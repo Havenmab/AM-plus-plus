@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -129,16 +130,181 @@ internal class AppleInternalCatalogResolver(
         RootConstants.DEFAULT_HOOK_APPLE_MUSIC_CONTENT_UI_LANGUAGE
 
     /**
+     * Account storefront read from MediaApi before any configured region is applied.
+     *
+     * Radio/station and lyrics requests are tied to the account's entitlements, so they are
+     * always rewritten back to this value; without that, changing the display region can make
+     * songs the account can actually play resolve to nothing.
+     */
+    @Volatile
+    private var accountStorefront: String? = null
+    @Volatile
+    private var accountStorefrontCaptured = false
+
+    /** Last value this resolver wrote into the MediaApi storefront field. */
+    @Volatile
+    private var lastAppliedConfiguredStorefront: String? = null
+
+    /**
+     * Whether the configured profile may rewrite ordinary (non-module) Apple Music traffic.
+     *
+     * False keeps the historical AM++ behaviour: only token-scoped module lookups are
+     * localized and every ordinary request keeps the account region.
+     */
+    @Volatile
+    private var globalRegionRewriteEnabled = false
+
+    // Apple Music 6.5.3 leaves applicationConnector uninitialized during Application.onCreate,
+    // so the storefront write has to be retried instead of failing the whole install.
+    private val storefrontApplyRetryGate = AtomicBoolean()
+    private val storefrontApplyRetryAttempts = AtomicInteger()
+
+    /**
+     * Applies the configured region to ordinary Apple Music catalog traffic.
+     *
+     * [regionReplacementRequested] is the user's region switch; a profile that selects no
+     * storefront ([storefrontForContentUiLanguage] returns null) never rewrites traffic no
+     * matter what the switch says.
+     */
+    fun applyRegionConfiguration(
+        selection: Int,
+        regionReplacementRequested: Boolean,
+        localizedMetadataCacheEnabled: Boolean,
+    ) {
+        contentUiLanguageSelection = selection
+        globalRegionRewriteEnabled = regionReplacementRequested &&
+            storefrontForContentUiLanguage(selection) != null
+        // Records the profile and warms its display cache; the region write below is separate so
+        // a profile that only restores names never touches ordinary traffic.
+        applyContentUiLanguage(selection)
+        setPersistentLocalizedCacheEnabled(localizedMetadataCacheEnabled)
+        if (!globalRegionRewriteEnabled) {
+            // Switching the region replacement off has to hand the storefront back to the
+            // account, otherwise the process keeps browsing the previously selected region
+            // until Apple Music restarts.
+            if (accountStorefrontCaptured) restoreStorefrontAccess(isFirstAttempt = true)
+            return
+        }
+        // A module-owned direct query is temporarily driving the storefront field; leave it.
+        if (activeCatalogRequest.get() != null) return
+        if (!restoreStorefrontAccess(isFirstAttempt = true)) scheduleStorefrontApplyRetry()
+    }
+
+    /** Whether ordinary Apple Music traffic is currently rewritten to the configured region. */
+    fun isGlobalRegionRewriteEnabled(): Boolean = globalRegionRewriteEnabled
+
+    /** The configured storefront for ordinary requests, or null when none applies. */
+    fun configuredStorefrontOrNull(): String? =
+        if (globalRegionRewriteEnabled) storefrontForContentUiLanguage(contentUiLanguageSelection)
+        else null
+
+    /** The configured catalog language for ordinary requests, or null when none applies. */
+    fun configuredLanguageOrNull(): String? =
+        if (globalRegionRewriteEnabled) languageTagForContentUiLanguage(contentUiLanguageSelection)
+        else null
+
+    /**
      * Prepares the selected metadata profile without changing Apple Music's account storefront.
      *
      * Fixed-region requests are scoped by [CatalogRequestLocalization] inside [queryResponse]
-     * and are tagged with [CATALOG_REQUEST_TOKEN_PARAM].  Mutating MediaApi here would affect
-     * ordinary Apple Music catalog traffic, so this method intentionally only records the
-     * selection and warms the profile's display cache.
+     * and are tagged with [CATALOG_REQUEST_TOKEN_PARAM].  Ordinary traffic is only rewritten by
+     * [applyRegionConfiguration], which the user has to opt into.
      */
     fun applyContentUiLanguage(selection: Int) {
         contentUiLanguageSelection = selection
         warmPersistentLocalizedCache(selection)
+    }
+
+    /**
+     * storefront 应用成败只取决于 MediaApi 是否已就绪：6.5.3 在 Application.onCreate 阶段
+     * applicationConnector 尚未初始化，此时 createCatalogAccess 必然失败，只能延迟重试。
+     * 返回是否成功，供调用方决定是否继续排期。
+     */
+    private fun restoreStorefrontAccess(isFirstAttempt: Boolean): Boolean = runCatching {
+        val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
+        restoreConfiguredStorefront(access)
+    }.onFailure { error ->
+        if (isFirstAttempt) {
+            ProviderLogger.error(
+                "Apple 内容 UI storefront 应用失败，已安排延迟重试: " +
+                    "selection=$contentUiLanguageSelection",
+                error,
+            )
+        } else {
+            ProviderLogger.info(
+                "Apple 内容 UI storefront 应用重试仍未就绪: " +
+                    "selection=$contentUiLanguageSelection, error=${error.javaClass.simpleName}",
+            )
+        }
+    }.isSuccess
+
+    private fun scheduleStorefrontApplyRetry() {
+        if (!storefrontApplyRetryGate.compareAndSet(false, true)) return
+        mainHandler.postDelayed({
+            storefrontApplyRetryGate.set(false)
+            if (restoreStorefrontAccess(isFirstAttempt = false)) {
+                storefrontApplyRetryAttempts.set(0)
+                return@postDelayed
+            }
+            val attempts = storefrontApplyRetryAttempts.incrementAndGet()
+            if (attempts < STOREFRONT_APPLY_MAX_ATTEMPTS) {
+                scheduleStorefrontApplyRetry()
+            } else {
+                storefrontApplyRetryAttempts.set(0)
+                ProviderLogger.info(
+                    "Apple 内容 UI storefront 应用重试放弃: attempts=$attempts, " +
+                        "selection=$contentUiLanguageSelection",
+                )
+            }
+        }, STOREFRONT_APPLY_RETRY_DELAY_MS)
+    }
+
+    /**
+     * Writes the configured storefront into MediaApi without losing the account's own value.
+     *
+     * Apple Music builds catalog URLs from this field, so writing it is what makes ordinary
+     * browsing, search and recommendations resolve in the configured region; [accountStorefront]
+     * keeps the original value available for the entitlement-bound request paths.
+     */
+    private fun restoreConfiguredStorefront(access: CatalogAccess) {
+        captureAccountStorefront(access)
+        val configuredStorefront = storefrontForContentUiLanguage(contentUiLanguageSelection)
+        if (configuredStorefront == null && !accountStorefrontCaptured) return
+        val target = configuredStorefront ?: accountStorefront
+        val previous = access.storefrontField.get(access.mediaApi) as? String
+        access.storefrontField.set(access.mediaApi, target)
+        lastAppliedConfiguredStorefront = configuredStorefront
+        if (previous != target) {
+            ProviderLogger.info(
+                "Apple 内容 UI storefront 已应用: selection=$contentUiLanguageSelection, " +
+                    "previous=${previous ?: "unset"}, " +
+                    "storefront=${target ?: "account-default"}, " +
+                    "accountStorefront=${accountStorefront ?: "account-default"}",
+            )
+        }
+    }
+
+    private fun captureAccountStorefront(access: CatalogAccess) {
+        val current = access.storefrontField.get(access.mediaApi) as? String ?: return
+        if (!accountStorefrontCaptured || current != lastAppliedConfiguredStorefront) {
+            accountStorefront = current
+            accountStorefrontCaptured = true
+        }
+    }
+
+    /**
+     * The account's real storefront, used to bring entitlement-bound requests back home.
+     *
+     * Falls back to reading MediaApi when the value was never captured, which also happens on
+     * versions where the region configuration is applied before the account storefront is known.
+     */
+    fun accountStorefrontForPlaybackRequest(): String? {
+        accountStorefront?.let { return it }
+        return runCatching {
+            val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
+            captureAccountStorefront(access)
+            accountStorefront
+        }.getOrNull()
     }
 
     fun setPersistentLocalizedCacheEnabled(enabled: Boolean) {
@@ -2024,6 +2190,9 @@ internal class AppleInternalCatalogResolver(
                     null
                 }
                 if (localization != null) {
+                    // Capture before the field is temporarily switched below, otherwise the
+                    // module's own target storefront would be remembered as the account's.
+                    captureAccountStorefront(access)
                     requestToken = catalogRequestSequence.incrementAndGet().toString(36)
                     pendingCatalogRequests[requestToken] = localization
                 }
@@ -2713,6 +2882,18 @@ internal class AppleInternalCatalogResolver(
         private const val QUERY_TIMEOUT_MS = 30_000L
         private const val ARTIST_ALIAS_CACHE_SCHEMA = "V2"
         internal const val CATALOG_REQUEST_TOKEN_PARAM = "hle_catalog_request"
+
+        /**
+         * Marks a request the catalog-executor layer already localized by rewriting its
+         * storefront argument.  The HTTP layer skips these so it cannot re-apply the global
+         * region to a request that deliberately targeted a different one.
+         */
+        internal const val AMP_HTTP_MODULE_MARKER_PARAM = "hle_catalog_module"
+        internal const val AMP_HTTP_MODULE_MARKER_VALUE = "1"
+
+        /** MediaApi is not ready during Application.onCreate on 6.5.3; retry the write. */
+        private const val STOREFRONT_APPLY_RETRY_DELAY_MS = 5_000L
+        private const val STOREFRONT_APPLY_MAX_ATTEMPTS = 6
         private val ORIGINAL_LANGUAGE_PROBE_ORDER = listOf(
             "ja-JP",
             "ko-KR",

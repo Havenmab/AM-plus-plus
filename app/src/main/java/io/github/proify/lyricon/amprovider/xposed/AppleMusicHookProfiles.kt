@@ -104,6 +104,8 @@ internal enum class AppleMusicHookPoint {
     LISTEN_NOW_CUSTOM_IMAGE_VIEW,
     LISTEN_NOW_MEDIA_ENTITY,
     LISTEN_NOW_COLLECTION_ITEM_VIEW,
+    MEDIA_API_CATALOG_REQUEST_EXECUTOR,
+    MEDIA_API_AMP_HTTP_INTERCEPTOR,
 }
 
 internal enum class AppleMusicRuntimeMember {
@@ -530,6 +532,22 @@ internal object AppleMusicHookProfiles {
             // here, so pinning the wrong owner silently breaks every original-title lookup.
             AppleMusicHookPoint.CONTENT_HTTP_LOCALIZATION to listOf(
                 contentHttpLocalizationTarget653(),
+            ),
+            // Catalog request executors build "/v1/catalog/{arg3}" and "/v1/editorial/{arg3}"
+            // paths, so rewriting argument 3 is what redirects library/browse entity loads and
+            // catalog search that never reach the HTTP interceptor.  Verified from 6.5.3 (1599)
+            // bytecode: v8.D#d/#b are the repository batch and single loads, A5.l#d/#c the
+            // catalog search pair, Ic.n#d/#e the editorial multiplex/browse pair.  Only 6.5.3
+            // carries these targets — 6.5.0/6.5.1/6.5.2 fall back to the MediaApi storefront
+            // field plus MEDIA_API_LOCALIZATION and CONTENT_HTTP_LOCALIZATION.
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR to
+                catalogRequestExecutorTargets653(),
+            // Every amp-api request reaches its final form in this OkHttp interceptor
+            // (6.5.3 = w8.d#a(Li.f)Gi.D), including browse/editorial URLs built outside the
+            // repository executors.  It carries the same OkHttp runtime member names as the
+            // content HTTP seam, so both share one rewrite body.
+            AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR to listOf(
+                mediaApiAmpHttpInterceptorTarget(),
             ),
             // libraries/epoxy: the controller, method name, parameter count and the
             // library2/a parameter are unchanged; library2.M became library2.H and the
@@ -1493,6 +1511,118 @@ internal object AppleMusicHookProfiles {
         parameterCount = 1,
         parameterTypeNames = listOf("Li.f"),
         returnTypeName = "Gi.D",
+        runtimeMemberNames = contentHttpRuntimeMemberNames,
+    )
+
+    /**
+     * Apple Music 6.5.3 (1599) catalog request executors.
+     *
+     * Six methods across three owners, each verified from the 1599 DEX: the storefront always
+     * occupies argument index 3 (the "/v1/catalog/{arg3}" and "/v1/editorial/{arg3}" path
+     * segment) and the query map is the first `Map` parameter (index 5 for d/e, index 4 for b/c,
+     * which is why the installer derives it from the signature instead of pinning it).
+     *
+     * Only 6.5.3 declares these targets.  6.5.0/6.5.1/6.5.2 have no verified equivalents, so on
+     * those builds the region rewrite relies on the MediaApi storefront field plus
+     * MEDIA_API_LOCALIZATION and CONTENT_HTTP_LOCALIZATION, and the executor sub-capability is
+     * reported as DEGRADED rather than guessed at.
+     */
+    private fun catalogRequestExecutorTargets653(): List<AppleMusicHookTarget> = listOf(
+        AppleMusicHookTarget(
+            className = "v8.D",
+            methodName = "d",
+            parameterCount = 7,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.lang.String", "java.util.LinkedHashMap",
+                "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+        AppleMusicHookTarget(
+            className = "v8.D",
+            methodName = "b",
+            parameterCount = 7,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.util.LinkedHashMap", "java.util.LinkedHashMap",
+                "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+        AppleMusicHookTarget(
+            className = "A5.l",
+            methodName = "d",
+            parameterCount = 7,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.lang.String", "java.util.LinkedHashMap",
+                "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+        AppleMusicHookTarget(
+            className = "A5.l",
+            methodName = "c",
+            parameterCount = 6,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.util.LinkedHashMap", "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+        AppleMusicHookTarget(
+            className = "Ic.n",
+            methodName = "d",
+            parameterCount = 7,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.lang.String", "java.util.LinkedHashMap",
+                "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+        AppleMusicHookTarget(
+            className = "Ic.n",
+            methodName = "e",
+            parameterCount = 7,
+            parameterTypeNames = listOf(
+                "java.lang.Long", "java.lang.String", "java.lang.String",
+                "java.lang.String", "java.lang.String", "java.util.LinkedHashMap",
+                "Hg.c",
+            ),
+            returnTypeName = "java.lang.Object",
+            isStatic = false,
+            allowFirstMatch = false,
+        ),
+    )
+
+    /**
+     * Apple Music 6.5.3 (1599) amp-api network interceptor.
+     *
+     * Verified from classes2.dex: w8.d#a(Li.f)Gi.D is the AMD-retry interceptor on the
+     * amp-api/media-api OkHttp client, so every content request passes through it in its final
+     * form.  It reuses the content-HTTP runtime member names because only the owning package
+     * moved between 6.5.2 and 6.5.3.  Not declared for 6.5.0/6.5.1/6.5.2, which have no verified
+     * equivalent.
+     */
+    private fun mediaApiAmpHttpInterceptorTarget() = AppleMusicHookTarget(
+        className = "w8.d",
+        methodName = "a",
+        parameterCount = 1,
+        parameterTypeNames = listOf("Li.f"),
+        returnTypeName = "Gi.D",
+        isStatic = false,
         runtimeMemberNames = contentHttpRuntimeMemberNames,
     )
 
@@ -2463,6 +2593,15 @@ internal class AppleMusicHookResolver(
             AppleMusicHookPoint.PLAYER_LYRICS_VIEW_MODEL_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ARTIST_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ALBUM_CLASS -> true
+
+            // Catalog executors are verified by full descriptor in the profile; the structural
+            // fallback only has to reject obviously wrong shapes so a renamed sibling cannot be
+            // hooked in their place.
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR ->
+                method.parameterCount in 6..7 &&
+                    method.parameterTypes.any { Map::class.java.isAssignableFrom(it) }
+
+            AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR -> method.parameterCount == 1
 
             AppleMusicHookPoint.MEDIA_API_REPOSITORY_HOLDER_CLASS -> true
 

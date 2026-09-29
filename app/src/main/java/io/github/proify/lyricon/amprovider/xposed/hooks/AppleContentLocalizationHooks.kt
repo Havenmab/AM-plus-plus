@@ -10,15 +10,18 @@ import android.net.Uri
 import android.os.SystemClock
 import com.juren233.hyperlyricsenhanced.BuildConfig
 import dev.amenhancer.module.config.CatalogLanguagePolicy
+import io.github.libxposed.api.XposedInterface.Chain
 import io.github.proify.lyricon.amprovider.xposed.AppleContentHttpTimingTracker
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookProfiles
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookTarget
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicProviderRuntime
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicRuntimeMember
 import io.github.proify.lyricon.amprovider.xposed.AppleReflection
 import io.github.proify.lyricon.amprovider.xposed.ProviderLogger
 import io.github.proify.lyricon.amprovider.xposed.isAppleLyricsRequestPath
+import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
 internal class AppleContentLocalizationHooks(
@@ -31,6 +34,7 @@ internal class AppleContentLocalizationHooks(
     private val contentRequestDecisionTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val contentRequestHeaderTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val mediaApiLocalizationTraceKeys = ConcurrentHashMap.newKeySet<String>()
+    private val mediaApiGlobalTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val contentHttpTimingTracker by lazy {
         AppleContentHttpTimingTracker(clock = SystemClock::elapsedRealtime)
     }
@@ -51,15 +55,18 @@ internal class AppleContentLocalizationHooks(
                 ]?.toString()
                 val requestLocalization = resolver.catalogRequestLocalization(requestToken)
                     ?: resolver.activeCatalogRequestLocalization()
-                // This hook is shared with every native MediaApi request.  Only a resolver-owned
-                // token proves that the request belongs to the module's metadata lookup; without
-                // it, leave the account's language and storefront untouched.
-                val language = requestLocalization?.language ?: return@installHook
+                // A resolver-owned token always wins.  Ordinary MediaApi requests are only
+                // touched when the user turned on a region replacement, so the historical
+                // "account region stays untouched" behaviour survives a disabled feature.
+                val configuredLanguage = resolver.configuredLanguageOrNull()
+                val language = requestLocalization?.language
+                    ?: configuredLanguage
+                    ?: return@installHook
                 params["l"] = language
                 if (lastLoggedContentLanguage != language) {
                     lastLoggedContentLanguage = language
                     ProviderLogger.info(
-                        "Apple Music HLE 元数据本地化参数已覆盖: language=$language"
+                        "Apple Music 内容本地化参数已覆盖: language=$language"
                     )
                 }
                 if (
@@ -69,9 +76,20 @@ internal class AppleContentLocalizationHooks(
                 ) {
                     ProviderLogger.diagnostic(
                         "AppleCatalogLocalizationParams: token=$requestToken, " +
-                            "resolved=true, " +
+                            "resolved=${requestLocalization != null}, " +
                             "storefront=${requestLocalization?.storefront ?: "fallback"}, " +
                             "language=${requestLocalization?.language ?: language}"
+                    )
+                }
+                if (
+                    BuildConfig.DEBUG &&
+                    requestToken == null &&
+                    configuredLanguage != null &&
+                    mediaApiGlobalTraceKeys.add(configuredLanguage)
+                ) {
+                    ProviderLogger.diagnostic(
+                        "AppleCatalogLocalizationParams: native request localized to " +
+                            "language=$configuredLanguage"
                     )
                 }
             })
@@ -85,67 +103,228 @@ internal class AppleContentLocalizationHooks(
         }
     }
 
-    fun installContentHttpLocalization() {
-        runCatching {
-            val resolved = runtime.hookResolver.resolveMethod(
-                AppleMusicHookPoint.CONTENT_HTTP_LOCALIZATION
+    /**
+     * 目录直连执行器（6.5.3 v8.D/A5.l/Ic.n 请求方法）参数级本地化改写。
+     *
+     * storefront 恒为参数 index 3（"/v1/catalog/{arg3}/"、"/v1/editorial/{arg3}/" 路径段，
+     * 各方法字节码逐一验证）；查询表索引随方法形状不同（d/e 在 5，b/c 在 4——v8.D.b 的
+     * arg4 是 query、arg5 是 headers），由安装器从 Method 签名取「第一个 Map 参数」得出。
+     *
+     * 识别模块请求的唯一切入点是查询表里的 [AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM]；
+     * 无论能否解析出目标 storefront，该 token 都必须从出网请求中移除。原生请求无 token：
+     * 配置了内容地区时按配置值改写 storefront，未配置则不动。
+     */
+    fun installCatalogRequestLocalization() {
+        val resolvedClasses = runCatching {
+            runtime.hookResolver.resolveClasses(
+                AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR
             )
+        }.getOrNull()
+        if (resolvedClasses.isNullOrEmpty()) {
+            ProviderLogger.info(
+                "Apple Music 目录直连请求 storefront Hook 未安装: 本版本无已验证执行器目标"
+            )
+            return
+        }
+        // resolveClasses 按类去重（v8.D 的 d 和 b 共用一个类条目），必须按档案目标
+        // 逐个匹配方法安装，漏一个目标就是一条请求通道（如批量加载 v8.D#b）。
+        val classesByTarget = resolvedClasses.associateBy { it.target.className }
+        val exactTargets = AppleMusicHookProfiles.exactTargets(
+            runtime.hookResolver.version,
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR,
+        )
+        var installed = 0
+        exactTargets.forEach { target ->
+            val resolved = classesByTarget[target.className]
+            if (resolved == null) {
+                ProviderLogger.info(
+                    "Apple Music 目录直连请求 storefront Hook 目标类缺失: ${target.className}"
+                )
+                return@forEach
+            }
+            runCatching {
+                val method = resolved.clazz.declaredMethods
+                    .filter { candidate ->
+                        candidate.name == target.methodName &&
+                            candidate.parameterCount == target.parameterCount
+                    }
+                    .filter { candidate ->
+                        val expected = target.parameterTypeNames
+                        expected == null || expected.indices.all { index ->
+                            expected[index] == null ||
+                                expected[index] == candidate.parameterTypes[index].name
+                        }
+                    }
+                    .single()
+                method.isAccessible = true
+                val queryArgIndex = AppleCatalogExecutorArgs.queryArgIndex(method)
+                runtime.hookRegistrar.installArgumentRewriteHook(method) { chain ->
+                    val resolver = catalogResolver()
+                    val result = AppleCatalogExecutorArgs.rewrite(
+                        args = chain.args,
+                        queryArgIndex = queryArgIndex,
+                        configuredStorefront = resolver.configuredStorefrontOrNull(),
+                    ) { token ->
+                        resolver.catalogRequestLocalization(token)
+                    }
+                    result?.args
+                }
+                installed += 1
+            }.onFailure {
+                ProviderLogger.error(
+                    "Apple Music 目录直连请求 storefront Hook 安装失败: " +
+                        "${target.className}#${target.methodName}",
+                    it,
+                )
+            }
+        }
+        ProviderLogger.info(
+            "Apple Music 目录直连请求 storefront Hook 已安装: executors=" +
+                exactTargets.joinToString("/") { "${it.className}#${it.methodName}" } +
+                ", installed=$installed"
+        )
+    }
+
+    fun installContentHttpLocalization() {
+        installContentHttpHook(
+            hookPoint = AppleMusicHookPoint.CONTENT_HTTP_LOCALIZATION,
+            label = "Apple 内容 HTTP 本地化",
+        )
+    }
+
+    /**
+     * amp-api 媒体客户端的网络拦截器（6.5.3 = w8.d#a）：所有内容请求的最终形态都在此执行，
+     * 覆盖不经 repository executor 的浏览/编辑页请求（新发现、广播等独立体系）。
+     */
+    fun installAmpApiHttpLocalization() {
+        installContentHttpHook(
+            hookPoint = AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR,
+            label = "Apple amp-api 内容请求网络拦截",
+        )
+    }
+
+    /**
+     * Both HTTP seams share one rewrite body.  Their targets carry the same runtime member
+     * names (only the owning package moves between versions), so the most recently resolved
+     * target describes either seam equally well.
+     */
+    private fun installContentHttpHook(
+        hookPoint: AppleMusicHookPoint,
+        label: String,
+    ) {
+        runCatching {
+            val resolved = runtime.hookResolver.resolveMethod(hookPoint)
             contentHttpTarget = resolved.target
             runtime.hookRegistrar.installHook(
                 resolved.method,
-                before = { chain ->
-                    val httpChain = chain.args.firstOrNull() ?: return@installHook
-                    val request = AppleReflection.field(
-                        httpChain,
-                        member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
-                    ) ?: return@installHook
-                    val requestUrl = AppleReflection.field(
-                        request,
-                        member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_URL_FIELD),
-                    )?.toString().orEmpty()
-                    val requestUri = Uri.parse(requestUrl)
-                    startContentHttpTiming(httpChain, requestUri)
-                    val resolver = catalogResolver()
-                    val requestToken = requestUri.getQueryParameter(
-                        AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
-                    )
-                    val requestLocalization = resolver.catalogRequestLocalization(requestToken)
-                        ?: resolver.activeCatalogRequestLocalization()
-                    // Native catalog, playback, lyrics, search and playlist requests do not carry
-                    // this token and must follow the Apple Music account region unchanged.
-                    if (requestLocalization == null) return@installHook
-                    val storefront = requestLocalization.storefront
-                    val language = requestLocalization.language
-                    logContentRequestLocalizationDecision(
-                        uri = requestUri,
-                        requestToken = requestToken,
-                        requestLocalization = requestLocalization,
-                        targetStorefront = storefront,
-                        targetLanguage = language,
-                    )
-                    val rewritten = rewriteContentRequest(
-                        request = request,
-                        storefront = storefront,
-                        language = language,
-                        requestToken = requestToken,
-                    ) ?: return@installHook
-                    AppleReflection.setField(
-                        httpChain,
-                        member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
-                        rewritten,
-                    )
-                },
-                after = { chain, result ->
-                    finishContentHttpTiming(
-                        httpChain = chain.args.firstOrNull(),
-                        response = result,
-                    )
-                },
+                before = ::contentHttpLocalizationBefore,
+                after = ::contentHttpLocalizationAfter,
             )
-            ProviderLogger.info("Apple 内容 HTTP 本地化 Hook 已安装")
+            ProviderLogger.info("$label Hook 已安装")
         }.onFailure {
-            ProviderLogger.error("Apple 内容 HTTP 本地化 Hook 安装失败", it)
+            ProviderLogger.error("$label Hook 安装失败", it)
         }
+    }
+
+    private fun contentHttpLocalizationBefore(chain: Chain) {
+        val httpChain = chain.args.firstOrNull() ?: return
+        val request = AppleReflection.field(
+            httpChain,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+        ) ?: return
+        val requestUrl = AppleReflection.field(
+            request,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_URL_FIELD),
+        )?.toString().orEmpty()
+        val requestUri = Uri.parse(requestUrl)
+        startContentHttpTiming(httpChain, requestUri)
+
+        val resolver = catalogResolver()
+        val pathSegments = requestUri.pathSegments
+
+        // The catalog executor already localized this request by rewriting its storefront
+        // argument.  Rewriting again here could undo a deliberate original-region target, so
+        // only strip the module's own parameters so they never reach Apple.
+        if (requestUri.getQueryParameter(
+                AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM
+            ) != null
+        ) {
+            stripModuleParameters(request, requestUri)?.let { stripped ->
+                AppleReflection.setField(
+                    httpChain,
+                    member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+                    stripped,
+                )
+            }
+            return
+        }
+
+        val requestToken = requestUri.getQueryParameter(
+            AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
+        )
+        val requestLocalization = resolver.catalogRequestLocalization(requestToken)
+            ?: resolver.activeCatalogRequestLocalization()
+        // Preserve the historical behaviour for ordinary traffic while the feature is off.
+        if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return
+
+        // Radio/station and lyrics requests are bound to the account's entitlements, so a
+        // native one must always resolve in the account's own storefront.  A resolver-owned
+        // token is left alone: the module deliberately targeted another region for it.
+        if (requestLocalization == null &&
+            (
+                AppleInternalCatalogResolver.isAccountScopedPlaybackPath(pathSegments) ||
+                    isAppleLyricsRequestPath(pathSegments)
+                )
+        ) {
+            val accountStorefront = resolver.accountStorefrontForPlaybackRequest() ?: return
+            val rewritten = rewriteContentRequestStorefrontOnly(request, accountStorefront)
+                ?: return
+            AppleReflection.setField(
+                httpChain,
+                member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+                rewritten,
+            )
+            if (BuildConfig.DEBUG) {
+                ProviderLogger.info(
+                    "Apple 账号域请求回退账号 storefront: " +
+                        "${AppleInternalCatalogResolver.storefrontFromContentPath(pathSegments)
+                            ?: "none"}->$accountStorefront"
+                )
+            }
+            return
+        }
+
+        val storefront = requestLocalization?.storefront
+            ?: resolver.configuredStorefrontOrNull()
+            ?: return
+        val language = requestLocalization?.language
+            ?: resolver.configuredLanguageOrNull()
+            ?: return
+        logContentRequestLocalizationDecision(
+            uri = requestUri,
+            requestToken = requestToken,
+            requestLocalization = requestLocalization,
+            targetStorefront = storefront,
+            targetLanguage = language,
+        )
+        val rewritten = rewriteContentRequest(
+            request = request,
+            storefront = storefront,
+            language = language,
+            requestToken = requestToken,
+        ) ?: return
+        AppleReflection.setField(
+            httpChain,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+            rewritten,
+        )
+    }
+
+    private fun contentHttpLocalizationAfter(chain: Chain, result: Any?) {
+        finishContentHttpTiming(
+            httpChain = chain.args.firstOrNull(),
+            response = result,
+        )
     }
 
     private fun startContentHttpTiming(httpChain: Any, uri: Uri) {
@@ -264,9 +443,9 @@ internal class AppleContentLocalizationHooks(
         )
         builder.clearQuery()
         uri.queryParameterNames.forEach { name ->
-            if (
-                name != "l" &&
-                name != AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
+            if (name != "l" &&
+                name != AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM &&
+                name != AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM
             ) {
                 uri.getQueryParameters(name).forEach { value ->
                     builder.appendQueryParameter(name, value)
@@ -339,6 +518,39 @@ internal class AppleContentLocalizationHooks(
             targetStorefrontHeader = targetStorefrontHeader,
             sourceRequestStorefrontHeader = sourceRequestStorefrontHeader,
             targetRequestStorefrontHeader = targetRequestStorefrontHeader,
+        )
+        return AppleReflection.call(
+            requestBuilder,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_BUILDER_BUILD_METHOD),
+        )
+    }
+
+    /**
+     * Removes the module's own query parameters from an already-localized request so the
+     * `hle_catalog_*` markers never leave the device.
+     */
+    private fun stripModuleParameters(request: Any, uri: Uri): Any? {
+        val builder = uri.buildUpon()
+        builder.clearQuery()
+        uri.queryParameterNames.forEach { name ->
+            if (name != AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM &&
+                name != AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
+            ) {
+                uri.getQueryParameters(name).forEach { value ->
+                    builder.appendQueryParameter(name, value)
+                }
+            }
+        }
+        val rewrittenUrl = builder.build().toString()
+        if (rewrittenUrl == uri.toString()) return null
+        val requestBuilder = AppleReflection.call(
+            request,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_NEW_BUILDER_METHOD),
+        ) ?: return null
+        AppleReflection.call(
+            requestBuilder,
+            member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_BUILDER_URL_METHOD),
+            rewrittenUrl,
         )
         return AppleReflection.call(
             requestBuilder,
@@ -490,4 +702,57 @@ internal class AppleContentLocalizationHooks(
 
     private fun member(member: AppleMusicRuntimeMember): String =
         contentHttpTarget.runtimeMemberName(member)
+}
+
+/**
+ * 目录执行器参数改写（不含 Hook 安装，便于 JVM 单测）。
+ *
+ * storefront 参数位在各方法字节码中逐一验证过；查询表参数位随方法形状不同，由调用方从
+ * Method 签名取「第一个 Map 参数」传入。
+ */
+internal object AppleCatalogExecutorArgs {
+    const val STOREFRONT_ARG_INDEX = 3
+
+    internal class Result(
+        val token: String?,
+        val storefront: String?,
+        val args: Array<Any?>,
+    )
+
+    /** 查询表参数位：Method 签名里第一个 Map 类型参数（d/e=arg5，b/c=arg4）。 */
+    fun queryArgIndex(method: Method): Int =
+        method.parameterTypes.indexOfFirst { Map::class.java.isAssignableFrom(it) }
+
+    fun rewrite(
+        args: List<Any?>,
+        queryArgIndex: Int,
+        configuredStorefront: String?,
+        localizationForToken: (String) -> AppleInternalCatalogResolver.CatalogRequestLocalization?,
+    ): Result? {
+        if (args.size <= queryArgIndex || queryArgIndex <= STOREFRONT_ARG_INDEX) return null
+        @Suppress("UNCHECKED_CAST")
+        val query = args[queryArgIndex] as? MutableMap<Any?, Any?> ?: return null
+        val token = query[AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM] as? String
+        if (token == null) {
+            // Native request: only the user's configured region may redirect it.
+            if (configuredStorefront.isNullOrEmpty()) return null
+            query[AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM] =
+                AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_VALUE
+            val rewritten = args.toTypedArray()
+            rewritten[STOREFRONT_ARG_INDEX] = configuredStorefront
+            return Result(null, configuredStorefront, rewritten)
+        }
+        // Resolver-owned request: the token must never reach the network, and the
+        // storefront follows the token's own target rather than the global region.
+        query.remove(AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM)
+        query[AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM] =
+            AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_VALUE
+        val localization = localizationForToken(token)
+        val target = localization?.storefront
+        val rewritten = args.toTypedArray()
+        if (target != null) {
+            rewritten[STOREFRONT_ARG_INDEX] = target
+        }
+        return Result(token, target, rewritten)
+    }
 }

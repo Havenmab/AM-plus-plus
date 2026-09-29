@@ -72,7 +72,7 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `new metadata lookups scope storefront and language rewriting to HLE tokens`() {
+    fun `region rewriting is opt-in and entitlement-bound requests keep the account storefront`() {
         val runtime = source("app/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt")
         val localization = source(
             "app/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
@@ -80,16 +80,32 @@ class HleMetadataIntegrationStructuralTest {
         val resolver = source(
             "app/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
         )
-        assertTrue(runtime.contains("mode.contentUiLanguageSelection"))
-        assertTrue(runtime.contains("cacheNamespace = mode.cacheNamespace"))
+        // The runtime applies the region profile and installs all four localization seams.
+        assertTrue(runtime.contains("applyRegionConfiguration("))
+        assertTrue(runtime.contains("regionReplacementRequested = mode.replacesRegion"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))
+        assertTrue(runtime.contains("contentLocalizationHooks.installCatalogRequestLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installContentHttpLocalization()"))
+        assertTrue(runtime.contains("contentLocalizationHooks.installAmpApiHttpLocalization()"))
+        // Module-owned lookups still win through their token.
         assertTrue(localization.contains("resolver.catalogRequestLocalization(requestToken)"))
         assertTrue(localization.contains("resolver.activeCatalogRequestLocalization()"))
-        assertTrue(localization.contains("if (requestLocalization == null) return@installHook"))
-        assertFalse(localization.contains("resolver.applyContentUiLanguage(selection)"))
+        // Ordinary traffic is only rewritten while the user enabled a region replacement.
+        assertTrue(
+            localization.contains(
+                "if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return",
+            ),
+        )
+        // Radio/station and lyrics requests are pulled back to the account storefront.
+        assertTrue(localization.contains("AppleInternalCatalogResolver.isAccountScopedPlaybackPath"))
+        assertTrue(localization.contains("resolver.accountStorefrontForPlaybackRequest()"))
+        assertTrue(localization.contains("rewriteContentRequestStorefrontOnly("))
         assertTrue(localization.contains("Accept-Language"))
-        assertFalse(resolver.contains("restoreConfiguredStorefront(access)"))
+        // The storefront is written into MediaApi only through the account-preserving helper.
+        assertTrue(resolver.contains("restoreConfiguredStorefront(access)"))
+        assertTrue(resolver.contains("captureAccountStorefront(access)"))
+        assertTrue(resolver.contains("isAccountScopedPlaybackPath"))
+        assertFalse(resolver.contains("functionally disabled"))
     }
 
     @Test
@@ -317,11 +333,18 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `embedded settings expose profile selector without restoring refresh action`() {
+    fun `embedded settings expose the region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
         assertTrue(embedded.contains("歌曲名显示修正"))
         assertTrue(embedded.contains("歌曲名修正模式"))
         assertTrue(embedded.contains("titleCorrectionMode"))
+        // The two HLE region extras must be reachable from the host settings page.
+        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
+        assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
+        assertTrue(embedded.contains("创建检索库以提升替换体验"))
+        assertTrue(embedded.contains("localizedMetadataCache"))
+        // The picker enumerates the model, so new profiles appear without a UI change.
+        assertTrue(embedded.contains("TitleCorrectionMode.values()"))
         assertFalse(embedded.contains("刷新资料库"))
     }
 
@@ -336,7 +359,7 @@ class HleMetadataIntegrationStructuralTest {
         assertTrue(schema.contains("KEY_TITLE_CORRECTION_TARGET_LANGUAGE"))
         assertTrue(target.contains("isHleResolverRequest"))
         assertTrue(target.contains("CATALOG_REQUEST_TOKEN_PARAM"))
-        assertTrue(target.contains("Global Catalog locale hooks disabled"))
+        assertTrue(target.contains("region rewrite is owned by the HLE localization hooks"))
         assertFalse(target.contains("ModernXposedRuntime.hookMethod"))
         assertTrue(bridge.contains("MediaMetadataCache.setProfile(profileId)"))
         assertTrue(bridge.contains("if (MediaMetadataCache.profile() != profileId)"))

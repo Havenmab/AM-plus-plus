@@ -341,6 +341,40 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
+    fun `region seams stay uninstalled on hosts without verified targets`() {
+        val localization = source(
+            "app/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
+        )
+        // Both region-only seams must check for a verified target before resolving.  Without the
+        // gate they fall through to the DexKit structural layer, where the only outcomes are
+        // "hook an unverified method" or "fail" — and a failure is not cached, so on 6.5.2 the
+        // whole-DEX scan repeated on every cold start.
+        assertTrue(localization.contains("requireExactTargets: Boolean = false"))
+        assertTrue(localization.contains("requireExactTargets = true"))
+        assertTrue(
+            localization.contains(
+                "AppleMusicHookProfiles.exactTargets(runtime.hookResolver.version, hookPoint).isEmpty()",
+            ),
+        )
+        // The executor gate must run before the resolution it guards.
+        val catalogInstaller = localization
+            .substringAfter("fun installCatalogRequestLocalization()")
+            .substringBefore("private fun installContentHttpHook")
+        val gate = catalogInstaller.indexOf("if (exactTargets.isEmpty())")
+        val resolve = catalogInstaller.indexOf("resolveClasses(")
+        assertTrue(gate >= 0)
+        assertTrue(resolve >= 0)
+        assertTrue(gate < resolve)
+        // The content HTTP seam is deliberately exempt: 6.5.1/6.5.2 have no exact target for it
+        // either, but reach their verified owner through the compatibility chain, so gating it
+        // would disable a working hook.
+        assertTrue(localization.contains("Deliberately not applied to CONTENT_HTTP_LOCALIZATION"))
+        // The MediaApi parameter map belongs to the host and every native request passes through
+        // the after-hook, so the write must be idempotent.
+        assertTrue(localization.contains("if (params[\"l\"] == language) return@installHook"))
+    }
+
+    @Test
     fun `embedded settings expose the region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
         assertTrue(embedded.contains("歌曲名显示修正"))

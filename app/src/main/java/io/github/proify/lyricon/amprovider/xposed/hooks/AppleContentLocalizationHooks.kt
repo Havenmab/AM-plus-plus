@@ -62,6 +62,10 @@ internal class AppleContentLocalizationHooks(
                 val language = requestLocalization?.language
                     ?: configuredLanguage
                     ?: return@installHook
+                // Every native MediaApi request passes through here and this map belongs to the
+                // host, so only write when the value actually changes: re-writing the same entry
+                // cannot help and could invalidate host-side state keyed on the parameters.
+                if (params["l"] == language) return@installHook
                 params["l"] = language
                 if (lastLoggedContentLanguage != language) {
                     lastLoggedContentLanguage = language
@@ -115,6 +119,22 @@ internal class AppleContentLocalizationHooks(
      * 配置了内容地区时按配置值改写 storefront，未配置则不动。
      */
     fun installCatalogRequestLocalization() {
+        // Only a version with its own verified targets may install this seam.  Without them the
+        // resolver falls through to the DexKit structural layer, where the only possible outcomes
+        // are "hook an unverified method" or "fail" — and a failure is not cached, so the scan
+        // repeats on every cold start (on 6.5.2 it degenerates into a whole-DEX query).  The
+        // project's rule is to stay uninstalled and report it, which is also what README promises
+        // for 6.5.1/6.5.2.
+        val exactTargets = AppleMusicHookProfiles.exactTargets(
+            runtime.hookResolver.version,
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR,
+        )
+        if (exactTargets.isEmpty()) {
+            ProviderLogger.info(
+                "Apple Music 目录直连请求 storefront Hook 未安装: 本版本无已验证执行器目标"
+            )
+            return
+        }
         val resolvedClasses = runCatching {
             runtime.hookResolver.resolveClasses(
                 AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR
@@ -122,17 +142,13 @@ internal class AppleContentLocalizationHooks(
         }.getOrNull()
         if (resolvedClasses.isNullOrEmpty()) {
             ProviderLogger.info(
-                "Apple Music 目录直连请求 storefront Hook 未安装: 本版本无已验证执行器目标"
+                "Apple Music 目录直连请求 storefront Hook 未安装: 执行器目标类解析失败"
             )
             return
         }
         // resolveClasses 按类去重（v8.D 的 d 和 b 共用一个类条目），必须按档案目标
         // 逐个匹配方法安装，漏一个目标就是一条请求通道（如批量加载 v8.D#b）。
         val classesByTarget = resolvedClasses.associateBy { it.target.className }
-        val exactTargets = AppleMusicHookProfiles.exactTargets(
-            runtime.hookResolver.version,
-            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR,
-        )
         var installed = 0
         exactTargets.forEach { target ->
             val resolved = classesByTarget[target.className]
@@ -200,6 +216,11 @@ internal class AppleContentLocalizationHooks(
         installContentHttpHook(
             hookPoint = AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR,
             label = "Apple amp-api 内容请求网络拦截",
+            // Unlike the content HTTP seam below, this one has no verified owner on 6.5.0-6.5.2
+            // and no compatibility candidate that can match, so without this gate its resolution
+            // degenerates into a whole-DEX DexKit query for every one-argument method named "a"
+            // and then fails — uncached, on every cold start.
+            requireExactTargets = true,
         )
     }
 
@@ -211,7 +232,17 @@ internal class AppleContentLocalizationHooks(
     private fun installContentHttpHook(
         hookPoint: AppleMusicHookPoint,
         label: String,
+        requireExactTargets: Boolean = false,
     ) {
+        // Deliberately not applied to CONTENT_HTTP_LOCALIZATION: it has no exact target on
+        // 6.5.1/6.5.2 either, but those builds reach their verified owner through the
+        // compatibility candidate chain, so gating it would disable a working hook.
+        if (requireExactTargets &&
+            AppleMusicHookProfiles.exactTargets(runtime.hookResolver.version, hookPoint).isEmpty()
+        ) {
+            ProviderLogger.info("$label Hook 未安装: 本版本无已验证目标")
+            return
+        }
         runCatching {
             val resolved = runtime.hookResolver.resolveMethod(hookPoint)
             contentHttpTarget = resolved.target
@@ -312,6 +343,8 @@ internal class AppleContentLocalizationHooks(
         )
         val rewritten = rewriteContentRequest(
             request = request,
+            uri = requestUri,
+            pathSegments = pathSegments,
             storefront = storefront,
             language = language,
             requestToken = requestToken,
@@ -418,8 +451,17 @@ internal class AppleContentLocalizationHooks(
         return pathSegments.firstOrNull(knownCategories::contains) ?: "other"
     }
 
+    /**
+     * Rewrites one request to [storefront]/[language].
+     *
+     * The caller has already parsed [uri] and split [pathSegments] for the account-scoped checks,
+     * so they are passed in rather than re-derived: this runs for every content request once a
+     * region is selected.
+     */
     private fun rewriteContentRequest(
         request: Any,
+        uri: Uri,
+        pathSegments: List<String>,
         storefront: String,
         language: String,
         requestToken: String?,
@@ -428,11 +470,10 @@ internal class AppleContentLocalizationHooks(
             request,
             member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_URL_FIELD),
         )?.toString().orEmpty()
-        val uri = Uri.parse(url)
         val host = uri.host.orEmpty()
         if (!host.contains("apple", ignoreCase = true)) return null
 
-        val segments = uri.pathSegments.toMutableList()
+        val segments = pathSegments.toMutableList()
         val pathStorefront = AppleInternalCatalogResolver.storefrontFromContentPath(segments)
         val isPersonalizedContent = segments.take(3) == listOf("v1", "me", "recommendations")
         val isLyricsRequest = isAppleLyricsRequestPath(segments)

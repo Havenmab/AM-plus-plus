@@ -130,6 +130,15 @@ internal class AppleInternalCatalogResolver(
         RootConstants.DEFAULT_HOOK_APPLE_MUSIC_CONTENT_UI_LANGUAGE
 
     /**
+     * Language tag for the current selection, derived once when the selection changes.
+     *
+     * [configuredLanguageOrNull] is read on every ordinary MediaApi request, and deriving the tag
+     * allocates a fresh list each time; caching it keeps the hot path allocation-free.
+     */
+    @Volatile
+    private var configuredLanguageTag: String? = null
+
+    /**
      * Account storefront read from MediaApi before any configured region is applied.
      *
      * Radio/station and lyrics requests are tied to the account's entitlements, so they are
@@ -200,8 +209,7 @@ internal class AppleInternalCatalogResolver(
 
     /** The configured catalog language for ordinary requests, or null when none applies. */
     fun configuredLanguageOrNull(): String? =
-        if (globalRegionRewriteEnabled) languageTagForContentUiLanguage(contentUiLanguageSelection)
-        else null
+        if (globalRegionRewriteEnabled) configuredLanguageTag else null
 
     /**
      * Prepares the selected metadata profile without changing Apple Music's account storefront.
@@ -212,6 +220,7 @@ internal class AppleInternalCatalogResolver(
      */
     fun applyContentUiLanguage(selection: Int) {
         contentUiLanguageSelection = selection
+        configuredLanguageTag = languageTagForContentUiLanguage(selection)
         warmPersistentLocalizedCache(selection)
     }
 

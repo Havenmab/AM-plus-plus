@@ -96,10 +96,18 @@ class HleMetadataIntegrationStructuralTest {
                 "if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return",
             ),
         )
-        // Radio/station and lyrics requests are pulled back to the account storefront.
+        // Radio/station and lyrics requests are pulled back to the account storefront, and that
+        // check must run BEFORE the module-marker early return: the catalog executor can stamp
+        // a request it already redirected, and leaving such a request on the configured region
+        // is what makes account-available radio/lyrics unplayable.
         assertTrue(localization.contains("AppleInternalCatalogResolver.isAccountScopedPlaybackPath"))
         assertTrue(localization.contains("resolver.accountStorefrontForPlaybackRequest()"))
-        assertTrue(localization.contains("rewriteContentRequestStorefrontOnly("))
+        assertTrue(localization.contains("rewriteAccountScopedRequest("))
+        val accountScopedCheck = localization.indexOf("isAccountScopedPlaybackPath(pathSegments)")
+        val moduleMarkerCheck = localization.indexOf("if (carriesModuleMarker)")
+        assertTrue(accountScopedCheck >= 0)
+        assertTrue(moduleMarkerCheck >= 0)
+        assertTrue(accountScopedCheck < moduleMarkerCheck)
         assertTrue(localization.contains("Accept-Language"))
         // The storefront is written into MediaApi only through the account-preserving helper.
         assertTrue(resolver.contains("restoreConfiguredStorefront(access)"))

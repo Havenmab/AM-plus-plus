@@ -241,14 +241,49 @@ internal class AppleContentLocalizationHooks(
 
         val resolver = catalogResolver()
         val pathSegments = requestUri.pathSegments
+        val carriesModuleMarker = requestUri.getQueryParameter(
+            AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM
+        ) != null
+        val requestToken = requestUri.getQueryParameter(
+            AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
+        )
+        val requestLocalization = resolver.catalogRequestLocalization(requestToken)
+            ?: resolver.activeCatalogRequestLocalization()
+
+        // Entitlement-bound paths are checked BEFORE the module marker: the catalog executor
+        // may already have redirected such a request to the configured region, and leaving it
+        // there is exactly what makes account-available radio/lyrics unplayable.  These paths
+        // are never used by the module's own catalog lookups, so pulling them home is always
+        // correct.
+        if (AppleInternalCatalogResolver.isAccountScopedPlaybackPath(pathSegments) ||
+            isAppleLyricsRequestPath(pathSegments)
+        ) {
+            val accountStorefront = resolver.accountStorefrontForPlaybackRequest()
+            val rewritten = rewriteAccountScopedRequest(
+                request = request,
+                uri = requestUri,
+                accountStorefront = accountStorefront,
+            ) ?: return
+            AppleReflection.setField(
+                httpChain,
+                member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+                rewritten,
+            )
+            if (BuildConfig.DEBUG) {
+                ProviderLogger.info(
+                    "Apple 账号域请求回退账号 storefront: " +
+                        "${AppleInternalCatalogResolver.storefrontFromContentPath(pathSegments)
+                            ?: "none"}->${accountStorefront ?: "unchanged"}, " +
+                        "moduleParams=${carriesModuleMarker || requestToken != null}"
+                )
+            }
+            return
+        }
 
         // The catalog executor already localized this request by rewriting its storefront
         // argument.  Rewriting again here could undo a deliberate original-region target, so
         // only strip the module's own parameters so they never reach Apple.
-        if (requestUri.getQueryParameter(
-                AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM
-            ) != null
-        ) {
+        if (carriesModuleMarker) {
             stripModuleParameters(request, requestUri)?.let { stripped ->
                 AppleReflection.setField(
                     httpChain,
@@ -259,40 +294,8 @@ internal class AppleContentLocalizationHooks(
             return
         }
 
-        val requestToken = requestUri.getQueryParameter(
-            AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
-        )
-        val requestLocalization = resolver.catalogRequestLocalization(requestToken)
-            ?: resolver.activeCatalogRequestLocalization()
         // Preserve the historical behaviour for ordinary traffic while the feature is off.
         if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return
-
-        // Radio/station and lyrics requests are bound to the account's entitlements, so a
-        // native one must always resolve in the account's own storefront.  A resolver-owned
-        // token is left alone: the module deliberately targeted another region for it.
-        if (requestLocalization == null &&
-            (
-                AppleInternalCatalogResolver.isAccountScopedPlaybackPath(pathSegments) ||
-                    isAppleLyricsRequestPath(pathSegments)
-                )
-        ) {
-            val accountStorefront = resolver.accountStorefrontForPlaybackRequest() ?: return
-            val rewritten = rewriteContentRequestStorefrontOnly(request, accountStorefront)
-                ?: return
-            AppleReflection.setField(
-                httpChain,
-                member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
-                rewritten,
-            )
-            if (BuildConfig.DEBUG) {
-                ProviderLogger.info(
-                    "Apple 账号域请求回退账号 storefront: " +
-                        "${AppleInternalCatalogResolver.storefrontFromContentPath(pathSegments)
-                            ?: "none"}->$accountStorefront"
-                )
-            }
-            return
-        }
 
         val storefront = requestLocalization?.storefront
             ?: resolver.configuredStorefrontOrNull()
@@ -570,27 +573,57 @@ internal class AppleContentLocalizationHooks(
         ) as? String)?.trim()?.takeIf(String::isNotEmpty)
     }.getOrNull()
 
-    private fun rewriteContentRequestStorefrontOnly(
+    /**
+     * Brings an entitlement-bound request back to the account storefront and removes the
+     * module's own query parameters.
+     *
+     * Both parts are needed: the catalog executor may have redirected the storefront *and*
+     * stamped its marker on the same request, and neither must survive.  Returns null when the
+     * request already has that shape, so an untouched native request is never rebuilt.
+     */
+    private fun rewriteAccountScopedRequest(
         request: Any,
-        storefront: String,
+        uri: Uri,
+        accountStorefront: String?,
     ): Any? {
-        val url = AppleReflection.field(
+        if (!uri.host.orEmpty().contains("apple", ignoreCase = true)) return null
+
+        val segments = uri.pathSegments.toMutableList()
+        val pathStorefront = AppleInternalCatalogResolver.storefrontFromContentPath(segments)
+        val storefrontChanged = accountStorefront != null &&
+            pathStorefront != null &&
+            pathStorefront != accountStorefront
+        if (storefrontChanged) segments[2] = accountStorefront
+
+        val moduleParams = uri.queryParameterNames.filter {
+            it == AppleInternalCatalogResolver.AMP_HTTP_MODULE_MARKER_PARAM ||
+                it == AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
+        }
+        if (!storefrontChanged && moduleParams.isEmpty()) return null
+
+        val builder = uri.buildUpon()
+        if (storefrontChanged) {
+            builder.encodedPath(
+                segments.joinToString(separator = "/", prefix = "/") { Uri.encode(it) }
+            )
+        }
+        if (moduleParams.isNotEmpty()) {
+            builder.clearQuery()
+            uri.queryParameterNames.forEach { name ->
+                if (!moduleParams.contains(name)) {
+                    uri.getQueryParameters(name).forEach { value ->
+                        builder.appendQueryParameter(name, value)
+                    }
+                }
+            }
+        }
+        val rewrittenUrl = builder.build().toString()
+        val originalUrl = AppleReflection.field(
             request,
             member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_URL_FIELD),
         )?.toString().orEmpty()
-        val uri = Uri.parse(url)
-        if (!uri.host.orEmpty().contains("apple", ignoreCase = true)) return null
-        val segments = uri.pathSegments.toMutableList()
-        val pathStorefront = AppleInternalCatalogResolver.storefrontFromContentPath(segments)
-            ?: return null
-        if (pathStorefront == storefront) return null
-        segments[2] = storefront
-        val rewrittenUrl = uri.buildUpon()
-            .encodedPath(
-                segments.joinToString(separator = "/", prefix = "/") { Uri.encode(it) }
-            )
-            .build()
-            .toString()
+        if (rewrittenUrl == originalUrl) return null
+
         val requestBuilder = AppleReflection.call(
             request,
             member(AppleMusicRuntimeMember.CONTENT_HTTP_REQUEST_NEW_BUILDER_METHOD),

@@ -113,6 +113,8 @@ class OrdinarySettingsWritePolicyTest {
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,
                 "title_correction_mode" to "original_hyper",
+                "restore_cjk_original_metadata" to true,
+                "localized_metadata_cache" to true,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "schema_version" to ModuleConstants.CONFIG_SCHEMA_VERSION,

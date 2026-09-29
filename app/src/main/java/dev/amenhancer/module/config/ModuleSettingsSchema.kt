@@ -10,58 +10,74 @@ internal object ModuleSettingsSchema {
     /** Keys removed by the profile migration. */
     internal val obsoleteKeys: Set<String> = setOf(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
 
-    fun decode(values: Map<String, *>): ModuleSettings = ModuleSettings(
-        dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
-        disableEditorialVideoOnTablet = values.boolean(
-            KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
-            default = true,
-        ),
-        phoneLiquidGlassEnabled = values.boolean(
-            KEY_PHONE_LIQUID_GLASS,
-            default = false,
-        ),
-        phoneLiquidGlassBottomGapDp = values.number(KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)
-            ?.coerceIn(
-                ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-                ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-            ) ?: GlassPolicy.BOTTOM_DP,
-        phoneLiquidGlassPanelBlurDp = values.number(KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP)
-            ?.coerceIn(
-                ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-                ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-            ) ?: GlassPolicy.PANEL_BLUR_DP.toInt(),
-        futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
-        cjkKaraokeAnimationEnabled = values.boolean(
-            KEY_CJK_KARAOKE_ANIMATION_ENABLED,
-            default = true,
-        ),
-        navigationCompensationEnabled = values.boolean(
-            KEY_NAVIGATION_COMPENSATION,
-            default = false,
-        ),
-        lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
-            ?.coerceIn(
-                ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
-                ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
-            ) ?: 0,
-        appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
-            values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
-        ),
-        titleCorrectionEnabled = values.boolean(
-            KEY_TITLE_CORRECTION_ENABLED,
-            default = false,
-        ),
-        titleCorrectionMode = values.titleCorrectionMode(),
-        customLyricsEnabled = values.boolean(
-            KEY_CUSTOM_LYRICS_ENABLED,
-            default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
-        ),
-        automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
-        fontManifest = values.fontManifest(),
-        customLyricsManifest = values.customLyricsManifest(),
-        schemaVersion = values.number(KEY_SCHEMA_VERSION)
-            ?: ModuleConstants.CONFIG_SCHEMA_VERSION,
-    )
+    fun decode(values: Map<String, *>): ModuleSettings {
+        val titleCorrectionMode = values.titleCorrectionMode()
+        return ModuleSettings(
+            dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
+            disableEditorialVideoOnTablet = values.boolean(
+                KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
+                default = true,
+            ),
+            phoneLiquidGlassEnabled = values.boolean(
+                KEY_PHONE_LIQUID_GLASS,
+                default = false,
+            ),
+            phoneLiquidGlassBottomGapDp = values.number(KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)
+                ?.coerceIn(
+                    ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
+                    ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
+                ) ?: GlassPolicy.BOTTOM_DP,
+            phoneLiquidGlassPanelBlurDp = values.number(KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP)
+                ?.coerceIn(
+                    ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+                    ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+                ) ?: GlassPolicy.PANEL_BLUR_DP.toInt(),
+            futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
+            cjkKaraokeAnimationEnabled = values.boolean(
+                KEY_CJK_KARAOKE_ANIMATION_ENABLED,
+                default = true,
+            ),
+            navigationCompensationEnabled = values.boolean(
+                KEY_NAVIGATION_COMPENSATION,
+                default = false,
+            ),
+            lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
+                    ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
+                ) ?: 0,
+            appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
+                values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
+            ),
+            titleCorrectionEnabled = values.boolean(
+                KEY_TITLE_CORRECTION_ENABLED,
+                default = false,
+            ),
+            titleCorrectionMode = titleCorrectionMode,
+            // v15: a configuration that predates the region extras keeps the behaviour
+            // of its stored profile.  The old profiles did not separate "replace the
+            // region" from "restore original names": ORIGINAL_HYPER always restored
+            // names while the fixed regions never did.  Deriving the default here keeps
+            // that mapping without a value-by-value migration table.
+            restoreCjkOriginalMetadata = values.boolean(
+                KEY_RESTORE_CJK_ORIGINAL_METADATA,
+                default = titleCorrectionMode == TitleCorrectionMode.ORIGINAL_HYPER,
+            ),
+            localizedMetadataCache = values.boolean(
+                KEY_LOCALIZED_METADATA_CACHE,
+                default = true,
+            ),
+            customLyricsEnabled = values.boolean(
+                KEY_CUSTOM_LYRICS_ENABLED,
+                default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
+            ),
+            automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
+            fontManifest = values.fontManifest(),
+            customLyricsManifest = values.customLyricsManifest(),
+            schemaVersion = values.number(KEY_SCHEMA_VERSION)
+                ?: ModuleConstants.CONFIG_SCHEMA_VERSION,
+        )
+    }
 
     fun encode(settings: ModuleSettings): Map<String, Any> =
         encodeOrdinarySettings(settings) +
@@ -99,6 +115,8 @@ internal object ModuleSettingsSchema {
             ),
             KEY_TITLE_CORRECTION_ENABLED to settings.titleCorrectionEnabled,
             KEY_TITLE_CORRECTION_MODE to settings.titleCorrectionMode.storageValue,
+            KEY_RESTORE_CJK_ORIGINAL_METADATA to settings.restoreCjkOriginalMetadata,
+            KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
         )
@@ -252,6 +270,8 @@ internal object ModuleSettingsSchema {
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_TITLE_CORRECTION_ENABLED,
         KEY_TITLE_CORRECTION_MODE,
+        KEY_RESTORE_CJK_ORIGINAL_METADATA,
+        KEY_LOCALIZED_METADATA_CACHE,
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
@@ -284,6 +304,8 @@ internal object ModuleSettingsSchema {
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"
     private const val KEY_TITLE_CORRECTION_MODE = "title_correction_mode"
+    private const val KEY_RESTORE_CJK_ORIGINAL_METADATA = "restore_cjk_original_metadata"
+    private const val KEY_LOCALIZED_METADATA_CACHE = "localized_metadata_cache"
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"

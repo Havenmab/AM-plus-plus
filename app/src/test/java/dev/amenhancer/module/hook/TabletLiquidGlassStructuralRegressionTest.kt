@@ -2,14 +2,15 @@ package dev.amenhancer.module.hook
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Guards the tablet dual-pane + liquid-glass combination contract: the tablet session is
  * gated behind the dual-pane form and the shared toggle, the dual-pane boundary sync stays
- * muted while glass owns the collapsed geometry, and the configuration schema is untouched
- * (no new keys, no migration).
+ * muted while glass owns the collapsed geometry, and the glass surface adds no configuration
+ * keys or migrations of its own (the region extras bump the schema version, not this surface).
  */
 class TabletLiquidGlassStructuralRegressionTest {
     private fun source(relativePath: String): String = sequenceOf(
@@ -122,12 +123,12 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys and schema version unchanged`() {
+    fun `keeps the glass configuration keys and does not add a glass migration`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
         // Exactly the three existing glass keys: the tablet form reuses the phone toggle,
-        // gap and blur, so no new key exists and no migration was added.
+        // gap and blur, so no new glass key exists and no glass migration was added.
         val glassKeys = Regex("\"(phone_liquid_glass[a-z_]*)\"").findAll(schema)
             .map { it.groupValues[1] }.toSet()
         assertEquals(
@@ -138,6 +139,9 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 14"))
+        // v15 bumped the version for the region extras; the glass surface is unaffected and
+        // must not have grown its own migration.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 15"))
+        assertFalse(schema.contains("phone_liquid_glass_migration"))
     }
 }

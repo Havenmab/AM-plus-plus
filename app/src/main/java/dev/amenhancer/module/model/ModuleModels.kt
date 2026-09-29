@@ -23,6 +23,21 @@ data class ModuleSettings(
     val titleCorrectionEnabled: Boolean = false,
     /** Selected metadata profile; ignored while [titleCorrectionEnabled] is false. */
     val titleCorrectionMode: TitleCorrectionMode = TitleCorrectionMode.ORIGINAL_HYPER,
+    /**
+     * Restores CJK songs to their original-region names.  Independent of
+     * [titleCorrectionMode]: it can be combined with a region replacement.
+     *
+     * Defaults to true because that is the behaviour a fresh installation had
+     * before the region extras existed (the old default profile restored names).
+     * [dev.amenhancer.module.config.ModuleSettingsSchema] derives it from the stored
+     * profile when the key is absent, so migrating users keep their old behaviour.
+     */
+    val restoreCjkOriginalMetadata: Boolean = true,
+    /**
+     * Keeps the region/original metadata lookup results in SQLite so a cold start
+     * does not have to re-query Apple Music's catalog.
+     */
+    val localizedMetadataCache: Boolean = true,
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,

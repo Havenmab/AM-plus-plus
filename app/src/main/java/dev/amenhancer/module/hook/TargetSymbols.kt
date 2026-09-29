@@ -958,7 +958,22 @@ internal object AppleMusicSymbols {
                 ).filter { field ->
                     field.declaringClass.isAssignableFrom(lyricsFragment)
                 }
-                hierarchyFields
+                // Apple Music 6.5.2 (1586) declares two BaseContentItem fields in the lyrics
+                // fragment ancestry, and the profile pin (`player.fragment.m`) matches neither,
+                // so the structural fallback saw exactly two candidates and failed closed:
+                // `player.fragment.e#U` and `player.fragment.l#c`. The field name "c" is not a
+                // guess: it is the contract `isLyricsCurrentItemField` already enforces, and the
+                // 6.5.1 profile independently pins `player.fragment.l`. `fragment.l#c` satisfies
+                // both, `fragment.e#U` satisfies neither, so the verified name is applied here as
+                // a tiebreaker over the structural list. This deliberately does not touch any
+                // version profile pin: pinning `fragment.l` could be wrong on a different 6.5.2
+                // build where `fragment.m#c` really is correct, whereas the tiebreaker only acts
+                // where the pin already failed. `ifEmpty` keeps an unknown host that renamed the
+                // field reporting Ambiguous instead of silently binding the wrong field.
+                val named = hierarchyFields.filter {
+                    it.name == VERIFIED_LYRICS_CURRENT_ITEM_FIELD_NAME
+                }
+                named.ifEmpty { hierarchyFields }
             }
         },
         identity = ::fieldIdentity,
@@ -2565,9 +2580,15 @@ internal fun isObfuscatedTopLevelClass(name: String): Boolean =
         name[2] == '.' &&
         name[3].isLetterOrDigit()
 
+/**
+ * The verified name of the fragment hierarchy's current lyrics item field. Shared by the strict
+ * profile contract and the structural tiebreaker so the two can never drift apart.
+ */
+private const val VERIFIED_LYRICS_CURRENT_ITEM_FIELD_NAME = "c"
+
 private fun isLyricsCurrentItemField(field: Field): Boolean =
     !Modifier.isStatic(field.modifiers) &&
-        field.name == "c" &&
+        field.name == VERIFIED_LYRICS_CURRENT_ITEM_FIELD_NAME &&
         field.type.name == "com.apple.android.music.model.BaseContentItem"
 
 private fun isStructurallyLyricsCurrentItemField(field: Field): Boolean =

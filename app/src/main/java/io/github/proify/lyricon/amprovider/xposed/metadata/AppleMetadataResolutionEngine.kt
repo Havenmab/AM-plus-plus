@@ -17,6 +17,16 @@ import com.juren233.hyperlyricsenhanced.common.lyric.AppleOriginalMetadataPolicy
 internal object AppleMetadataResolutionEngine {
     internal const val ORIGINAL_METADATA_CACHE_MISS_RETRY_MS = 750L
 
+    /**
+     * Total number of failed original-region cache probes tolerated per media id before the
+     * lookup is treated as unresolved for the current generation.  Four attempts, each spaced
+     * by [ORIGINAL_METADATA_CACHE_MISS_RETRY_MS], spread ~3 s of retries around a slow first
+     * resolution while stopping the permanent 750 ms re-probe of an id that will never resolve
+     * (collaborations rejected on purpose, `languages=[]`).  A visible surface that later learns
+     * better lookup ids re-arms the id via `AppleMetadataOverrideStore.resetOriginalResolutionState`.
+     */
+    internal const val ORIGINAL_METADATA_CACHE_MISS_MAX_RETRIES = 4
+
     fun catalogMetadataResolutionPlan(
         overrideAccountLanguage: Boolean,
         restoreCjkOriginalMetadata: Boolean,
@@ -128,10 +138,20 @@ internal object AppleMetadataResolutionEngine {
         originalResolved: Boolean,
         lastMissUptimeMillis: Long?,
         nowUptimeMillis: Long,
+        attemptedRetries: Int = 0,
+        maxRetries: Int = ORIGINAL_METADATA_CACHE_MISS_MAX_RETRIES,
         retryAfterMillis: Long = ORIGINAL_METADATA_CACHE_MISS_RETRY_MS,
     ): Boolean {
-        if (!originalResolved) return true
-        val lastMiss = lastMissUptimeMillis ?: return false
+        // An id that keeps missing the cache must stop being re-probed instead of retrying on
+        // every surface callback for the rest of the session.
+        if (attemptedRetries >= maxRetries) return false
+        val lastMiss = lastMissUptimeMillis
+        if (!originalResolved) {
+            // The first probe (and any re-armed generation) is allowed immediately; once a miss
+            // has been recorded it also has to respect the existing retry interval.
+            return lastMiss == null || nowUptimeMillis >= lastMiss + retryAfterMillis
+        }
+        if (lastMiss == null) return false
         return nowUptimeMillis >= lastMiss + retryAfterMillis
     }
 

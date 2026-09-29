@@ -1595,6 +1595,7 @@ internal class HleMetadataSurfaceBridge(
             originalResolved = metadataStore.isOriginalResolved(mediaId),
             lastMissUptimeMillis = metadataStore.originalCacheMissUptimeMillis(mediaId),
             nowUptimeMillis = SystemClock.uptimeMillis(),
+            attemptedRetries = metadataStore.originalCacheMissAttempts(mediaId),
         )
 
     private fun ensureOverride(

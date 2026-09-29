@@ -108,6 +108,27 @@ internal fun shouldRefreshInAppSurface(
     hasActiveVisibleLease: Boolean = false,
 ): Boolean = surfaceRelevant || hasVisibleExactConsumer || hasActiveVisibleLease
 
+/**
+ * Only a changed effective alias (or an explicit caller-forced rebind) can change what the
+ * registered in-app surfaces show.  An unchanged alias still needs the coordinator's
+ * store/cache/callback bookkeeping, but it must not pay for the full
+ * [AppleInAppMetadataApplier.applyAliasToMetadataRefs] surface walk again.
+ */
+internal fun shouldRebindInAppMetadataRefs(
+    aliasChanged: Boolean,
+    requestedForceInAppRebind: Boolean,
+): Boolean = aliasChanged || requestedForceInAppRebind
+
+/**
+ * A shared-artist fan-out only needs the forced surface walk for targets that do not already
+ * carry the alias, or when the shared alias itself changed.  Forcing it for every associated
+ * media id made one artist publication walk every live row, even when nothing changed.
+ */
+internal fun shouldForceSharedArtistTargetRebind(
+    targetAlreadyCarriesAlias: Boolean,
+    sharedAliasChanged: Boolean,
+): Boolean = sharedAliasChanged || !targetAlreadyCarriesAlias
+
 internal fun shouldRefreshExactBoundTarget(
     surfaceRelevant: Boolean,
     mediaIdMatches: Boolean,
@@ -523,11 +544,13 @@ internal fun shouldRetryOriginalMetadataCacheProbe(
     originalResolved: Boolean,
     lastMissUptimeMillis: Long?,
     nowUptimeMillis: Long,
+    attemptedRetries: Int = 0,
     retryAfterMillis: Long = AppleMetadataResolutionEngine.ORIGINAL_METADATA_CACHE_MISS_RETRY_MS,
 ): Boolean = AppleMetadataResolutionEngine.shouldRetryOriginalMetadataCacheProbe(
     originalResolved = originalResolved,
     lastMissUptimeMillis = lastMissUptimeMillis,
     nowUptimeMillis = nowUptimeMillis,
+    attemptedRetries = attemptedRetries,
     retryAfterMillis = retryAfterMillis,
 )
 

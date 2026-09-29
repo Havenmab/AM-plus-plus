@@ -59,7 +59,6 @@ internal class AppleMetadataOverrideApplicationCoordinator(
                     sourceMediaId = mediaId,
                     artistId = artistId,
                     alias = alias,
-                    forceInAppRebind = forceInAppRebind,
                     rememberLocalizedArtist = rememberLocalizedArtist,
                     originalMetadata = originalMetadata,
                     originalMetadataConfirmed = originalMetadataConfirmed,
@@ -95,7 +94,11 @@ internal class AppleMetadataOverrideApplicationCoordinator(
             )
             return
         }
-        val shouldForceInAppRebind = forceInAppRebind || previousEffective != effectiveAlias
+        val aliasChanged = previousEffective != effectiveAlias
+        val shouldForceInAppRebind = shouldRebindInAppMetadataRefs(
+            aliasChanged = aliasChanged,
+            requestedForceInAppRebind = forceInAppRebind,
+        )
         val identity = media3MetadataCoordinator.activePlaybackIdentity()
         val appliesToActivePlayback = identity.mediaId == mediaId
         val hasBoundConsumer = metadataApplier.hasLiveModelTarget(mediaId)
@@ -138,7 +141,11 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         } else {
             0
         }
-        if (allowModelRefresh) {
+        // The surface walk below is the expensive part of this path; skip it entirely when the
+        // effective alias is unchanged and the caller did not explicitly force a rebind.  The
+        // bookkeeping above (stores, cache, notifications) and the unchanged-path callback
+        // refresh below still run in the same order as before.
+        if (allowModelRefresh && shouldForceInAppRebind) {
             metadataApplier.applyAliasToMetadataRefs(
                 mediaId = mediaId,
                 alias = effectiveAlias,
@@ -162,12 +169,12 @@ internal class AppleMetadataOverrideApplicationCoordinator(
             details = "overrideId=$mediaId, active=$appliesToActivePlayback, " +
                 "effective=${effectiveAlias.title}/${effectiveAlias.artist}/${effectiveAlias.album}, " +
                 "original=$originalMetadata, confirmed=$originalMetadataConfirmed, " +
-                "artistOnly=$artistOnly, changed=${previousEffective != effectiveAlias}, " +
+                "artistOnly=$artistOnly, changed=$aliasChanged, " +
                 "listenNowDirectBindingTargets=$listenNowDirectBindingTargets, " +
                 "metadataRefs=$metadataRefCount, itemRefs=$playbackItemRefCount, " +
                 "containerRefs=$containerItemRefCount",
         )
-        if (previousEffective == effectiveAlias) {
+        if (!aliasChanged) {
             if (appliesToActivePlayback) {
                 metadataApplier.refreshMetadataCallbacks(mediaId, effectiveAlias)
             }
@@ -189,7 +196,6 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         sourceMediaId: String,
         artistId: String,
         alias: AppleInternalCatalogResolver.Alias,
-        forceInAppRebind: Boolean,
         rememberLocalizedArtist: Boolean,
         originalMetadata: Boolean,
         originalMetadataConfirmed: Boolean,
@@ -203,6 +209,7 @@ internal class AppleMetadataOverrideApplicationCoordinator(
                 alias = alias,
             )
         }
+        val sharedAliasChanged = previousSharedAlias != alias
         val targets = linkedSetOf(sourceMediaId, artistId).apply {
             addAll(metadataStore.associatedMediaIds("id:$artistId").orEmpty())
         }
@@ -215,11 +222,18 @@ internal class AppleMetadataOverrideApplicationCoordinator(
                     targetArtistCredit = resolutionCoordinator.associatedArtistCredit(targetMediaId),
                 )
             ) return@forEach
+            val appliedArtistAlias = if (originalMetadata) {
+                metadataStore.originalArtist(targetMediaId)
+            } else {
+                metadataStore.configuredArtist(targetMediaId)
+            }
             apply(
                 mediaId = targetMediaId,
                 alias = alias,
-                forceInAppRebind = forceInAppRebind ||
-                    previousSharedAlias != alias || targetMediaId != sourceMediaId,
+                forceInAppRebind = shouldForceSharedArtistTargetRebind(
+                    targetAlreadyCarriesAlias = appliedArtistAlias == alias,
+                    sharedAliasChanged = sharedAliasChanged,
+                ),
                 rememberLocalizedArtist = rememberLocalizedArtist,
                 originalMetadata = originalMetadata,
                 originalMetadataConfirmed = originalMetadataConfirmed,

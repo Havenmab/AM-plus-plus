@@ -43,6 +43,7 @@ internal class AppleMetadataOverrideStore {
     private val originalResolvedIds = ConcurrentHashMap.newKeySet<String>()
     private val originalPendingIds = ConcurrentHashMap.newKeySet<String>()
     private val originalCacheMissUptimeMillis = ConcurrentHashMap<String, Long>()
+    private val originalCacheMissAttempts = ConcurrentHashMap<String, Int>()
     private val originalLanguageByArtistKey = ConcurrentHashMap<String, String>()
 
     @Volatile
@@ -64,6 +65,7 @@ internal class AppleMetadataOverrideStore {
         originalResolvedIds.clear()
         originalPendingIds.clear()
         originalCacheMissUptimeMillis.clear()
+        originalCacheMissAttempts.clear()
         originalLanguageByArtistKey.clear()
         currentPlaybackOverride = null
     }
@@ -316,13 +318,18 @@ internal class AppleMetadataOverrideStore {
 
     fun recordOriginalCacheMiss(mediaId: String, uptimeMillis: Long) {
         originalCacheMissUptimeMillis[mediaId] = uptimeMillis
+        originalCacheMissAttempts.merge(mediaId, 1, Int::plus)
     }
 
     fun originalCacheMissUptimeMillis(mediaId: String): Long? =
         originalCacheMissUptimeMillis[mediaId]
 
+    fun originalCacheMissAttempts(mediaId: String): Int =
+        originalCacheMissAttempts[mediaId] ?: 0
+
     fun clearOriginalCacheMiss(mediaId: String) {
         originalCacheMissUptimeMillis.remove(mediaId)
+        originalCacheMissAttempts.remove(mediaId)
     }
 
     /**
@@ -336,6 +343,7 @@ internal class AppleMetadataOverrideStore {
         originalResolvedIds.remove(mediaId)
         originalPendingIds.remove(mediaId)
         originalCacheMissUptimeMillis.remove(mediaId)
+        originalCacheMissAttempts.remove(mediaId)
     }
 
     fun originalLanguage(artistKey: String): String? = originalLanguageByArtistKey[artistKey]

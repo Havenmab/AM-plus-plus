@@ -1241,5 +1241,6 @@ internal class AppleInAppMetadataResolutionCoordinator(
             originalResolved = metadataStore.isOriginalResolved(mediaId),
             lastMissUptimeMillis = metadataStore.originalCacheMissUptimeMillis(mediaId),
             nowUptimeMillis = SystemClock.uptimeMillis(),
+            attemptedRetries = metadataStore.originalCacheMissAttempts(mediaId),
         )
 }

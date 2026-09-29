@@ -535,6 +535,9 @@ git diff --check
 | 已验证改名 | `app/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleCatalogQueryMethod.kt` |
 | DexKit 与 native | `app/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleMusicDexKitResolver.kt` |
 | 元数据运行时 | `app/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt`、`HleMetadataSurfaceBridge.kt` |
+| 地区档位与映射 | `app/src/main/java/dev/amenhancer/module/config/TitleCorrectionMode.kt`（storefront/语言/缓存命名空间） |
+| 地区请求改写 | `app/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt`（MediaApi 参数、目录执行器参数、内容 HTTP、amp-api 拦截、账号域回退） |
+| 地区 storefront 与账号回退 | `app/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt`（`applyRegionConfiguration` / `restoreConfiguredStorefront` / `accountStorefrontForPlaybackRequest`） |
 | 静态校验 | `scripts/verify-host-profile.py`、`scripts/README.md` |
 | 适配记录 | `docs/apple-music-<version>-adaptation.md` |
 | 玻璃逐项依赖 | `docs/liquid-glass-adaptation.md` |

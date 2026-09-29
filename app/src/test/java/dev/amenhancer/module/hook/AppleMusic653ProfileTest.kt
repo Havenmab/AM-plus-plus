@@ -1,6 +1,8 @@
 package dev.amenhancer.module.hook
 
 import android.content.Context
+import com.apple.android.music.model.BaseContentItem
+import com.apple.android.music.model.PlaybackItem
 import dev.amenhancer.module.ModuleConstants
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookProfiles
@@ -12,11 +14,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import v3.v
 
 /**
  * Apple Music 6.5.3 (1599) adaptation coverage: the new exact profile is selected for its own
- * tuple only, the re-derived owner names stay pinned, and the deliberately unresolved symbol is
- * still resolved through the reviewed fallback instead of a guessed class.
+ * tuple only, the re-derived owner names stay pinned, the metadata publish seam resolves at the
+ * profile layer, and an unusable class source still fails closed instead of guessing.
  */
 class AppleMusic653ProfileTest {
     private val build653 = TargetBuild(ModuleConstants.TARGET_PACKAGE, "6.5.3", 1599L)
@@ -173,12 +176,69 @@ class AppleMusic653ProfileTest {
     }
 
     @Test
-    fun `unresolved 6_5_3 metadata hub falls back instead of being guessed`() {
-        val source = Profile653FakeClassSource(emptyMap())
+    fun `6_5_3 profile resolves the metadata publish seam without scanning dex`() {
+        // The 6.5.2 identity was a renamed lambda with no surviving 1599 name, so the profile
+        // pins the owner and the media3-retained callback name instead.  Resolving at the profile
+        // layer is what keeps the current-song cache alive on 1599; the global converter scan it
+        // used to depend on collapses ambiguity into "no candidate".
+        val source = Profile653FakeClassSource(
+            mapOf("com.apple.android.music.player.e" to Media3OnlyMetadataHub653Fixture::class.java),
+        )
         val resolution = IndexedTargetSymbolResolver(build653, source)
             .resolve(AppleMusicSymbols.PlayerMetadataPublishMethod)
 
+        assertTrue(resolution is TargetResolution.Found)
+        assertEquals(SymbolMatch.VERSION_PROFILE, (resolution as TargetResolution.Found).match)
+        assertEquals("onMediaMetadataChanged", resolution.value.name)
+        assertEquals("v3.v", resolution.value.parameterTypes.single().name)
+        assertEquals(0, source.classNameReads)
+    }
+
+    @Test
+    fun `an unusable class source still fails closed for the metadata publish seam`() {
+        val resolution = IndexedTargetSymbolResolver(
+            build653,
+            Profile653FakeClassSource(emptyMap()),
+        ).resolve(AppleMusicSymbols.PlayerMetadataPublishMethod)
+
         assertTrue(resolution is TargetResolution.Missing)
+    }
+
+    @Test
+    fun `older builds keep selecting the renamed sibling instead of the media3 name`() {
+        // 6.5.0-6.5.2 pin player.f, which declares both the renamed `g` and the media3 callback.
+        // Preferring `g` keeps their resolution byte-identical; widening the filter instead would
+        // produce two profile candidates and make the resolution ambiguous, breaking builds that
+        // currently report ACTIVE.
+        val source = Profile653FakeClassSource(
+            mapOf(
+                "com.apple.android.music.player.f" to
+                    MetadataHubWithLegacySiblingFixture::class.java,
+            ),
+        )
+        val resolution = IndexedTargetSymbolResolver(
+            TargetBuild(ModuleConstants.TARGET_PACKAGE, "6.5.2", 1586L),
+            source,
+        ).resolve(AppleMusicSymbols.PlayerMetadataPublishMethod)
+
+        assertTrue(resolution is TargetResolution.Found)
+        assertEquals(SymbolMatch.VERSION_PROFILE, (resolution as TargetResolution.Found).match)
+        assertEquals("g", resolution.value.name)
+    }
+
+    @Test
+    fun `6_5_3 profile resolves the metadata to playback item converter`() {
+        // The converter is what turns the published media3 metadata into the PlaybackItem whose
+        // Adam ID ends up in the identity cache, so both halves of the seam must stay pinned.
+        val source = Profile653FakeClassSource(
+            mapOf("com.apple.android.music.player.P" to MetadataConverter653Fixture::class.java),
+        )
+        val resolution = IndexedTargetSymbolResolver(build653, source)
+            .resolve(AppleMusicSymbols.MetadataToPlaybackItemMethod)
+
+        assertTrue(resolution is TargetResolution.Found)
+        assertEquals(SymbolMatch.VERSION_PROFILE, (resolution as TargetResolution.Found).match)
+        assertEquals("b", resolution.value.name)
     }
 
     @Test
@@ -288,5 +348,30 @@ private class LanguageArray653Fixture {
     companion object {
         @JvmStatic
         fun b(context: Context): Array<String> = arrayOf("zh", "en")
+    }
+}
+
+/** 6.5.3 shape: the media3 callback name survives obfuscation, the renamed `g` does not. */
+@Suppress("UNUSED_PARAMETER")
+private class Media3OnlyMetadataHub653Fixture {
+    fun onMediaMetadataChanged(metadata: v) = Unit
+}
+
+/** 6.5.0-6.5.2 shape: both names are declared, and `g` must win. */
+@Suppress("UNUSED_PARAMETER")
+private class MetadataHubWithLegacySiblingFixture {
+    fun g(metadata: v) = Unit
+    fun onMediaMetadataChanged(metadata: v) = Unit
+}
+
+/** 6.5.3 converter: `a` narrows the media3 metadata, `b` produces the playable item. */
+@Suppress("UNUSED_PARAMETER")
+private class MetadataConverter653Fixture {
+    companion object {
+        @JvmStatic
+        fun a(metadata: v): BaseContentItem = BaseContentItem()
+
+        @JvmStatic
+        fun b(metadata: v): PlaybackItem = PlaybackItem()
     }
 }

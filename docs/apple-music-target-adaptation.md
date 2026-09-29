@@ -236,7 +236,8 @@ R8 在版本间**复用短名字**。同一个名字在新宿主里可能指向�
 
 ### 5.2 添加 profile 的规则
 
-- 只写有证据的条目；证据不足时**宁可不钉**（6.5.3 的 `PLAYER_METADATA_HUB` 就故意留空，走 exact-preferred 的结构回退）。
+- 只写有证据的条目；证据不足时**宁可不钉**（例如主页 Listen Now 封面连续性 Hook 在 6.5.3 上至今没有足证据候选，就保持空档并报告降级）。
+  注：6.5.3 的 `PLAYER_METADATA_HUB` 原本也走这条路，后来发现上游对同一缝在 1599 有 DEX 级证据（media3 回调名未被混淆），才改为钉 owner + 名字回退；**"宁可不钉"不等于"永不补证"**。
 - 每条目标尽量写全 `className / methodName / parameterCount / parameterTypeNames / returnTypeName / isStatic / runtimeMemberNames`，让契约能真正收紧。
 - 注释里写清「证据是什么」，例如「骨架 0.97 唯一匹配 + 调用点参数类型变化」，便于下一个人复核。
 - 旧版本档案不改字节；新版本走新档案，选择逻辑用 tuple 精确匹配。

@@ -46,7 +46,7 @@
 | `COMPOSE_OBSERVE_AS_STATE` | `C1.w#e(LiveData, Composer): z0.p0` | `Dg.c#l(LiveData, Composer): z0.n0` | 两代各只有一个该形状的静态方法；`z0.n0` 与 1586 `z0.p0` 一样只声明 `setValue`，运行实例 `z0.n1` 保留策略字段 `b` 与 get/setValue。两个版本里的 `LiveData` 本身是混淆名 `androidx.lifecycle.G`（见 §8） |
 | `COMPOSE_NEVER_EQUAL_POLICY` | `z0.s0` | `z0.p0` | 字节码相同：`const/4 v0,#0; return v0`（其余同名候选体不同） |
 | 曲库查询 / 事件枚举 | `G5.g` / `Vf.o` | `H5.g` / `Zf.o` | 方法骨架一致；`common.I#v(List,Z)` 返回类型同步变为 `Zf.o` |
-| `PLAYER_METADATA_HUB` | `player.f` | **未固定** | 6.5.2 身份是被重命名的 lambda，1599 无足证据候选，故不写入档案，保留 `EXACT_PREFERRED` 的结构回退 |
+| `PLAYER_METADATA_HUB` | `player.f` | `player.e` | 6.5.2 的身份是被重命名的 lambda `g`，1599 无该名字的足证据候选；但 media3 回调名 `onMediaMetadataChanged(Lv3/v;)V` 未被混淆，上游对该缝在 1599 做过 DEX 核对，`verify-host-profile.py` 也在断言同一描述符。因此档案钉住 owner `player.e`，选择器优先取 `g`、仅在 owner 未声明 `g` 时退回 media3 名（6.5.0–6.5.2 行为不变） |
 
 未列出的 hook 点（媒体库刷新、编辑视频诊断、歌词 RecyclerView/Compose 文本等）在 6.5.3 上沿用既有“继承候选 + 契约校验”路径：候选必须在 owner、描述符与契约同时成立时才会安装，否则报告 `DEGRADED/FAILED`。
 
@@ -66,7 +66,7 @@
 
 ## 6. 未验证项与限制
 
-- `PLAYER_METADATA_HUB` 未固定：6.5.3 的元数据发布缝若结构回退也失败，相关能力会报告降级而不是静默失败。
+- `PLAYER_METADATA_HUB` 已改为钉住 `player.e#onMediaMetadataChanged(Lv3/v;)V`（依据上游 1599 DEX 核对与 `verify-host-profile.py` 的既有断言）。**仍需真机确认该回调发布的是"当前播放项"而非预取/队列项**：缓存只校验 `appleMusicId > 0`，没有当前项交叉校验；若观察到 ID 抖动，改用备选钉法 `PlayerSongViewFragment$PlayerListener`（同一形状契约）并补当前项守卫。
 - 仍为降级、只波及各自子面的两处（详见 §9.5）：`IN_APP_ACTION_SHEET_BINDING`（播放菜单/操作表元数据）与主页 Listen Now 封面连续性 Hook。
 - 6.5.2 的 PixelCopy/性能矩阵结论不继承到 6.5.3，需单独测量。
 - 曲库 Compose/双栏在 6.5.3 的真机行为（展开、收回、拖拽、按钮点击）尚未验收。

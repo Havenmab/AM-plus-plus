@@ -357,9 +357,13 @@ private object AppleMusicProfiles {
      * Apple Music 6.5.3 (1599). Renames were re-derived from the base APK DEX with structural
      * evidence only: identical member skeletons, unchanged call sites/descriptors and, where two
      * candidates stayed ambiguous, the same compiled behavior (see the Compose policy singletons).
-     * [TargetSymbolId.PLAYER_METADATA_HUB] is deliberately absent: its 6.5.2 identity was a renamed
-     * lambda and no 6.5.3 candidate carries enough evidence yet, so the symbol keeps its
-     * EXACT_PREFERRED fallback instead of a guessed class.
+     *
+     * [TargetSymbolId.PLAYER_METADATA_HUB] pins `com.apple.android.music.player.e`, the owner the
+     * structural rule already searched for: the 6.5.2 identity was a renamed lambda with no
+     * surviving 1599 name, but the media3 callback name does survive obfuscation and is the seam
+     * upstream independently verified on 1599 (`player.e#onMediaMetadataChanged(Lv3/v;)V`, DEX
+     * checked, and asserted by `scripts/verify-host-profile.py`). 6.5.0-6.5.2 keep their renamed
+     * sibling `player.f#g` untouched.
      */
     private val appleMusic653 = AppleMusicProfile(
         id = "apple-music-6.5.3-1599",
@@ -388,6 +392,7 @@ private object AppleMusicProfiles {
             TargetSymbolId.LYRICS_CURRENT_ITEM_FIELD to
                 "com.apple.android.music.player.fragment.m",
             TargetSymbolId.METADATA_TO_ITEM_CONVERTER to "com.apple.android.music.player.P",
+            TargetSymbolId.PLAYER_METADATA_HUB to "com.apple.android.music.player.e",
             TargetSymbolId.LYRICS_AVAILABILITY_OWNER to "com.apple.android.music.player.e1",
             TargetSymbolId.MEDIA_ENTITY_TO_SONG_CONVERTER to "A8.D",
             TargetSymbolId.STORE_FRONT_LANGUAGE_ARRAY_OWNER to "K5.a",
@@ -864,11 +869,15 @@ internal object AppleMusicSymbols {
         profilePolicy = ProfilePolicy.EXACT_PREFERRED,
         profileCandidates = { profile ->
             runCatching {
-                profile?.exactClasses?.get(TargetSymbolId.PLAYER_METADATA_HUB)
+                val declared = profile?.exactClasses?.get(TargetSymbolId.PLAYER_METADATA_HUB)
                     ?.let(::load)
                     ?.declaredMethods
-                    ?.filter(::isPlayerMetadataPublishMethod)
                     .orEmpty()
+                // Prefer the pre-6.5.3 renamed sibling when it exists so those builds keep
+                // resolving exactly one candidate; only an owner without it (6.5.3) falls back
+                // to the media3-retained callback name.
+                declared.filter(::isPlayerMetadataPublishMethod)
+                    .ifEmpty { declared.filter(::isMedia3MetadataChangedMethod) }
             }.getOrDefault(emptyList())
         },
         structuralCandidates = {
@@ -2198,6 +2207,22 @@ private fun isLyricsItemUpdateFlagsType(flagsType: Class<*>, fragmentType: Class
 private fun isPlayerMetadataPublishMethod(method: Method): Boolean =
     !Modifier.isStatic(method.modifiers) &&
         method.name == "g" &&
+        method.returnType == Void.TYPE &&
+        method.parameterTypes.singleOrNull()?.name == "v3.v"
+
+/**
+ * The 6.5.3 replacement for the renamed `g` lambda.
+ *
+ * Media3's listener name survives obfuscation, so the publish seam on 1599 is the media3 callback
+ * itself, on the short player class upstream calls the global metadata dispatcher
+ * (`com.apple.android.music.player.e#onMediaMetadataChanged(Lv3/v;)V`, DEX-verified upstream and
+ * asserted by `scripts/verify-host-profile.py`).  Same shape as [isPlayerMetadataPublishMethod]
+ * and only consulted when the pinned owner declares no `g`, so 6.5.0-6.5.2 keep selecting exactly
+ * `g` and never turn ambiguous because of this branch.
+ */
+private fun isMedia3MetadataChangedMethod(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == "onMediaMetadataChanged" &&
         method.returnType == Void.TYPE &&
         method.parameterTypes.singleOrNull()?.name == "v3.v"
 

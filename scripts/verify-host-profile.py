@@ -217,7 +217,12 @@ PROFILES = {
                 "k1()Lcom/apple/android/music/common/activity/PlayerActivity$m;",
             ],
             "Lcom/apple/android/music/player/fragment/v0;": [],
-            "Lcom/apple/android/music/player/P;": [],
+            "Lcom/apple/android/music/player/P;": [
+                # The metadata-to-playback-item converter: the identity cache is fed the result
+                # of b(v3.v) after a(v3.v) narrows the published media3 metadata.
+                "a(Lv3/v;)Lcom/apple/android/music/model/BaseContentItem;",
+                "b(Lv3/v;)Lcom/apple/android/music/model/PlaybackItem;",
+            ],
             "Lcom/apple/android/music/player/e1;": [
                 "d(Lv3/v;Lcom/apple/android/music/model/PlaybackItem;Ldg/e;)Lcom/apple/android/music/model/PlaybackItem;",
             ],

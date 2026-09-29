@@ -38,3 +38,13 @@ Besides the pinned classes, methods and fields, the script asserts the two seams
 reuses between builds: the direct catalog query (only one method may satisfy the
 `(String, Map, Continuation)` shape, and it must be the verified name for that version) and the
 obfuscated `androidx.lifecycle.LiveData` alias that `COMPOSE_OBSERVE_AS_STATE` accepts.
+
+The 6.5.3 profile additionally asserts the two MediaApi hook points that only that build declares:
+`MEDIA_API_CATALOG_REQUEST_EXECUTOR`, the six `execute()` targets `v8.D#d`, `v8.D#b`, `A5.l#d`,
+`A5.l#c`, `Ic.n#d` and `Ic.n#e`, and `MEDIA_API_AMP_HTTP_INTERCEPTOR`, the `w8.d#a(Li.f)Gi.D`
+interceptor together with the OkHttp surface it reads (`Li.f#e`, `Gi.A#a`/`#c`/`#b()`, `Gi.A$a#h`/
+`#d`/`#b`, `Gi.t#a`/`#e()` and `Gi.D#a`/`#d`/`#f`). Apple Music 6.5.1 (1583) and 6.5.2 (1586)
+deliberately declare no targets for either hook point: on those versions the module falls back to
+the MediaApi storefront field plus the `MEDIA_API_LOCALIZATION` and `CONTENT_HTTP_LOCALIZATION`
+seams and must report the extra sub-capabilities as DEGRADED, so the script carries no 6.5.1/6.5.2
+assertions for them.

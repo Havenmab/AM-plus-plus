@@ -254,6 +254,25 @@ PROFILES = {
                 "c0(Ljava/util/Map;)Ljava/util/LinkedHashMap;",
                 "v(Ljava/lang/String;Ljava/util/Map;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;",
             ],
+            # MEDIA_API_CATALOG_REQUEST_EXECUTOR re-creates the MediaApi request-parameter
+            # localization seam on the six execute() targets 1599 declares. All six are instance
+            # methods; a DEX signature does not record staticness, so only the descriptor is
+            # asserted. 6.5.1 (1583) and 6.5.2 (1586) deliberately pin no targets for this hook
+            # point: on those builds the module falls back to the MediaApi storefront field plus
+            # the MEDIA_API_LOCALIZATION and CONTENT_HTTP_LOCALIZATION seams and reports the extra
+            # sub-capability as DEGRADED, so no 6.5.1/6.5.2 entries may be invented here.
+            "Lv8/D;": [
+                "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+                "b(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+            ],
+            "LA5/l;": [
+                "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+                "c(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+            ],
+            "LIc/n;": [
+                "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+                "e(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+            ],
             "LGi/A;": ["b()LGi/A$a;"],
             "LGi/A$a;": [
                 "b()LGi/A;",
@@ -261,6 +280,14 @@ PROFILES = {
                 "h(Ljava/lang/String;)V",
             ],
             "LGi/t;": ["e(Ljava/lang/String;)Ljava/lang/String;"],
+            # MEDIA_API_AMP_HTTP_INTERCEPTOR: the MediaApi AMP interceptor is w8.d#a(Li.f)Gi.D.
+            # Its dependent OkHttp surface (Li.f#e, Gi.A#a/#c/#b(), Gi.t#a/#e(), Gi.D#a/#d/#f)
+            # is already pinned by the CONTENT_HTTP_LOCALIZATION family above; only the response
+            # builder's parameter slots are new and are added to fields below. 6.5.1 (1583) and
+            # 6.5.2 (1586) pin no target either: the module falls back to the MediaApi storefront
+            # field along with the MEDIA_API_LOCALIZATION and CONTENT_HTTP_LOCALIZATION seams and
+            # reports this sub-capability as DEGRADED.
+            "Lw8/d;": ["a(LLi/f;)LGi/D;"],
             "LKd/b;": ["onMeasure(II)V", "e(Landroid/content/Context;)LKd/a;"],
             "LK5/a;": ["b(Landroid/content/Context;)[Ljava/lang/String;"],
             "LA8/D;": [
@@ -274,6 +301,9 @@ PROFILES = {
             "Lz0/p0;": ["a"],
             "LLi/f;": ["e"],
             "LGi/A;": ["a", "c"],
+            # The MEDIA_API_AMP_HTTP_INTERCEPTOR rewrite also reads the response builder's
+            # parameter slots, which the CONTENT_HTTP_LOCALIZATION pins above do not cover.
+            "LGi/A$a;": ["h", "d", "b"],
             "LGi/D;": ["a", "d", "f"],
             "LGi/t;": ["a"],
         },

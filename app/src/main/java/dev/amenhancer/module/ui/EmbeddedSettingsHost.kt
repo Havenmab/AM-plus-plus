@@ -814,9 +814,34 @@ internal object EmbeddedSettingsTextPolicy {
     }
 
     fun isSettingsTitle(text: CharSequence?): Boolean {
-        val normalized = text?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
-        if (normalized.isBlank()) return false
-        return titleMarkers.any(normalized::contains)
+        if (text == null || text.isEmpty()) return false
+        return titleMarkers.any { marker -> containsIgnoreCase(text, marker) }
+    }
+
+    /**
+     * Case-insensitive containment over a [CharSequence] that allocates no strings.
+     *
+     * The previous implementation normalised every candidate with
+     * `toString().trim().lowercase(...)`, i.e. two allocations per visited view.  This runs for up
+     * to [MAX_VIEW_SCAN_NODES] views on every global layout of the main content activity, so the
+     * allocations were paid while scrolling.  Trimming is unnecessary because no marker contains
+     * whitespace, and [CharSequence.lowercaseChar] reproduces the locale-independent matching that
+     * `lowercase(Locale.ROOT)` provided.
+     */
+    internal fun containsIgnoreCase(text: CharSequence, marker: String): Boolean {
+        val markerLength = marker.length
+        if (markerLength == 0) return true
+        if (text.length < markerLength) return false
+        outer@ for (start in 0..text.length - markerLength) {
+            for (offset in 0 until markerLength) {
+                val candidate = text[start + offset]
+                val expected = marker[offset]
+                if (candidate == expected) continue
+                if (candidate.lowercaseChar() != expected.lowercaseChar()) continue@outer
+            }
+            return true
+        }
+        return false
     }
 
     fun containsSettingsTitle(root: View, ignoredTag: Any? = null): Boolean {
@@ -838,6 +863,33 @@ internal object EmbeddedSettingsTextPolicy {
     }
 
     private const val MAX_VIEW_SCAN_NODES = 1024
+}
+
+/**
+ * Rate limiter for work that would otherwise run on every global layout pass.
+ *
+ * The injected settings entry is discovered by scanning the decor view hierarchy, and that
+ * callback is registered for the whole lifetime of the main content activity.  Scanning on every
+ * pass costs up to [EmbeddedSettingsTextPolicy]'s node cap even while the user is scrolling, so
+ * the scan is throttled instead; the settings page stays on screen far longer than the interval,
+ * which makes the added latency invisible.
+ */
+internal class EmbeddedLayoutScanThrottle(
+    private val intervalMs: Long = DEFAULT_INTERVAL_MS,
+) {
+    private var lastScanAtMs: Long? = null
+
+    /** True at most once per [intervalMs]; the first call always passes. */
+    fun tryAcquire(nowMs: Long): Boolean {
+        val last = lastScanAtMs
+        if (last != null && nowMs - last < intervalMs) return false
+        lastScanAtMs = nowMs
+        return true
+    }
+
+    companion object {
+        const val DEFAULT_INTERVAL_MS = 250L
+    }
 }
 
 /** Matches the fixed PlayerActivity across subclasses and class-loader copies. */
@@ -1097,6 +1149,7 @@ internal class EmbeddedSettingsHost private constructor(
     private var observedMainContentActivity: WeakReference<Activity>? = null
     private var observedMainContentDecor: WeakReference<View>? = null
     private var mainContentLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+    private val layoutScanThrottle = EmbeddedLayoutScanThrottle()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ampp-embedded-settings").apply { isDaemon = true }
@@ -1394,6 +1447,11 @@ internal class EmbeddedSettingsHost private constructor(
     private fun onMainContentLayout(activity: Activity) {
         if (!registered || activityReference?.get() !== activity) return
         val decor = activity.window?.decorView ?: return
+        // This runs on every global layout of the main content activity for the whole process
+        // lifetime, and the scan below visits up to MAX_VIEW_SCAN_NODES views -- which grew after
+        // a settings page had been opened and its retained fragment enlarged the tree.  Throttling
+        // keeps a scroll from paying for a full hierarchy walk on every layout pass.
+        if (!layoutScanThrottle.tryAcquire(android.os.SystemClock.uptimeMillis())) return
         val activityId = activityKey(activity)
         if (!EmbeddedSettingsTextPolicy.containsSettingsTitle(decor, SETTINGS_OPTION_TAG)) {
             nativePreferenceActivityIds.remove(activityId)

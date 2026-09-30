@@ -431,8 +431,14 @@ private object AppleMusicProfiles {
                 "com.apple.android.music.ttml.javanative.model.SongInfo\$SongInfoNative",
             TargetSymbolId.TTML_PARSER_NATIVE to
                 "com.apple.android.music.ttml.javanative.TTMLParser\$TTMLParserNative",
+            // 6.5.2 (1586) device log: resolving this symbol reported two structural candidates,
+            // `player.fragment.e#U` and `player.fragment.l#c`, which means the previous pin
+            // (`player.fragment.m`) declares no matching field on the real APK and never produced
+            // a profile hit. `player.fragment.l#c` is exactly the field the
+            // `isLyricsCurrentItemField` contract requires (non-static, name "c", type
+            // BaseContentItem), and 6.5.1 independently pins the same owner.
             TargetSymbolId.LYRICS_CURRENT_ITEM_FIELD to
-                "com.apple.android.music.player.fragment.m",
+                "com.apple.android.music.player.fragment.l",
             TargetSymbolId.PLAYER_METADATA_HUB to "com.apple.android.music.player.f",
             TargetSymbolId.METADATA_TO_ITEM_CONVERTER to "com.apple.android.music.player.O",
             TargetSymbolId.LYRICS_AVAILABILITY_OWNER to "com.apple.android.music.player.e1",

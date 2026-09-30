@@ -9,6 +9,7 @@ package io.github.proify.lyricon.amprovider.xposed
 import android.os.SystemClock
 import android.view.Choreographer
 import com.juren233.hyperlyricsenhanced.BuildConfig
+import io.github.proify.lyricon.amprovider.xposed.internal.ThreadLocalReentryGuard
 import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
 import java.lang.ref.WeakReference
 import java.lang.reflect.Modifier
@@ -107,6 +108,8 @@ internal class AppleLibrarySurfaceHooks(
     private val entityRefs =
         ConcurrentHashMap<String, ConcurrentLinkedQueue<InAppLibraryEntityRef>>()
     private val entityIds = WeakIdentityMap<Any, String>()
+    private val hostFieldWrites = MetadataFieldWriteMemo()
+    private val attributeReadGuard = ThreadLocalReentryGuard()
     private val entityAttributes = WeakIdentityMap<Any, Any>()
     private val entityEnrichedIds = WeakIdentityMap<Any, String>()
     private val mediaApiAttributeBindings =
@@ -400,36 +403,46 @@ internal class AppleLibrarySurfaceHooks(
         alias: AppleInternalCatalogResolver.Alias,
     ): Boolean {
         val attributes = host.mediaApiEntityAttributes(entity) ?: return false
-        val name = when (kind) {
-            InAppLibraryEntityKind.ALBUM -> alias.album.ifBlank { alias.title }
-            InAppLibraryEntityKind.SONG -> alias.title
-            InAppLibraryEntityKind.ARTIST -> alias.artist.ifBlank { alias.title }
-        }
+        // Keyed by media id + attribute, not by the entity instance: Apple builds a fresh entity /
+        // attributes pair per bind, so the old unconditional setter ran ~19x per media id.
+        val mediaId = entityIds[entity]
         var changed = false
-        name.takeIf(String::isNotBlank)?.let { value ->
-            runCatching {
-                setMediaApiAttribute(attributes, AppleMediaApiTextAttribute.NAME, value)
+        fun applyAttribute(attribute: AppleMediaApiTextAttribute, value: String?) {
+            val target = value?.takeIf(String::isNotBlank) ?: return
+            val key = mediaId?.let {
+                MetadataFieldKey(it, metadataHostFieldForMediaApiAttribute(attribute))
             }
-                .onSuccess { changed = true }
-        }
-        alias.artist.takeIf(String::isNotBlank)?.let { value ->
-            runCatching {
-                setMediaApiAttribute(attributes, AppleMediaApiTextAttribute.ARTIST_NAME, value)
-            }
-                .onSuccess { changed = true }
-        }
-        if (kind == InAppLibraryEntityKind.SONG) {
-            alias.album.takeIf(String::isNotBlank)?.let { value ->
-                runCatching {
-                    setMediaApiAttribute(attributes, AppleMediaApiTextAttribute.ALBUM_NAME, value)
+            val decision = decideMetadataHostFieldWrite(
+                currentValue = mediaApiAttributeRaw(attributes, attribute),
+                targetValue = target,
+                lastAppliedValue = key?.let(hostFieldWrites::lastApplied),
+            )
+            if (!decision.write) return
+            runCatching { setMediaApiAttribute(attributes, attribute, target) }
+                .onSuccess {
+                    changed = true
+                    if (key != null) hostFieldWrites.record(key, target)
                 }
-                    .onSuccess { changed = true }
-            }
+        }
+        applyAttribute(
+            AppleMediaApiTextAttribute.NAME,
+            when (kind) {
+                InAppLibraryEntityKind.ALBUM -> alias.album.ifBlank { alias.title }
+                InAppLibraryEntityKind.SONG -> alias.title
+                InAppLibraryEntityKind.ARTIST -> alias.artist.ifBlank { alias.title }
+            },
+        )
+        applyAttribute(AppleMediaApiTextAttribute.ARTIST_NAME, alias.artist)
+        if (kind == InAppLibraryEntityKind.SONG) {
+            applyAttribute(AppleMediaApiTextAttribute.ALBUM_NAME, alias.album)
         }
         return changed
     }
 
     fun restoreOriginalEntities(): Set<String> = buildSet {
+        // Originals are written back below, so the applied-value memo is stale; drop it so a later
+        // re-apply of the same alias still writes.
+        hostFieldWrites.clear()
         entityRefs.forEach { (mediaId, refs) ->
             refs.forEach { ref ->
                 val entity = ref.entity.get()
@@ -482,6 +495,9 @@ internal class AppleLibrarySurfaceHooks(
                 !mediaApiAttributeHookedMethods.add(method)
             ) return@forEach
             runtime.hookRegistrar.installResultOverrideHook(method) { chain, original ->
+                if (attributeReadGuard.isActive) {
+                    return@installResultOverrideHook original
+                }
                 val target = chain.thisObject ?: return@installResultOverrideHook original
                 val binding = mediaApiAttributeBindings[target]
                     ?: return@installResultOverrideHook original
@@ -522,6 +538,16 @@ internal class AppleLibrarySurfaceHooks(
             catalogMember(attribute.getterRuntimeMember),
         )?.toString()
     }.getOrNull()?.takeIf(String::isNotBlank)
+
+    /**
+     * Reads the value the host object actually stores, bypassing this module's own getter override
+     * (and its recycler/compose capture side effects) so the write decision compares against the
+     * real field.
+     */
+    private fun mediaApiAttributeRaw(
+        attributes: Any,
+        attribute: AppleMediaApiTextAttribute,
+    ): String? = attributeReadGuard.run { mediaApiAttribute(attributes, attribute) }
 
     private fun setMediaApiAttribute(
         attributes: Any,

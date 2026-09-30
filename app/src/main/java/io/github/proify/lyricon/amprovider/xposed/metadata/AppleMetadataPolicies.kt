@@ -7,6 +7,7 @@
 package io.github.proify.lyricon.amprovider.xposed
 
 import android.app.Notification
+import java.util.LinkedHashMap
 
 internal fun inAppPlaybackItemAccess(
     contract: InAppPlaybackItemContract,
@@ -118,6 +119,110 @@ internal fun shouldRebindInAppMetadataRefs(
     aliasChanged: Boolean,
     requestedForceInAppRebind: Boolean,
 ): Boolean = aliasChanged || requestedForceInAppRebind
+
+/**
+ * One overridable text field of one host-object surface.  The applier cannot key its write
+ * bookkeeping on the host instance: Apple allocates a fresh object per bind/build, so any
+ * identity-keyed guard never fires (device logs: ~19 byte-identical applications per media id).
+ * The media id plus this field is the stable identity of "the text this surface shows".
+ */
+internal enum class MetadataHostField {
+    PLAYBACK_ITEM_TITLE,
+    PLAYBACK_ITEM_ARTIST,
+    PLAYBACK_ITEM_ALBUM,
+    LIBRARY_ENTITY_NAME,
+    LIBRARY_ENTITY_ARTIST,
+    LIBRARY_ENTITY_ALBUM,
+}
+
+internal data class MetadataFieldKey(
+    val mediaId: String,
+    val field: MetadataHostField,
+)
+
+/** Whether a host field is written, and whether the change notification paired with it runs. */
+internal data class MetadataFieldWriteDecision(
+    val write: Boolean,
+    val notify: Boolean,
+)
+
+/**
+ * Read-before-write decision shared by the playback-item and library-entity appliers.
+ *
+ * [currentValue] is what the host object holds right now and [lastAppliedValue] is what this
+ * module last wrote for the same media id and field (null when unknown).  An unchanged alias on a
+ * fresh host instance reads back the original value, so the memo is what makes that repeated write
+ * skippable; a genuinely changed alias yields a new target that never matches the memo, so the
+ * write and its notification still run.  A missing/blank current value is always restored, even
+ * when the memo matches, because the host can clear a field between binds.
+ */
+internal fun decideMetadataHostFieldWrite(
+    currentValue: String?,
+    targetValue: String?,
+    lastAppliedValue: String?,
+): MetadataFieldWriteDecision {
+    val target = targetValue?.takeIf(String::isNotBlank)
+        ?: return MetadataFieldWriteDecision(write = false, notify = false)
+    val current = currentValue?.takeIf(String::isNotBlank)
+        ?: return MetadataFieldWriteDecision(write = true, notify = true)
+    if (current == target) return MetadataFieldWriteDecision(write = false, notify = false)
+    if (lastAppliedValue == target) return MetadataFieldWriteDecision(write = false, notify = false)
+    return MetadataFieldWriteDecision(write = true, notify = true)
+}
+
+internal fun metadataHostFieldForPlaybackItem(
+    field: InAppPlaybackItemField,
+): MetadataHostField = when (field) {
+    InAppPlaybackItemField.TITLE -> MetadataHostField.PLAYBACK_ITEM_TITLE
+    InAppPlaybackItemField.ARTIST -> MetadataHostField.PLAYBACK_ITEM_ARTIST
+    InAppPlaybackItemField.ALBUM -> MetadataHostField.PLAYBACK_ITEM_ALBUM
+}
+
+internal fun metadataHostFieldForMediaApiAttribute(
+    attribute: AppleMediaApiTextAttribute,
+): MetadataHostField = when (attribute) {
+    AppleMediaApiTextAttribute.NAME -> MetadataHostField.LIBRARY_ENTITY_NAME
+    AppleMediaApiTextAttribute.ARTIST_NAME -> MetadataHostField.LIBRARY_ENTITY_ARTIST
+    AppleMediaApiTextAttribute.ALBUM_NAME -> MetadataHostField.LIBRARY_ENTITY_ALBUM
+}
+
+/**
+ * Bounded, access-ordered record of the last value written per media id + host field.  It is
+ * deliberately not keyed by object identity and is bounded so a long scroll session over a large
+ * library cannot grow the bookkeeping without limit.
+ */
+internal class MetadataFieldWriteMemo(
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+) {
+    init {
+        require(maxEntries > 0) { "maxEntries must be positive" }
+    }
+
+    private val entries = LinkedHashMap<MetadataFieldKey, String>(16, 0.75f, true)
+
+    @Synchronized
+    fun lastApplied(key: MetadataFieldKey): String? = entries[key]
+
+    @Synchronized
+    fun record(key: MetadataFieldKey, value: String) {
+        entries[key] = value
+        val iterator = entries.entries.iterator()
+        while (entries.size > maxEntries && iterator.hasNext()) {
+            iterator.next()
+            iterator.remove()
+        }
+    }
+
+    @Synchronized
+    fun clear() = entries.clear()
+
+    @Synchronized
+    fun size(): Int = entries.size
+
+    companion object {
+        const val DEFAULT_MAX_ENTRIES = 2_048
+    }
+}
 
 /**
  * A shared-artist fan-out only needs the forced surface walk for targets that do not already

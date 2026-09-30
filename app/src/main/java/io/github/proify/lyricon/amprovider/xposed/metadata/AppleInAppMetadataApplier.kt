@@ -29,6 +29,7 @@ internal class AppleInAppMetadataApplier(
 ) {
     private val callbackAppliedAliases =
         Collections.synchronizedMap(WeakHashMap<Any, AppliedMetadataAlias>())
+    private val hostFieldWrites = MetadataFieldWriteMemo()
     private val metadataTarget = runtime.hookResolver.resolveMethod(
         AppleMusicHookPoint.IN_APP_QUEUE_ADAPTER_SUBMIT,
     ).target
@@ -247,31 +248,42 @@ internal class AppleInAppMetadataApplier(
     ) {
         val entityType = localizedEntityType(playbackItem) ?: return
         val contract = registry.playbackItemContract(playbackItem)
-        var changed = false
+        // The memo is keyed by media id + field, not by the host instance: Apple allocates a fresh
+        // PlaybackItem per bind, so an identity guard never fired.
+        val mediaId = registry.playbackItemId(playbackItem)
+        var writeNotified = false
         listOf(
             Triple(InAppPlaybackItemField.TITLE, AppleContentItemGetter.TITLE, alias.title),
             Triple(InAppPlaybackItemField.ARTIST, AppleContentItemGetter.ARTIST, alias.artist),
             Triple(InAppPlaybackItemField.ALBUM, AppleContentItemGetter.COLLECTION, alias.album),
         ).forEach { (field, getter, _) ->
-            contentItemMetadataOverride(entityType, getter, alias, null)
-                ?.takeIf(String::isNotBlank)
-                ?.let { value ->
-                    if (readPlaybackItemValue(playbackItem, field, contract) != value) {
-                        changed = writePlaybackItemValue(
-                            playbackItem,
-                            field,
-                            value,
-                            contract,
-                        ) || changed
-                    }
-                }
+            val target = contentItemMetadataOverride(entityType, getter, alias, null)
+            val key = mediaId?.let {
+                MetadataFieldKey(it, metadataHostFieldForPlaybackItem(field))
+            }
+            val decision = decideMetadataHostFieldWrite(
+                currentValue = readPlaybackItemValue(playbackItem, field, contract),
+                targetValue = target,
+                lastAppliedValue = key?.let(hostFieldWrites::lastApplied),
+            )
+            if (!decision.write) return@forEach
+            if (writePlaybackItemValue(playbackItem, field, target, contract)) {
+                if (decision.notify) writeNotified = true
+                if (key != null && target != null) hostFieldWrites.record(key, target)
+            }
         }
-        if (changed && notifyChange && contract == InAppPlaybackItemContract.STANDARD) {
+        if (
+            writeNotified && notifyChange &&
+            contract == InAppPlaybackItemContract.STANDARD
+        ) {
             notifyPlaybackItemChanged(playbackItem, "变更")
         }
     }
 
     fun restoreCapturedModels() {
+        // The originals are written back below, so the "already applied" memo no longer describes
+        // any live host value; drop it so a later re-apply of the same alias writes again.
+        hostFieldWrites.clear()
         registry.allLiveMetadataRefs().forEach { ref ->
             ref.metadata.get()?.let { metadata ->
                 AppleReflection.setField(

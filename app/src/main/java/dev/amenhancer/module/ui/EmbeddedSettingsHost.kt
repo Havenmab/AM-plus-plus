@@ -16,6 +16,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -845,19 +846,60 @@ internal object EmbeddedSettingsTextPolicy {
     }
 
     fun containsSettingsTitle(root: View, ignoredTag: Any? = null): Boolean {
-        val pending = ArrayDeque<View>()
-        pending.add(root)
-        var visited = 0
-        while (pending.isNotEmpty() && visited++ < MAX_VIEW_SCAN_NODES) {
-            val view = pending.removeFirst()
-            if (ignoredTag != null && view.tag == ignoredTag) continue
-            if (view.visibility != View.VISIBLE || view.alpha <= 0f) continue
-            if (view is TextView && isSettingsTitle(view.text)) return true
-            if (view is ViewGroup) {
-                for (index in 0 until view.childCount) {
-                    pending.addLast(view.getChildAt(index))
+        val visibleBounds = Rect()
+        return scanForSettingsTitle(
+            root = root,
+            ignoredTag = ignoredTag,
+            maxNodes = MAX_VIEW_SCAN_NODES,
+            tagOf = { it.tag },
+            // A parked pager page can stay VISIBLE with a positive alpha, and isShown() is also
+            // satisfied by a translated/clipped page, so a candidate also has to be attached and
+            // to actually occupy a non-empty rectangle on screen.
+            isCandidate = { view ->
+                view.visibility == View.VISIBLE &&
+                    view.alpha > 0f &&
+                    view.isAttachedToWindow &&
+                    view.getGlobalVisibleRect(visibleBounds) &&
+                    !visibleBounds.isEmpty
+            },
+            titleOf = { (it as? TextView)?.text },
+            childrenInto = { view, out ->
+                if (view is ViewGroup) {
+                    for (index in 0 until view.childCount) out.addLast(view.getChildAt(index))
                 }
-            }
+            },
+        )
+    }
+
+    /**
+     * Breadth-first title search, pure enough to run against a fake node type on the JVM.
+     *
+     * The four node accessors describe the hierarchy under test; [containsSettingsTitle] supplies
+     * the Android [View] ones.  A node whose tag equals [ignoredTag] is dropped *before* it can
+     * consume the node budget, so the [maxNodes] boundary always measures real candidates -- if
+     * skipped views counted, a title just past the cap could be found on one pass and missed on the
+     * next as the ignored set changed.
+     */
+    internal inline fun <T> scanForSettingsTitle(
+        root: T,
+        ignoredTag: Any?,
+        maxNodes: Int,
+        crossinline tagOf: (T) -> Any?,
+        crossinline isCandidate: (T) -> Boolean,
+        crossinline titleOf: (T) -> CharSequence?,
+        crossinline childrenInto: (T, ArrayDeque<T>) -> Unit,
+    ): Boolean {
+        val pending = ArrayDeque<T>()
+        pending.addLast(root)
+        var consumed = 0
+        while (pending.isNotEmpty()) {
+            val node = pending.removeFirst()
+            if (ignoredTag != null && tagOf(node) == ignoredTag) continue
+            if (consumed++ >= maxNodes) return false
+            if (!isCandidate(node)) continue
+            val title = titleOf(node)
+            if (title != null && isSettingsTitle(title)) return true
+            childrenInto(node, pending)
         }
         return false
     }
@@ -871,24 +913,40 @@ internal object EmbeddedSettingsTextPolicy {
  * The injected settings entry is discovered by scanning the decor view hierarchy, and that
  * callback is registered for the whole lifetime of the main content activity.  Scanning on every
  * pass costs up to [EmbeddedSettingsTextPolicy]'s node cap even while the user is scrolling, so
- * the scan is throttled instead; the settings page stays on screen far longer than the interval,
- * which makes the added latency invisible.
+ * the scan is throttled instead.
+ *
+ * Once a pass has decided the settings page is gone, nothing about the host hierarchy changes
+ * until the user navigates again, so the interval used for the next pass is the slower
+ * [idleIntervalMs]; while the previous pass still took the settings branch the shorter
+ * [intervalMs] is used so leaving the page is noticed promptly.  The first pass before any result
+ * is known uses the shorter interval.
  */
 internal class EmbeddedLayoutScanThrottle(
     private val intervalMs: Long = DEFAULT_INTERVAL_MS,
+    private val idleIntervalMs: Long = intervalMs,
 ) {
     private var lastScanAtMs: Long? = null
+    private var lastScanFoundSettings = true
 
-    /** True at most once per [intervalMs]; the first call always passes. */
+    /** True at most once per interval; the first call always passes. */
     fun tryAcquire(nowMs: Long): Boolean {
         val last = lastScanAtMs
-        if (last != null && nowMs - last < intervalMs) return false
+        val interval = if (lastScanFoundSettings) intervalMs else idleIntervalMs
+        if (last != null && nowMs - last < interval) return false
         lastScanAtMs = nowMs
         return true
     }
 
+    /** Records what the admitted pass decided, which selects the next pass's interval. */
+    fun recordResult(foundSettings: Boolean) {
+        lastScanFoundSettings = foundSettings
+    }
+
     companion object {
         const val DEFAULT_INTERVAL_MS = 250L
+
+        /** When the settings page is not on screen a layout pass rarely changes the answer. */
+        const val DEFAULT_IDLE_INTERVAL_MS = 1_000L
     }
 }
 
@@ -1149,7 +1207,16 @@ internal class EmbeddedSettingsHost private constructor(
     private var observedMainContentActivity: WeakReference<Activity>? = null
     private var observedMainContentDecor: WeakReference<View>? = null
     private var mainContentLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
-    private val layoutScanThrottle = EmbeddedLayoutScanThrottle()
+    private val layoutScanThrottle = EmbeddedLayoutScanThrottle(
+        intervalMs = EmbeddedLayoutScanThrottle.DEFAULT_INTERVAL_MS,
+        idleIntervalMs = EmbeddedLayoutScanThrottle.DEFAULT_IDLE_INTERVAL_MS,
+    )
+
+    // Tagged rows and the floating button are only ever attached by this host, on the activity
+    // recorded here.  A decor walk can therefore be skipped unless it targets that activity, which
+    // keeps the layout observer from re-deriving on every pass a fact only this class changes.
+    private var settingsOptionActivity: WeakReference<Activity>? = null
+    private var floatingButtonActivity: WeakReference<Activity>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ampp-embedded-settings").apply { isDaemon = true }
@@ -1453,7 +1520,12 @@ internal class EmbeddedSettingsHost private constructor(
         // keeps a scroll from paying for a full hierarchy walk on every layout pass.
         if (!layoutScanThrottle.tryAcquire(android.os.SystemClock.uptimeMillis())) return
         val activityId = activityKey(activity)
-        if (!EmbeddedSettingsTextPolicy.containsSettingsTitle(decor, SETTINGS_OPTION_TAG)) {
+        val onSettingsPage =
+            EmbeddedSettingsTextPolicy.containsSettingsTitle(decor, SETTINGS_OPTION_TAG)
+        // Remember the outcome: while it is "not settings" the next passes only re-check at the
+        // slow idle cadence, so scrolling the home page or library does not pay for a decor walk.
+        layoutScanThrottle.recordResult(onSettingsPage)
+        if (!onSettingsPage) {
             nativePreferenceActivityIds.remove(activityId)
             nativePreferenceFragmentReference = null
             if (activeActivityRole == EmbeddedHostActivityRole.Settings) {
@@ -1483,6 +1555,7 @@ internal class EmbeddedSettingsHost private constructor(
         val existing: View? = content.findViewWithTag<View>(FLOATING_BUTTON_TAG)
         if (existing != null) {
             buttonReference = WeakReference<View>(existing)
+            floatingButtonActivity = WeakReference(activity)
             return
         }
 
@@ -1516,15 +1589,28 @@ internal class EmbeddedSettingsHost private constructor(
         }
         content.addView(button, layoutParams)
         buttonReference = WeakReference<View>(button)
+        floatingButtonActivity = WeakReference(activity)
     }
 
     private fun injectSettingsOptionIfNeeded(activity: Activity, preferredRoot: ViewGroup? = null) {
         val content = activity.findViewById<ViewGroup>(android.R.id.content)
         val decor = activity.window?.decorView as? ViewGroup
         if (content == null && decor == null) return
+        // The row is attached by this method and its activity is recorded, so an attached tracked
+        // row cannot have duplicates unless something outside this host changed the hierarchy.
+        val tracked = settingsOptionReference?.get()
+        if (
+            settingsOptionActivity?.get() === activity &&
+            tracked != null &&
+            tracked.parent != null &&
+            belongsToActivity(tracked, activity)
+        ) {
+            return
+        }
         val existing = deduplicateTaggedSettingsOptions(activity)
         if (existing != null) {
             settingsOptionReference = WeakReference(existing)
+            settingsOptionActivity = WeakReference(activity)
             return
         }
 
@@ -1570,6 +1656,7 @@ internal class EmbeddedSettingsHost private constructor(
             runCatching { container.addView(option, layoutParams) }
                 .onSuccess {
                     settingsOptionReference = WeakReference<View>(option)
+                    settingsOptionActivity = WeakReference(activity)
                 }
             return
         }
@@ -1592,6 +1679,7 @@ internal class EmbeddedSettingsHost private constructor(
             runCatching { fallbackRoot.addView(option, layoutParams) }
                 .onSuccess {
                     settingsOptionReference = WeakReference<View>(option)
+                    settingsOptionActivity = WeakReference(activity)
                 }
         }
     }
@@ -4497,12 +4585,17 @@ internal class EmbeddedSettingsHost private constructor(
         } else if (button?.parent == null) {
             buttonReference = null
         }
-        if (activity != null) {
-            findTaggedView(activity, FLOATING_BUTTON_TAG)?.let { tagged ->
-                (tagged.parent as? ViewGroup)?.removeView(tagged)
-                if (buttonReference?.get() === tagged) buttonReference = null
-            }
+        if (activity == null) {
+            floatingButtonActivity = null
+            return
         }
+        // A decor walk can only find something on the activity the button was attached to.
+        if (floatingButtonActivity?.get() !== activity) return
+        findTaggedView(activity, FLOATING_BUTTON_TAG)?.let { tagged ->
+            (tagged.parent as? ViewGroup)?.removeView(tagged)
+            if (buttonReference?.get() === tagged) buttonReference = null
+        }
+        floatingButtonActivity = null
     }
 
     private fun removeSettingsOption(activity: Activity?) {
@@ -4513,12 +4606,19 @@ internal class EmbeddedSettingsHost private constructor(
         } else if (option?.parent == null) {
             settingsOptionReference = null
         }
-        if (activity != null) {
-            findTaggedViews(activity, SETTINGS_OPTION_TAG).forEach { tagged ->
-                (tagged.parent as? ViewGroup)?.removeView(tagged)
-                if (settingsOptionReference?.get() === tagged) settingsOptionReference = null
-            }
+        if (activity == null) {
+            settingsOptionActivity = null
+            return
         }
+        // The scan still catches a row this host attached but lost track of (for example a
+        // duplicate from a second fragment callback); it is only skipped when the row was never
+        // attached to this activity.
+        if (settingsOptionActivity?.get() !== activity) return
+        findTaggedViews(activity, SETTINGS_OPTION_TAG).forEach { tagged ->
+            (tagged.parent as? ViewGroup)?.removeView(tagged)
+            if (settingsOptionReference?.get() === tagged) settingsOptionReference = null
+        }
+        settingsOptionActivity = null
     }
 
     private fun removeInjectedViews(activity: Activity?) {
@@ -4542,10 +4642,13 @@ internal class EmbeddedSettingsHost private constructor(
     private fun findTaggedViews(activity: Activity, tag: String): List<View> {
         val content = activity.findViewById<ViewGroup>(android.R.id.content)
         val decor = activity.window?.decorView as? ViewGroup
+        // injectSettingsOptionIfNeeded() can attach the row to a container found in the decor, so
+        // the content view is not guaranteed to contain every tagged view.  The decor contains
+        // android.R.id.content on a normal Activity, so rooting there covers both cases with a
+        // single root and the same row is never visited twice.
+        val root = decor ?: content ?: return emptyList()
         val pending = ArrayDeque<View>()
-        // decorView contains android.R.id.content on normal Activities. Use
-        // one root only so the same tagged row is never visited twice.
-        (content?.let(::listOf) ?: listOfNotNull(decor)).forEach(pending::addLast)
+        pending.addLast(root)
         val matches = ArrayList<View>()
         var visited = 0
         while (pending.isNotEmpty() && visited++ < MAX_TAGGED_VIEW_SCAN) {

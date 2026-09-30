@@ -135,6 +135,42 @@ internal fun shouldRefreshExactBoundTarget(
     rootVisible: Boolean,
 ): Boolean = mediaIdMatches && (surfaceRelevant || rootVisible)
 
+/**
+ * Listen Now re-probes an applied binding on every bind.  The probe (alias-value assembly plus a
+ * view-text walk) is only justified when the alias actually changed, when the binding was re-bound
+ * after the alias was applied -- Apple may have restored the original text in the meantime -- or
+ * when a refresh is already pending.  Same alias, same bind generation, nothing pending means the
+ * views already hold what the probe would prove.
+ */
+internal fun shouldProbeListenNowDataBindingAlias(
+    appliedAlias: AppliedMetadataAlias?,
+    requestedAlias: AppliedMetadataAlias,
+    appliedBindGeneration: Long?,
+    currentBindGeneration: Long,
+    hasPendingRefresh: Boolean,
+): Boolean {
+    if (appliedAlias != requestedAlias) return true
+    if (hasPendingRefresh) return true
+    return appliedBindGeneration != currentBindGeneration
+}
+
+/**
+ * The home page primes every card build.  Once this exact live entity has been registered and its
+ * effective alias resolved, repeating the register/enrich/resolve block cannot change what the
+ * card shows; a new entity instance or a changed alias still primes normally.
+ */
+internal fun shouldPrimeInAppListenNowMetadata(
+    lastPrimedMediaId: String?,
+    lastPrimedAlias: AppliedMetadataAlias?,
+    mediaId: String,
+    effectiveAlias: AppliedMetadataAlias?,
+    originalResolutionPending: Boolean,
+): Boolean {
+    if (originalResolutionPending) return true
+    if (effectiveAlias == null) return true
+    return lastPrimedMediaId != mediaId || lastPrimedAlias != effectiveAlias
+}
+
 internal fun inAppLibraryControllerBuildStrategy(
     hasAlbumBuildData: Boolean,
     hasArtistBuildData: Boolean,

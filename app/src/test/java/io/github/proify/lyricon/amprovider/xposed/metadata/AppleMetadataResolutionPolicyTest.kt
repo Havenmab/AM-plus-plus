@@ -3,7 +3,10 @@ package io.github.proify.lyricon.amprovider.xposed.metadata
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMetadataOverrideStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMetadataResolutionEngine
+import io.github.proify.lyricon.amprovider.xposed.AppliedMetadataAlias
 import io.github.proify.lyricon.amprovider.xposed.shouldForceSharedArtistTargetRebind
+import io.github.proify.lyricon.amprovider.xposed.shouldPrimeInAppListenNowMetadata
+import io.github.proify.lyricon.amprovider.xposed.shouldProbeListenNowDataBindingAlias
 import io.github.proify.lyricon.amprovider.xposed.shouldRebindInAppMetadataRefs
 import io.github.proify.lyricon.amprovider.xposed.shouldRetryOriginalMetadataCacheProbe
 import org.junit.Assert.assertEquals
@@ -177,4 +180,152 @@ class AppleMetadataResolutionPolicyTest {
         )
         assertEquals(0, store.originalCacheMissAttempts("42"))
     }
+
+    // ------------------------------------------- Home path: unchanged alias skips the per-bind probe
+
+    @Test
+    fun `unchanged alias on the same bind generation skips the home probe`() {
+        val alias = listenNowAlias("101")
+        assertFalse(
+            shouldProbeListenNowDataBindingAlias(
+                appliedAlias = alias,
+                requestedAlias = alias,
+                appliedBindGeneration = 7L,
+                currentBindGeneration = 7L,
+                hasPendingRefresh = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `first application probes because nothing was applied yet`() {
+        assertTrue(
+            shouldProbeListenNowDataBindingAlias(
+                appliedAlias = null,
+                requestedAlias = listenNowAlias("101"),
+                appliedBindGeneration = null,
+                currentBindGeneration = 1L,
+                hasPendingRefresh = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `changed alias probes even within the same bind generation`() {
+        assertTrue(
+            shouldProbeListenNowDataBindingAlias(
+                appliedAlias = listenNowAlias("101"),
+                requestedAlias = listenNowAlias("101", title = "new title"),
+                appliedBindGeneration = 7L,
+                currentBindGeneration = 7L,
+                hasPendingRefresh = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a rebind since the alias was applied probes again`() {
+        val alias = listenNowAlias("101")
+        assertTrue(
+            shouldProbeListenNowDataBindingAlias(
+                appliedAlias = alias,
+                requestedAlias = alias,
+                appliedBindGeneration = 7L,
+                currentBindGeneration = 8L,
+                hasPendingRefresh = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `pending work probes even when the alias and generation match`() {
+        val alias = listenNowAlias("101")
+        assertTrue(
+            shouldProbeListenNowDataBindingAlias(
+                appliedAlias = alias,
+                requestedAlias = alias,
+                appliedBindGeneration = 7L,
+                currentBindGeneration = 7L,
+                hasPendingRefresh = true,
+            ),
+        )
+    }
+
+    // --------------------------------------------- Home path: per-card prime skip
+
+    @Test
+    fun `repeated prime of the same entity with an unchanged alias is skipped`() {
+        val alias = listenNowAlias("101")
+        assertFalse(
+            shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = "101",
+                lastPrimedAlias = alias,
+                mediaId = "101",
+                effectiveAlias = alias,
+                originalResolutionPending = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a changed effective alias primes the entity again`() {
+        assertTrue(
+            shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = "101",
+                lastPrimedAlias = listenNowAlias("101"),
+                mediaId = "101",
+                effectiveAlias = listenNowAlias("101", title = "new title"),
+                originalResolutionPending = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a first prime always runs`() {
+        assertTrue(
+            shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = null,
+                lastPrimedAlias = null,
+                mediaId = "101",
+                effectiveAlias = listenNowAlias("101"),
+                originalResolutionPending = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a still-unresolved alias keeps priming so resolution is not stranded`() {
+        assertTrue(
+            shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = "101",
+                lastPrimedAlias = listenNowAlias("101"),
+                mediaId = "101",
+                effectiveAlias = null,
+                originalResolutionPending = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a pending original-cache probe keeps priming even with an unchanged alias`() {
+        val alias = listenNowAlias("101")
+        assertTrue(
+            shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = "101",
+                lastPrimedAlias = alias,
+                mediaId = "101",
+                effectiveAlias = alias,
+                originalResolutionPending = true,
+            ),
+        )
+    }
+
+    private fun listenNowAlias(mediaId: String, title: String = "title"): AppliedMetadataAlias =
+        AppliedMetadataAlias(
+            mediaId = mediaId,
+            title = title,
+            artist = "artist",
+            album = "album",
+            language = "en-US",
+        )
 }

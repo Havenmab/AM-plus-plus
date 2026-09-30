@@ -192,6 +192,22 @@ internal fun shouldSkipInAppListenNowArtworkLookup(
     return normalizedCurrent.isNotEmpty() && normalizedCurrent == normalizedSeeded
 }
 
+/**
+ * The alias actually applied to a Listen Now binding, kept across rebinds.  The applier's own map
+ * is cleared by `beginModelBind` on every bind, which is why an unchanged alias still looked like
+ * a first application afterwards.
+ */
+private data class ListenNowAppliedBindingState(
+    val alias: AppliedMetadataAlias,
+    val bindGeneration: Long,
+)
+
+/** The effective alias this exact live entity was last primed with. */
+private data class ListenNowPrimedEntity(
+    val mediaId: String,
+    val alias: AppliedMetadataAlias,
+)
+
 internal class AppleListenNowHooks(
     private val runtime: AppleMusicProviderRuntime,
     private val metadataStore: AppleMetadataOverrideStore,
@@ -202,6 +218,13 @@ internal class AppleListenNowHooks(
     private companion object {
         const val MAX_LISTEN_NOW_ARTWORK_CONTINUITY_ENTRIES = 1_024
         const val LISTEN_NOW_ARTWORK_CONTINUITY_TTL_MS = 10 * 60 * 1_000L
+
+        /**
+         * The `listen_now_artwork_cache_lookup` diagnostic used to scan the whole (up to 1,024
+         * entry) artwork-continuity cache on every empty-artwork card bind.  The exact LRU lookup
+         * above is enough for release behavior; the O(cache-size) breakdown is opt-in only.
+         */
+        const val LISTEN_NOW_ARTWORK_CACHE_SCAN_DIAGNOSTICS = false
     }
 
     private val inAppListenNowArtworkContinuityCache =
@@ -237,6 +260,10 @@ internal class AppleListenNowHooks(
         WeakIdentityMap<Any, InAppListenNowModelBuildState>()
     private val inAppListenNowModelBuildStatesByLiveData =
         WeakIdentityMap<Any, InAppListenNowModelBuildState>()
+    private val inAppListenNowAppliedBindingStates =
+        WeakIdentityMap<Any, ListenNowAppliedBindingState>()
+    private val inAppListenNowPrimedEntities =
+        WeakIdentityMap<Any, ListenNowPrimedEntity>()
     private val debugListenNowArtworkLiveData =
         WeakIdentityMap<Any, DebugListenNowArtworkTrace>()
     private val debugListenNowArtworkDelegates =
@@ -341,16 +368,21 @@ internal class AppleListenNowHooks(
                     }
                     if (BuildConfig.DEBUG) {
                         val cacheDiagnostics = synchronized(inAppListenNowArtworkContinuityCache) {
-                            val sameBaseArtworkHashes = inAppListenNowArtworkContinuityCache.keys
-                                .asSequence()
-                                .filter { candidate ->
-                                    candidate.id == key.id &&
-                                        candidate.persistentId == key.persistentId &&
-                                        candidate.contentType == key.contentType
+                            val sameBaseArtworkHashes =
+                                if (LISTEN_NOW_ARTWORK_CACHE_SCAN_DIAGNOSTICS) {
+                                    inAppListenNowArtworkContinuityCache.keys
+                                        .asSequence()
+                                        .filter { candidate ->
+                                            candidate.id == key.id &&
+                                                candidate.persistentId == key.persistentId &&
+                                                candidate.contentType == key.contentType
+                                        }
+                                        .map { candidate -> candidate.artworkIdentity.hashCode() }
+                                        .distinct()
+                                        .toList()
+                                } else {
+                                    emptyList()
                                 }
-                                .map { candidate -> candidate.artworkIdentity.hashCode() }
-                                .distinct()
-                                .toList()
                             inAppListenNowArtworkContinuityCache.size to sameBaseArtworkHashes
                         }
                         host.logMetadataIdentity(
@@ -459,6 +491,34 @@ internal class AppleListenNowHooks(
             ?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
             ?: host.mediaApiEntityCatalogId(entity, attributes)
             ?: return
+        val entityType = localizedEntityTypeForInAppLibraryKind(kind)
+        val originalCacheProbeDue = host.isRestoreOriginalMetadataEnabled() &&
+            !metadataStore.hasOriginalMetadata(mediaId) &&
+            host.shouldRetryOriginalMetadataCacheProbe(mediaId)
+        // A repeated build of the same live entity cannot have a different effective alias, so the
+        // register/enrich/resolve block below is skipped unless something actually changed.  The
+        // pre-register probe may be null on the very first prime (the entity type is not remembered
+        // yet); that simply means this prime runs and records the post-register alias.
+        val primedAlias = host.effectiveAlias(mediaId)?.let { AppliedMetadataAlias(mediaId, it) }
+        val lastPrimed = inAppListenNowPrimedEntities[entity]
+        if (
+            !shouldPrimeInAppListenNowMetadata(
+                lastPrimedMediaId = lastPrimed?.mediaId,
+                lastPrimedAlias = lastPrimed?.alias,
+                mediaId = mediaId,
+                effectiveAlias = primedAlias,
+                originalResolutionPending = originalCacheProbeDue,
+            )
+        ) {
+            if (BuildConfig.DEBUG) {
+                host.logMetadataIdentity(
+                    event = "listen_now_metadata_prime_skipped",
+                    details = "contentId=$mediaId, kind=$kind, " +
+                        "effective=${primedAlias?.title}/${primedAlias?.artist}",
+                )
+            }
+            return
+        }
         host.registerLibraryEntity(
             mediaId = mediaId,
             entity = entity,
@@ -469,11 +529,7 @@ internal class AppleListenNowHooks(
         )
         host.enrichLibraryEntity(mediaId, entity, kind, attributes)
 
-        val entityType = localizedEntityTypeForInAppLibraryKind(kind)
         val localizedCacheHit = metadataStore.hasConfiguredMetadata(mediaId)
-        val originalCacheProbeDue = host.isRestoreOriginalMetadataEnabled() &&
-            !metadataStore.hasOriginalMetadata(mediaId) &&
-            host.shouldRetryOriginalMetadataCacheProbe(mediaId)
         val originalCacheHit = if (originalCacheProbeDue) {
             catalogResolver.cachedOriginalEntity(
                 mediaId = mediaId,
@@ -505,6 +561,15 @@ internal class AppleListenNowHooks(
             )
         }
         val alias = host.effectiveAlias(mediaId)
+        if (alias != null) {
+            inAppListenNowPrimedEntities[entity] = ListenNowPrimedEntity(
+                mediaId = mediaId,
+                alias = AppliedMetadataAlias(mediaId, alias),
+            )
+        } else {
+            // Do not remember a null prime: the resolution below may still be outstanding.
+            inAppListenNowPrimedEntities.remove(entity)
+        }
         val originalApplied = originalCacheHit?.let {
             host.applyAliasToLibraryEntity(entity, kind, it)
         } == true
@@ -594,9 +659,10 @@ internal class AppleListenNowHooks(
                 val binding = listenNowDataBindingArgument(chain.args.getOrNull(1))
                     ?: return@installHook
                 val buildState = inAppListenNowModelBuildStates[model]
+                val currentBindGeneration = host.dataBindingGeneration(binding)
                 buildState?.boundBinding = InAppListenNowBoundBinding(
                     binding = WeakReference(binding),
-                    bindGeneration = host.dataBindingGeneration(binding),
+                    bindGeneration = currentBindGeneration,
                 )
                 val mediaId = host.mediaApiEntityCatalogId(entity)
                     ?: buildState?.catalogId
@@ -623,10 +689,16 @@ internal class AppleListenNowHooks(
                         // The builder wrote the alias before model creation. Keep the fast path
                         // only while the bound views do not prove that Apple restored old text.
                         host.rememberAppliedAlias(binding, appliedAlias)
+                        inAppListenNowAppliedBindingStates[binding] = ListenNowAppliedBindingState(
+                            alias = appliedAlias,
+                            bindGeneration = currentBindGeneration,
+                        )
                         return@installHook
                     }
                 }
-                refreshDataBindings(mediaId, alias)
+                // Coalesce the whole scan, not just the mutation: the queue merges every scan for
+                // the same media id into one action per frame, so a bind burst costs one walk.
+                enqueueInAppListenNowBindingScan(mediaId, alias)
                 if (BuildConfig.DEBUG) {
                     host.logMetadataIdentity(
                         event = "listen_now_metadata_binding_refresh",
@@ -664,6 +736,29 @@ internal class AppleListenNowHooks(
         }
         host.clearDataBindingMediaId(binding)
         inAppListenNowDataBindingMediaIds.remove(binding)
+    }
+
+    /**
+     * The bound-listener hook used to run the whole ref scan inline on every bind.  Routing the
+     * scan through the frame queue coalesces every card that binds the same media id in a frame
+     * into a single walk; the one-frame delay is intentional and does not change the result.
+     */
+    private fun enqueueInAppListenNowBindingScan(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+    ) {
+        val scan: () -> Unit = { refreshDataBindings(mediaId, alias) }
+        val queue = refreshQueue
+        if (queue == null) {
+            runtime.mainHandler.post(scan)
+        } else {
+            queue.enqueueAction(
+                kind = AppleMetadataRefreshKind.LISTEN_NOW_REBIND,
+                mediaId = mediaId,
+                alias = alias,
+                action = scan,
+            )
+        }
     }
 
     private fun registerInAppListenNowDataBinding(
@@ -760,7 +855,26 @@ internal class AppleListenNowHooks(
                 refs.remove(ref)
                 return@forEach
             }
-            val previousAppliedAlias = host.appliedAlias(binding)
+            val currentBindGeneration = host.dataBindingGeneration(binding)
+            val appliedState = inAppListenNowAppliedBindingStates[binding]
+            val previousAppliedAlias = appliedState?.alias
+            val hasPendingRefresh = synchronized(inAppListenNowDataBindingPendingRefreshes) {
+                inAppListenNowDataBindingPendingRefreshes[binding] != null
+            }
+            // Unchanged alias, same bind generation and no pending work means the views already
+            // hold what the probe would prove; the applier's own applied-alias map is cleared on
+            // every bind, so this decision keeps its own record across rebinds.
+            if (
+                !shouldProbeListenNowDataBindingAlias(
+                    appliedAlias = previousAppliedAlias,
+                    requestedAlias = appliedAlias,
+                    appliedBindGeneration = appliedState?.bindGeneration,
+                    currentBindGeneration = currentBindGeneration,
+                    hasPendingRefresh = hasPendingRefresh,
+                )
+            ) {
+                return@forEach
+            }
             if (previousAppliedAlias == appliedAlias) {
                 val values = host.aliasValues(mediaId, alias, binding)
                 val renderedTexts = host.renderedTexts(binding)
@@ -772,6 +886,10 @@ internal class AppleListenNowHooks(
                         renderedTexts = renderedTexts,
                     )
                 ) {
+                    inAppListenNowAppliedBindingStates[binding] = ListenNowAppliedBindingState(
+                        alias = appliedAlias,
+                        bindGeneration = currentBindGeneration,
+                    )
                     return@forEach
                 }
                 if (BuildConfig.DEBUG) {
@@ -836,6 +954,10 @@ internal class AppleListenNowHooks(
                     }
                     host.executePendingDataBindings(binding)
                     host.rememberAppliedAlias(binding, appliedAlias)
+                    inAppListenNowAppliedBindingStates[binding] = ListenNowAppliedBindingState(
+                        alias = appliedAlias,
+                        bindGeneration = bindGeneration,
+                    )
                 }.onFailure {
                     ProviderLogger.error(
                         "Apple Music 主页 Listen Now 文字绑定刷新失败: " +
@@ -1484,6 +1606,8 @@ internal class AppleListenNowHooks(
         inAppListenNowDataBindingPendingRefreshes.clear()
         inAppListenNowModelBuildStates.clear()
         inAppListenNowModelBuildStatesByLiveData.clear()
+        inAppListenNowAppliedBindingStates.clear()
+        inAppListenNowPrimedEntities.clear()
     }
 
     fun hasDataBindingRefs(mediaId: String): Boolean =

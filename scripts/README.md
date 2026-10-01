@@ -23,16 +23,25 @@ $env:ANDROID_SERIAL = "your-device-serial"
 
 `verify-host-profile.py` is a read-only DEX check of the exact host profile. It takes the original
 XAPK (or a bare base APK) and verifies every class/method/field the AM++ version profile pins,
-including the phone liquid-glass seams with `--glass`:
+including the phone liquid-glass seams with `--glass` and the tablet iPad-style chrome host
+resources with `--tablet-chrome` (6.5.3 only):
 
 ```powershell
-python scripts\verify-host-profile.py "apple-music-6-5-3.xapk" --version-name 6.5.3 --version-code 1599 --glass
+python scripts\verify-host-profile.py "apple-music-6-5-3.xapk" --version-name 6.5.3 --version-code 1599 --glass --tablet-chrome
 python scripts\verify-host-profile.py "Apple+Music_6.5.2_APKPure.xapk" --glass
 ```
 
 The version tuple comes from `manifest.json` when the XAPK ships one; otherwise pass it explicitly.
 A PASS means the static evidence behind a profile still holds for that package; it does not prove
-runtime behaviour, resource IDs, container types or blur sampling.
+runtime behaviour, runtime resource-ID resolution, container types or blur sampling.
+
+`--tablet-chrome` extracts the base APK's `resources.arsc` and resolves every tablet resource name
+against the type that owns it (`drawable`, `id`, `color`, `dimen`, `bool`), so a rename or a name
+reused under another type fails the run — one `FAIL missing tablet chrome resource <type>/<name>`
+per missing entry. It asserts only that the name/type pair is declared in the table: it does not
+evaluate configuration qualifiers, read the resource value, or prove the on-device
+`getIdentifier()`/`resourceId()` lookup resolves. Only the 6.5.3 (1599) profile registers the
+group; 6.5.1 (1583) and 6.5.2 (1586) report the feature as DEGRADED and pin no resource names.
 
 Besides the pinned classes, methods and fields, the script asserts the two seams whose names R8
 reuses between builds: the direct catalog query (only one method may satisfy the

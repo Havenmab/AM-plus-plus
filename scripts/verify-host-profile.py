@@ -7,6 +7,9 @@ adaptation pinned one, the field name. No APK code is executed and no file is wr
 Usage:
     python scripts/verify-host-profile.py apple-music-6-5-3.xapk \
         --version-name 6.5.3 --version-code 1599 --glass
+
+Add --tablet-chrome (6.5.3 only) to also resolve the tablet iPad-style chrome host resources
+name -> type against the base APK's resources.arsc.
 """
 import argparse
 import io
@@ -96,6 +99,97 @@ def dex_classes(data):
     return classes
 
 
+def _pool_strings(data, offset):
+    """Return the strings of a RES_STRING_POOL_TYPE chunk at offset in an ARSC/DEX blob."""
+    chunk_type, header_size, _ = struct.unpack_from("<HHI", data, offset)
+    if chunk_type != 0x0001:
+        raise ValueError("Not a resource string pool")
+    count, _, flags, strings_start, _ = struct.unpack_from("<IIIII", data, offset + 8)
+    utf8 = bool(flags & 0x100)
+    strings = []
+    for i in range(count):
+        position = offset + strings_start + struct.unpack_from(
+            "<I", data, offset + header_size + 4 * i
+        )[0]
+        if utf8:
+            # UTF-8 pools store the UTF-16 length, then the UTF-8 byte length (each 1-2 bytes).
+            length = data[position]
+            position += 1
+            if length & 0x80:
+                position += 1
+            length = data[position]
+            position += 1
+            if length & 0x80:
+                length = ((length & 0x7F) << 8) | data[position]
+                position += 1
+            strings.append(data[position:position + length].decode("utf8", errors="replace"))
+        else:
+            length = struct.unpack_from("<H", data, position)[0]
+            position += 2
+            if length & 0x8000:
+                length = ((length & 0x7FFF) << 16) | struct.unpack_from("<H", data, position)[0]
+                position += 2
+            strings.append(data[position:position + 2 * length].decode("utf16", errors="replace"))
+    return strings
+
+
+def arsc_resources(data):
+    """Return the set of (type name, entry name) pairs declared by a resources.arsc table.
+
+    The type comes from the ResTable_type chunk that owns the entry, the name from the key
+    string that entry references, so a rename or a retype both show up as a missing pair.
+    This proves a name/type pairing exists in the table; it does not evaluate configuration
+    qualifiers, read the value, or prove the runtime getIdentifier() lookup resolves.
+    """
+    chunk_type, header_size, total_size = struct.unpack_from("<HHI", data, 0)
+    if chunk_type != 0x0002:
+        raise ValueError("Not a resources.arsc table")
+    pairs = set()
+    offset = header_size  # the first child is the global value string pool; skip it
+    while offset < total_size:
+        package_type, _, package_size = struct.unpack_from("<HHI", data, offset)
+        if package_type == 0x0200:  # RES_TABLE_PACKAGE_TYPE
+            type_strings, _, key_strings, _ = struct.unpack_from(
+                "<IIII", data, offset + 12 + 256
+            )
+            types = _pool_strings(data, offset + type_strings)
+            keys = _pool_strings(data, offset + key_strings)
+            cursor = offset + struct.unpack_from("<HHI", data, offset)[1]
+            end = offset + package_size
+            while cursor < end:
+                entry_type, header, size = struct.unpack_from("<HHI", data, cursor)
+                if entry_type == 0x0201:  # RES_TABLE_TYPE_TYPE
+                    type_id, flags = data[cursor + 8], data[cursor + 9]
+                    entry_count, entries_start = struct.unpack_from("<II", data, cursor + 12)
+                    type_name = types[type_id - 1]
+                    for index in range(entry_count):
+                        if flags & 0x01:  # FLAG_SPARSE: {u16 index, u16 offset/4}
+                            _, entry_offset = struct.unpack_from(
+                                "<HH", data, cursor + header + 4 * index
+                            )
+                            if entry_offset == 0xFFFF:
+                                continue
+                            position = cursor + entries_start + 4 * entry_offset
+                        else:
+                            if flags & 0x02:  # FLAG_OFFSET16: u16 offset/4
+                                entry_offset = 4 * struct.unpack_from(
+                                    "<H", data, cursor + header + 2 * index
+                                )[0]
+                            else:
+                                entry_offset = struct.unpack_from(
+                                    "<I", data, cursor + header + 4 * index
+                                )[0]
+                            if entry_offset == 0xFFFFFFFF:
+                                continue
+                            position = cursor + entries_start + entry_offset
+                        key = struct.unpack_from("<I", data, position + 4)[0]
+                        if key < len(keys):
+                            pairs.add((type_name, keys[key]))
+                cursor += size
+        offset += package_size
+    return pairs
+
+
 LAYOUTS = [
     "res/layout/bottom_navigation.xml",
     "res/layout/mini_player.xml",
@@ -147,6 +241,41 @@ GLASS_METHODS = {
         "getSelectedItemId()I",
         "setSelectedItemId(I)V",
     ],
+}
+
+# Tablet iPad-style chrome resolves these host resources by name at runtime, so a rename would
+# silently blank an icon or break an id lookup. Only 6.5.3 (1599) claims them; on 6.5.1 (1583) and
+# 6.5.2 (1586) the feature reports DEGRADED instead of binding names that were never verified.
+TABLET_CHROME_RESOURCES = {
+    "6.5.3": {
+        "drawable": [
+            "ic_nowplaying_shuffle",
+            "ic_nowplaying_shuffleon",
+            "ic_nowplaying_mp_rewind",
+            "ic_nowplaying_mp_play",
+            "ic_nowplaying_mp_pause",
+            "ic_nowplaying_mp_fforward",
+            "ic_nowplaying_repeat",
+            "ic_nowplaying_repeaton",
+            "ic_nowplaying_repeatoneon",
+            "selector_nowplaying_lyrics",
+            "selector_nowplaying_queue",
+        ],
+        "id": [
+            "search_fragment",
+            "mini_player_content",
+            "video_surface",
+            "player_sheet_container",
+            "player_root",
+            "navigation_host_group",
+            "bottom_navigation_root_flat",
+            "bottom_navigation_root_stacked",
+            "bottom_navigation_tabs_frame",
+        ],
+        "color": ["color_primary"],
+        "dimen": ["navigation_tabs_height", "miniplayer_height"],
+        "bool": ["multiply_tablet_layout_enabled", "is_tablet"],
+    },
 }
 
 PROFILES = {
@@ -349,6 +478,11 @@ def main():
     parser.add_argument("--version-name", default=None)
     parser.add_argument("--version-code", default=None)
     parser.add_argument("--glass", action="store_true", help="also verify the phone glass seams")
+    parser.add_argument(
+        "--tablet-chrome",
+        action="store_true",
+        help="also verify the tablet chrome host resources resolved by name",
+    )
     args = parser.parse_args()
 
     with zipfile.ZipFile(args.package) as package:
@@ -472,9 +606,44 @@ def main():
                 if layout not in apk.namelist():
                     failures.append("missing layout %s" % layout)
 
+        # TABLET_CHROME resources: every pair is resolved name -> type against the base APK's
+        # resources.arsc, so a rename (or a name reused under a different type) fails the run.
+        # This is deliberately the strongest cheap static claim available: it does not evaluate
+        # configuration qualifiers, read the resource value, or prove the on-device
+        # getIdentifier()/resourceId() lookup actually resolves.
+        tablet_resources = (
+            TABLET_CHROME_RESOURCES.get(version_name, {}) if args.tablet_chrome else {}
+        )
+        if tablet_resources:
+            if "resources.arsc" not in apk.namelist():
+                failures.append("cannot verify tablet chrome resources: missing resources.arsc")
+            else:
+                resolved = arsc_resources(apk.read("resources.arsc"))
+                for resource_type, names in tablet_resources.items():
+                    for name in names:
+                        checks += 1
+                        if (resource_type, name) in resolved:
+                            continue
+                        other = sorted(
+                            other_type
+                            for other_type, other_name in resolved
+                            if other_name == name
+                        )
+                        suffix = " (present as %s)" % "/".join(other) if other else ""
+                        failures.append(
+                            "missing tablet chrome resource %s/%s%s"
+                            % (resource_type, name, suffix)
+                        )
+
         print("package: %s" % args.package)
         print("base apk: %s" % base_name)
         print("version tuple: %s (%s)" % (version_name, version_code))
+        if tablet_resources:
+            print(
+                "tablet chrome resources: %d name->type pairs resolved from resources.arsc "
+                "(rename/retype check only; no runtime lookup, value or config qualifier proof)"
+                % sum(len(names) for names in tablet_resources.values())
+            )
         print("checks: %d, failures: %d" % (checks, len(failures)))
         if failures:
             for failure in failures:

@@ -108,7 +108,7 @@
 
 | 项 | 结果 |
 | --- | --- |
-| 静态符号校验（`scripts/verify-host-profile.py`，针对用户提供的 XAPK） | **68 checks / 1 failure**；新增 5 条（`MediaPlaybackService#onCreate`、字段 `N`、`player/m0#h`、`Activity#v1`、`Activity#f1`、`utils/E#o`）**全部通过**。唯一失败是既有的 `LGi/A$a; h`（`feat/region-port` 地区替换遗留，与本次无关） |
+| 静态符号校验（`scripts/verify-host-profile.py --glass --tablet-chrome`，针对用户提供的 XAPK） | **93 checks / 1 failure**：新增符号断言 5 条 + **新增资源断言 25 条**（11 drawable、9 id、`color_primary`、2 dimen、2 bool，全部按 name→type 解析通过）。唯一失败是既有的 `LGi/A$a; h`（`feat/region-port` 地区替换遗留，与本次无关）。资源检查只证明「名字仍以该类型存在」，不证明取值、配置限定符或运行时 `getIdentifier()` 结果 |
 | 结构回归（`TabletChromeStructuralRegressionTest`） | 已加：路由顺序与互斥、门控、单键无迁移、能力接口 |
 | JVM 全量测试 | **896 tests / 0 failures / 0 errors**（基线 871 + 本能力 25：`TopBarGeometryTest` 7、`TabletChromeStyleTest` 6、`AppleMusicTabletChromeTargetTest` 3、`TabletChromeMiniPlayerPolicyTest` 5、`TabletChromeStructuralRegressionTest` 4） |
 | `verify-glass-reference.py` | PASS：33 个 `backdrop/src` 文件哈希一致，1 个已声明补丁命中（本次未改 `backdrop`） |

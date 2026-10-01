@@ -141,7 +141,7 @@
 2.1 `GlassNavigation` 的「选中项用强调色」是**可选参数** `tintSelectedWithAccent`（默认 false）。原版手机/双栏栏只靠库的半透明拇指表达选中，因此**不得**默认开启；只有 iPad 顶栏传 true。`TabletChromeStructuralRegressionTest` 有回归断言守护这一点。
 3. `peekHeight()` 仍沿用手机几何（56+16=72dp+inset），与原生 `miniplayer_height`=59dp 存在约 3dp 残差；未改动以免引入不可验证的偏差。
 4. 命中胶囊后不再由宿主 sheet 处理拖拽，即**从胶囊上拉不再展开**（改为点击展开）——若希望两者都支持需再调整拦截条件。
-5. 若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。
+5. ~~若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。~~ 已修：渲染改用 `effectiveSlide()` —— 当尚未收到任何 slide 回调且 `isCollapsed` 为假时按「已展开」处理，顶栏直接停在隐藏态、迷你胶囊同样隐藏，不会盖在完整播放器上。
 
 ## 6.1 未在设备上验证的已知风险
 

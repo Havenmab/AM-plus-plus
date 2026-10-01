@@ -83,6 +83,9 @@ internal class TabletChromeSession(
     /** Mirrors the ~500 ms settings cadence PhoneGlassSession already uses for its own re-checks. */
     private companion object {
         const val TOP_REFRESH_INTERVAL_MS = 500L
+
+        /** Slide progress that means "the full player owns the screen". */
+        const val EXPANDED_SLIDE = 1f
     }
 
     /**
@@ -269,6 +272,14 @@ internal class TabletChromeSession(
         val next = progress.coerceIn(0f, 1f)
         if (next != topSlide) topSlide = next
     }
+
+    /**
+     * Slide progress the chrome renders from. The mirrored callback value is authoritative once it
+     * has fired, but a session created while the sheet was **already open** has never seen one: then
+     * [isCollapsed] is the only truth, so the top capsule has to start parked instead of being drawn
+     * over the full player (and the mini capsule has to start hidden instead of over it).
+     */
+    private fun effectiveSlide(): Float = if (topSlide <= 0f && !isCollapsed) EXPANDED_SLIDE else topSlide
 
     override fun onPreDraw(): Boolean {
         val result = super.onPreDraw()
@@ -693,7 +704,7 @@ internal class TabletChromeSession(
             glass.layoutParams = params
         }
         val ready = activated && topBackdrop?.ready == true
-        val alpha = if (ready) TabletChromeLayoutPolicy.miniPlayerAlpha(topSlide) else 0f
+        val alpha = if (ready) TabletChromeLayoutPolicy.miniPlayerAlpha(effectiveSlide()) else 0f
         if (glass.alpha != alpha) glass.alpha = alpha
         val visibility = if (alpha > 0f) View.VISIBLE else View.GONE
         if (glass.visibility != visibility) glass.visibility = visibility
@@ -1070,7 +1081,7 @@ internal class TabletChromeSession(
         }
         // The expanded full player owns the screen: the floating top bar fades out of the way and
         // is restored the moment the sheet collapses again.
-        val hide = TabletChromeLayoutPolicy.expandHideFactor(topSlide)
+        val hide = TabletChromeLayoutPolicy.expandHideFactor(effectiveSlide())
         val ready = activated && glassMenuReady && hide < 1f
         val alpha = if (ready) 1f - hide else 0f
         if (glass.alpha != alpha) glass.alpha = alpha

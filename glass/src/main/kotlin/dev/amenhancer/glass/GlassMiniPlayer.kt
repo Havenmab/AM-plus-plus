@@ -76,16 +76,15 @@ private const val DISABLED_ALPHA = 0.4f
 private const val ARTIST_ALPHA = 0.6f
 private const val PLACEHOLDER_ALPHA = 0.08f
 
-private const val COVER_INSET_DP = 6
-private const val COVER_CORNER_DP = 6
-// iPad reference proportions: an 8dp inset at each end and one even 4dp run between every glyph and
-// the centre block. The transport group, the artwork/title block and the aux group therefore all
-// sit on the same rhythm and the centre block starts right after the transport group, so nothing
-// reads as a separate cluster.
-private const val PANEL_PADDING_DP = 8
-private const val CONTROL_GAP_DP = 4
-private const val CENTER_GAP_DP = 4
-private const val TEXT_GAP_DP = 6
+// iPad reference proportions, all measured against the capsule's own height H (86px art / 56dp bar
+// here): the artwork is a small rounded square, the transport glyphs are pitched ~0.70H apart, and
+// the centre block is separated from the transport and aux groups without being a lone cluster.
+private const val COVER_SIZE_FRACTION = 0.74f // iPad: artwork edge ~0.74 x capsule height
+private const val COVER_CORNER_FRACTION = 1f / 6f // iPad: corner ~1/6 of the artwork's own edge
+private const val PANEL_PADDING_DP = 15 // iPad: ~0.28 x capsule height of glass at each end
+private const val CONTROL_GAP_DP = 11 // iPad: glyph pitch ~0.70H less the 28dp control box
+private const val CENTER_GAP_DP = 10 // iPad: ~0.19 x capsule height around the centre block
+private const val TEXT_GAP_DP = 8 // iPad: ~0.14 x capsule height, artwork -> title
 private const val TITLE_SIZE_SP = 13f
 private const val ARTIST_SIZE_SP = 11f
 private val ControlSize = 28.dp
@@ -129,8 +128,10 @@ fun GlassMiniPlayer(
     val artistStyle = remember(foreground) {
         TextStyle(color = foreground.copy(alpha = ARTIST_ALPHA), fontSize = ARTIST_SIZE_SP.sp)
     }
-    val coverSize = (panelHeight - (COVER_INSET_DP * 2).dp).coerceAtLeast(0.dp)
-    val coverShape = remember { RoundedCornerShape(COVER_CORNER_DP.dp) }
+    val coverSize = (panelHeight * COVER_SIZE_FRACTION).coerceAtLeast(0.dp)
+    val coverShape = remember(coverSize) {
+        RoundedCornerShape(coverSize * COVER_CORNER_FRACTION)
+    }
     val placeholderColor = remember(foreground) { foreground.copy(alpha = PLACEHOLDER_ALPHA) }
     val expand = rememberUpdatedState(onExpand)
 

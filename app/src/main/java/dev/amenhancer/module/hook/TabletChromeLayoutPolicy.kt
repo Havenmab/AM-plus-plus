@@ -23,16 +23,22 @@ internal object TabletChromeLayoutPolicy {
     const val TOP_BAR_SIDE_GAP_DP = 16
 
     /**
-     * Width one top-nav tab reserves inside the floating capsule, in whole dp. The iPad reference
-     * top bar hugs its tabs; the shared component fills whatever slot it is given, so the host sizes
-     * the centred slot here instead. This is the single tuning knob for the top capsule's width.
+     * Width one top-nav tab reserves inside the floating capsule, as a fraction of the window.
      *
-     * Derived from the reference: there the whole capsule spans roughly 22.5% of the window with
-     * five cells plus the (omitted) sidebar toggle, i.e. about 4.5% per cell — ~58dp on a 1280dp
-     * tablet. 60dp keeps that proportion with a little breathing room for a three-character CJK
-     * label at the shared 11sp tab size.
+     * Derived from the reference: the whole capsule spans roughly 22.5% of the window over five
+     * visible cells (including the sidebar toggle we deliberately omit), i.e. about 4.5% per cell.
+     * It is a fraction rather than a fixed dp so the bar keeps that proportion on narrower tablets
+     * instead of looking inflated — ~58dp on a 1280dp tablet, ~36dp on an 800dp one.
      */
-    const val TOP_TAB_CELL_DP = 60
+    const val TOP_TAB_CELL_FRACTION = 0.045f
+
+    /**
+     * Bounds for [TOP_TAB_CELL_FRACTION] in dp. The floor keeps a three-character CJK label at the
+     * shared 11sp tab size legible (its glyphs measure ~33dp) plus padding; the ceiling stops a very
+     * wide window from stretching the bar into a slab.
+     */
+    const val TOP_TAB_CELL_MIN_DP = 44
+    const val TOP_TAB_CELL_MAX_DP = 58
 
     /** Sheet progress at which the top capsule has completely faded for the expanded player. */
     const val EXPAND_FADE_END = 0.35f
@@ -71,13 +77,20 @@ internal object TabletChromeLayoutPolicy {
         (gapDp * density).toInt().coerceAtLeast(0)
 
     /**
-     * Width of the centred top capsule: one [TOP_TAB_CELL_DP] slot per tab, never wider than the
-     * window minus one [topBarSideMarginPx] on each side. At least a two-tab slot while the host
-     * menu has not been read yet, and clamped at zero for degenerate widths.
+     * Width of the centred top capsule: [TOP_TAB_CELL_FRACTION] of the window per tab, clamped into
+     * [TOP_TAB_CELL_MIN_DP]..[TOP_TAB_CELL_MAX_DP], and never wider than the window minus one
+     * [topBarSideMarginPx] on each side. At least two slots while the host menu has not been read
+     * yet, and clamped at zero for degenerate widths.
      */
     fun topBarWidthPx(screenWidthPx: Int, tabsCount: Int, density: Float): Int {
         val available = (screenWidthPx - 2 * topBarSideMarginPx(density)).coerceAtLeast(0)
-        val desired = ((tabsCount.coerceAtLeast(2) * TOP_TAB_CELL_DP) * density).toInt()
+        if (available <= 0) return 0
+        val cellPx = (screenWidthPx * TOP_TAB_CELL_FRACTION)
+            .coerceIn(
+                (TOP_TAB_CELL_MIN_DP * density),
+                (TOP_TAB_CELL_MAX_DP * density),
+            )
+        val desired = (tabsCount.coerceAtLeast(2) * cellPx).toInt()
         return desired.coerceAtMost(available).coerceAtLeast(0)
     }
 

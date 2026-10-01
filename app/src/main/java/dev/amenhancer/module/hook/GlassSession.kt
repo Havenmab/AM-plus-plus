@@ -14,6 +14,9 @@ internal interface GlassSession : AutoCloseable {
     val playerBehavior: Any?
     val activated: Boolean
 
+    /** Feature key this session reports its mounted/failed health under. */
+    val glassFeatureKey: String
+
     fun attachAvailableViews()
     fun ownsCurrentHierarchy(): Boolean
     fun onSlide(progress: Float)

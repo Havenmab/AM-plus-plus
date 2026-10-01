@@ -126,6 +126,16 @@ internal open class PhoneGlassSession(
     /** Capsule geometry shared by every occupied-height consumer; a diverging form overrides this. */
     protected open val geometry: GlassGeometry get() = GlassGeometry.Phone
 
+    /**
+     * Feature key this session reports its mounted/failed health under. The tablet iPad-style
+     * chrome is its own feature, so it reports there instead of under the phone glass toggle.
+     */
+    override val glassFeatureKey: String get() = ModuleConstants.FEATURE_PHONE_LIQUID_GLASS
+
+    /** Mounted-state health text; a diverging form describes its own surface. */
+    protected open val glassActiveMessage: String
+        get() = "AndroidLiquidGlass 已挂载：实时背景、底栏透镜及迷你播放器；真机视觉验收另行记录"
+
     protected open fun playerFragmentsAlphaFactor(progress: Float, materialProgress: Float): Float = materialProgress
 
     /**
@@ -443,8 +453,8 @@ internal open class PhoneGlassSession(
         updateTransition()
         // The dual-pane boundary sync yields geometry ownership once activation completes.
         onGlassOwnership(hostRoot)
-        config.reportHealth(FeatureHealth(ModuleConstants.FEATURE_PHONE_LIQUID_GLASS, FeatureState.ACTIVE,
-            "AndroidLiquidGlass 已挂载：实时背景、底栏透镜及迷你播放器；真机视觉验收另行记录", targetBuild(activity).displayName))
+        config.reportHealth(FeatureHealth(glassFeatureKey, FeatureState.ACTIVE,
+            glassActiveMessage, targetBuild(activity).displayName))
     }
 
     private fun prepareMini() {

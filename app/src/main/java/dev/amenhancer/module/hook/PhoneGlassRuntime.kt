@@ -13,6 +13,7 @@ import dev.amenhancer.glass.GlassHostForm
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.model.FeatureHealth
 import dev.amenhancer.module.model.FeatureState
 import java.lang.reflect.Method
@@ -58,13 +59,26 @@ internal object PhoneGlassRuntime {
     /** Routes the host form; null means no session may exist for this activity right now. */
     private fun createSession(activity: Activity, config: TargetConfigClient, onFail: (Throwable) -> Unit): GlassSession? {
         val build = targetBuild(activity)
-        if (config.settings().phoneLiquidGlassEnabled &&
+        val settings = config.settings()
+        // The iPad style is checked first: on a tablet it replaces the dual-pane row rather than
+        // stacking with it, and on a phone the tablet gate below leaves the phone path untouched.
+        // The session re-checks its own eligibility (style, orientation and the w640dp layout flag)
+        // and closes itself back to the native chrome when that does not hold.
+        if (settings.phoneLiquidGlassEnabled &&
+            settings.tabletChromeStyle == TabletChromeStyle.IPAD &&
+            TabletModeQualifier.isOfficialTablet(activity) &&
+            GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.TabletDualPane)
+        ) {
+            return TabletChromeSession(activity, config, onFail)
+        }
+        if (settings.phoneLiquidGlassEnabled &&
             !TabletModeQualifier.isOfficialTablet(activity) &&
             GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.PhoneStacked)
         ) {
             return PhoneGlassSession(activity, config, onFail)
         }
-        if (config.settings().phoneLiquidGlassEnabled &&
+        if (settings.phoneLiquidGlassEnabled &&
+            settings.tabletChromeStyle != TabletChromeStyle.IPAD &&
             TabletModeQualifier.isEligible(activity) &&
             GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.TabletDualPane)
         ) {
@@ -75,9 +89,13 @@ internal object PhoneGlassRuntime {
 
     private fun fail(activity: Activity, config: TargetConfigClient, error: Throwable) {
         failed += activity
-        sessions.remove(activity)?.close()
+        val session = sessions.remove(activity)
+        // Report under the session's own feature so the tablet iPad-style chrome does not
+        // surface its failures as phone liquid-glass failures.
+        val featureKey = session?.glassFeatureKey ?: ModuleConstants.FEATURE_PHONE_LIQUID_GLASS
+        session?.close()
         ModernXposedRuntime.log("liquid glass 1586 restored native UI", error)
-        config.reportHealth(FeatureHealth(ModuleConstants.FEATURE_PHONE_LIQUID_GLASS, FeatureState.FAILED,
+        config.reportHealth(FeatureHealth(featureKey, FeatureState.FAILED,
             "玻璃接入失败，已恢复原生界面：${error.javaClass.simpleName}: ${error.message}", targetBuild(activity).displayName))
     }
 

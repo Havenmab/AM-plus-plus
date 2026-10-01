@@ -266,6 +266,16 @@ internal enum class TargetSymbolId {
     CJK_KARAOKE_ANIMATION_METHOD,
     CJK_UNICODE_BLOCK_HELPER_OWNER,
     CJK_UNICODE_BLOCK_HELPER_METHOD,
+    // iPad-style tablet chrome capture seams; verified on Apple Music 6.5.3 (1599) only.
+    MEDIA_PLAYBACK_SERVICE,
+    MEDIA_PLAYBACK_SERVICE_ON_CREATE,
+    MEDIA_PLAYBACK_SERVICE_CONTROLLER_FIELD,
+    MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER,
+    MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_FIELD,
+    PLAYER_ACTIVITY_EXPAND_PLAYER,
+    PLAYER_ACTIVITY_PLAYER_FRAGMENT,
+    QUEUE_BUNDLE_ARG_KEY_OWNER,
+    QUEUE_BUNDLE_ARG_KEY_FIELD,
 }
 
 private object AppleMusicProfiles {
@@ -398,6 +408,12 @@ private object AppleMusicProfiles {
             TargetSymbolId.STORE_FRONT_LANGUAGE_ARRAY_OWNER to "K5.a",
             TargetSymbolId.CJK_KARAOKE_ANIMATION_OWNER to "com.apple.android.music.player.A",
             TargetSymbolId.CJK_UNICODE_BLOCK_HELPER_OWNER to "com.apple.android.music.utils.E0\$a",
+            // iPad-style tablet chrome capture: the playback service owns the live controller.
+            TargetSymbolId.MEDIA_PLAYBACK_SERVICE to
+                "com.apple.android.music.player.MediaPlaybackService",
+            TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER to
+                "com.apple.android.music.player.m0",
+            TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_OWNER to "com.apple.android.music.utils.E",
         ),
         exactMethods = mapOf(
             TargetSymbolId.PLAYER_ACTIVITY_CREATE_STACKED_NAVIGATION_HOLDER to "k1",
@@ -406,9 +422,15 @@ private object AppleMusicProfiles {
             TargetSymbolId.STORE_FRONT_LANGUAGE_ARRAY_METHOD to "b",
             TargetSymbolId.CJK_KARAOKE_ANIMATION_METHOD to "a0",
             TargetSymbolId.CJK_UNICODE_BLOCK_HELPER_METHOD to "a",
+            TargetSymbolId.MEDIA_PLAYBACK_SERVICE_ON_CREATE to "onCreate",
+            TargetSymbolId.PLAYER_ACTIVITY_EXPAND_PLAYER to "v1",
+            TargetSymbolId.PLAYER_ACTIVITY_PLAYER_FRAGMENT to "f1",
         ),
         exactFields = mapOf(
             TargetSymbolId.PLAYER_ACTIVITY_BEHAVIOR_FIELD to "c1",
+            TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_FIELD to "N",
+            TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_FIELD to "h",
+            TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_FIELD to "o",
         ),
     )
 
@@ -1862,12 +1884,328 @@ internal object AppleMusicSymbols {
         identity = ::methodIdentity,
     )
 
+    /**
+     * iPad-style tablet chrome seams.
+     *
+     * The live `MediaPlayerController` is reached through the playback service. Every
+     * version-specific owner below is pinned in the 6.5.3 profile with
+     * [ProfilePolicy.EXACT_REQUIRED] and a disabled structural fallback, so
+     * 6.5.0/6.5.1/6.5.2 and unknown builds report `Missing` instead of binding a guessed
+     * class. The controller interface and the playback model accessors keep their
+     * non-obfuscated public names and resolve by exact descriptor only (no structural
+     * fallback either: a host that renamed them is not a host we understand).
+     */
+    val TabletMediaPlaybackService = classSymbol(
+        id = "tablet-media-playback-service",
+        profileId = TargetSymbolId.MEDIA_PLAYBACK_SERVICE,
+        fallbackName = { false },
+        contract = { android.app.Service::class.java.isAssignableFrom(it) },
+    )
+
+    val TabletMediaPlaybackServiceOnCreate = methodSymbol(
+        id = "tablet-media-playback-service-on-create",
+        profileOwner = TargetSymbolId.MEDIA_PLAYBACK_SERVICE,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactMethodId = TargetSymbolId.MEDIA_PLAYBACK_SERVICE_ON_CREATE,
+        fallbackOwner = { false },
+        contract = ::isMediaPlaybackServiceOnCreate,
+    )
+
+    val TabletMediaPlaybackServiceControllerField = fieldSymbol(
+        id = "tablet-media-playback-service-controller-field",
+        profileOwner = TargetSymbolId.MEDIA_PLAYBACK_SERVICE,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactFieldId = TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_FIELD,
+        fallbackOwner = { false },
+        contract = ::isMediaPlaybackServiceControllerField,
+    )
+
+    val TabletMediaPlaybackServiceControllerHolder = classSymbol(
+        id = "tablet-media-playback-service-controller-holder",
+        profileId = TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER,
+        fallbackName = { false },
+        contract = ::isMediaPlaybackServiceControllerHolderClass,
+    )
+
+    val TabletMediaPlaybackServiceControllerHolderField = fieldSymbol(
+        id = "tablet-media-playback-service-controller-holder-field",
+        profileOwner = TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactFieldId = TargetSymbolId.MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_FIELD,
+        fallbackOwner = { false },
+        contract = ::isMediaPlaybackServiceControllerHolderField,
+    )
+
+    /** Public, non-obfuscated playback-library interface; the exact FQN is the pin. */
+    val TabletMediaPlayerController = classSymbol(
+        id = "tablet-media-player-controller",
+        stableName = MEDIA_PLAYER_CONTROLLER_CLASS,
+        fallbackName = { false },
+        contract = { it.isInterface },
+    )
+
+    val TabletMediaPlayerControllerPlay = stableMethodSymbol(
+        "tablet-media-player-controller-play",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("play", "void", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerPause = stableMethodSymbol(
+        "tablet-media-player-controller-pause",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("pause", "void", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerSkipToNextItem = stableMethodSymbol(
+        "tablet-media-player-controller-skip-to-next-item",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("skipToNextItem", "void", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerSkipToPreviousItem = stableMethodSymbol(
+        "tablet-media-player-controller-skip-to-previous-item",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("skipToPreviousItem", "void", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerCanSkipToNextItem = stableMethodSymbol(
+        "tablet-media-player-controller-can-skip-to-next-item",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("canSkipToNextItem", "boolean", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerCanSkipToPreviousItem = stableMethodSymbol(
+        "tablet-media-player-controller-can-skip-to-previous-item",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("canSkipToPreviousItem", "boolean", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerGetShuffleMode = stableMethodSymbol(
+        "tablet-media-player-controller-get-shuffle-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("getShuffleMode", "int", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerSetShuffleMode = stableMethodSymbol(
+        "tablet-media-player-controller-set-shuffle-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("setShuffleMode", "void", listOf("int")),
+    )
+
+    val TabletMediaPlayerControllerCanSetShuffleMode = stableMethodSymbol(
+        "tablet-media-player-controller-can-set-shuffle-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("canSetShuffleMode", "boolean", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerGetRepeatMode = stableMethodSymbol(
+        "tablet-media-player-controller-get-repeat-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("getRepeatMode", "int", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerSetRepeatMode = stableMethodSymbol(
+        "tablet-media-player-controller-set-repeat-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("setRepeatMode", "void", listOf("int")),
+    )
+
+    val TabletMediaPlayerControllerCanSetRepeatMode = stableMethodSymbol(
+        "tablet-media-player-controller-can-set-repeat-mode",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("canSetRepeatMode", "boolean", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerGetPlaybackState = stableMethodSymbol(
+        "tablet-media-player-controller-get-playback-state",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("getPlaybackState", "int", emptyList()),
+    )
+
+    val TabletMediaPlayerControllerGetCurrentItem = stableMethodSymbol(
+        "tablet-media-player-controller-get-current-item",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract("getCurrentItem", PLAYER_QUEUE_ITEM_CLASS, emptyList()),
+    )
+
+    val TabletMediaPlayerControllerAddListener = stableMethodSymbol(
+        "tablet-media-player-controller-add-listener",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract(
+            "addListener",
+            "void",
+            listOf(MEDIA_PLAYER_CONTROLLER_LISTENER_CLASS),
+        ),
+    )
+
+    val TabletMediaPlayerControllerRemoveListener = stableMethodSymbol(
+        "tablet-media-player-controller-remove-listener",
+        MEDIA_PLAYER_CONTROLLER_CLASS,
+        controllerMethodContract(
+            "removeListener",
+            "void",
+            listOf(MEDIA_PLAYER_CONTROLLER_LISTENER_CLASS),
+        ),
+    )
+
+    val TabletPlayerQueueItemGetItem = stableMethodSymbol(
+        "tablet-player-queue-item-get-item",
+        PLAYER_QUEUE_ITEM_CLASS,
+        controllerMethodContract("getItem", PLAYER_MEDIA_ITEM_CLASS, emptyList()),
+    )
+
+    val TabletPlayerMediaItemGetTitle = stableMethodSymbol(
+        "tablet-player-media-item-get-title",
+        PLAYER_MEDIA_ITEM_CLASS,
+        controllerMethodContract("getTitle", "java.lang.String", emptyList()),
+    )
+
+    val TabletPlayerMediaItemGetArtistName = stableMethodSymbol(
+        "tablet-player-media-item-get-artist-name",
+        PLAYER_MEDIA_ITEM_CLASS,
+        controllerMethodContract("getArtistName", "java.lang.String", emptyList()),
+    )
+
+    val TabletPlayerActivityExpandPlayer = methodSymbol(
+        id = "tablet-player-activity-expand-player",
+        profileOwner = TargetSymbolId.PLAYER_ACTIVITY,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactMethodId = TargetSymbolId.PLAYER_ACTIVITY_EXPAND_PLAYER,
+        fallbackOwner = { false },
+        contract = ::isPlayerActivityExpandPlayer,
+    )
+
+    val TabletPlayerActivityPlayerFragment = methodSymbol(
+        id = "tablet-player-activity-player-fragment",
+        profileOwner = TargetSymbolId.PLAYER_ACTIVITY,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactMethodId = TargetSymbolId.PLAYER_ACTIVITY_PLAYER_FRAGMENT,
+        fallbackOwner = { false },
+        contract = ::isPlayerActivityPlayerFragment,
+    )
+
+    val TabletQueueBundleArgKeyOwner = classSymbol(
+        id = "tablet-queue-bundle-arg-key-owner",
+        profileId = TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_OWNER,
+        fallbackName = { false },
+        contract = ::hasQueueBundleArgKeyField,
+    )
+
+    val TabletQueueBundleArgKeyField = fieldSymbol(
+        id = "tablet-queue-bundle-arg-key-field",
+        profileOwner = TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_OWNER,
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        exactFieldId = TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_FIELD,
+        fallbackOwner = { false },
+        contract = ::isQueueBundleArgKeyField,
+    )
+
     private const val ATTRIBUTES_CLASS =
         "com.apple.android.music.mediaapi.models.internals.Attributes"
     private const val TITLE_CLASS =
         "com.apple.android.music.mediaapi.models.internals.Title"
 
 }
+
+private const val MEDIA_PLAYER_CONTROLLER_CLASS =
+    "com.apple.android.music.playback.controller.MediaPlayerController"
+private const val MEDIA_PLAYER_CONTROLLER_LISTENER_CLASS =
+    "com.apple.android.music.playback.controller.MediaPlayerController\$Listener"
+private const val MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_CLASS =
+    "com.apple.android.music.player.m0"
+private const val PLAYER_QUEUE_ITEM_CLASS =
+    "com.apple.android.music.playback.model.PlayerQueueItem"
+private const val PLAYER_MEDIA_ITEM_CLASS =
+    "com.apple.android.music.playback.model.PlayerMediaItem"
+private const val PLAYER_CONTROLLER_653_CLASS =
+    "com.apple.android.music.player.fragment.v0"
+
+/**
+ * Resolves one command method on a non-obfuscated, publicly named host type. Only an exact
+ * descriptor declared by that type (or by an interface/superclass it inherits from) counts;
+ * there is deliberately no structural fallback, so a renamed member degrades that single
+ * command instead of binding an unrelated same-shaped overload.
+ */
+private fun stableMethodSymbol(
+    id: String,
+    ownerClassName: String,
+    contract: (Method) -> Boolean,
+): TargetSymbolKey<Method> = TargetSymbolKey(
+    id = id,
+    profilePolicy = ProfilePolicy.NO_PROFILE,
+    stableCandidates = {
+        runCatching {
+            load(ownerClassName)?.let { owner -> methodsInTypeGraph(owner, contract) }.orEmpty()
+        }.getOrDefault(emptyList())
+    },
+    structuralCandidates = { emptyList() },
+    identity = ::methodIdentity,
+)
+
+private fun methodsInTypeGraph(root: Class<*>, contract: (Method) -> Boolean): List<Method> {
+    val seen = mutableSetOf<Class<*>>()
+    val pending = java.util.ArrayDeque<Class<*>>()
+    pending.add(root)
+    val methods = mutableListOf<Method>()
+    while (pending.isNotEmpty()) {
+        val type = pending.removeLast()
+        if (!seen.add(type)) continue
+        type.declaredMethods
+            .filter { method -> runCatching { contract(method) }.getOrDefault(false) }
+            .forEach(methods::add)
+        type.superclass?.let(pending::add)
+        type.interfaces.forEach(pending::add)
+    }
+    return methods
+}
+
+private fun controllerMethodContract(
+    name: String,
+    returnTypeName: String,
+    parameterTypeNames: List<String>,
+): (Method) -> Boolean = { method ->
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == name &&
+        method.returnType.name == returnTypeName &&
+        method.parameterTypes.map { it.name } == parameterTypeNames
+}
+
+private fun isMediaPlaybackServiceOnCreate(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == "onCreate" &&
+        method.parameterTypes.isEmpty() &&
+        method.returnType == Void.TYPE
+
+private fun isMediaPlaybackServiceControllerField(field: Field): Boolean =
+    !Modifier.isStatic(field.modifiers) &&
+        field.type.name == MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_CLASS
+
+private fun isMediaPlaybackServiceControllerHolderClass(candidate: Class<*>): Boolean =
+    !candidate.isInterface &&
+        candidate.declaredFields.any(::isMediaPlaybackServiceControllerHolderField)
+
+private fun isMediaPlaybackServiceControllerHolderField(field: Field): Boolean =
+    !Modifier.isStatic(field.modifiers) &&
+        field.type.name == MEDIA_PLAYER_CONTROLLER_CLASS
+
+private fun isPlayerActivityExpandPlayer(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == "v1" &&
+        method.returnType == Void.TYPE &&
+        method.parameterTypes.size == 1 &&
+        method.parameterTypes[0].isEnum
+
+private fun isPlayerActivityPlayerFragment(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == "f1" &&
+        method.parameterTypes.isEmpty() &&
+        method.returnType.name == PLAYER_CONTROLLER_653_CLASS
+
+private fun hasQueueBundleArgKeyField(candidate: Class<*>): Boolean =
+    candidate.declaredFields.any(::isQueueBundleArgKeyField)
+
+private fun isQueueBundleArgKeyField(field: Field): Boolean =
+    Modifier.isStatic(field.modifiers) && field.type == String::class.java
 
 private fun isCjkKaraokeAnimationMethod(method: Method): Boolean =
     !Modifier.isStatic(method.modifiers) &&

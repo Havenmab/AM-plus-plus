@@ -300,6 +300,16 @@ PROFILES = {
             ],
             "Lcom/apple/android/music/utils/E0$a;": ["a(Ljava/lang/CharSequence;Ljava/util/Set;)Z"],
             "Lcom/apple/android/music/player/A;": ["a0(Lcom/apple/android/music/player/A$a;IIIZ)V"],
+            # TABLET_CHROME (iPad-style top bar + mini player): the live MediaPlayerController is
+            # reached from the playback service, and the full-player / pane seams are called
+            # directly. These owners keep their unobfuscated Apple Music names, so the descriptors
+            # are asserted exactly. 6.5.1 (1583) and 6.5.2 (1586) pin none of them: the feature
+            # reports DEGRADED there instead of binding a name that was never verified.
+            "Lcom/apple/android/music/player/MediaPlaybackService;": ["onCreate()V"],
+            "Lcom/apple/android/music/common/activity/PlayerActivity;": [
+                "v1(Lcom/apple/android/music/common/activity/PlayerActivity$p;)V",
+                "f1()Lcom/apple/android/music/player/fragment/v0;",
+            ],
         },
         "fields": {
             "Lcom/apple/android/music/common/activity/PlayerActivity;": ["c1"],
@@ -311,6 +321,11 @@ PROFILES = {
             "LGi/A$a;": ["h", "d", "b"],
             "LGi/D;": ["a", "d", "f"],
             "LGi/t;": ["a"],
+            # TABLET_CHROME capture chain: MediaPlaybackService.N -> player.m0.h is the live
+            # MediaPlayerController, and utils.E.o is the queue-pane Bundle argument key.
+            "Lcom/apple/android/music/player/MediaPlaybackService;": ["N"],
+            "Lcom/apple/android/music/player/m0;": ["h"],
+            "Lcom/apple/android/music/utils/E;": ["o"],
         },
         # The preferred name survives on 1599 but describes another method, so the module has to
         # fall back to the verified rename v. Assert both halves of that claim.

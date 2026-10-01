@@ -49,6 +49,7 @@ import android.widget.Toast
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
+import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TitleCorrectionMode
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.hook.AmLyricsClient
@@ -2370,6 +2371,23 @@ internal class EmbeddedSettingsHost private constructor(
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     suffix = "作用于底栏与迷你播放器",
                 ) { onSettingsChanged(settings.copy(phoneLiquidGlassPanelBlurDp = it)) })
+
+                addView(embeddedDivider(activity))
+                addView(embeddedNavigationRow(
+                    activity,
+                    "平板界面风格",
+                    "${settings.tabletChromeStyle.displayName} · 仅平板生效 · 重开 Apple Music 后生效",
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.TabletDualPane,
+                        EmbeddedSettingsPalette.accent,
+                    ),
+                    inlineSummary = true,
+                ) {
+                    showEmbeddedTabletChromeStylePicker(activity = activity) { style ->
+                        onSettingsChanged(settings.copy(tabletChromeStyle = style))
+                        pageRefresh?.invoke()
+                    }
+                })
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
@@ -3443,6 +3461,23 @@ internal class EmbeddedSettingsHost private constructor(
             .setTitle("歌曲名修正模式")
             .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
                 modes.getOrNull(which)?.let(onSelected)
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showEmbeddedTabletChromeStylePicker(
+        activity: Activity,
+        onSelected: (TabletChromeStyle) -> Unit,
+    ) {
+        val styles = TabletChromeStyle.values()
+        val current = controller.currentSettings().tabletChromeStyle
+        val labels = styles.map(TabletChromeStyle::displayName).toTypedArray()
+        AlertDialog.Builder(activity)
+            .setTitle("平板界面风格")
+            .setSingleChoiceItems(labels, styles.indexOf(current)) { dialog, which ->
+                styles.getOrNull(which)?.let(onSelected)
                 dialog.dismiss()
             }
             .setNegativeButton("取消", null)

@@ -106,6 +106,7 @@ class OrdinarySettingsWritePolicyTest {
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,
                 "phone_liquid_glass_panel_blur_dp" to 4,
+                "tablet_chrome_style" to "author",
                 "future_blur_enabled" to false,
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,

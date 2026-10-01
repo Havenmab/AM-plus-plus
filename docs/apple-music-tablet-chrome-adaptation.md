@@ -137,15 +137,19 @@
 ## 6.3 修复后仍待真机确认
 
 1. 顶栏玻璃与按压实效、选中项强调色（本轮修复的目标，需复测）。
-2. 顶栏宽度按参考图比例推导（整条胶囊约占窗口 22.5%、每格约 4.5% → 1280dp 平板上约 58dp），当前取 `TOP_TAB_CELL_DP = 60`，仍是唯一调参点，需目视复核。
+2. 顶栏宽度按参考图比例推导：**每格占窗口 4.5%**（整条约 22.5% ÷ 5 格），夹在 `TOP_TAB_CELL_MIN_DP = 44` .. `TOP_TAB_CELL_MAX_DP = 58`。窄平板等比收窄，不再是固定 dp。
 2.1 `GlassNavigation` 的「选中项用强调色」是**可选参数** `tintSelectedWithAccent`（默认 false）。原版手机/双栏栏只靠库的半透明拇指表达选中，因此**不得**默认开启；只有 iPad 顶栏传 true。`TabletChromeStructuralRegressionTest` 有回归断言守护这一点。
-3. `peekHeight()` 仍沿用手机几何（56+16=72dp+inset），与原生 `miniplayer_height`=59dp 存在约 3dp 残差；未改动以免引入不可验证的偏差。
+2.2 `cleanSelectionMask`（默认 false，仅 iPad 顶栏传 true）：库会把标签内容**录进拇指折射用的图层**（`alpha(0f)` 在 `layerBackdrop` 之前，只淡化合成输出，录进图层的内容仍是实心），于是拇指的 `lens` 把这份拷贝位移+色散成重影。开启后不再录那一遍、标签在拇指之后只画一次；lens/高亮/阴影/按压动画不变。
+3. `peekHeight()`：删除自绘胶囊、不再 `GONE` miniRoot 之后，`miniVisible == true`，基类恢复按 mini 高度测量座位与 peek —— 本节此前的 3dp 残差结论已不再适用，需真机复核。
 4. 命中胶囊后不再由宿主 sheet 处理拖拽，即**从胶囊上拉不再展开**（改为点击展开）——若希望两者都支持需再调整拦截条件。
-5. ~~若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。~~ 已修：渲染改用 `effectiveSlide()` —— 当尚未收到任何 slide 回调且 `isCollapsed` 为假时按「已展开」处理，顶栏直接停在隐藏态、迷你胶囊同样隐藏，不会盖在完整播放器上。
+5. ~~若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。~~ 已修：渲染改用 `effectiveSlide()`。
+6. **设置/账户页顶栏作用域**：判据取宿主自身信号 —— `settings.fragment.p.onStart()` → `MainContentActivity.Q1(0, true)` 会把 `bottom_navigation_root_flat` 置 GONE，回到标签页的 `common.fragment.a.onStart()` 再恢复；顶栏因此跟随 `hostRoot.isShown`。已知边角：资料库标签页在「加入播放列表」会话中宿主同样会隐藏该根（`LibraryComposeContentFragment.shouldHideBottomNav()`），此时顶栏一并隐藏，与宿主自身行为一致。
+7. **迷你播放器连贯形变**：已按原版机制改造 —— 不再自绘固定尺寸胶囊，而是**重皮宿主那唯一会形变的玻璃表面**（`miniGlass`），几何/座位/alpha/可见性全部回到原版 `updateTransition` 驱动；`GlassMiniPlayer` 新增默认 `expansion`，圆角按 `NativeLiquidButton` 的 `Capsule()`→24dp 插值。**未完成**：平板封面飞入的原点校正（原 `TabletDualPaneGlassSession.alignNativeArtworkStart`）需要把该校正在 `PhoneGlassSession` 提为 `protected open` 并改 `PhoneGlassRuntime` 的广播，超出本次改动范围，封面原点可能有轻微偏差。
+8. 待真机判定的两个前提（静态读代码无法确定）：平板下 `player_sheet_container` 是否等于 `mini_player`（若是，基类的几何形变整段被跳过，只剩淡出）；以及 `mini_player_content` 被置 INVISIBLE 后宿主是否仍刷新封面 drawable。
 
 ## 6.1 未在设备上验证的已知风险
 
-1. **隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。
+1. ~~**隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。~~ 自绘胶囊与 `hideSeam(miniRoot)` 已删除，此条已不适用。
 2. **隐藏 `mini_player_touch_panel`** 让基类 `miniVisible == false`，模块 peek 从约 123dp 缩到约 72dp+inset；胶囊按 `Gravity.TOP` 落到折叠带顶部，可能需要改为底部对齐（`TabletChromeLayoutPolicy.miniPlayerTopPx` 是唯一调节点）。
 3. 原生 mini root 被 GONE 后，宿主是否仍刷新 `mini_player_content` 的封面（胶囊封面直接读该原生 View 的 drawable）。
 4. 平板 flat holder 的 `BottomSheetBehavior` 拦截可能吃掉胶囊点击（本会话未覆写 `shouldBypassPlayerIntercept`）。

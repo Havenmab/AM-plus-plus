@@ -2,6 +2,7 @@ package dev.amenhancer.module.hook
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,6 +25,17 @@ class TabletChromeStructuralRegressionTest {
 
     /** Collapses line wraps so multi-line expressions can be matched as written prose. */
     private fun normalized(text: String): String = text.replace(Regex("\\s+"), " ")
+
+    /**
+     * Reads a source file from the sibling `glass` module. The unit-test working directory is
+     * either the `app` module or the repo root depending on how Gradle launches it, so both
+     * candidate roots are tried.
+     */
+    private fun glassSource(relativePath: String): String = sequenceOf(
+        File("../glass/src/main/kotlin/$relativePath"),
+        File("glass/src/main/kotlin/$relativePath"),
+    ).firstOrNull(File::isFile)?.readText()
+        ?: error("$relativePath was not found from the unit-test working directory")
 
     @Test
     fun `routes the iPad session ahead of the dual-pane session and never both`() {
@@ -96,5 +108,32 @@ class TabletChromeStructuralRegressionTest {
         )) {
             assertTrue("TabletChromeCommands must declare $member", commands.contains(member))
         }
+    }
+
+    @Test
+    fun `leaves the shipped phone glass bar on its original rendering`() {
+        // The iPad top bar wants an accent-tinted selected label; the shipped phone/dual-pane bar
+        // conveys selection with the library thumb alone. The tint must therefore be opt-in, and
+        // only the tablet session may opt in — otherwise the original author's bar changes.
+        val navigation = normalized(glassSource("dev/amenhancer/glass/GlassNavigation.kt"))
+        assertTrue(
+            "GlassNavigation must default the accent tint off",
+            navigation.contains("tintSelectedWithAccent: Boolean = false"),
+        )
+
+        val phone = normalized(source("dev/amenhancer/module/hook/PhoneGlassSession.kt"))
+        val phoneCall = phone.indexOf("GlassNavigation(")
+        assertTrue("PhoneGlassSession must render GlassNavigation", phoneCall >= 0)
+        assertFalse(
+            "the phone session must not opt into the accent tint",
+            phone.substring(phoneCall, minOf(phone.length, phoneCall + 500))
+                .contains("tintSelectedWithAccent"),
+        )
+
+        val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
+        assertTrue(
+            "the tablet top bar must opt into the accent tint",
+            tablet.contains("tintSelectedWithAccent = true"),
+        )
     }
 }

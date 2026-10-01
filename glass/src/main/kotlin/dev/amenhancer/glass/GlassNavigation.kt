@@ -59,8 +59,8 @@ private const val TAB_LABEL_SIZE_SP = 11f
  *
  * The material, the sliding translucent selection mask, the press/"灵动" squeeze animation and the
  * free thumb drag all come from the library's [LiquidBottomTabs]; this composable only decides what
- * each cell paints. The selected cell paints its title and icon with [accent] (the host accent, as
- * in the reference) and every other cell keeps [foreground].
+ * each cell paints. Cells normally keep [foreground]; the iPad top bar opts into
+ * [tintSelectedWithAccent] so its selected label and search glyph take the host accent.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.
@@ -75,6 +75,15 @@ fun GlassNavigation(
     onSelect: (Int) -> Int,
     panelHeight: Dp = GlassPolicy.NAV_HEIGHT_DP.dp,
     panelBlur: Dp = GlassPolicy.PANEL_BLUR_DP.dp,
+    /**
+     * Paints the selected cell's title and icon with [accent] instead of [foreground].
+     *
+     * Off by default so the shipped phone/dual-pane bar keeps its exact rendering: there the
+     * selection is conveyed by the library's translucent thumb alone, and the host already
+     * pre-tints its icons to the same foreground. The tablet iPad top bar opts in, because its
+     * reference turns the selected label and the search glyph the host accent colour.
+     */
+    tintSelectedWithAccent: Boolean = false,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -104,7 +113,7 @@ fun GlassNavigation(
                 // Keep each cell's remembered tinted drawable keyed to the tab, so a menu swap can
                 // never hand a cell the previous menu's clone.
                 key(tab.id) {
-                    val tint = if (tab.id == selectedId) accent else foreground
+                    val tint = if (tintSelectedWithAccent && tab.id == selectedId) accent else foreground
                     LiquidBottomTab(
                         onClick = { request(tab) },
                         modifier = Modifier.semantics {

@@ -26,8 +26,13 @@ internal object TabletChromeLayoutPolicy {
      * Width one top-nav tab reserves inside the floating capsule, in whole dp. The iPad reference
      * top bar hugs its tabs; the shared component fills whatever slot it is given, so the host sizes
      * the centred slot here instead. This is the single tuning knob for the top capsule's width.
+     *
+     * Derived from the reference: there the whole capsule spans roughly 22.5% of the window with
+     * five cells plus the (omitted) sidebar toggle, i.e. about 4.5% per cell — ~58dp on a 1280dp
+     * tablet. 60dp keeps that proportion with a little breathing room for a three-character CJK
+     * label at the shared 11sp tab size.
      */
-    const val TOP_TAB_CELL_DP = 92
+    const val TOP_TAB_CELL_DP = 60
 
     /** Sheet progress at which the top capsule has completely faded for the expanded player. */
     const val EXPAND_FADE_END = 0.35f

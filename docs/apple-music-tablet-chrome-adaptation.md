@@ -137,7 +137,8 @@
 ## 6.3 修复后仍待真机确认
 
 1. 顶栏玻璃与按压实效、选中项强调色（本轮修复的目标，需复测）。
-2. `GlassNavigation` 的顶栏宽度是 `tab 数 × 92dp` 的估算（`TOP_TAB_CELL_DP` 调参点），是否与参考图一致需目视。
+2. 顶栏宽度按参考图比例推导（整条胶囊约占窗口 22.5%、每格约 4.5% → 1280dp 平板上约 58dp），当前取 `TOP_TAB_CELL_DP = 60`，仍是唯一调参点，需目视复核。
+2.1 `GlassNavigation` 的「选中项用强调色」是**可选参数** `tintSelectedWithAccent`（默认 false）。原版手机/双栏栏只靠库的半透明拇指表达选中，因此**不得**默认开启；只有 iPad 顶栏传 true。`TabletChromeStructuralRegressionTest` 有回归断言守护这一点。
 3. `peekHeight()` 仍沿用手机几何（56+16=72dp+inset），与原生 `miniplayer_height`=59dp 存在约 3dp 残差；未改动以免引入不可验证的偏差。
 4. 命中胶囊后不再由宿主 sheet 处理拖拽，即**从胶囊上拉不再展开**（改为点击展开）——若希望两者都支持需再调整拦截条件。
 5. 若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。

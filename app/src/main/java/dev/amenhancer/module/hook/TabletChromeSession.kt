@@ -366,6 +366,9 @@ internal class TabletChromeSession(
                         onSelect = ::selectTopTab,
                         panelHeight = panelHeight,
                         panelBlur = topPanelBlurDp.dp,
+                        // The iPad reference turns the selected label and the search glyph the host
+                        // accent; the phone/dual-pane bar keeps the library thumb alone.
+                        tintSelectedWithAccent = true,
                     )
                 }
             }

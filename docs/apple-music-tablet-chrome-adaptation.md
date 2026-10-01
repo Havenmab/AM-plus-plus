@@ -117,6 +117,31 @@
 | `push` 触发的 release 路径 | 失败于 `Verify release signature`：fork 上未配置 `AMPP_RELEASE_*` 签名 secrets，release APK 落回 debug 证书时工作流按设计拒绝。与本次代码无关；验证以 PR 运行为准 |
 | 真机验收 | **未做**（无设备） |
 
+## 6.2 真机首轮验收与修复（2026-10-01）
+
+首轮真机（平板）暴露的缺陷与修复：
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 顶栏**完全没有玻璃** | 会话自建 `ViewBackdrop` 后立刻 `setCaptureEnabled(false)`，`ready` 永远为假，激活门控不过 → 胶囊始终 `GONE` | 改为原版做法：`ViewBackdrop(navigation_host_group).also { topBackdrop = it; it.start() }`，不做 capture 门控 |
+| 顶栏下方**莫名空白且不随滚动** | 会话给内容根加了顶部 padding 预留空间，胶囊悬在空白上（既无内容可折射，也挡不住内容） | 删除全部顶部 padding 及其快照/恢复，顶栏改为**纯悬浮覆盖**，页面内容从其下方滚过 |
+| 按压无灵动触动、选中项是**红色实心块**、文字不变色 | 自绘 `GlassTopNavigation` 绕开了库的 `LiquidBottomTabs`（拖动拇指/按压动画都在那里），且强调色被写死成 `Color.Red` | 顶栏改用 `GlassNavigation`（库提供半透明选中遮罩 + 按压/灵动 + 拖拽）；强调色取宿主 `color_primary`（回退 `0xFFFA233B`）；`GlassNavigation` 新增按选中态着色：选中项的**文字与图标**用强调色 |
+| 进入完整播放器后**顶栏仍在** | 顶栏未订阅 slide 进度 | 覆写 `onSlide`，`1 - smoothstep(0, 0.35, progress)` 淡出并在阈值后 `GONE`（迷你胶囊 0.35→0.6 淡出） |
+| 迷你播放器**图标不对、间距差** | 控件图标是模块自绘矢量 | 改用宿主真实资源（按资源名解析）：`ic_nowplaying_shuffle/shuffleon`、`ic_nowplaying_mp_rewind`、`ic_nowplaying_mp_play/mp_pause`、`ic_nowplaying_mp_fforward`、`ic_nowplaying_repeat/repeaton/repeatoneon`、`selector_nowplaying_lyrics`、`selector_nowplaying_queue`；间距统一为 8dp 外插值 + 4dp 均匀间隔 |
+| 迷你播放器**封面缺失** | 原生 mini 子树被 `GONE`，且封面查找路径不对 | 容器取 `mini_player_content → video_surface`；优先 `getArtworkView()`，否则取第一个带 drawable 的 `ImageView`；隐藏方式改为 `INVISIBLE + alpha 0`（不用 `GONE`），保证原生仍更新封面 |
+| 歌词/播放列表**点了没反应**、点本体**不能展开**（只能上拉） | 胶囊的 DOWN 被宿主 `StaticCollapsedBottomSheetBehavior` 吃掉，Compose 收不到事件 | 命中胶囊的 DOWN 时 `shouldBypassPlayerIntercept` 返回 true；在 `player_sheet_container`/`player_root` 上把 DOWN/MOVE/UP 平移转发给 Compose 胶囊；胶囊本体 `onExpand` → `PlayerActivity#v1(EXPAND_PLAYER)` |
+| 收起时与底栏**对齐偏差** | 迷你胶囊没有对齐原生折叠座位 | 折叠态下读取原生 mini root 在 `player_sheet_container` 内的偏移，作为 `topMargin`（`miniPlayerSeatPx`）；`miniPlayerTopPx` 保留为 0 调参点 |
+
+修复后：`test` **896 / 0 失败**。仍未在真机验证的项见 §6.1 与 §6.3。
+
+## 6.3 修复后仍待真机确认
+
+1. 顶栏玻璃与按压实效、选中项强调色（本轮修复的目标，需复测）。
+2. `GlassNavigation` 的顶栏宽度是 `tab 数 × 92dp` 的估算（`TOP_TAB_CELL_DP` 调参点），是否与参考图一致需目视。
+3. `peekHeight()` 仍沿用手机几何（56+16=72dp+inset），与原生 `miniplayer_height`=59dp 存在约 3dp 残差；未改动以免引入不可验证的偏差。
+4. 命中胶囊后不再由宿主 sheet 处理拖拽，即**从胶囊上拉不再展开**（改为点击展开）——若希望两者都支持需再调整拦截条件。
+5. 若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。
+
 ## 6.1 未在设备上验证的已知风险
 
 1. **隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。

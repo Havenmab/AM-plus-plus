@@ -44,30 +44,34 @@ import dev.amenhancer.glass.GlassCapsuleBounds
 import dev.amenhancer.glass.GlassHostView
 import dev.amenhancer.glass.GlassMiniPlayer
 import dev.amenhancer.glass.GlassMiniPlayerCommand
+import dev.amenhancer.glass.GlassMiniPlayerIcons
 import dev.amenhancer.glass.GlassMiniPlayerState
+import dev.amenhancer.glass.GlassNavigation
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.glass.GlassRepeatMode
-import dev.amenhancer.glass.GlassTopNavigation
-import dev.amenhancer.glass.GlassTopTab
-import dev.amenhancer.glass.GlassTopTabDisplay
+import dev.amenhancer.glass.GlassTab
+import dev.amenhancer.glass.GlassTabDisplay
 import dev.amenhancer.glass.TabletGlassGestureGate
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
+import java.lang.reflect.Method
 
 /**
- * iPad-style tablet chrome: [GlassTopNavigation] renders the navigation as one capsule at the
- * window's top centre and [GlassMiniPlayer] renders the transport as one capsule at the bottom
+ * iPad-style tablet chrome: [GlassNavigation] renders the navigation as one floating capsule at
+ * the window's top centre and [GlassMiniPlayer] renders the transport as one capsule at the bottom
  * centre. The host's native bottom tab strip and the author's full-width bottom mini glass are
  * parked, while the inherited [PhoneGlassSession] pipeline keeps owning the player transition and
  * the peek handling.
  *
- * The session owns only the two capsules, the reservation of the top space they occupy and touch
- * ownership of their bands. Every native write goes through the inherited compare-then-write
- * seams: the tabs frame, the native mini root/content and the author's mini glass are hidden with
- * `hideSeam` (a [PhoneGlassSession] `NativeViewState` snapshot) and the content root's original top
- * padding is snapshotted here, so [close] restores all of them exactly.
+ * The top capsule is a pure overlay: it floats over `navigation_host_group` behind a started
+ * [ViewBackdrop] — the same material contract `PhoneGlassSession` uses for its bottom bar — and
+ * reserves **no** top padding, so the page keeps scrolling under the glass. The session owns only
+ * the two capsules, their seat, and touch ownership of their bands. Every native write goes through
+ * the inherited compare-then-write seams: the tabs frame, the native mini root/content and the
+ * author's mini glass are snapshotted through `hideSeam` (a [PhoneGlassSession] `NativeViewState`
+ * record) and [PhoneGlassSession.close] restores every one of them.
  */
 @RequiresApi(33)
 internal class TabletChromeSession(
@@ -90,7 +94,7 @@ internal class TabletChromeSession(
     override val glassActiveMessage: String
         get() = "iPad 风格界面已挂载：顶部导航胶囊已接管平板导航，原生底栏已隐藏；真机视觉验收另行记录"
 
-    /** Screen-space rectangle of the rendered capsule; written on Compose layout, read on touch. */
+    /** Screen-space rectangle of a rendered capsule; written on Compose layout, read on touch. */
     private class CapsuleFrame {
         var left = 0f
         var top = 0f
@@ -98,6 +102,8 @@ internal class TabletChromeSession(
         var bottom = 0f
         val ready: Boolean get() = right > left && bottom > top
     }
+
+    // ---- Top capsule -------------------------------------------------------------------------
 
     private val topTouchGate = TabletGlassGestureGate()
     private val topCapsuleFrame = CapsuleFrame()
@@ -109,34 +115,52 @@ internal class TabletChromeSession(
     private var topRefreshAt = 0L
     private var topGlass: GlassHostView? = null
     private var topBackdrop: ViewBackdrop? = null
-    private var topBackdropCapture = false
     private var topObserver: ViewTreeObserver? = null
-    private var contentRoot: ViewGroup? = null
     private var navView: View? = null
-    private var topPaddingOriginal: Int? = null
     private var topBarHeightPx = 0
     private var topBarMarginPx = 0
-    private var topContentPaddingPx = 0
     private var topPanelBlurDp = GlassPolicy.PANEL_BLUR_DP.toInt()
 
-    private var topTabs by mutableStateOf(emptyList<GlassTopTab>())
+    /**
+     * Latest sheet progress, mirrored from [onSlide]. A plain float so the pre-draw path can read
+     * it without boxing or allocation.
+     */
+    private var topSlide = 0f
+
+    private var topTabs by mutableStateOf(emptyList<GlassTab>())
     private var topSelectedId by mutableIntStateOf(View.NO_ID)
-    private var topAccent by mutableStateOf(Color.Red)
+    private var topAccent by mutableStateOf(Color(0xFFFA233B))
     private var topForeground by mutableStateOf(Color.Black)
     private var topHostConfiguration by mutableStateOf(Configuration(activity.resources.configuration))
     private var topMenuKey: List<Any?> = emptyList()
 
-    // Bottom iPad-style mini-player capsule. It shares the top capsule's backdrop capture (the
-    // base already renders three consumers from one [ViewBackdrop]) and owns no reflection cache
-    // beyond the resolved artwork source, so a layout pass never scans the hierarchy.
+    // ---- Bottom mini-player capsule ----------------------------------------------------------
+
+    // The mini capsule shares the top capsule's backdrop (one source, two consumers). The native
+    // mini root, the content that carries the host artwork, and the image view actually read from
+    // are cached together, so a refresh never scans the hierarchy per frame.
     private val miniTouchGate = TabletGlassGestureGate()
+
+    /**
+     * Owns the "should the host player behavior intercept this gesture" latch. A DOWN inside a
+     * capsule takes the whole gesture away from the behavior so the module's Compose view receives
+     * it; a DOWN outside leaves the behavior alone so the host page keeps its native handling.
+     */
+    private val behaviorBypassGate = TabletGlassGestureGate()
+
     private val miniCapsuleFrame = CapsuleFrame()
+    private val sheetLocation = IntArray(2)
+    private val miniLocation = IntArray(2)
     private var miniCapsule: GlassHostView? = null
     private var miniCapsuleHeightPx = 0
+    private var miniSeatPx = 0
     private var miniListener: AutoCloseable? = null
     private var miniListenerBound = false
     private var miniSuppressedRoot: View? = null
-    private var miniArtworkSource: View? = null
+    private var miniPlayerContent: View? = null
+    private var miniArtworkContainer: View? = null
+    private var miniArtworkImage: View? = null
+    private var miniArtworkMethod: Method? = null
 
     /** Written by the host controller listener (any thread), consumed on the next pre-draw. */
     @Volatile
@@ -153,6 +177,27 @@ internal class TabletChromeSession(
     private var miniTitle by mutableStateOf("")
     private var miniArtist by mutableStateOf("")
     private var miniCover by mutableStateOf<Drawable?>(null)
+    private var miniIcons by mutableStateOf(
+        GlassMiniPlayerIcons(
+            shuffle = null,
+            shuffleOn = null,
+            previous = null,
+            play = null,
+            pause = null,
+            next = null,
+            repeat = null,
+            repeatOn = null,
+            repeatOne = null,
+            repeatOneOn = null,
+            lyrics = null,
+            queue = null,
+        ),
+    )
+    private var miniIconsConfiguration: Configuration? = null
+
+    // Touch redirection: the DOWN chosen by a gesture is latched for its whole duration.
+    private var redirectedMiniTarget: GlassHostView? = null
+    private var redirectedMiniDownTime: Long? = null
 
     /**
      * Both tablet orientations use the same chrome: the host bool that selects the
@@ -209,22 +254,20 @@ internal class TabletChromeSession(
         root?.let(TabletGlassChrome::clearGlassActive)
     }
 
-    /**
-     * Only the two rendered capsules own their DOWNs. Each gate is scoped to this session's own
-     * band: a DOWN outside the capsule makes that view report "not handled", so the event falls
-     * through to whatever is underneath (the host page for the top band, the host sheet for the
-     * mini band). Every other view keeps the inherited phone behaviour.
-     */
-    override fun shouldPassThroughTouch(view: View, event: MotionEvent): Boolean {
-        if (view === topGlass) return passesThroughTopBand(event)
-        if (view === miniCapsule) return passesThroughMiniBand(event)
-        return false
-    }
-
     override fun foreground(active: Boolean) {
         super.foreground(active)
         topGlass?.foreground(active)
         miniCapsule?.foreground(active)
+    }
+
+    /**
+     * Mirrors the runtime's slide callback into [topSlide]. The base keeps owning the exit/geometry
+     * maths; this session only needs the scalar to fade the top capsule out of the expanded player.
+     */
+    override fun onSlide(progress: Float) {
+        super.onSlide(progress)
+        val next = progress.coerceIn(0f, 1f)
+        if (next != topSlide) topSlide = next
     }
 
     override fun onPreDraw(): Boolean {
@@ -242,8 +285,10 @@ internal class TabletChromeSession(
                 topRefreshAt = now + TOP_REFRESH_INTERVAL_MS
                 refreshTopMetrics()
                 refreshTopMenu()
+                refreshMiniIcons()
                 refreshMiniState()
                 refreshMiniCover()
+                refreshMiniSeat()
             }
             updateTopChrome()
             attachMiniCapsule()
@@ -262,12 +307,12 @@ internal class TabletChromeSession(
         topClosed = true
         releaseMiniCapsule()
         releaseTopChrome()
+        // The base restores every NativeViewState snapshot, including the mini views this session
+        // concealed: no reserved top space ever existed, so nothing else needs undoing.
         super.close()
-        // PhoneGlassSession restored the content root from the NativeViewState snapshot it took
-        // after this session had already reserved the top space. Undo that snapshot's top padding
-        // once the base restore has run, so no reserved space survives the session.
-        restoreTopContentPadding()
     }
+
+    // ---- Top capsule construction ------------------------------------------------------------
 
     private fun attachTopChrome() {
         if (topGlass != null || topClosed) return
@@ -281,7 +326,6 @@ internal class TabletChromeSession(
         if (navHeight <= 0) return
         val parent = topMountParent(content) ?: return
 
-        contentRoot = content
         navView = navigation
         topPanelBlurDp = ModuleSettings.normalizePhoneLiquidGlassPanelBlurDp(
             config.settings().phoneLiquidGlassPanelBlurDp,
@@ -289,14 +333,15 @@ internal class TabletChromeSession(
         refreshTopMetrics()
         topHostConfiguration = Configuration(activity.resources.configuration)
         refreshTopMenu()
+        refreshMiniIcons()
 
+        // Exact original pattern (PhoneGlassSession.attachAvailableViews): the backdrop samples the
+        // page content and is started so it captures before the capsule is revealed. A ViewBackdrop
+        // that is never started, or whose capture is disabled, never becomes ready and the capsule
+        // renders no glass at all.
         val backdrop = ViewBackdrop(content, ::scheduleTopFailure).also {
             topBackdrop = it
             it.start()
-            // Nothing consumes the top capsule before activation, so do not record alongside the
-            // inherited backdrop; updateTopChrome() enables capture when the capsule is revealed.
-            it.setCaptureEnabled(false)
-            topBackdropCapture = false
         }
         val glass = GlassHostView(glassContext).also { topGlass = it }
         glass.alpha = 0f
@@ -304,10 +349,15 @@ internal class TabletChromeSession(
         val panelHeight = (navHeight / density).dp
         glass.content {
             TopHostConfiguration {
-                // GlassHostView fills its Box, so the wrap-content capsule is centred here; the
-                // host's own gravity only decides where the full-width band sits.
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                    GlassTopNavigation(
+                // GlassHostView fills its Box, so the component's own bar is centred here; the
+                // host's own gravity only decides where the floating band sits. The wrapper Box
+                // carries the layout callback: the shared GlassNavigation capsule owns its own
+                // drawing, and the Box's bounds are exactly the capsule's floating band.
+                Box(
+                    Modifier.fillMaxWidth().onGloballyPositioned(::recordTopCapsuleFrame),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    GlassNavigation(
                         tabs = topTabs,
                         selectedId = topSelectedId,
                         accent = topAccent,
@@ -316,23 +366,26 @@ internal class TabletChromeSession(
                         onSelect = ::selectTopTab,
                         panelHeight = panelHeight,
                         panelBlur = topPanelBlurDp.dp,
-                        modifier = Modifier.onGloballyPositioned(::recordTopCapsuleFrame),
                     )
                 }
             }
         }
+        // The top capsule is a pure overlay: it floats over the page, so no content padding is
+        // written anywhere and the page keeps scrolling under the glass. Its width follows the live
+        // tab count so it reads as the iPad top bar (a compact centred capsule), not a full band.
         parent.addView(
             glass,
             FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                TabletChromeLayoutPolicy.topBarWidthPx(capsuleScreenWidthPx(parent), topTabs.size, density),
                 navHeight,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL,
-            ).apply { topMargin = topBarMarginPx },
+            ).apply {
+                topMargin = topBarMarginPx
+            },
         )
         topObserver = activity.window.decorView.viewTreeObserver.also {
             it.addOnGlobalLayoutListener(topLayoutListener)
         }
-        applyTopContentPadding()
     }
 
     /**
@@ -364,12 +417,62 @@ internal class TabletChromeSession(
             root.height >= content.height
     }
 
+    // ---- Top capsule touch -------------------------------------------------------------------
+
+    override fun shouldPassThroughTouch(view: View, event: MotionEvent): Boolean {
+        if (view === topGlass) return passesThroughTopBand(event)
+        if (view === miniCapsule) return passesThroughMiniBand(event)
+        return false
+    }
+
+    /**
+     * The host player behavior must not swallow a gesture that starts on either capsule, otherwise
+     * the module's Compose view never sees the DOWN and every button plus tap-to-expand is dead.
+     * A DOWN outside both capsules leaves the behavior alone (the host page keeps its native
+     * drag/handling). The choice is latched by the DOWN for the whole gesture.
+     */
+    override fun shouldBypassPlayerIntercept(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            return behaviorBypassGate.start(event.downTime, hitCapsule = !capsuleHitEither(event))
+        }
+        return behaviorBypassGate.isPassedThrough(event.downTime)
+    }
+
+    private fun capsuleHitEither(event: MotionEvent): Boolean {
+        val top = topGlass?.takeIf { it.isShown && it.width > 0 && it.height > 0 }
+        if (top != null && capsuleHit(event)) return true
+        val mini = miniCapsule?.takeIf { it.isShown && it.width > 0 && it.height > 0 }
+        return mini != null && miniCapsuleHit(event)
+    }
+
+    // The host field declares BottomSheetBehavior<FrameLayout> but runs PlayerBottomSheetBehavior
+    // (and is the activity's only Behavior field). Prefer the value whose runtime class names it so
+    // the shared intercept hook's `playerBehavior === thisObject` test resolves for the bypass.
+    override fun findPlayerBehavior(): Any? {
+        generateSequence(activity.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }
+            .mapNotNull { field -> runCatching { field.isAccessible = true; field.get(activity) }.getOrNull() }
+            .firstOrNull { it.javaClass.name.contains("PlayerBottomSheetBehavior") }
+            ?.let { return it }
+        return super.findPlayerBehavior()
+    }
+
     private fun passesThroughTopBand(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            return topTouchGate.start(event.downTime, hitCapsule = !activated || capsuleHit(event))
+            val visible = topGlass?.isShown == true
+            return topTouchGate.start(event.downTime, hitCapsule = !activated || (visible && capsuleHit(event)))
         }
         // Keep the owner chosen by the DOWN for the whole gesture.
         return topTouchGate.isPassedThrough(event.downTime)
+    }
+
+    private fun passesThroughMiniBand(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val visible = miniCapsule?.isShown == true
+            return miniTouchGate.start(event.downTime, hitCapsule = !activated || (visible && miniCapsuleHit(event)))
+        }
+        // Keep the owner chosen by the DOWN for the whole gesture.
+        return miniTouchGate.isPassedThrough(event.downTime)
     }
 
     private fun capsuleHit(event: MotionEvent): Boolean {
@@ -405,14 +508,6 @@ internal class TabletChromeSession(
         topCapsuleFrame.top = top
         topCapsuleFrame.right = left + coordinates.size.width
         topCapsuleFrame.bottom = top + coordinates.size.height
-    }
-
-    private fun passesThroughMiniBand(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            return miniTouchGate.start(event.downTime, hitCapsule = !activated || miniCapsuleHit(event))
-        }
-        // Keep the owner chosen by the DOWN for the whole gesture.
-        return miniTouchGate.isPassedThrough(event.downTime)
     }
 
     private fun miniCapsuleHit(event: MotionEvent): Boolean {
@@ -451,14 +546,44 @@ internal class TabletChromeSession(
     }
 
     /**
+     * Delivers a collapsed mini gesture to the module's own Compose capsule when the host routes
+     * the DOWN to the native player subtree instead of the capsule (the sheet container and
+     * `player_root` are full-size native touch owners). Mirroring the dual-pane session's proven
+     * redirect: the DOWN picks the capsule, every following event is forwarded to it translated
+     * into its own coordinates, and the latch clears on UP/CANCEL. A DOWN outside the capsule
+     * returns null so the host page keeps the event.
+     */
+    override fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean? {
+        val capsule = miniCapsule ?: return null
+        if (view !== playerSheet && view.id != resourceId("player_root", "id")) return null
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            redirectedMiniTarget = capsule.takeIf {
+                activated && isCollapsed && it.isShown && miniCapsuleHit(event)
+            }
+            redirectedMiniDownTime = event.downTime.takeIf { redirectedMiniTarget != null }
+        }
+        val target = redirectedMiniTarget?.takeIf { redirectedMiniDownTime == event.downTime } ?: return null
+        val location = IntArray(2).also(target::getLocationOnScreen)
+        val forwarded = MotionEvent.obtain(event)
+        forwarded.setLocation(event.rawX - location[0], event.rawY - location[1])
+        return try {
+            target.dispatchTouchEvent(forwarded)
+        } finally {
+            forwarded.recycle()
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                redirectedMiniTarget = null
+                redirectedMiniDownTime = null
+            }
+        }
+    }
+
+    // ---- Bottom mini-player capsule ----------------------------------------------------------
+
+    /**
      * Mounts the iPad-style bottom capsule exactly where the base mounts its own mini glass: into
      * `player_sheet_container` at index 0 with `Gravity.TOP`, so the host's peek/slide/expand
-     * behaviour keeps moving it. The host view spans exactly the capsule, so a touch outside it is
-     * never dispatched to it in the first place and the gesture gate only guards the bleed margin.
-     *
-     * The native mini root is the fallback mount parent on hosts without a sheet container; there
-     * the replacement capsule would hide itself, so this session leaves the host chrome alone
-     * instead of blanking the band.
+     * behaviour keeps moving it. [refreshMiniSeat] then seats it at the native mini band's own
+     * offset inside that sheet, which is where the author's mini glass collapses to.
      */
     private fun attachMiniCapsule() {
         if (topClosed) return
@@ -477,17 +602,26 @@ internal class TabletChromeSession(
         glass.visibility = View.GONE
         glass.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         // Populate the Compose states before the composition is first committed.
+        refreshMiniIcons()
         refreshMiniState()
         refreshMiniCover()
+        refreshMiniSeat()
         glass.content {
             TopHostConfiguration {
+                val cover: (@Composable () -> Unit)? = if (miniCover != null) {
+                    { MiniCoverArtwork() }
+                } else {
+                    null
+                }
                 GlassMiniPlayer(
                     state = miniState,
                     backdrop = backdrop,
+                    icons = miniIcons,
                     accent = topAccent,
                     foreground = topForeground,
                     onCommand = ::handleMiniCommand,
-                    cover = { MiniCoverArtwork() },
+                    onExpand = ::expandPlayer,
+                    cover = cover,
                     title = miniTitle,
                     artist = miniArtist,
                     panelHeight = (height / density).dp,
@@ -506,6 +640,7 @@ internal class TabletChromeSession(
                 Gravity.TOP,
             ).apply {
                 leftMargin = TabletChromeLayoutPolicy.miniPlayerLeftPx(screenWidth)
+                topMargin = miniSeatPx
             },
         )
         suppressNativeMiniChrome()
@@ -518,14 +653,20 @@ internal class TabletChromeSession(
         miniCapsule?.let { glass -> (glass.parent as? ViewGroup)?.removeView(glass) }
         miniCapsule = null
         miniCapsuleHeightPx = 0
+        miniSeatPx = 0
         miniSuppressedRoot = null
-        miniArtworkSource = null
+        miniPlayerContent = null
+        miniArtworkContainer = null
+        miniArtworkImage = null
+        miniArtworkMethod = null
+        redirectedMiniTarget = null
+        redirectedMiniDownTime = null
     }
 
     /**
      * Compare-then-write for the capsule only: size, seat, alpha and visibility. The capsule is
-     * visible exactly while the shell is active and the shared backdrop is ready, mirroring the top
-     * capsule; no layout parameter is written unless it actually changed.
+     * visible exactly while the shell is active, the shared backdrop is ready and the sheet has not
+     * handed over to the full player; no layout parameter is written unless it actually changed.
      */
     private fun updateMiniChrome() {
         val glass = miniCapsule ?: return
@@ -534,7 +675,7 @@ internal class TabletChromeSession(
         val screenWidth = capsuleScreenWidthPx(parent)
         val width = TabletChromeLayoutPolicy.miniPlayerWidthPx(screenWidth)
         val left = TabletChromeLayoutPolicy.miniPlayerLeftPx(screenWidth)
-        val top = TabletChromeLayoutPolicy.miniPlayerTopPx()
+        val top = miniSeatPx
         val params = glass.layoutParams as? FrameLayout.LayoutParams
         if (params != null &&
             (params.width != width ||
@@ -549,9 +690,9 @@ internal class TabletChromeSession(
             glass.layoutParams = params
         }
         val ready = activated && topBackdrop?.ready == true
-        val alpha = if (ready) 1f else 0f
+        val alpha = if (ready) TabletChromeLayoutPolicy.miniPlayerAlpha(topSlide) else 0f
         if (glass.alpha != alpha) glass.alpha = alpha
-        val visibility = if (ready) View.VISIBLE else View.GONE
+        val visibility = if (alpha > 0f) View.VISIBLE else View.GONE
         if (glass.visibility != visibility) glass.visibility = visibility
         suppressNativeMiniChrome()
     }
@@ -560,35 +701,65 @@ internal class TabletChromeSession(
         parent.width.takeIf { it > 0 } ?: activity.resources.displayMetrics.widthPixels
 
     /**
+     * Reads the native mini band's offset inside `player_sheet_container`, which is where the
+     * author's own mini glass collapses to. Throttled with the rest of the content refresh and
+     * allocation-free: a not-yet-laid-out source keeps the previous seat.
+     */
+    private fun refreshMiniSeat() {
+        if (!isCollapsed) return
+        val sheet = (miniCapsule?.parent as? View) ?: playerSheet ?: return
+        val root = miniRoot ?: return
+        if (sheet.height <= 0 || !sheet.isAttachedToWindow || !root.isAttachedToWindow) return
+        sheet.getLocationInWindow(sheetLocation)
+        root.getLocationInWindow(miniLocation)
+        val seat = TabletChromeLayoutPolicy.miniPlayerSeatPx(miniLocation[1] - sheetLocation[1])
+        if (miniSeatPx != seat) miniSeatPx = seat
+    }
+
+    /**
      * Suppresses the author's bottom chrome for this session only.
      *
      * [hideSeam] snapshots visibility/alpha through the inherited `NativeViewState`, so
      * [PhoneGlassSession.close] restores every one of these views exactly.
      *
-     * Parking the native mini root is what makes the base park its own mini glass without a
-     * per-frame fight: `PhoneGlassSession.miniVisible` is `miniRoot.isShown`, so a hidden root
-     * drives the base's own `miniAlpha` to zero while the sheet is collapsed. The explicit
-     * `miniGlass` snapshots record the author's surface as hidden rather than leaving it to chance.
+     * The native mini root and its content are then kept laid out but invisible (`INVISIBLE` +
+     * `alpha = 0`) instead of `GONE`: a GONE mini subtree stops being measured/laid out and the
+     * host can stop refreshing the artwork drawable the capsule reads from it. `INVISIBLE` keeps
+     * `miniVisible == false` for the base (so the author glass stays parked) while the artwork view
+     * keeps updating. The author's own mini glass is a pure render surface, so it stays `GONE`.
      */
     private fun suppressNativeMiniChrome() {
         val root = miniRoot ?: return
         if (root === playerSheet) return
         if (miniSuppressedRoot !== root) {
             miniSuppressedRoot = root
-            hideSeam(find("mini_player_content"))
-            hideSeam(miniGlass)
+            miniPlayerContent = find("mini_player_content")
+            hideSeam(root)
+            hideSeam(miniPlayerContent)
         }
-        hideSeam(root)
+        // The base's own mini glass is re-revealed by its transition maths on every frame, so it
+        // is parked on every frame too: compare-then-write, and it is a pure render surface.
+        hideSeam(miniGlass)
+        concealForArtwork(root)
+        concealForArtwork(miniPlayerContent)
+    }
+
+    /** Compare-then-write conceal that keeps the view in layout; never touches a missing view. */
+    private fun concealForArtwork(view: View?) {
+        view ?: return
+        if (view.visibility != View.INVISIBLE) view.visibility = View.INVISIBLE
+        if (view.alpha != 0f) view.alpha = 0f
     }
 
     /** Draws the host's already-loaded artwork, never its own. Nothing is drawn while it is null. */
     @Composable
     private fun MiniCoverArtwork() {
         val source = miniCover ?: return
-        // Clone before setting bounds: the host keeps ownership of its own Drawable.
+        // Clone before setting bounds: the host keeps ownership of its own Drawable. A drawable
+        // with no constant state falls back to drawing the host instance (it is invisible anyway).
         val artwork = remember(source) {
-            runCatching { source.constantState?.newDrawable() }.getOrNull()
-        } ?: return
+            runCatching { source.constantState?.newDrawable() }.getOrNull() ?: source
+        }
         Canvas(Modifier.fillMaxSize()) {
             val canvas = drawContext.canvas.nativeCanvas
             val save = canvas.save()
@@ -631,6 +802,39 @@ internal class TabletChromeSession(
     }
 
     /**
+     * Loads the host's own transport drawables once per resource/theme change. Resolved strictly by
+     * resource name at runtime (never a hard-coded id) and cached in Compose state so no frame or
+     * layout pass re-resolves them. A name the host build does not carry resolves to null.
+     */
+    private fun refreshMiniIcons() {
+        if (miniIconsConfiguration == topHostConfiguration) return
+        miniIconsConfiguration = topHostConfiguration
+        val next = GlassMiniPlayerIcons(
+            shuffle = hostDrawable("ic_nowplaying_shuffle"),
+            shuffleOn = hostDrawable("ic_nowplaying_shuffleon"),
+            previous = hostDrawable("ic_nowplaying_mp_rewind"),
+            play = hostDrawable("ic_nowplaying_mp_play"),
+            pause = hostDrawable("ic_nowplaying_mp_pause"),
+            next = hostDrawable("ic_nowplaying_mp_fforward"),
+            repeat = hostDrawable("ic_nowplaying_repeat"),
+            repeatOn = hostDrawable("ic_nowplaying_repeaton"),
+            // The host ships one "repeat one, on" asset; seed both one-state slots with it so
+            // whichever variant the component reads always paints the selected one glyph.
+            repeatOne = hostDrawable("ic_nowplaying_repeatoneon"),
+            repeatOneOn = hostDrawable("ic_nowplaying_repeatoneon"),
+            lyrics = hostDrawable("selector_nowplaying_lyrics"),
+            queue = hostDrawable("selector_nowplaying_queue"),
+        )
+        if (next != miniIcons) miniIcons = next
+    }
+
+    private fun hostDrawable(name: String): Drawable? {
+        val id = resourceId(name, "drawable")
+        if (id == 0) return null
+        return runCatching { activity.getDrawable(id) }.getOrNull()
+    }
+
+    /**
      * Binds the host controller listener once, and only after the adapter actually has a live
      * controller; before that it would hand back a no-op handle that would never fire.
      */
@@ -657,46 +861,89 @@ internal class TabletChromeSession(
     }
 
     /**
-     * The artwork the host already loaded into its native mini player. The source view is cached
-     * and only re-resolved when it detaches, so a refresh never scans the hierarchy per frame.
+     * The artwork the host already loaded into its native mini player. The container
+     * (`mini_player_content` -> `video_surface`) and the image view that actually carries the
+     * drawable are cached and only re-resolved when the cached view detaches, so a refresh never
+     * scans the hierarchy per frame.
      */
     private fun nativeMiniArtwork(): Drawable? {
         // Prefer the base's cached root; only fall back to a lookup when the host replaced it.
-        val root = miniRoot?.takeIf { it.isAttachedToWindow } ?: find("mini_player") ?: return null
-        val source = miniArtworkSource?.takeIf { it.isAttachedToWindow }
-            ?: resolveMiniArtworkSource(root)?.also { miniArtworkSource = it }
+        val root = miniRoot?.takeIf { it.isAttachedToWindow }
+            ?: find("mini_player")?.takeIf { it.isAttachedToWindow }
             ?: return null
-        return artworkDrawable(source)
+        val container = miniArtworkContainer?.takeIf { it.isAttachedToWindow }
+            ?: resolveArtworkContainer(root)?.also {
+                miniArtworkContainer = it
+                miniArtworkImage = null
+            }
+            ?: return null
+        // A cached view that detached or temporarily lost its drawable is re-resolved (throttled
+        // by the caller), so a host that swaps its image view is picked up without a per-frame scan.
+        val image = miniArtworkImage?.takeIf { it.isAttachedToWindow && artworkDrawableOf(it) != null }
+            ?: resolveArtworkImage(container)?.also { miniArtworkImage = it }
+            ?: return null
+        return artworkDrawableOf(image)
     }
 
-    private fun resolveMiniArtworkSource(root: View): View? {
+    /**
+     * `mini_player_content` -> `video_surface` (`com.apple.android.music.player.NowPlayingContentView`).
+     * Falls back to the content container and then to the cached root so a build without
+     * `video_surface` still yields the container the host fills.
+     */
+    private fun resolveArtworkContainer(root: View): View? {
         val contentId = resourceId("mini_player_content", "id")
-        val content = if (contentId != 0) root.findViewById<View>(contentId) ?: root else root
+        val content = (if (contentId != 0) root.findViewById<View>(contentId) else null)
+            ?: find("mini_player_content")
+            ?: root
         val surfaceId = resourceId("video_surface", "id")
-        if (surfaceId != 0) return content.findViewById(surfaceId)
+        if (surfaceId != 0) content.findViewById<View>(surfaceId)?.let { return it }
         return content
     }
 
-    private fun artworkDrawable(source: View): Drawable? =
-        reflectedArtwork(source) ?: firstImageDrawable(source)
+    /**
+     * The view that carries the artwork itself: `getArtworkView()` first (resolved reflectively and
+     * cached per class), then the first descendant `ImageView`/`ImageButton` with a live drawable.
+     */
+    private fun resolveArtworkImage(container: View): View? {
+        reflectedArtworkView(container)?.let { if (artworkDrawableOf(it) != null) return it }
+        return firstArtworkChild(container)
+    }
 
     /** `NowPlayingContentView.getArtworkView()`, when the host build exposes one. */
-    private fun reflectedArtwork(source: View): Drawable? = runCatching {
-        val method = source.javaClass.methods.firstOrNull {
-            it.parameterCount == 0 && it.name == "getArtworkView"
-        }
-        when (val view = method?.invoke(source) as? View) {
-            null -> null
-            is ImageView -> view.drawable
-            else -> firstImageDrawable(view)
-        }
-    }.getOrNull()
+    private fun reflectedArtworkView(container: View): View? {
+        val method = miniArtworkMethod?.takeIf { it.declaringClass.isInstance(container) }
+            ?: findArtworkMethod(container.javaClass)?.also { miniArtworkMethod = it }
+            ?: return null
+        return runCatching { method.invoke(container) as? View }.getOrNull()
+    }
 
-    private fun firstImageDrawable(root: View): Drawable? {
-        if (root is ImageView) root.drawable?.let { return it }
+    /**
+     * Resolves `getArtworkView` publicly or privately, walking superclasses: the host's View
+     * subclass obfuscates most members but keeps this accessor on the verified build. Cached per
+     * session (see [miniArtworkMethod]), so this never runs on a layout pass.
+     */
+    private fun findArtworkMethod(type: Class<*>): Method? {
+        var current: Class<*>? = type
+        while (current != null) {
+            current.declaredMethods.firstOrNull { it.parameterCount == 0 && it.name == "getArtworkView" }
+                ?.let { method ->
+                    runCatching { method.isAccessible = true }
+                    return method
+                }
+            current = current.superclass
+        }
+        return null
+    }
+
+    private fun artworkDrawableOf(view: View): Drawable? =
+        if (view is ImageView) view.drawable else view.background
+
+    private fun firstArtworkChild(root: View): View? {
         if (root !is ViewGroup) return null
         for (index in 0 until root.childCount) {
-            firstImageDrawable(root.getChildAt(index))?.let { return it }
+            val child = root.getChildAt(index)
+            if (child is ImageView && child.drawable != null) return child
+            firstArtworkChild(child)?.let { return it }
         }
         return null
     }
@@ -729,7 +976,14 @@ internal class TabletChromeSession(
         miniStateDirty = true
     }
 
-    /** Host `Menu` -> [GlassTopTab]; only a changed menu key rebuilds the list. */
+    /** Tapping anywhere on the mini capsule (outside a control) expands the full player. */
+    private fun expandPlayer() {
+        runCatching { TabletChromeRuntime.commands?.expandPlayer(activity) }
+    }
+
+    // ---- Top capsule content -----------------------------------------------------------------
+
+    /** Host `Menu` -> [GlassTab]; only a changed menu key rebuilds the list. */
     private fun refreshTopMenu() {
         val navigation = navView ?: return
         val configuration = activity.resources.configuration
@@ -747,16 +1001,16 @@ internal class TabletChromeSession(
             topMenuKey = key
             val searchId = resourceId("search_fragment", "id")
             topTabs = items.map { item ->
-                GlassTopTab(
+                GlassTab(
                     id = item.itemId,
                     title = item.title?.toString().orEmpty(),
-                    // GlassTopNavigation clones and tints the icon itself; never pre-tint the host drawable.
+                    // The component clones and tints the icon itself; never pre-tint the host drawable.
                     icon = item.icon,
                     enabled = item.isEnabled,
                     display = if (searchId != 0 && item.itemId == searchId) {
-                        GlassTopTabDisplay.ICON
+                        GlassTabDisplay.ICON
                     } else {
-                        GlassTopTabDisplay.TEXT
+                        GlassTabDisplay.TEXT
                     },
                 )
             }
@@ -768,7 +1022,7 @@ internal class TabletChromeSession(
 
     /**
      * Drives the host and reports what it actually accepted, so a rejected tap leaves the
-     * highlight where it was ([GlassTopNavigation] only moves it when the return value matches).
+     * highlight where it was ([GlassNavigation] only moves it when the return value matches).
      */
     private fun selectTopTab(id: Int): Int {
         if (topTabs.none { it.id == id && it.enabled }) return topSelectedId
@@ -784,55 +1038,41 @@ internal class TabletChromeSession(
         if (topBarHeightPx <= 0) return
         val topInset = statusBarInset()
         topBarMarginPx = TabletChromeLayoutPolicy.capsuleTopMarginPx(topBarHeightPx, topInset, density)
-        topContentPaddingPx = TabletChromeLayoutPolicy.contentTopPaddingPx(topBarHeightPx, topInset, density)
     }
 
     private fun statusBarInset(): Int =
         activity.window.decorView.rootWindowInsets?.getInsets(WindowInsets.Type.statusBars())?.top ?: 0
 
-    /** Compare-then-write for every per-frame value: params, alpha, visibility, capture, padding. */
+    /** Compare-then-write for every per-frame value: width, height, seat, alpha and visibility. */
     private fun updateTopChrome() {
         val glass = topGlass ?: return
         if (topBarHeightPx <= 0) return
         val params = glass.layoutParams as? FrameLayout.LayoutParams
-        if (params != null && (params.height != topBarHeightPx || params.topMargin != topBarMarginPx)) {
-            params.height = topBarHeightPx
-            params.topMargin = topBarMarginPx
-            glass.layoutParams = params
+        if (params != null) {
+            val parentWidth = (glass.parent as? View)?.width?.takeIf { it > 0 }
+                ?: activity.resources.displayMetrics.widthPixels
+            val width = TabletChromeLayoutPolicy.topBarWidthPx(parentWidth, topTabs.size, density)
+            if (params.width != width ||
+                params.height != topBarHeightPx ||
+                params.topMargin != topBarMarginPx
+            ) {
+                params.width = width
+                params.height = topBarHeightPx
+                params.topMargin = topBarMarginPx
+                params.leftMargin = 0
+                params.rightMargin = 0
+                params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                glass.layoutParams = params
+            }
         }
-        // Capture is armed by activation/menu readiness, not by the backdrop being ready: the
-        // backdrop can only become ready once capture is enabled.
-        val armed = activated && glassMenuReady
-        if (topBackdropCapture != armed) {
-            topBackdropCapture = armed
-            topBackdrop?.setCaptureEnabled(armed)
-        }
-        val ready = armed && topBackdrop?.ready == true
-        val alpha = if (ready) 1f else 0f
+        // The expanded full player owns the screen: the floating top bar fades out of the way and
+        // is restored the moment the sheet collapses again.
+        val hide = TabletChromeLayoutPolicy.expandHideFactor(topSlide)
+        val ready = activated && glassMenuReady && hide < 1f
+        val alpha = if (ready) 1f - hide else 0f
         if (glass.alpha != alpha) glass.alpha = alpha
         val visibility = if (ready) View.VISIBLE else View.GONE
         if (glass.visibility != visibility) glass.visibility = visibility
-        applyTopContentPadding()
-    }
-
-    private fun applyTopContentPadding() {
-        val root = contentRoot ?: return
-        if (topPaddingOriginal == null) topPaddingOriginal = root.paddingTop
-        if (topContentPaddingPx <= 0) return
-        // The policy owns the "where" decision; it is the page viewport, not a scrolling child.
-        if (TabletChromeLayoutPolicy.topPaddingTarget() != TabletChromeLayoutPolicy.TopPaddingTarget.CONTENT_ROOT) return
-        if (root.paddingTop == topContentPaddingPx) return
-        root.setPadding(root.paddingLeft, topContentPaddingPx, root.paddingRight, root.paddingBottom)
-    }
-
-    private fun restoreTopContentPadding() {
-        val root = contentRoot ?: return
-        val original = topPaddingOriginal ?: return
-        if (root.paddingTop != original) {
-            root.setPadding(root.paddingLeft, original, root.paddingRight, root.paddingBottom)
-        }
-        topPaddingOriginal = null
-        contentRoot = null
     }
 
     private fun releaseTopChrome() {
@@ -840,7 +1080,6 @@ internal class TabletChromeSession(
         topObserver = null
         topBackdrop?.close()
         topBackdrop = null
-        topBackdropCapture = false
         topGlass?.let { glass -> (glass.parent as? ViewGroup)?.removeView(glass) }
         topGlass = null
         navView = null

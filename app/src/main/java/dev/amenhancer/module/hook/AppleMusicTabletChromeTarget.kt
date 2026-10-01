@@ -354,12 +354,17 @@ internal class AppleMusicTabletChromeTarget(
     }
 
     override fun openQueue(activity: Activity) {
+        // The pane enum carries the intent: the host's own queue button additionally puts a boolean
+        // under `utils.E.o` so the pane opens on its "up next" tab, but an unresolved key must not
+        // stop the pane from opening at all — the lyrics pane proves the selector works with no
+        // extras. Fall back to an empty bundle instead of silently doing nothing.
         val key = queueArgKey()
         if (key == null) {
-            debug("tablet chrome openQueue skipped: queue bundle arg key unavailable")
-            return
+            debug("tablet chrome openQueue: queue bundle arg key unavailable, opening the pane bare")
         }
-        val extras = runCatching { Bundle().apply { putBoolean(key, true) } }.getOrNull() ?: return
+        val extras = key?.let { resolved ->
+            runCatching { Bundle().apply { putBoolean(resolved, true) } }.getOrNull()
+        }
         openPane(activity, QUEUE_PANE, extras, "openQueue")
     }
 
@@ -440,10 +445,19 @@ internal class AppleMusicTabletChromeTarget(
         }.onFailure { debug("tablet chrome $label failed: $it") }
     }
 
+    /**
+     * The Bundle key the host's own queue button uses.
+     *
+     * `utils.E` composes its keys in `<clinit>` as `E.class.getName() + ".KEY_..."`; `o` is
+     * `… + ".KEY_IS_USER_PRESS_QUEUE_BUTTON"` (verified in the 6.5.3 bytecode, next to `n` =
+     * `…KEY_IS_USER_PRESS_LYRICS_BUTTON`). The reflective read is preferred because it survives a
+     * renamed class, but it can come back empty if the holder has not been initialised yet, so the
+     * bytecode-derived literal is used as the fallback rather than dropping the extras entirely.
+     */
     private fun queueArgKey(): String? = runCatching {
-        val field = seams?.queueArgKey ?: return@runCatching null
-        (field.get(null) as? String)?.takeIf { it.isNotBlank() }
-    }.getOrNull()
+        val field = seams?.queueArgKey ?: return@runCatching QUEUE_ARG_KEY_FALLBACK
+        (field.get(null) as? String)?.takeIf { it.isNotBlank() } ?: QUEUE_ARG_KEY_FALLBACK
+    }.getOrElse { QUEUE_ARG_KEY_FALLBACK }
 
     private fun enumConstant(enumType: Class<*>, name: String): Any? = runCatching {
         enumType.enumConstants.orEmpty().firstOrNull { (it as? Enum<*>)?.name == name }
@@ -565,6 +579,13 @@ private const val EXPAND_PLAYER = "EXPAND_PLAYER"
 /** Verified `v0$n` pane enum constants (6.5.3 / 1599). */
 private const val LYRICS_PANE = "LYRICS"
 private const val QUEUE_PANE = "QUEUE"
+
+/**
+ * `com.apple.android.music.utils.E.o` as the host builds it: `E.class.getName() +
+ * ".KEY_IS_USER_PRESS_QUEUE_BUTTON"`. Only used when the reflective read yields nothing.
+ */
+private const val QUEUE_ARG_KEY_FALLBACK =
+    "com.apple.android.music.utils.E.KEY_IS_USER_PRESS_QUEUE_BUTTON"
 
 private const val DEBUG_PREFIX = "[AMENH-3]"
 

@@ -380,6 +380,10 @@ internal class TabletChromeSession(
                         // The iPad reference turns the selected label and the search glyph the host
                         // accent; the phone/dual-pane bar keeps the library thumb alone.
                         tintSelectedWithAccent = true,
+                        // The library records a second, faded copy of the cells into the layer its
+                        // thumb refracts, which smears a ghost of the label inside the mask. The
+                        // top bar opts out of that recording; the phone bar keeps it.
+                        cleanSelectionMask = true,
                     )
                 }
             }

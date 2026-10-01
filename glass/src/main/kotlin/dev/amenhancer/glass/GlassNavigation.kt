@@ -60,7 +60,8 @@ private const val TAB_LABEL_SIZE_SP = 11f
  * The material, the sliding translucent selection mask, the press/"灵动" squeeze animation and the
  * free thumb drag all come from the library's [LiquidBottomTabs]; this composable only decides what
  * each cell paints. Cells normally keep [foreground]; the iPad top bar opts into
- * [tintSelectedWithAccent] so its selected label and search glyph take the host accent.
+ * [tintSelectedWithAccent] so its selected label and search glyph take the host accent, and into
+ * [cleanSelectionMask] so the mask never refracts a ghost copy of the selected label.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.
@@ -84,6 +85,19 @@ fun GlassNavigation(
      * reference turns the selected label and the search glyph the host accent colour.
      */
     tintSelectedWithAccent: Boolean = false,
+    /**
+     * Keeps the selection mask translucent without turning the selected label into a ghost.
+     *
+     * The library's capsule draws its cells twice: once visibly and once — invisible but recorded —
+     * into the layer the sliding thumb samples. The thumb's lens then displaces, colour-fringes and
+     * press-scales that recorded copy, so a pressed selection mask shows the selected label/icon
+     * duplicated and smeared inside itself. This switch drops the recorded copy, so the mask
+     * refracts the panel material alone, and draws the one visible copy on top of the mask.
+     *
+     * The mask itself, the press/"灵动" squeeze and the free thumb drag are unchanged. Off by
+     * default, so the shipped phone/dual-pane bar keeps the reference layer and animation exactly.
+     */
+    cleanSelectionMask: Boolean = false,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -108,6 +122,7 @@ fun GlassNavigation(
             accentOverride = accent,
             panelHeight = panelHeight,
             panelBlur = panelBlur,
+            cleanSelectionMask = cleanSelectionMask,
         ) {
             tabs.forEach { tab ->
                 // Keep each cell's remembered tinted drawable keyed to the tab, so a menu swap can

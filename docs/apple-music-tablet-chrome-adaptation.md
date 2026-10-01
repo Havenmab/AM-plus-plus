@@ -113,7 +113,8 @@
 | JVM 全量测试 | **896 tests / 0 failures / 0 errors**（基线 871 + 本能力 25：`TopBarGeometryTest` 7、`TabletChromeStyleTest` 6、`AppleMusicTabletChromeTargetTest` 3、`TabletChromeMiniPlayerPolicyTest` 5、`TabletChromeStructuralRegressionTest` 4） |
 | `verify-glass-reference.py` | PASS：33 个 `backdrop/src` 文件哈希一致，1 个已声明补丁命中（本次未改 `backdrop`） |
 | `git diff --check` | 无空白错误 |
-| lint（`:app:lintDebug :app:lintVitalRelease :glass:lintDebug`） | 首次离线运行在 `:app:lintAnalyzeDebug` 因**缺少缓存的 `io.github.libxposed:interface:102.0.0`**（仅 `debugLintChecksClasspath` 需要）而解析失败——环境问题，非代码问题；已确认网络可用并改为在线重跑 |
+| lint（`:app:lintDebug :app:lintVitalRelease :glass:lintDebug`） | **PASS（GitHub Actions PR 运行）**：`./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :app:assembleDebug --no-daemon` 全部成功，并产出 `AM-plus-plus-debug` APK。本机离线首次运行曾因缺少缓存的 `io.github.libxposed:interface:102.0.0`（仅 `debugLintChecksClasspath` 需要）解析失败——环境问题，非代码问题 |
+| `push` 触发的 release 路径 | 失败于 `Verify release signature`：fork 上未配置 `AMPP_RELEASE_*` 签名 secrets，release APK 落回 debug 证书时工作流按设计拒绝。与本次代码无关；验证以 PR 运行为准 |
 | 真机验收 | **未做**（无设备） |
 
 ## 6.1 未在设备上验证的已知风险

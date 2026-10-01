@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -101,6 +100,13 @@ private val ControlSize = 28.dp
  * The capsule fills the width of its [modifier] slot (the centre label column needs a bounded
  * width), so the host sizes it — see [TopBarGeometry.miniPlayerWidthPx] — and centres it.
  * Tapping the body (artwork/title/artist) calls [onExpand]; the controls never do.
+ *
+ * The surface fills its parent, so a host that animates the capsule's View height (the tablet
+ * session grows the collapsed band into the full player) gets content that follows the View.
+ * [panelHeight] is the **collapsed** reference only: the artwork size and the collapsed corner
+ * radius are measured against it, exactly as [NativeLiquidButton] measures its `miniHeightDp`.
+ * [expansion] reports how far the host has expanded the surface (`0` = collapsed capsule, `1` =
+ * full player) so the material's shape can interpolate like `NLB`'s does.
  */
 @Composable
 fun GlassMiniPlayer(
@@ -115,6 +121,7 @@ fun GlassMiniPlayer(
     title: String,
     artist: String,
     panelHeight: Dp,
+    expansion: Float = 0f,
     panelBlur: Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -134,6 +141,17 @@ fun GlassMiniPlayer(
     }
     val placeholderColor = remember(foreground) { foreground.copy(alpha = PLACEHOLDER_ALPHA) }
     val expand = rememberUpdatedState(onExpand)
+    // The material shape tracks the host's expansion the same way NativeLiquidButton's does: a
+    // capsule when collapsed, a large rounded rect once the surface has grown into the player.
+    // `expansion == 0` keeps the exact `Capsule()` the collapsed capsule shipped with.
+    val clampedExpansion = expansion.coerceIn(0f, 1f)
+    val shape: Shape = remember(clampedExpansion, panelHeight) {
+        if (clampedExpansion == 0f) {
+            Capsule()
+        } else {
+            RoundedCornerShape((panelHeight.value / 2f + (24f - panelHeight.value / 2f) * clampedExpansion).dp)
+        }
+    }
 
     val animationScope = rememberCoroutineScope()
     val interactiveHighlight = remember(animationScope) { InteractiveHighlight(animationScope) }
@@ -142,7 +160,7 @@ fun GlassMiniPlayer(
         modifier
             .drawBackdrop(
                 backdrop = backdrop,
-                shape = { Capsule() },
+                shape = { shape },
                 effects = {
                     vibrancy()
                     blur(panelBlur.toPx())
@@ -154,8 +172,10 @@ fun GlassMiniPlayer(
             )
             .then(interactiveHighlight.modifier)
             .then(interactiveHighlight.gestureModifier)
-            .height(panelHeight)
-            .fillMaxWidth()
+            // Fill the host's animated slot: the session grows this View from the collapsed band
+            // into the full player, and the content must follow that height rather than stay at
+            // the collapsed `panelHeight`.
+            .fillMaxSize()
             .padding(horizontal = PANEL_PADDING_DP.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

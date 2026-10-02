@@ -62,12 +62,14 @@ private const val TAB_LABEL_SIZE_SP = 11f
  * The material, the sliding translucent selection mask, the press/"灵动" squeeze animation and the
  * free thumb drag all come from the library's [LiquidBottomTabs]; this composable only decides what
  * each cell paints. Cells keep [foreground] unless the caller opts into [tintSelectedWithAccent]
- * (the shipped sessions do not). The iPad top bar keeps the library's own cell-layer recording — the
- * reference's refraction source, so the droplet refracts the labels themselves — and opts into
- * [tintSelectedWithAccent] for the accent-selected label, a bigger/heavier
- * [tabLabelSize]/[tabLabelWeight], a thin [panelHeight] with a 56dp [effectReferenceHeight] so
- * the library's absolute-dp effects keep their proportions, and `pressScalesCells = false` so a
- * press does not grow every cell; every one of those defaults to the shipped phone/dual-pane value.
+ * (the shipped sessions do not, and the iPad top bar no longer does either: the library's own
+ * recorded-row accent tint is what colours the cell the droplet covers). The iPad top bar keeps the
+ * library's own cell-layer recording — the reference's refraction source, so the droplet refracts
+ * the labels themselves — and opts into a bigger/heavier [tabLabelSize]/[tabLabelWeight], a thin
+ * [panelHeight] with a 56dp [effectReferenceHeight] so the library's absolute-dp effects keep their
+ * proportions, `pressScalesCells = false` so a press does not grow every cell, and
+ * [refractionScalesWithThumb] so the refracted label is magnified in place instead of landing beside
+ * the crisp one; every one of those defaults to the shipped phone/dual-pane value.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.
@@ -143,6 +145,19 @@ fun GlassNavigation(
      * phone/dual-pane bar keeps the reference's press animation byte-identically.
      */
     pressScalesCells: Boolean = true,
+    /**
+     * Magnifies the backdrop the selection thumb refracts **with** the thumb instead of against it.
+     *
+     * The library's reference path counter-transforms the refracted backdrop against the thumb's
+     * press bloom; the two do not cancel exactly (the counter-scale is about the layer's origin, the
+     * bloom about the thumb's centre), so on a compact bar whose cell is barely wider than its label
+     * the recorded copy of the label lands beside the crisp one as a second, ghosted label. With
+     * this on the bloom is applied to the thumb alone, so the page and the recorded cells are
+     * magnified together — the refracted copy is the label, magnified in place.
+     *
+     * Off by default, so the shipped phone/dual-pane bar keeps the reference path byte-identically.
+     */
+    refractionScalesWithThumb: Boolean = false,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -170,6 +185,7 @@ fun GlassNavigation(
             effectReferenceHeight = effectReferenceHeight,
             cleanSelectionMask = cleanSelectionMask,
             pressScalesCells = pressScalesCells,
+            refractionScalesWithThumb = refractionScalesWithThumb,
         ) {
             tabs.forEachIndexed { cellIndex, tab ->
                 // Keep each cell's remembered tinted drawable keyed to the tab, so a menu swap can

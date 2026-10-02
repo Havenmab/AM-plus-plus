@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
@@ -62,6 +63,7 @@ import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.reflect.Method
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -118,6 +120,13 @@ internal class TabletChromeSession(
 
         /** Upper end of the inherited material band: `blend(0f, 0.35f)` (same as `glassExpansion`). */
         const val MATERIAL_PROGRESS_END = 0.35f
+
+        /**
+         * Longest a queue-pane request waits for the sheet's own slide callback to report the full
+         * player. The host's open animation is a few hundred ms; past this the selection is issued
+         * anyway, because a host that never reports progress must not swallow the command.
+         */
+        const val QUEUE_PANE_DEADLINE_MS = 700L
     }
 
     /**
@@ -211,9 +220,20 @@ internal class TabletChromeSession(
     // runs per slide frame, so it must neither allocate nor scan the hierarchy.
     private var artworkSeatView: View? = null
     private var artworkAnchorView: View? = null
+    private var artworkStartOffsetX: Float? = null
     private var artworkStartOffsetY: Float? = null
     private val artworkSeatLocation = IntArray(2)
     private val artworkLocation = IntArray(2)
+    private val miniCoverGlassScreen = IntArray(2)
+    private val miniCoverGlassWindow = IntArray(2)
+
+    /** Screen-space origin of the cover the collapsed capsule actually paints. */
+    private val miniCoverLocation = IntArray(2)
+    private var miniCoverReady = false
+
+    /** The fly-in source frozen at the collapsed first frame (see [alignNativeArtwork]). */
+    private val artworkSourceLocation = IntArray(2)
+    private var artworkSourceReady = false
 
     /**
      * The author glass whose Compose content this session re-skins. Held so the content is
@@ -271,6 +291,20 @@ internal class TabletChromeSession(
     // Touch redirection: the DOWN chosen by a gesture is latched for its whole duration.
     private var redirectedMiniTarget: GlassHostView? = null
     private var redirectedMiniDownTime: Long? = null
+
+    // Drag-up hand-off: a gesture that starts on the collapsed capsule and turns into an upward
+    // drag expands the full player instead of dying on the capsule. See [maybeHandOffMiniDrag].
+    private var miniDragDownTime = Long.MIN_VALUE
+    private var miniDragDownX = 0f
+    private var miniDragDownY = 0f
+    private var miniDragHandedOff = false
+
+    /** Host touch slop, read once: the touch seam runs per event and must not query it again. */
+    private val miniDragSlop = ViewConfiguration.get(activity).scaledTouchSlop.toFloat()
+
+    /** A queue-pane selection owed once the sheet has actually opened into the full player. */
+    private var queuePanePending = false
+    private var queuePaneDeadline = 0L
 
     /**
      * Both tablet orientations use the same chrome: the host bool that selects the
@@ -447,6 +481,8 @@ internal class TabletChromeSession(
             updateBackdropCapture()
             updateTopChrome()
             updateMiniChrome()
+            // A one-tap queue request waits here for the sheet to reach the full player.
+            flushQueuePaneRequest()
         } catch (error: Throwable) {
             scheduleTopFailure(error)
         }
@@ -541,13 +577,13 @@ internal class TabletChromeSession(
                         // opt-in, so the phone/dual-pane bar stays byte-identical.
                         tabLabelSize = TabletChromeLayoutPolicy.TOP_TAB_LABEL_SIZE_SP.sp,
                         tabLabelWeight = FontWeight.SemiBold,
-                        // The reference turns the selected label — and the search glyph — the host
-                        // accent colour, and the library's own `accentOverride` does not do that: it
-                        // only tints the recorded copy the droplet samples. This is the switch that
-                        // actually colours the selected cell, and the colour it uses is the host
-                        // accent passed above. Off by default, so the phone/dual-pane bar keeps its
-                        // foreground-only cells.
-                        tintSelectedWithAccent = true,
+                        // The accent is applied by the library itself, and only where the droplet
+                        // covers it: `accentOverride` tints the *recorded* row — the copy the
+                        // droplet's lens samples — and nothing else. So the cell the droplet sits on
+                        // reads accent, and no cell is accent on its own while the droplet is
+                        // elsewhere. The visible-cell tint option is deliberately NOT taken: it
+                        // painted the selected label accent even when the droplet had moved away,
+                        // which is the reported "主页 is red on its own".
                         // A press on the bar must not grow the labels or the search glyph. The
                         // library's reference squeeze scales every cell through
                         // `LocalLiquidBottomTabScale`; with this off the cells hold still under the
@@ -557,9 +593,11 @@ internal class TabletChromeSession(
                         // Author parity on purpose, including the cell recording: the library's
                         // default records the cell row into the layer the thumb's lens samples, and
                         // that recorded copy is exactly what the reference's droplet refracts. The
-                        // thumb is one cell wide and `panelHeight - 8` tall, so the copy is magnified
-                        // in place under the crisp label (see LiquidBottomTabs), and the phone/
-                        // dual-pane bar keeps precisely this path.
+                        // thin 44dp capsule makes the cell barely wider than its 13sp label, so the
+                        // reference's counter-transform of that recorded copy left a residue of a
+                        // third of a glyph and the copy landed beside the crisp label as a second,
+                        // ghosted one; magnifying the refraction with the thumb keeps it in place.
+                        refractionScalesWithThumb = true,
                     )
                 }
             }
@@ -740,6 +778,26 @@ internal class TabletChromeSession(
     }
 
     /**
+     * Screen origin of the artwork the collapsed capsule actually paints, for
+     * [alignNativeArtwork]. Apple's slide callback morphs the full player's cover from the
+     * **native** mini thumbnail, which the iPad layout parks at the capsule's leading edge while
+     * this session's capsule paints its cover after the transport group — so the seam needs the
+     * cover the user sees, not the native seat. Written on Compose layout into cached scratch, so
+     * the per-frame seam only reads two ints; no allocation and no hierarchy scan.
+     */
+    private fun recordMiniCoverFrame(coordinates: LayoutCoordinates) {
+        val glass = miniGlass ?: return
+        glass.getLocationOnScreen(miniCoverGlassScreen)
+        glass.getLocationInWindow(miniCoverGlassWindow)
+        val origin = coordinates.positionInWindow()
+        miniCoverLocation[0] =
+            (origin.x + (miniCoverGlassScreen[0] - miniCoverGlassWindow[0])).roundToInt()
+        miniCoverLocation[1] =
+            (origin.y + (miniCoverGlassScreen[1] - miniCoverGlassWindow[1])).roundToInt()
+        miniCoverReady = coordinates.size.width > 0 && coordinates.size.height > 0
+    }
+
+    /**
      * Delivers a collapsed mini gesture to the module's own Compose capsule when the host routes
      * the DOWN to the native player subtree instead of the capsule (the sheet container and
      * `player_root` are full-size native touch owners). Mirroring the dual-pane session's proven
@@ -755,7 +813,14 @@ internal class TabletChromeSession(
                 activated && isCollapsed && it.isShown && miniCapsuleHit(event)
             }
             redirectedMiniDownTime = event.downTime.takeIf { redirectedMiniTarget != null }
+            // Arm the drag-up hand-off for every gesture on the collapsed band, whichever way the
+            // host routed its DOWN (its own mini subtree, or this capsule directly).
+            miniDragDownTime = event.downTime
+            miniDragDownX = event.rawX
+            miniDragDownY = event.rawY
+            miniDragHandedOff = false
         }
+        maybeHandOffMiniDrag(event)
         val target = redirectedMiniTarget?.takeIf { redirectedMiniDownTime == event.downTime } ?: return null
         val location = IntArray(2).also(target::getLocationOnScreen)
         val forwarded = MotionEvent.obtain(event)
@@ -769,6 +834,33 @@ internal class TabletChromeSession(
                 redirectedMiniDownTime = null
             }
         }
+    }
+
+    /**
+     * The author's mini player expands on both a tap and an upward drag, and the capsule has to do
+     * both without losing its buttons: a tap (and a tap on a control) still belongs to the capsule,
+     * but once an upward gesture travels past host touch slop the host takes it and the full player
+     * opens.
+     *
+     * The capsule's DOWN is deliberately kept away from the host behavior — that bypass is what
+     * lets the module's Compose view see the gesture at all (see [shouldBypassPlayerIntercept]), and
+     * the bypass runs *before* the behavior's body, so its drag tracker never sees a DOWN and cannot
+     * pick the drag up on a later MOVE. The hand-off therefore drives the host's own expansion entry
+     * point; from there it is the host's sheet animation that opens the player.
+     *
+     * Compare-then-act per event, and one hand-off per gesture.
+     */
+    private fun maybeHandOffMiniDrag(event: MotionEvent) {
+        if (miniDragHandedOff || event.downTime != miniDragDownTime) return
+        if (event.actionMasked != MotionEvent.ACTION_MOVE) return
+        if (!activated || !isCollapsed) return
+        val dy = event.rawY - miniDragDownY
+        val dx = event.rawX - miniDragDownX
+        // Upward (raw Y shrinks) and more vertical than horizontal: a deliberate expand swipe, not
+        // a sloppy press on a control.
+        if (-dy <= miniDragSlop || -dy <= abs(dx)) return
+        miniDragHandedOff = true
+        expandPlayer()
     }
 
     // ---- Bottom mini-player capsule ----------------------------------------------------------
@@ -849,9 +941,14 @@ internal class TabletChromeSession(
         miniArtworkMethod = null
         artworkSeatView = null
         artworkAnchorView = null
+        artworkStartOffsetX = null
         artworkStartOffsetY = null
+        miniCoverReady = false
+        artworkSourceReady = false
         redirectedMiniTarget = null
         redirectedMiniDownTime = null
+        queuePanePending = false
+        queuePaneDeadline = 0L
         if (miniExpansion != 0f) miniExpansion = 0f
     }
 
@@ -878,29 +975,19 @@ internal class TabletChromeSession(
      * iPad form of the artwork-origin correction seam: this session's centred-seat counterpart of
      * the dual-pane row's correction.
      *
-     * Apple's slide callback positions the full-player cover from the **native mini thumbnail**
-     * but computes that rect with `offsetDescendantRectToMyCoords`, which omits the tablet
-     * `artwork_container`'s visual translation (the dual-pane adaptation centres the cover by
-     * translating that container). The inherited `PhoneGlassSession` default is a no-op because
-     * the stacked phone host carries no such translation; both tablet forms restore the origin.
-     *
-     * Quantity mapping for this session's seat:
-     *  - **seat** = `miniRoot`'s `video_surface_container`. That is the native hero thumbnail from
-     *    which Apple's callback derives the cover transform, and it is the base's own collapsed
-     *    band: `prepareMini`/`updateGeometry` place `mini_player_content` in this session's
-     *    centred, half-width `capsuleMarginsPx` slot, while `updateTransition` seats the re-skinned
-     *    `miniGlass` at the same `miniRoot` offset inside `player_sheet_container`. Its screen
-     *    origin is therefore the origin the cover must fly from, and its centred slot already
-     *    matches the callback's horizontal source, so the correction stays a Y-only shift on the
-     *    axis the dropped container translation lives on — no dual-pane row-slot value is reused.
-     *  - **container** = the artwork's `artwork_container` parent; its `translationY` is that
-     *    omitted visual translation, used only when the collapsed frame could not measure the seat.
-     *  - **slide** = the `0..1` sheet progress that fades the correction: full at the collapsed
-     *    seat (`1 - slide == 1`), gone at the full view (`1 - slide == 0`).
+     * Apple's slide callback morphs the full-player cover from a **native mini thumbnail** rect it
+     * computes itself, and on the iPad layout that thumbnail is not the cover the user sees: the
+     * native `video_surface_container` sits at the leading edge of the half-width capsule, while
+     * [GlassMiniPlayer] paints its cover after the transport group. The callback also computes that
+     * rect with `offsetDescendantRectToMyCoords`, which omits the tablet `artwork_container`'s
+     * visual translation. The cover therefore has to be moved, per frame, from the origin Apple
+     * starts it at onto the origin the capsule actually paints — [miniCoverLocation], recorded from
+     * the capsule's own Compose layout — fading out to nothing at the full view so Apple's endpoint
+     * is untouched. Both axes are corrected because the two origins differ on both.
      *
      * The write is additive, exactly like the dual-pane form's: it must stack on top of whatever
      * Apple just wrote for this frame, so it cannot be a plain overwrite. Cached view/scratch
-     * fields keep it allocation- and scan-free, and the shift is skipped when it computes to zero.
+     * fields keep it allocation- and scan-free, and a shift that computes to zero is skipped.
      */
     override fun alignNativeArtwork(artwork: View, slide: Float) {
         if (!activated || !slide.isFinite()) return
@@ -909,28 +996,46 @@ internal class TabletChromeSession(
         if (artworkAnchorView !== artwork || !artwork.isAttachedToWindow) {
             if (artwork !== find("fullplayerSongImage")) return
             artworkAnchorView = artwork
+            artworkStartOffsetX = null
             artworkStartOffsetY = null
         }
         val container = artwork.parent as? View ?: return
         if (container.id != resourceId("artwork_container", "id")) return
         val progress = slide.coerceIn(0f, 1f)
-        val seat = artworkSeat()
         // The collapsed first frame is the only frame where the cover is still folded onto the
-        // capsule; capture the seat delta there and reuse it for the whole slide.
-        if (progress <= 0.001f && artwork.scaleY < 0.2f && seat != null) {
-            seat.getLocationOnScreen(artworkSeatLocation)
+        // capsule; capture the delta there and reuse it for the whole slide. Ours is preferred;
+        // the native thumbnail is only a fallback for a frame Compose has not placed our cover on.
+        // The origin is copied out at that frame because the capsule's own rect keeps moving (and
+        // growing) with the morph — only the collapsed seat may be used as the fly-in source.
+        if (progress <= 0.001f && artwork.scaleY < 0.2f) {
+            val seat = artworkSeat()
+            if (seat != null) seat.getLocationOnScreen(artworkSeatLocation)
             artwork.getLocationOnScreen(artworkLocation)
-            artworkStartOffsetY = (artworkSeatLocation[1] - artworkLocation[1]).toFloat()
+            val source = when {
+                miniCoverReady -> miniCoverLocation
+                seat != null -> artworkSeatLocation
+                else -> null
+            }
+            artworkSourceReady = source != null
+            if (source != null) {
+                artworkSourceLocation[0] = source[0]
+                artworkSourceLocation[1] = source[1]
+                artworkStartOffsetX = (source[0] - artworkLocation[0]).toFloat()
+                artworkStartOffsetY = (source[1] - artworkLocation[1]).toFloat()
+            } else {
+                artworkStartOffsetX = null
+                artworkStartOffsetY = null
+            }
         }
-        val sourceCorrection = artworkStartOffsetY ?: -container.translationY
-        val shift = sourceCorrection * (1f - progress)
-        if (shift != 0f) artwork.translationY += shift
-        if (progress > 0f && seat != null) {
-            seat.getLocationOnScreen(artworkSeatLocation)
+        val remaining = 1f - progress
+        artworkStartOffsetX?.let { if (it != 0f) artwork.translationX += it * remaining }
+        val sourceCorrectionY = artworkStartOffsetY ?: -container.translationY
+        if (sourceCorrectionY != 0f) artwork.translationY += sourceCorrectionY * remaining
+        if (progress > 0f && artworkSourceReady) {
             artwork.getLocationOnScreen(artworkLocation)
             // Apple's full cover can run above the capsule while the sheet is still opening; push
-            // it back down to the seat. Its native scale and horizontal motion remain untouched.
-            val clamp = (artworkSeatLocation[1] - artworkLocation[1]).toFloat()
+            // it back down to the collapsed seat. Its native scale remains untouched.
+            val clamp = (artworkSourceLocation[1] - artworkLocation[1]).toFloat()
             if (clamp > 0f) artwork.translationY += clamp
         }
     }
@@ -998,7 +1103,7 @@ internal class TabletChromeSession(
         val artwork = remember(source) {
             runCatching { source.constantState?.newDrawable() }.getOrNull() ?: source
         }
-        Canvas(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize().onGloballyPositioned(::recordMiniCoverFrame)) {
             val canvas = drawContext.canvas.nativeCanvas
             val save = canvas.save()
             try {
@@ -1207,7 +1312,9 @@ internal class TabletChromeSession(
                     GlassMiniPlayerCommand.REPEAT -> commands.cycleRepeatMode()
                     // The lyrics button expands the full player, per the product decision.
                     GlassMiniPlayerCommand.LYRICS -> commands.expandPlayer(activity)
-                    GlassMiniPlayerCommand.QUEUE -> commands.openQueue(activity)
+                    // The queue pane only exists inside the full player (the host's own queue
+                    // button lives there), so this is expand-then-select, not a bare pane switch.
+                    GlassMiniPlayerCommand.QUEUE -> requestQueuePane()
                 }
             }
         }
@@ -1217,6 +1324,32 @@ internal class TabletChromeSession(
     /** Tapping anywhere on the mini capsule (outside a control) expands the full player. */
     private fun expandPlayer() {
         runCatching { TabletChromeRuntime.commands?.expandPlayer(activity) }
+    }
+
+    /**
+     * One-tap queue: the queue pane is only reachable inside the full player, so the capsule's
+     * queue button expands first and selects the pane once the host has actually opened the sheet.
+     *
+     * The pane selection cannot go in the same call: the player fragment is not resumed yet while
+     * the sheet is still animating, so a selection issued immediately can be dropped or overwritten
+     * by the opening transition. The request is therefore parked and flushed from the pre-draw path
+     * ([flushQueuePaneRequest]) as soon as the slide reports the full player, with a bounded deadline
+     * so a host that never reports one still gets the command. Exception-isolated end to end: the
+     * command surface guards every call, and a failure here must never tear the session down.
+     */
+    private fun requestQueuePane() {
+        queuePanePending = true
+        queuePaneDeadline = SystemClock.uptimeMillis() + QUEUE_PANE_DEADLINE_MS
+        expandPlayer()
+    }
+
+    /** Fires a parked queue request once the sheet is open (or its deadline has passed). */
+    private fun flushQueuePaneRequest() {
+        if (!queuePanePending) return
+        val expanded = topSlide >= EXPANDED_SLIDE || (topSlide <= 0f && !isCollapsed)
+        if (!expanded && SystemClock.uptimeMillis() < queuePaneDeadline) return
+        queuePanePending = false
+        runCatching { TabletChromeRuntime.commands?.openQueue(activity) }
     }
 
     // ---- Top capsule content -----------------------------------------------------------------

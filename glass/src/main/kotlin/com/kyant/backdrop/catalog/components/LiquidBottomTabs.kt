@@ -10,7 +10,9 @@
  * and an opt-in `effectReferenceHeight` that scales the reference's absolute-dp lens/squeeze
  * constants from the panel height so a thinner capsule keeps the same proportions,
  * and an opt-in `pressScalesCells = false` that holds the cells still while pressed and replaces
- * that all-cell squeeze with a brief pulse on the one cell the thumb settles on.
+ * that all-cell squeeze with a brief pulse on the one cell the thumb settles on,
+ * and an opt-in `refractionScalesWithThumb` that lets the thumb's press bloom magnify the backdrop
+ * it refracts in place instead of counter-transforming it against the thumb.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -46,6 +48,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
@@ -93,6 +96,23 @@ private const val SETTLE_PULSE_SCALE = 1.12f
 
 /** AM++: milliseconds the settled cell takes to ease back to 1x after its pulse peak. */
 private const val SETTLE_PULSE_MS = 180
+
+/**
+ * AM++: the thumb's own press bloom — the reference's spring scale plus its velocity shear.
+ *
+ * It lives in one place because it can be applied two different ways (see
+ * [LiquidBottomTabs]'s `refractionScalesWithThumb`): as the backdrop sampler's `layerBlock`
+ * (the reference path, where the library counter-transforms the refraction against it) or as a
+ * plain `graphicsLayer` on the thumb (the in-place path, where the refracting backdrop is
+ * magnified with the thumb). Both must use the identical numbers or the two paths drift.
+ */
+private fun GraphicsLayerScope.thumbBloom(animation: DampedDragAnimation) {
+    scaleX = animation.scaleX
+    scaleY = animation.scaleY
+    val velocity = animation.velocity / 10f
+    scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+    scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+}
 
 @Composable
 fun LiquidBottomTabs(
@@ -147,6 +167,27 @@ fun LiquidBottomTabs(
      * reference's press animation byte-identically.
      */
     pressScalesCells: Boolean = true,
+    /**
+     * AM++: magnify the backdrop the thumb refracts **with** the thumb instead of against it.
+     *
+     * The reference hands the thumb's press bloom to the backdrop sampler as its `layerBlock`.
+     * The library counters that transform inside the sampler (its `InverseLayerScope`) and scales
+     * the thumb with the same block, so the two are meant to cancel and the refracted copy is
+     * supposed to stay put while the thumb grows. They do not cancel exactly: the counter-scale is
+     * about the sampled layer's own origin while the thumb's bloom is about the **thumb's centre**,
+     * so the sampled copy — the recorded row, i.e. the cells the thumb refracts — ends up translated
+     * by `(1 - scale) * thumbCentre` while the page behind it is magnified in place. For a wide
+     * reference panel that residue is small; for a compact bar whose cell is barely wider than its
+     * label it is a large fraction of a glyph, so the refracted copy lands beside the crisp label as
+     * a second, ghosted label.
+     *
+     * With this on the bloom is applied only as a plain `graphicsLayer` on the thumb: the sampler is
+     * never counter-transformed, so the page and the recorded cells are magnified together about the
+     * thumb's centre — the refracted copy is the label, magnified in place.
+     *
+     * Off by default, so the shipped phone/dual-pane bar keeps the reference path byte-identically.
+     */
+    refractionScalesWithThumb: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -412,6 +453,14 @@ fun LiquidBottomTabs(
                         if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
                         else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
                 }
+                // AM++: the in-place path keeps the bloom on the thumb itself and leaves the sampler
+                // alone, so everything the thumb draws — the page and the recorded cells alike — is
+                // magnified together about the thumb's centre. The default still hands the same
+                // bloom to `drawBackdrop` as its `layerBlock`, i.e. the reference path.
+                .then(
+                    if (refractionScalesWithThumb) Modifier.graphicsLayer { thumbBloom(dampedDragAnimation) }
+                    else Modifier
+                )
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
                     shape = { Capsule() },
@@ -438,12 +487,10 @@ fun LiquidBottomTabs(
                             alpha = progress
                         )
                     },
-                    layerBlock = {
-                        scaleX = dampedDragAnimation.scaleX
-                        scaleY = dampedDragAnimation.scaleY
-                        val velocity = dampedDragAnimation.velocity / 10f
-                        scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                    layerBlock = if (refractionScalesWithThumb) {
+                        null
+                    } else {
+                        { thumbBloom(dampedDragAnimation) }
                     },
                     onDrawSurface = {
                         val progress = dampedDragAnimation.pressProgress

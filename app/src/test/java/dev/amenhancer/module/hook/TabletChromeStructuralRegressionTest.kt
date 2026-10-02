@@ -131,16 +131,19 @@ class TabletChromeStructuralRegressionTest {
         )
 
         val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
-        // The tablet top bar takes three deliberate, defaulted opt-ins on the shared component,
-        // while staying on the author's default refraction path:
-        //  - the accent tint is ON, because the library's own accentOverride only colours the
-        //    *recorded* row and never the visible cells, so nothing else turns the selected tab red;
+        // The tablet top bar takes deliberate, defaulted opt-ins on the shared component while
+        // staying on the author's default refraction path:
+        //  - the accent tint is NOT passed: the library tints only the row the droplet samples, so
+        //    the selected label is red only while the droplet covers it — passing our extra
+        //    "selected cell is always accent" tint made both the current page and the droplet's
+        //    neighbours red at once;
         //  - the cell recording is NOT skipped, so the droplet refracts the labels themselves
         //    (the reference look) instead of only the page behind the bar;
-        //  - the press scale is OFF, so pressing does not grow every label and glyph.
-        assertTrue(
-            "the tablet top bar must colour the selected label with the host accent",
-            tablet.contains("tintSelectedWithAccent = true"),
+        //  - the press scale is OFF, so pressing does not grow every label and glyph;
+        //  - the refraction is scaled with the thumb so the sampled copy magnifies in place.
+        assertFalse(
+            "the tablet top bar must not tint the selected cell on its own",
+            tablet.contains("tintSelectedWithAccent"),
         )
         assertFalse(
             "the tablet top bar must keep the author's cell recording so the droplet refracts the labels",
@@ -151,6 +154,10 @@ class TabletChromeStructuralRegressionTest {
             tablet.contains("pressScalesCells = false"),
         )
         assertTrue(
+            "the sampled copy must magnify with the thumb so it lands in place",
+            tablet.contains("refractionScalesWithThumb = true"),
+        )
+        assertTrue(
             "the top capsule height must come from the tablet policy, not the host bottom row",
             tablet.contains("TOP_CAPSULE_HEIGHT_DP"),
         )
@@ -159,7 +166,8 @@ class TabletChromeStructuralRegressionTest {
             "the phone session must not take the tablet-only opt-ins",
             phone.contains("cleanSelectionMask") ||
                 phone.contains("TOP_CAPSULE_HEIGHT_DP") ||
-                phone.contains("pressScalesCells = false"),
+                phone.contains("pressScalesCells = false") ||
+                phone.contains("refractionScalesWithThumb = true"),
         )
     }
 }

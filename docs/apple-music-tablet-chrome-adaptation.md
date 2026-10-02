@@ -147,6 +147,19 @@
 7. **迷你播放器连贯形变**：已按原版机制改造 —— 不再自绘固定尺寸胶囊，而是**重皮宿主那唯一会形变的玻璃表面**（`miniGlass`），几何/座位/alpha/可见性全部回到原版 `updateTransition` 驱动；`GlassMiniPlayer` 新增默认 `expansion`，圆角按 `NativeLiquidButton` 的 `Capsule()`→24dp 插值。**未完成**：平板封面飞入的原点校正（原 `TabletDualPaneGlassSession.alignNativeArtworkStart`）需要把该校正在 `PhoneGlassSession` 提为 `protected open` 并改 `PhoneGlassRuntime` 的广播，超出本次改动范围，封面原点可能有轻微偏差。
 8. 待真机判定的两个前提（静态读代码无法确定）：平板下 `player_sheet_container` 是否等于 `mini_player`（若是，基类的几何形变整段被跳过，只剩淡出）；以及 `mini_player_content` 被置 INVISIBLE 后宿主是否仍刷新封面 drawable。
 
+## 6.4 第三轮真机反馈与修复
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 迷你播放器**下方多出一片空白** | 重皮原版形变面后 `miniVisible` 恢复为 true，而 `geometry` 仍带底部标签栏的 `navHeightDp=56` 与 `gapDp=8`，`GlassPolicy.occupiedHeight` 于是又为「已不在底部的标签栏」预留高度 | 我们的 `geometry` 覆盖改为 `navHeightDp=0 / gapDp=0`；并覆写 `peekHeight()` 去掉宿主 `shadow_height`（本会话不渲染那条底栏 scrim） |
+| 顶栏**太厚**（用户澄清：横向长度合适，是纵向） | 直接复用了宿主 `dimen/navigation_tabs_height`(56dp) —— 那是**底部**标签栏的高度 | 新增 `TabletChromeLayoutPolicy.TOP_BAR_HEIGHT_DP = 44`；按参考图实测约 42–43dp、且等于 Apple 标称 44pt |
+| 顶栏按压时**玻璃扭曲效果消失** | 开启 `cleanSelectionMask` 后跳过了文件里唯一的 `layerBackdrop` 录制，`LayerBackdrop` 走到 `layerCoordinates == null` 提前返回，拇指 `lens` 只折射到裸的 ViewBackdrop（顶栏后方是白底）→ 看起来是平的灰块 | 可见面板改为 `exportedBackdrop = tabsBackdrop`：录制的是**面板自身的材质**（背景/模糊/容器色），**从不录制标签**；默认路径该参数为 null，手机/双栏材质逐字节不变 |
+| 播放键是**红色** | 我把 play/pause 也映射成了 accent | 改为与相邻控件相同的 `foreground`；accent 只保留给真正「开启」的状态（随机开、循环非关） |
+| **播放键要更大**、歌名/艺人要更大更粗 | 原来 play 与相邻同尺寸；13sp/11sp 偏小 | play 独立 `PlayControlSize = 48dp`（参考图 1.73×相邻）；标题 15sp、艺人 13sp，均 `FontWeight.Medium` |
+| 字体要用 **AM 内置字体**（西文/标点 SF Pro，其余回落系统） | 之前用 Compose 默认字体 | `GlassMiniPlayer` 新增 `labelTypeface: android.graphics.Typeface? = null`；会话从宿主原生 `mini_player_title` 读取其 `Typeface` 传入，模块不自带字体 |
+
+仍未完成：平板封面飞入原点校正（见 §6.3.7）。本轮验证：`test` 897/0，CI 全绿。
+
 ## 6.1 未在设备上验证的已知风险
 
 1. ~~**隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。~~ 自绘胶囊与 `hideSeam(miniRoot)` 已删除，此条已不适用。

@@ -216,25 +216,6 @@ internal class TabletChromeSession(
     private var miniArtworkImage: View? = null
     private var miniArtworkMethod: Method? = null
 
-    // Artwork-origin correction state (see [alignNativeArtwork]). All cached/scratch: the seam
-    // runs per slide frame, so it must neither allocate nor scan the hierarchy.
-    private var artworkSeatView: View? = null
-    private var artworkAnchorView: View? = null
-    private var artworkStartOffsetX: Float? = null
-    private var artworkStartOffsetY: Float? = null
-    private val artworkSeatLocation = IntArray(2)
-    private val artworkLocation = IntArray(2)
-    private val miniCoverGlassScreen = IntArray(2)
-    private val miniCoverGlassWindow = IntArray(2)
-
-    /** Screen-space origin of the cover the collapsed capsule actually paints. */
-    private val miniCoverLocation = IntArray(2)
-    private var miniCoverReady = false
-
-    /** The fly-in source frozen at the collapsed first frame (see [alignNativeArtwork]). */
-    private val artworkSourceLocation = IntArray(2)
-    private var artworkSourceReady = false
-
     /**
      * The author glass whose Compose content this session re-skins. Held so the content is
      * installed exactly once per glass instance: `GlassHostView.content` feeds a Compose
@@ -514,10 +495,11 @@ internal class TabletChromeSession(
         val navigation = find("bottom_navigation") ?: return
         // The capsule's own thin height (the reference iPad bar), never the host's
         // `dimen/navigation_tabs_height` (56dp): that dimension belongs to the native *bottom* tab
-        // strip and made the top capsule read as "太胖". The library's lens/squeeze constants are
-        // absolute dp authored for its 56dp sample panel, so the component is told that reference
-        // height and scales them down with the panel — a thin capsule then keeps the reference's
-        // proportions instead of smearing the refraction.
+        // strip and made the top capsule read as "太胖". The library's lens/squeeze constants stay at
+        // their upstream absolute-dp values (the default effect path): the earlier
+        // `effectReferenceHeight` scaling was itself a source of a displaced refraction copy and is
+        // deliberately no longer passed, so a thin capsule reads proportionally stronger — which the
+        // user accepted over a copy that lands somewhere else.
         val navHeight = (TabletChromeLayoutPolicy.TOP_CAPSULE_HEIGHT_DP * density).roundToInt()
         if (navHeight <= 0) return
         val parent = topMountParent(content) ?: return
@@ -565,13 +547,10 @@ internal class TabletChromeSession(
                         onSelect = ::selectTopTab,
                         panelHeight = panelHeight,
                         panelBlur = topPanelBlurDp.dp,
-                        // The library's lens/squeeze constants are absolute dp authored for the
-                        // 56dp reference panel; this capsule is thin, so it keeps the proportions
-                        // by declaring that reference height. This is the compensation for the thin
-                        // bar: `effectScale = panelHeight / effectReferenceHeight` shrinks the lens
-                        // displacement and squeeze with the capsule, so the refracted copy of a cell
-                        // stays magnified in place under the label instead of landing beside it.
-                        effectReferenceHeight = GlassPolicy.NAV_HEIGHT_DP.dp,
+                        // The library's lens/squeeze constants keep their upstream absolute-dp
+                        // values: `effectReferenceHeight` is deliberately NOT passed, so
+                        // `effectScale == 1` (the default path). The earlier proportional scaling
+                        // was the prime suspect for the displaced refraction copy and is reverted.
                         // The top bar's labels are deliberately bigger and heavier than the shared
                         // phone tab label (11sp / default): the user's 「文字太小也太细」. Both are
                         // opt-in, so the phone/dual-pane bar stays byte-identical.
@@ -584,20 +563,19 @@ internal class TabletChromeSession(
                         // elsewhere. The visible-cell tint option is deliberately NOT taken: it
                         // painted the selected label accent even when the droplet had moved away,
                         // which is the reported "主页 is red on its own".
-                        // A press on the bar must not grow the labels or the search glyph. The
-                        // library's reference squeeze scales every cell through
-                        // `LocalLiquidBottomTabScale`; with this off the cells hold still under the
-                        // finger and only the cell the droplet settles on pulses briefly. Defaults
-                        // to true, so the phone/dual-pane press animation is unchanged.
+                        // A press on the bar must not grow the visible labels or the search glyph, so
+                        // the tablet takes the opt-out; the phone/dual-pane bar keeps the reference
+                        // default. NOTE: this also suppresses the author's `LocalLiquidBottomTabScale`
+                        // press magnification of the *recorded* row (see LiquidBottomTabs.tabScale),
+                        // which is the remaining candidate for a copy that no longer magnifies in
+                        // place — see the P1 note in the session report.
                         pressScalesCells = false,
                         // Author parity on purpose, including the cell recording: the library's
                         // default records the cell row into the layer the thumb's lens samples, and
                         // that recorded copy is exactly what the reference's droplet refracts. The
-                        // thin 44dp capsule makes the cell barely wider than its 13sp label, so the
-                        // reference's counter-transform of that recorded copy left a residue of a
-                        // third of a glyph and the copy landed beside the crisp label as a second,
-                        // ghosted one; magnifying the refraction with the thumb keeps it in place.
-                        refractionScalesWithThumb = true,
+                        // in-place `refractionScalesWithThumb` deviation is deliberately NOT taken:
+                        // it moved the press bloom onto the thumb and left the recorded copy
+                        // displaced, so the author's own counter-transformed sampler path is kept.
                     )
                 }
             }
@@ -778,26 +756,6 @@ internal class TabletChromeSession(
     }
 
     /**
-     * Screen origin of the artwork the collapsed capsule actually paints, for
-     * [alignNativeArtwork]. Apple's slide callback morphs the full player's cover from the
-     * **native** mini thumbnail, which the iPad layout parks at the capsule's leading edge while
-     * this session's capsule paints its cover after the transport group — so the seam needs the
-     * cover the user sees, not the native seat. Written on Compose layout into cached scratch, so
-     * the per-frame seam only reads two ints; no allocation and no hierarchy scan.
-     */
-    private fun recordMiniCoverFrame(coordinates: LayoutCoordinates) {
-        val glass = miniGlass ?: return
-        glass.getLocationOnScreen(miniCoverGlassScreen)
-        glass.getLocationInWindow(miniCoverGlassWindow)
-        val origin = coordinates.positionInWindow()
-        miniCoverLocation[0] =
-            (origin.x + (miniCoverGlassScreen[0] - miniCoverGlassWindow[0])).roundToInt()
-        miniCoverLocation[1] =
-            (origin.y + (miniCoverGlassScreen[1] - miniCoverGlassWindow[1])).roundToInt()
-        miniCoverReady = coordinates.size.width > 0 && coordinates.size.height > 0
-    }
-
-    /**
      * Delivers a collapsed mini gesture to the module's own Compose capsule when the host routes
      * the DOWN to the native player subtree instead of the capsule (the sheet container and
      * `player_root` are full-size native touch owners). Mirroring the dual-pane session's proven
@@ -939,12 +897,6 @@ internal class TabletChromeSession(
         miniArtworkContainer = null
         miniArtworkImage = null
         miniArtworkMethod = null
-        artworkSeatView = null
-        artworkAnchorView = null
-        artworkStartOffsetX = null
-        artworkStartOffsetY = null
-        miniCoverReady = false
-        artworkSourceReady = false
         redirectedMiniTarget = null
         redirectedMiniDownTime = null
         queuePanePending = false
@@ -972,88 +924,18 @@ internal class TabletChromeSession(
     }
 
     /**
-     * iPad form of the artwork-origin correction seam: this session's centred-seat counterpart of
-     * the dual-pane row's correction.
+     * The iPad seat deliberately does not correct Apple's artwork fly-in.
      *
-     * Apple's slide callback morphs the full-player cover from a **native mini thumbnail** rect it
-     * computes itself, and on the iPad layout that thumbnail is not the cover the user sees: the
-     * native `video_surface_container` sits at the leading edge of the half-width capsule, while
-     * [GlassMiniPlayer] paints its cover after the transport group. The callback also computes that
-     * rect with `offsetDescendantRectToMyCoords`, which omits the tablet `artwork_container`'s
-     * visual translation. The cover therefore has to be moved, per frame, from the origin Apple
-     * starts it at onto the origin the capsule actually paints — [miniCoverLocation], recorded from
-     * the capsule's own Compose layout — fading out to nothing at the full view so Apple's endpoint
-     * is untouched. Both axes are corrected because the two origins differ on both.
-     *
-     * The write is additive, exactly like the dual-pane form's: it must stack on top of whatever
-     * Apple just wrote for this frame, so it cannot be a plain overwrite. Cached view/scratch
-     * fields keep it allocation- and scan-free, and a shift that computes to zero is skipped.
+     * The immediately-previous form measured its fly-in origin from the re-skinned capsule's own
+     * Compose rect; that correction was over-applied and put the full player's cover against the
+     * bottom edge of the window. The inherited phone default (an empty override) leaves Apple's own
+     * callback in charge of the transform, so the iPad returns to it. The mini -> full hand-off is
+     * imperfect — the native `video_surface_container` sits at the capsule's leading edge, not where
+     * [GlassMiniPlayer] paints its cover — but the expanded cover sits where the host puts it, which
+     * is the behaviour that must not regress. The `alignNativeArtwork` seam itself is unchanged: the
+     * dual-pane row still overrides it, and the phone default stays empty.
      */
-    override fun alignNativeArtwork(artwork: View, slide: Float) {
-        if (!activated || !slide.isFinite()) return
-        // Cache the anchor so the common per-frame path skips the activity-wide lookup; a
-        // detached or replaced song image re-resolves it.
-        if (artworkAnchorView !== artwork || !artwork.isAttachedToWindow) {
-            if (artwork !== find("fullplayerSongImage")) return
-            artworkAnchorView = artwork
-            artworkStartOffsetX = null
-            artworkStartOffsetY = null
-        }
-        val container = artwork.parent as? View ?: return
-        if (container.id != resourceId("artwork_container", "id")) return
-        val progress = slide.coerceIn(0f, 1f)
-        // The collapsed first frame is the only frame where the cover is still folded onto the
-        // capsule; capture the delta there and reuse it for the whole slide. Ours is preferred;
-        // the native thumbnail is only a fallback for a frame Compose has not placed our cover on.
-        // The origin is copied out at that frame because the capsule's own rect keeps moving (and
-        // growing) with the morph — only the collapsed seat may be used as the fly-in source.
-        if (progress <= 0.001f && artwork.scaleY < 0.2f) {
-            val seat = artworkSeat()
-            if (seat != null) seat.getLocationOnScreen(artworkSeatLocation)
-            artwork.getLocationOnScreen(artworkLocation)
-            val source = when {
-                miniCoverReady -> miniCoverLocation
-                seat != null -> artworkSeatLocation
-                else -> null
-            }
-            artworkSourceReady = source != null
-            if (source != null) {
-                artworkSourceLocation[0] = source[0]
-                artworkSourceLocation[1] = source[1]
-                artworkStartOffsetX = (source[0] - artworkLocation[0]).toFloat()
-                artworkStartOffsetY = (source[1] - artworkLocation[1]).toFloat()
-            } else {
-                artworkStartOffsetX = null
-                artworkStartOffsetY = null
-            }
-        }
-        val remaining = 1f - progress
-        artworkStartOffsetX?.let { if (it != 0f) artwork.translationX += it * remaining }
-        val sourceCorrectionY = artworkStartOffsetY ?: -container.translationY
-        if (sourceCorrectionY != 0f) artwork.translationY += sourceCorrectionY * remaining
-        if (progress > 0f && artworkSourceReady) {
-            artwork.getLocationOnScreen(artworkLocation)
-            // Apple's full cover can run above the capsule while the sheet is still opening; push
-            // it back down to the collapsed seat. Its native scale remains untouched.
-            val clamp = (artworkSourceLocation[1] - artworkLocation[1]).toFloat()
-            if (clamp > 0f) artwork.translationY += clamp
-        }
-    }
-
-    /**
-     * The base's collapsed hero seat: the native mini thumbnail inside [PhoneGlassSession.miniRoot].
-     * Cached because the seam runs per slide frame; re-resolved only when it detaches or loses its
-     * bounds (a host that re-inflates the mini player yields a new view).
-     */
-    private fun artworkSeat(): View? {
-        val cached = artworkSeatView
-        if (cached != null && cached.isAttachedToWindow) return cached.takeIf { it.width > 0 && it.height > 0 }
-        val seatId = resourceId("video_surface_container", "id")
-        if (seatId == 0) return null
-        val seat = miniRoot?.findViewById<View>(seatId) ?: return null
-        artworkSeatView = seat
-        return seat.takeIf { it.width > 0 && it.height > 0 }
-    }
+    override fun alignNativeArtwork(artwork: View, slide: Float) = Unit
 
     private fun capsuleScreenWidthPx(parent: View): Int =
         parent.width.takeIf { it > 0 } ?: activity.resources.displayMetrics.widthPixels
@@ -1103,7 +985,7 @@ internal class TabletChromeSession(
         val artwork = remember(source) {
             runCatching { source.constantState?.newDrawable() }.getOrNull() ?: source
         }
-        Canvas(Modifier.fillMaxSize().onGloballyPositioned(::recordMiniCoverFrame)) {
+        Canvas(Modifier.fillMaxSize()) {
             val canvas = drawContext.canvas.nativeCanvas
             val save = canvas.save()
             try {

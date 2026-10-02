@@ -65,11 +65,11 @@ private const val TAB_LABEL_SIZE_SP = 11f
  * (the shipped sessions do not, and the iPad top bar no longer does either: the library's own
  * recorded-row accent tint is what colours the cell the droplet covers). The iPad top bar keeps the
  * library's own cell-layer recording — the reference's refraction source, so the droplet refracts
- * the labels themselves — and opts into a bigger/heavier [tabLabelSize]/[tabLabelWeight], a thin
- * [panelHeight] with a 56dp [effectReferenceHeight] so the library's absolute-dp effects keep their
- * proportions, `pressScalesCells = false` so a press does not grow every cell, and
- * [refractionScalesWithThumb] so the refracted label is magnified in place instead of landing beside
- * the crisp one; every one of those defaults to the shipped phone/dual-pane value.
+ * the labels themselves — and opts into a bigger/heavier [tabLabelSize]/[tabLabelWeight] and a thin
+ * [panelHeight]. It deliberately leaves [effectReferenceHeight] and [refractionScalesWithThumb] at
+ * their defaults: both deviations moved the refracted copy away from the crisp label, so the
+ * library's own absolute-dp effect path is what the tablet uses; every parameter defaults to the
+ * shipped phone/dual-pane value.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.

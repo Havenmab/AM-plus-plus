@@ -153,9 +153,17 @@ class TabletChromeStructuralRegressionTest {
             "pressing the top bar must not scale the labels",
             tablet.contains("pressScalesCells = false"),
         )
-        assertTrue(
-            "the sampled copy must magnify with the thumb so it lands in place",
-            tablet.contains("refractionScalesWithThumb = true"),
+        // The round-7 scaling deviations are gone: the effect constants are the author's absolute
+        // values again and the press bloom is not moved onto the thumb. Both were ours, and each
+        // one changed the relationship between the sampled layer and the thumb's lens, which is
+        // what displaced the refracted copy away from the crisp label.
+        assertFalse(
+            "the tablet must not scale the component's effect constants",
+            tablet.contains("effectReferenceHeight ="),
+        )
+        assertFalse(
+            "the tablet must not move the press bloom onto the thumb",
+            tablet.contains("refractionScalesWithThumb ="),
         )
         assertTrue(
             "the top capsule height must come from the tablet policy, not the host bottom row",

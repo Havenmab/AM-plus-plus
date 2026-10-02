@@ -160,11 +160,18 @@ class TabletChromeArtworkPolicyTest {
 
     @Test
     fun nativeCoverOwnsOnlyAValidVisibleTransition() {
-        assertTrue(TabletChromeArtworkPolicy.ownsMiniCover(0.01f, aligned = true, nativeVisible = true))
-        assertTrue(TabletChromeArtworkPolicy.ownsMiniCover(1f, aligned = true, nativeVisible = true))
-        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0f, aligned = true, nativeVisible = true))
-        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0.1f, aligned = false, nativeVisible = true))
-        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0.1f, aligned = true, nativeVisible = false))
-        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(Float.NaN, aligned = true, nativeVisible = true))
+        assertTrue(TabletChromeArtworkPolicy.ownsMiniCover(0.01f, aligned = true, nativeVisible = true, collapsed = false))
+        assertTrue(TabletChromeArtworkPolicy.ownsMiniCover(1f, aligned = true, nativeVisible = true, collapsed = false))
+        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0f, aligned = true, nativeVisible = true, collapsed = false))
+        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0.1f, aligned = false, nativeVisible = true, collapsed = false))
+        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(0.1f, aligned = true, nativeVisible = false, collapsed = false))
+        assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(Float.NaN, aligned = true, nativeVisible = true, collapsed = false))
+    }
+
+    @Test
+    fun collapsedSheetReturnsTheCoverEvenIfArtworkCallbackStillReportsMotion() {
+        for (staleProgress in listOf(0.0001f, 0.001f, 0.05f, 1f)) {
+            assertFalse(TabletChromeArtworkPolicy.ownsMiniCover(staleProgress, aligned = true, nativeVisible = true, collapsed = true))
+        }
     }
 }

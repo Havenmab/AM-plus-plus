@@ -47,6 +47,7 @@ class TabletChromeArtworkStructuralRegressionTest {
         assertTrue(tablet.contains("if (progress > 0f && nativeArtworkOwnsMiniCover) 1f else materialProgress"))
         assertTrue(tablet.contains("if (artworkOwned != nativeArtworkOwnsMiniCover) return false"))
         assertTrue(tablet.contains("artwork.isShown && artwork.alpha > 0f"))
+        assertTrue(tablet.contains("collapsed = isCollapsed"))
         assertTrue(tablet.contains("if (view.visibility != View.INVISIBLE) view.visibility = View.INVISIBLE"))
         assertTrue(tablet.contains("if (miniCover == null) return null"))
     }

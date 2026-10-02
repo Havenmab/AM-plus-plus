@@ -981,7 +981,7 @@ internal class TabletChromeSession(
             restoreNativeArtworkTransform()
         }
         nativeArtworkOwnsMiniCover = TabletChromeArtworkPolicy.ownsMiniCover(
-            nativeArtworkProgress, aligned != null, artwork.isShown && artwork.alpha > 0f,
+            nativeArtworkProgress, aligned != null, artwork.isShown && artwork.alpha > 0f, collapsed = isCollapsed,
         )
     }
 

@@ -21,8 +21,8 @@ internal object TabletChromeArtworkPolicy {
 
     data class Frame(val left: Float, val top: Float, val width: Float, val height: Float)
 
-    fun ownsMiniCover(progress: Float, aligned: Boolean, nativeVisible: Boolean): Boolean =
-        progress.isFinite() && progress > 0f && aligned && nativeVisible
+    fun ownsMiniCover(progress: Float, aligned: Boolean, nativeVisible: Boolean, collapsed: Boolean): Boolean =
+        !collapsed && progress.isFinite() && progress > 0f && aligned && nativeVisible
 
     fun align(native: Transform, layout: Layout, target: Frame?, progress: Float): Transform? {
         if (!progress.isFinite() || !native.valid() || !layout.valid()) return null

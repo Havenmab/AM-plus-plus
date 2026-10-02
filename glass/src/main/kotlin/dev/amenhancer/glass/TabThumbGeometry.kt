@@ -5,8 +5,6 @@ internal data class TabThumbBounds(
     val top: Float,
     val width: Float,
     val height: Float,
-    val radiusX: Float,
-    val radiusY: Float,
 )
 
 internal object TabThumbGeometry {
@@ -34,14 +32,11 @@ internal object TabThumbGeometry {
             else panelWidth - inset - (index + 0.5f) * tabWidth
         val width = tabWidth * scaleX
         val height = thumbHeight * scaleY
-        val radius = minOf(tabWidth, thumbHeight) / 2f
         return TabThumbBounds(
             left = centre - width / 2f,
             top = (thumbHeight - height) / 2f,
             width = width,
             height = height,
-            radiusX = radius * scaleX,
-            radiusY = radius * scaleY,
         )
     }
 }

@@ -20,8 +20,6 @@ class TabThumbGeometryTest {
         assertEquals(0f, mask.top, 0f)
         assertEquals(100f, mask.width, 0f)
         assertEquals(36f, mask.height, 0f)
-        assertEquals(18f, mask.radiusX, 0f)
-        assertEquals(18f, mask.radiusY, 0f)
         assertEquals(404f, bounds(index = 4f).left, 0f)
     }
 
@@ -43,7 +41,8 @@ class TabThumbGeometryTest {
             val rtl = bounds(index, false, 1.4f, 1.2f)
             assertEquals(508f, ltr.left + rtl.left + ltr.width, 0.0001f)
             assertEquals(ltr.top, rtl.top, 0f)
-            assertEquals(ltr.radiusX, rtl.radiusX, 0f)
+            assertEquals(ltr.width, rtl.width, 0f)
+            assertEquals(ltr.height, rtl.height, 0f)
         }
     }
 
@@ -54,8 +53,6 @@ class TabThumbGeometryTest {
         assertEquals(18f, mask.top + mask.height / 2f, 0f)
         assertEquals(150f, mask.width, 0f)
         assertEquals(45f, mask.height, 0f)
-        assertEquals(27f, mask.radiusX, 0f)
-        assertEquals(22.5f, mask.radiusY, 0f)
     }
 
     @Test
@@ -78,10 +75,12 @@ class TabThumbGeometryTest {
     }
 
     @Test
-    fun narrowCellsUseTheSameCapsuleCornerAsTheThumb() {
+    fun narrowCellsKeepTheThumbDimensionsAndCentre() {
         val mask = requireNotNull(TabThumbGeometry.bounds(100f, 20f, 36f, 4f, 0f, true, 1.2f, 1.4f))
-        assertEquals(12f, mask.radiusX, 0f)
-        assertEquals(14f, mask.radiusY, 0f)
+        assertEquals(24f, mask.width, 0f)
+        assertEquals(50.4f, mask.height, 0.0001f)
+        assertEquals(14f, mask.left + mask.width / 2f, 0f)
+        assertEquals(18f, mask.top + mask.height / 2f, 0f)
     }
 
     @Test

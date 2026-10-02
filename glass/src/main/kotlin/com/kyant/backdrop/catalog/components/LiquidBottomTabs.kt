@@ -45,8 +45,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -54,6 +53,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.GraphicsLayerScope
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
@@ -415,30 +416,36 @@ fun LiquidBottomTabs(
                             translationX = panelOffset
                             compositingStrategy = CompositingStrategy.Offscreen
                         }
-                        .drawWithContent {
-                            drawContent()
-                            val bounds = TabThumbGeometry.bounds(
-                                panelWidth = size.width,
-                                tabWidth = tabWidth,
-                                thumbHeight = size.height,
-                                inset = panelInset,
-                                index = dampedDragAnimation.value,
-                                isLtr = isLtr,
-                                scaleX = TabThumbGeometry.scaleX(
-                                    dampedDragAnimation.scaleX, dampedDragAnimation.velocity,
-                                ),
-                                scaleY = TabThumbGeometry.scaleY(
-                                    dampedDragAnimation.scaleY, dampedDragAnimation.velocity,
-                                ),
+                        .drawWithCache {
+                            val thumbOutline = Capsule().createOutline(
+                                Size(tabWidth, size.height), layoutDirection, this,
                             )
-                            if (bounds != null) {
-                                drawRoundRect(
-                                    color = Color.Black,
-                                    topLeft = Offset(bounds.left, bounds.top),
-                                    size = Size(bounds.width, bounds.height),
-                                    cornerRadius = CornerRadius(bounds.radiusX, bounds.radiusY),
-                                    blendMode = BlendMode.DstOut,
+                            onDrawWithContent {
+                                drawContent()
+                                val maskScaleX = TabThumbGeometry.scaleX(
+                                    dampedDragAnimation.scaleX, dampedDragAnimation.velocity,
                                 )
+                                val maskScaleY = TabThumbGeometry.scaleY(
+                                    dampedDragAnimation.scaleY, dampedDragAnimation.velocity,
+                                )
+                                val bounds = TabThumbGeometry.bounds(
+                                    panelWidth = size.width,
+                                    tabWidth = tabWidth,
+                                    thumbHeight = size.height,
+                                    inset = panelInset,
+                                    index = dampedDragAnimation.value,
+                                    isLtr = isLtr,
+                                    scaleX = maskScaleX,
+                                    scaleY = maskScaleY,
+                                )
+                                if (bounds != null) {
+                                    withTransform({
+                                        translate(bounds.left, bounds.top)
+                                        scale(maskScaleX, maskScaleY, Offset.Zero)
+                                    }) {
+                                        drawOutline(thumbOutline, Color.Black, blendMode = BlendMode.DstOut)
+                                    }
+                                }
                             }
                         }
                         .height(panelHeight - 8f.dp)

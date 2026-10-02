@@ -2,6 +2,8 @@ package dev.amenhancer.module.hook
 
 import android.app.Activity
 import android.content.res.Configuration
+import android.graphics.Matrix
+import android.graphics.RectF
 import android.graphics.Color as AndroidColor
 import android.graphics.drawable.Drawable
 import android.os.SystemClock
@@ -31,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -204,6 +207,16 @@ internal class TabletChromeSession(
     private var miniArtworkContainer: View? = null
     private var miniArtworkImage: View? = null
     private var miniArtworkMethod: Method? = null
+    private var miniCoverCoordinates: LayoutCoordinates? = null
+    private val miniCoverRect = RectF()
+    private val miniCoverMatrix = Matrix()
+    private val artworkParentMatrix = Matrix()
+    private val artworkParentInverse = Matrix()
+    private var artworkAnchorView: View? = null
+    private var nativeArtworkTransform: TabletChromeArtworkPolicy.Transform? = null
+    private var nativeArtworkProgress = 0f
+    private var artworkTransformApplied = false
+    private var nativeArtworkOwnsMiniCover by mutableStateOf(false)
 
     /**
      * The author glass whose Compose content this session re-skins. Held so the content is
@@ -453,6 +466,9 @@ internal class TabletChromeSession(
             updateBackdropCapture()
             updateTopChrome()
             updateMiniChrome()
+            val artworkOwned = nativeArtworkOwnsMiniCover
+            updateNativeArtworkAlignment()
+            if (artworkOwned != nativeArtworkOwnsMiniCover) return false
             // A one-tap queue request waits here for the sheet to reach the full player.
             flushQueuePaneRequest()
         } catch (error: Throwable) {
@@ -823,6 +839,8 @@ internal class TabletChromeSession(
         val glass = miniGlass ?: return
         if (miniStyledGlass === glass) return
         val backdrop = topBackdrop ?: return
+        miniCoverCoordinates = null
+        nativeArtworkOwnsMiniCover = false
         // Populate the Compose states before the composition is first committed.
         refreshMiniIcons()
         refreshMiniState()
@@ -870,6 +888,12 @@ internal class TabletChromeSession(
     }
 
     private fun releaseMiniCapsule() {
+        restoreNativeArtworkTransform()
+        artworkAnchorView = null
+        nativeArtworkTransform = null
+        nativeArtworkProgress = 0f
+        miniCoverCoordinates = null
+        nativeArtworkOwnsMiniCover = false
         miniListener?.let { handle -> runCatching { handle.close() } }
         miniListener = null
         miniListenerBound = false
@@ -907,19 +931,98 @@ internal class TabletChromeSession(
         return t * t * (3f - 2f * t)
     }
 
-    /**
-     * The iPad seat deliberately does not correct Apple's artwork fly-in.
-     *
-     * The immediately-previous form measured its fly-in origin from the re-skinned capsule's own
-     * Compose rect; that correction was over-applied and put the full player's cover against the
-     * bottom edge of the window. The inherited phone default (an empty override) leaves Apple's own
-     * callback in charge of the transform, so the iPad returns to it. The mini -> full hand-off is
-     * imperfect — the native `video_surface_container` sits at the capsule's leading edge, not where
-     * [GlassMiniPlayer] paints its cover — but the expanded cover sits where the host puts it, which
-     * is the behaviour that must not regress. The `alignNativeArtwork` seam itself is unchanged: the
-     * dual-pane row still overrides it, and the phone default stays empty.
-     */
-    override fun alignNativeArtwork(artwork: View, slide: Float) = Unit
+    override fun beforeNativeArtwork(artwork: View) {
+        if (artwork === artworkAnchorView) restoreNativeArtworkTransform()
+    }
+
+    override fun alignNativeArtwork(artwork: View, slide: Float) {
+        if (!activated || topClosed || !slide.isFinite() || artwork !== find("fullplayerSongImage")) return
+        val container = artwork.parent as? View ?: return
+        if (container.id != resourceId("artwork_container", "id")) return
+        if (artworkAnchorView !== artwork) {
+            restoreNativeArtworkTransform()
+            artworkAnchorView = artwork
+        }
+        nativeArtworkTransform = TabletChromeArtworkPolicy.Transform(
+            artwork.scaleX, artwork.scaleY, artwork.translationX, artwork.translationY,
+        )
+        nativeArtworkProgress = slide.coerceIn(0f, 1f)
+        updateNativeArtworkAlignment()
+    }
+
+    protected override fun playerFragmentsAlphaFactor(progress: Float, materialProgress: Float): Float =
+        if (progress > 0f && nativeArtworkOwnsMiniCover) 1f else materialProgress
+
+    private fun updateNativeArtworkAlignment() {
+        val artwork = artworkAnchorView
+        val native = nativeArtworkTransform
+        val container = artwork?.parent as? View
+        if (!activated || topClosed || artwork == null || native == null || container == null ||
+            !artwork.isAttachedToWindow || artwork !== find("fullplayerSongImage")
+        ) {
+            restoreNativeArtworkTransform()
+            nativeArtworkOwnsMiniCover = false
+            return
+        }
+        val aligned = TabletChromeArtworkPolicy.align(
+            native,
+            TabletChromeArtworkPolicy.Layout(
+                (artwork.left - container.scrollX).toFloat(),
+                (artwork.top - container.scrollY).toFloat(),
+                artwork.width.toFloat(), artwork.height.toFloat(), artwork.pivotX, artwork.pivotY,
+            ),
+            if (nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END) miniCoverFrame(container) else null,
+            nativeArtworkProgress,
+        )
+        if (nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END && aligned != null) {
+            applyNativeArtworkTransform(artwork, aligned)
+            artworkTransformApplied = aligned != native
+        } else {
+            restoreNativeArtworkTransform()
+        }
+        nativeArtworkOwnsMiniCover = TabletChromeArtworkPolicy.ownsMiniCover(
+            nativeArtworkProgress, aligned != null, artwork.isShown && artwork.alpha > 0f,
+        )
+    }
+
+    private fun recordMiniCoverFrame(coordinates: LayoutCoordinates) {
+        miniCoverCoordinates = coordinates
+        updateNativeArtworkAlignment()
+    }
+
+    private fun miniCoverFrame(container: View): TabletChromeArtworkPolicy.Frame? {
+        if (miniCover == null) return null
+        val glass = miniStyledGlass?.takeIf { it === miniGlass && it.isShown } ?: return null
+        val coordinates = miniCoverCoordinates?.takeIf { it.isAttached } ?: return null
+        val origin = coordinates.localToRoot(Offset.Zero)
+        val end = coordinates.localToRoot(Offset(coordinates.size.width.toFloat(), coordinates.size.height.toFloat()))
+        miniCoverRect.set(origin.x, origin.y, end.x, end.y)
+        miniCoverMatrix.reset()
+        glass.compose.transformMatrixToGlobal(miniCoverMatrix)
+        miniCoverMatrix.mapRect(miniCoverRect)
+        artworkParentMatrix.reset()
+        container.transformMatrixToGlobal(artworkParentMatrix)
+        if (!artworkParentMatrix.invert(artworkParentInverse)) return null
+        artworkParentInverse.mapRect(miniCoverRect)
+        return TabletChromeArtworkPolicy.Frame(
+            miniCoverRect.left, miniCoverRect.top, miniCoverRect.width(), miniCoverRect.height(),
+        )
+    }
+
+    private fun restoreNativeArtworkTransform() {
+        if (!artworkTransformApplied) return
+        val artwork = artworkAnchorView ?: return
+        val native = nativeArtworkTransform ?: return
+        applyNativeArtworkTransform(artwork, native)
+        artworkTransformApplied = false
+    }
+
+    private fun applyNativeArtworkTransform(artwork: View, transform: TabletChromeArtworkPolicy.Transform) {
+        if (artwork.scaleX != transform.scaleX) artwork.scaleX = transform.scaleX
+        if (artwork.scaleY != transform.scaleY) artwork.scaleY = transform.scaleY
+        if (artwork.translationX != transform.translationX) artwork.translationX = transform.translationX
+        if (artwork.translationY != transform.translationY) artwork.translationY = transform.translationY
+    }
 
     private fun capsuleScreenWidthPx(parent: View): Int =
         parent.width.takeIf { it > 0 } ?: activity.resources.displayMetrics.widthPixels
@@ -969,7 +1072,8 @@ internal class TabletChromeSession(
         val artwork = remember(source) {
             runCatching { source.constantState?.newDrawable() }.getOrNull() ?: source
         }
-        Canvas(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize().onGloballyPositioned(::recordMiniCoverFrame)) {
+            if (nativeArtworkOwnsMiniCover) return@Canvas
             val canvas = drawContext.canvas.nativeCanvas
             val save = canvas.save()
             try {

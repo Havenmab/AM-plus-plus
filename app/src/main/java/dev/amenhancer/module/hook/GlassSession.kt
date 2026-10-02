@@ -25,6 +25,8 @@ internal interface GlassSession : AutoCloseable {
     fun redirectedPadding(view: Any?): Int?
     fun redirectedLayerAlpha(view: Any?, alpha: Float): Float?
 
+    fun beforeNativeArtwork(artwork: View) = Unit
+
     /**
      * Corrects the native full-player artwork's screen origin while the sheet slides
      * ([slide] in `0..1`), called right after Apple's own per-frame artwork write.

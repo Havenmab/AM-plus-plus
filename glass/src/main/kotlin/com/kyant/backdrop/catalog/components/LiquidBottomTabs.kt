@@ -5,7 +5,8 @@
  * Changed by AM++: optional host accent, tap-only native reselection, free thumb dragging with
  * multi-finger hand-over, a panel highlight pinned to the thumb's centre (the reference draws
  * the same light a row inset to the left), and an opt-in `cleanSelectionMask` that keeps the tab
- * cells out of the layer the thumb refracts so they are never smeared into a ghost.
+ * cells out of the layer the thumb refracts — the mask samples the panel's exported surface
+ * instead — so the cells are never smeared into a ghost and the glass still refracts.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -95,9 +96,10 @@ fun LiquidBottomTabs(
      * recorded into the layer backdrop the thumb samples with its lens. That second copy is what
      * makes the selected cell look duplicated and smeared inside the sliding mask once the thumb
      * is pressed, because the lens displaces, colour-fringes and press-scales it into a ghost of
-     * the label. With this on, only the mask is refracted: the recorded layer carries the panel
-     * material but no cell content, and the single visible copy of the cells is drawn last, on top
-     * of the thumb, so it stays crisp.
+     * the label. With this on the cells are never recorded: the thumb instead refracts the panel's
+     * own exported surface — the recorded backdrop, blur and container tint, i.e. the page material
+     * seen through the bar — so the mask keeps the glass the reference shows, and the single
+     * visible copy of the cells is drawn last, on top of the thumb, so it stays crisp.
      *
      * Off by default, so the shipped phone/dual-pane bar keeps the reference material and the
      * reference press animation exactly as they are.
@@ -249,6 +251,13 @@ fun LiquidBottomTabs(
                         scaleX = scale
                         scaleY = scale
                     },
+                    // AM++: with the clean mask the row below no longer records anything, so the
+                    // thumb's lens would sample the bare page and read as a flat grey shape. The
+                    // panel exports its own surface instead: the exported layer is recorded from
+                    // the backdrop, the blur and the container tint *before* `drawContent`, so the
+                    // mask refracts the page material seen through the bar and never a copy of a
+                    // cell. The default path passes null and keeps recording the row below.
+                    exportedBackdrop = if (cleanSelectionMask) tabsBackdrop else null,
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .then(interactiveHighlight.modifier)
@@ -265,7 +274,8 @@ fun LiquidBottomTabs(
         // AM++: the reference records this row — the panel material *and* the cells — into the layer
         // the thumb refracts. The row itself is alpha(0f), but layerBackdrop records the content
         // before alpha is applied, so the cells end up in that layer and the thumb's lens turns
-        // them into a displaced, colour-fringed, press-scaled ghost of the label/icon.
+        // them into a displaced, colour-fringed, press-scaled ghost of the label/icon. The clean
+        // mask skips it entirely and takes the panel's exported surface instead.
         if (!cleanSelectionMask) {
             CompositionLocalProvider(
                 LocalLiquidBottomTabScale provides {
@@ -367,8 +377,8 @@ fun LiquidBottomTabs(
         // AM++: the one and only copy of the cells, drawn last so it sits on top of the thumb and
         // is never sampled by it. Placed with the same inset, height, squeeze and cell scale as the
         // reference's front row, so the cells stay exactly where they were; only the refracted
-        // ghost of them is gone. `tabsBackdrop` is deliberately left unrecorded in this mode, so the
-        // mask's backdrop is the page material alone.
+        // ghost of them is gone. `tabsBackdrop` carries the panel's exported surface — the page
+        // material through the bar's glass, never the cells — so the mask still refracts.
         if (cleanSelectionMask) {
             CompositionLocalProvider(
                 LocalLiquidBottomTabScale provides {

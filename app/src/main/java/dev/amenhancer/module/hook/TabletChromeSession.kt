@@ -14,6 +14,7 @@ import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -135,6 +136,10 @@ internal class TabletChromeSession(
      */
     private var topSlide = 0f
 
+    /** Cached host typeface for the mini-player text lines, and the view it was read from. */
+    private var miniLabelTypefaceCache: android.graphics.Typeface? = null
+    private var miniLabelTypefaceSource: View? = null
+
     private var topTabs by mutableStateOf(emptyList<GlassTab>())
     private var topSelectedId by mutableIntStateOf(View.NO_ID)
     private var topAccent by mutableStateOf(Color(0xFFFA233B))
@@ -252,13 +257,36 @@ internal class TabletChromeSession(
             // `dimen` returns device pixels; GlassGeometry.miniHeightDp is in dp, exactly what
             // `dp(geometry.miniHeightDp)` and `GlassPolicy.occupiedHeight` expect. Cache only once
             // the host dimension actually resolves, so an early read cannot pin the fallback.
+            // The tab row moved to the TOP, so the bottom band holds the mini capsule alone:
+            // `navHeightDp` and the inter-capsule `gapDp` must be 0 or
+            // `GlassPolicy.occupiedHeight` reserves their height again and the page keeps a blank
+            // strip below the capsule (the reported "迷你播放器下方多出一片空白").
             val miniDp = (dimen("miniplayer_height") / density).toInt()
             if (miniDp > 0) {
-                GlassGeometry(miniHeightDp = miniDp, sideBySide = false).also { resolvedGeometry = it }
+                GlassGeometry(
+                    navHeightDp = 0,
+                    miniHeightDp = miniDp,
+                    gapDp = 0,
+                    sideBySide = false,
+                ).also { resolvedGeometry = it }
             } else {
-                GlassGeometry(miniHeightDp = GlassGeometry.Tablet.miniHeightDp, sideBySide = false)
+                GlassGeometry(
+                    navHeightDp = 0,
+                    miniHeightDp = GlassGeometry.Tablet.miniHeightDp,
+                    gapDp = 0,
+                    sideBySide = false,
+                )
             }
         }
+
+    /**
+     * Collapsed height of the bottom band: the mini capsule plus the lift under it, and nothing
+     * else. The inherited formula also adds the host's `shadow_height`, but that shadow belongs to
+     * the author's bottom scrim, which this session never renders (the tab row it fades is parked),
+     * so counting it would reserve yet another blank strip under the capsule.
+     */
+    override fun peekHeight(): Int =
+        dimen("miniplayer_height") + (bottomGapDp * density).toInt() + bottomInset
 
     /**
      * The centred iPad mini seat: the capsule sits where the host's tablet mini band collapses to
@@ -336,6 +364,21 @@ internal class TabletChromeSession(
      */
     private fun effectiveSlide(): Float = if (topSlide <= 0f && !isCollapsed) EXPANDED_SLIDE else topSlide
 
+    /**
+     * Apple Music's own typeface, read off its native mini-player title. Using the host's own font
+     * is what makes Latin letters and punctuation render in SF Pro while CJK falls back to the
+     * system face, without the module shipping a font of its own. Cached and re-resolved only when
+     * the host swaps the title view.
+     */
+    private fun miniLabelTypeface(): android.graphics.Typeface? {
+        val view = find("mini_player_title")
+        if (view !== miniLabelTypefaceSource) {
+            miniLabelTypefaceSource = view
+            miniLabelTypefaceCache = (view as? TextView)?.typeface
+        }
+        return miniLabelTypefaceCache
+    }
+
     override fun onPreDraw(): Boolean {
         val result = super.onPreDraw()
         if (topClosed) return result
@@ -387,7 +430,9 @@ internal class TabletChromeSession(
         val glassContext = navGlass?.context ?: return
         val content = find("navigation_host_group") as? ViewGroup ?: return
         val navigation = find("bottom_navigation") ?: return
-        val navHeight = dimen("navigation_tabs_height")
+        // A slim top toolbar, not the host's 56dp bottom tab row: see TOP_BAR_HEIGHT_DP. The
+        // occupied-top-top calculation reads the same value so the two stay consistent.
+        val navHeight = (TabletChromeLayoutPolicy.TOP_BAR_HEIGHT_DP * density).toInt()
         if (navHeight <= 0) return
         val parent = topMountParent(content) ?: return
 
@@ -699,6 +744,9 @@ internal class TabletChromeSession(
                     title = miniTitle,
                     artist = miniArtist,
                     panelHeight = (miniPanelHeightPx / density).dp,
+                    // Apple's own typeface for the two text lines: Latin and punctuation render in
+                    // the host's SF Pro, CJK falls back to the system font.
+                    labelTypeface = miniLabelTypeface(),
                     // The inherited transition's own 0..0.35 band, so the Compose shape morphs in
                     // lockstep with the geometry the base is writing to this same View.
                     expansion = miniExpansion,

@@ -40,6 +40,16 @@ internal object TabletChromeLayoutPolicy {
     const val TOP_TAB_CELL_MIN_DP = 44
     const val TOP_TAB_CELL_MAX_DP = 58
 
+    /**
+     * Height of the floating top capsule, in dp.
+     *
+     * Deliberately thinner than the host's `dimen/navigation_tabs_height` (56dp): that is the
+     * *bottom* tab row's height, and reusing it made the top bar read as thick ("太宽…纵向"). The
+     * reference top bar is a slim toolbar — its text occupies roughly a third of the capsule — so
+     * the host dimension is only the fallback ceiling here. This is the knob for that thickness.
+     */
+    const val TOP_BAR_HEIGHT_DP = 44
+
     /** Sheet progress at which the top capsule has completely faded for the expanded player. */
     const val EXPAND_FADE_END = 0.35f
 

@@ -86,13 +86,15 @@ fun GlassNavigation(
      */
     tintSelectedWithAccent: Boolean = false,
     /**
-     * Keeps the selection mask translucent without turning the selected label into a ghost.
+     * Keeps the mask's glass while dropping the ghost of the selected label.
      *
      * The library's capsule draws its cells twice: once visibly and once — invisible but recorded —
      * into the layer the sliding thumb samples. The thumb's lens then displaces, colour-fringes and
      * press-scales that recorded copy, so a pressed selection mask shows the selected label/icon
-     * duplicated and smeared inside itself. This switch drops the recorded copy, so the mask
-     * refracts the panel material alone, and draws the one visible copy on top of the mask.
+     * duplicated and smeared inside itself. This switch stops the cells from ever being recorded and
+     * has the mask refract the panel's own exported surface — the page material seen through the
+     * bar's glass — so the refraction/lensing the reference shows is kept, while the one visible
+     * copy of the cells is drawn on top of the mask.
      *
      * The mask itself, the press/"灵动" squeeze and the free thumb drag are unchanged. Off by
      * default, so the shipped phone/dual-pane bar keeps the reference layer and animation exactly.

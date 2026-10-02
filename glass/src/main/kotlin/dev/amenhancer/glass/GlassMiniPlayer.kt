@@ -1,5 +1,6 @@
 package dev.amenhancer.glass
 
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -31,6 +32,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -84,9 +87,10 @@ private const val PANEL_PADDING_DP = 15 // iPad: ~0.28 x capsule height of glass
 private const val CONTROL_GAP_DP = 11 // iPad: glyph pitch ~0.70H less the 28dp control box
 private const val CENTER_GAP_DP = 10 // iPad: ~0.19 x capsule height around the centre block
 private const val TEXT_GAP_DP = 8 // iPad: ~0.14 x capsule height, artwork -> title
-private const val TITLE_SIZE_SP = 13f
-private const val ARTIST_SIZE_SP = 11f
+private const val TITLE_SIZE_SP = 15f // iPad: title cap ~0.16 x capsule height, the bolder line
+private const val ARTIST_SIZE_SP = 13f // iPad: artist x-height matches the title's, so nearly as big
 private val ControlSize = 28.dp
+private val PlayControlSize = 48.dp // iPad: play/pause glyph ~0.44 x capsule height vs ~0.25 for prev/next
 
 /**
  * The tablet iPad-style BOTTOM mini-player capsule: one horizontal glass capsule with the
@@ -107,6 +111,9 @@ private val ControlSize = 28.dp
  * radius are measured against it, exactly as [NativeLiquidButton] measures its `miniHeightDp`.
  * [expansion] reports how far the host has expanded the surface (`0` = collapsed capsule, `1` =
  * full player) so the material's shape can interpolate like `NLB`'s does.
+ *
+ * [labelTypeface] is the host's own typeface for the title/artist column; when null the default
+ * family is used.
  */
 @Composable
 fun GlassMiniPlayer(
@@ -124,16 +131,33 @@ fun GlassMiniPlayer(
     expansion: Float = 0f,
     panelBlur: Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     modifier: Modifier = Modifier,
+    labelTypeface: Typeface? = null,
 ) {
     val isLightTheme = !isSystemInDarkTheme()
     val containerColor = remember(isLightTheme) {
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f) else Color(0xFF121212).copy(0.4f)
     }
-    val titleStyle = remember(foreground) {
-        TextStyle(color = foreground, fontSize = TITLE_SIZE_SP.sp)
+    // The caller hands over the host's own Apple Music typeface (resolved from its native mini-player
+    // title view), so Latin renders in the app's SF Pro and CJK still falls back to the system font.
+    // Null keeps the default family, i.e. exactly the previous look.
+    val labelFontFamily = remember(labelTypeface) {
+        labelTypeface?.let { FontFamily(it) }
     }
-    val artistStyle = remember(foreground) {
-        TextStyle(color = foreground.copy(alpha = ARTIST_ALPHA), fontSize = ARTIST_SIZE_SP.sp)
+    val titleStyle = remember(foreground, labelFontFamily) {
+        TextStyle(
+            color = foreground,
+            fontSize = TITLE_SIZE_SP.sp,
+            fontFamily = labelFontFamily,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+    val artistStyle = remember(foreground, labelFontFamily) {
+        TextStyle(
+            color = foreground.copy(alpha = ARTIST_ALPHA),
+            fontSize = ARTIST_SIZE_SP.sp,
+            fontFamily = labelFontFamily,
+            fontWeight = FontWeight.Medium,
+        )
     }
     val coverSize = (panelHeight * COVER_SIZE_FRACTION).coerceAtLeast(0.dp)
     val coverShape = remember(coverSize) {
@@ -205,7 +229,8 @@ fun GlassMiniPlayer(
                 label = if (state.isPlaying) "暂停" else "播放",
                 enabled = state.enabled,
                 icon = if (state.isPlaying) icons.pause else icons.play,
-                tint = accent,
+                tint = foreground,
+                controlSize = PlayControlSize,
                 onCommand = onCommand,
             )
             MiniPlayerControl(
@@ -307,12 +332,13 @@ private fun MiniPlayerControl(
     icon: Drawable?,
     tint: Color,
     onCommand: (GlassMiniPlayerCommand) -> Unit,
+    controlSize: Dp = ControlSize,
 ) {
     val send = rememberUpdatedState(onCommand)
     val tinted = remember(icon, tint) { tintedDrawable(icon, tint) }
     Canvas(
         Modifier
-            .size(ControlSize)
+            .size(controlSize)
             .clickable(
                 interactionSource = null,
                 indication = null,

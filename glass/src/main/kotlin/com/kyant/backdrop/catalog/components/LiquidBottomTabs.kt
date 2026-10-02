@@ -45,9 +45,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -73,6 +78,7 @@ import com.kyant.backdrop.catalog.utils.InteractiveHighlight
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import dev.amenhancer.glass.GlassPolicy
+import dev.amenhancer.glass.TabThumbGeometry
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
@@ -107,11 +113,8 @@ private const val SETTLE_PULSE_MS = 180
  * magnified with the thumb). Both must use the identical numbers or the two paths drift.
  */
 private fun GraphicsLayerScope.thumbBloom(animation: DampedDragAnimation) {
-    scaleX = animation.scaleX
-    scaleY = animation.scaleY
-    val velocity = animation.velocity / 10f
-    scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-    scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+    scaleX = TabThumbGeometry.scaleX(animation.scaleX, animation.velocity)
+    scaleY = TabThumbGeometry.scaleY(animation.scaleY, animation.velocity)
 }
 
 @Composable
@@ -163,9 +166,7 @@ fun LiquidBottomTabs(
      * iPad-style top bar must stay still while pressed, so that session turns this off with `false`.
      * With it off the *visible* cells are held at `1f` during the press, and only the one cell the
      * thumb settles on grows, briefly, once the settle animation has carried the thumb onto it
-     * (after a tap or a completed drag). The opt-out is deliberately visible-row-only: the invisible
-     * row recorded for the thumb's lens always keeps `lerp(1f, 1.2f, pressProgress)`, so the
-     * refracted copy magnifies about its own cell centre and lands in place under the crisp label.
+     * (after a tap or a completed drag).
      * Defaulted to `true`, so the shipped phone/dual-pane bar keeps the reference's press animation
      * byte-identically.
      */
@@ -191,6 +192,7 @@ fun LiquidBottomTabs(
      * Off by default, so the shipped phone/dual-pane bar keeps the reference path byte-identically.
      */
     refractionScalesWithThumb: Boolean = false,
+    replaceContentUnderThumb: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -402,8 +404,51 @@ fun LiquidBottomTabs(
             // AM++: this row is the reference's only visible copy of the cells. With the clean mask
             // the cells are drawn once, by the top row below, so this copy is dropped rather than
             // double-painted under it. `cleanSelectionMask = false` passes `content` unchanged.
-            content = if (cleanSelectionMask) EmptyTabContent else content
+            content = if (cleanSelectionMask || replaceContentUnderThumb) EmptyTabContent else content
         )
+
+        if (replaceContentUnderThumb && !cleanSelectionMask) {
+            CompositionLocalProvider(LocalLiquidBottomTabScale provides tabScale) {
+                Row(
+                    Modifier
+                        .graphicsLayer {
+                            translationX = panelOffset
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            val bounds = TabThumbGeometry.bounds(
+                                panelWidth = size.width,
+                                tabWidth = tabWidth,
+                                thumbHeight = size.height,
+                                inset = panelInset,
+                                index = dampedDragAnimation.value,
+                                isLtr = isLtr,
+                                scaleX = TabThumbGeometry.scaleX(
+                                    dampedDragAnimation.scaleX, dampedDragAnimation.velocity,
+                                ),
+                                scaleY = TabThumbGeometry.scaleY(
+                                    dampedDragAnimation.scaleY, dampedDragAnimation.velocity,
+                                ),
+                            )
+                            if (bounds != null) {
+                                drawRoundRect(
+                                    color = Color.Black,
+                                    topLeft = Offset(bounds.left, bounds.top),
+                                    size = Size(bounds.width, bounds.height),
+                                    cornerRadius = CornerRadius(bounds.radiusX, bounds.radiusY),
+                                    blendMode = BlendMode.DstOut,
+                                )
+                            }
+                        }
+                        .height(panelHeight - 8f.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 4f.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = content,
+                )
+            }
+        }
 
         // AM++: the reference records this row — the panel material *and* the cells — into the layer
         // the thumb refracts. The row itself is alpha(0f), but layerBackdrop records the content
@@ -418,9 +463,7 @@ fun LiquidBottomTabs(
         // or colour-fringe, which is how the earlier attempt ended up a flat grey shape. The visible
         // panel keeps its blur; only the recorded refraction source is left sharp.
         CompositionLocalProvider(
-            // AM++: the recorded copy keeps the author's press curve unconditionally, so the
-            // sampled cells magnify about their own centres no matter what the visible row does.
-            LocalLiquidBottomTabScale provides pressScale
+            LocalLiquidBottomTabScale provides if (replaceContentUnderThumb) tabScale else pressScale
         ) {
             Row(
                 Modifier

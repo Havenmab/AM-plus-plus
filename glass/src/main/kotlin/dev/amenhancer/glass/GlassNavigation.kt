@@ -158,6 +158,7 @@ fun GlassNavigation(
      * Off by default, so the shipped phone/dual-pane bar keeps the reference path byte-identically.
      */
     refractionScalesWithThumb: Boolean = false,
+    replaceContentUnderThumb: Boolean = false,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -186,6 +187,7 @@ fun GlassNavigation(
             cleanSelectionMask = cleanSelectionMask,
             pressScalesCells = pressScalesCells,
             refractionScalesWithThumb = refractionScalesWithThumb,
+            replaceContentUnderThumb = replaceContentUnderThumb,
         ) {
             tabs.forEachIndexed { cellIndex, tab ->
                 // Keep each cell's remembered tinted drawable keyed to the tab, so a menu swap can

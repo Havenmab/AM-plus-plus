@@ -153,6 +153,11 @@ class TabletChromeStructuralRegressionTest {
             "pressing the top bar must not scale the labels",
             tablet.contains("pressScalesCells = false"),
         )
+        assertTrue(
+            "the tablet must replace ordinary labels under the refracting thumb",
+            tablet.contains("replaceContentUnderThumb = true"),
+        )
+        assertTrue(navigation.contains("replaceContentUnderThumb: Boolean = false"))
         // The round-7 scaling deviations are gone: the effect constants are the author's absolute
         // values again and the press bloom is not moved onto the thumb. Both were ours, and each
         // one changed the relationship between the sampled layer and the thumb's lens, which is
@@ -175,7 +180,37 @@ class TabletChromeStructuralRegressionTest {
             phone.contains("cleanSelectionMask") ||
                 phone.contains("TOP_CAPSULE_HEIGHT_DP") ||
                 phone.contains("pressScalesCells = false") ||
-                phone.contains("refractionScalesWithThumb = true"),
+                phone.contains("refractionScalesWithThumb = true") ||
+                phone.contains("replaceContentUnderThumb = true"),
         )
+    }
+
+    @Test
+    fun refractedLabelsReplaceOnlyTheCoveredOrdinaryTextWithoutRemovingTheSampler() {
+        val tabs = normalized(glassSource("com/kyant/backdrop/catalog/components/LiquidBottomTabs.kt"))
+        assertTrue(tabs.contains("replaceContentUnderThumb: Boolean = false"))
+        assertTrue(tabs.contains("cleanSelectionMask || replaceContentUnderThumb"))
+        assertTrue(tabs.contains("if (replaceContentUnderThumb && !cleanSelectionMask)"))
+        val ordinaryRow = tabs.indexOf("if (replaceContentUnderThumb && !cleanSelectionMask)")
+        val sampledRow = tabs.indexOf(".layerBackdrop(tabsBackdrop)", ordinaryRow)
+        val mask = tabs.substring(ordinaryRow, sampledRow)
+        assertTrue(mask.contains("compositingStrategy = CompositingStrategy.Offscreen"))
+        assertTrue(mask.contains("blendMode = BlendMode.DstOut"))
+        assertTrue(mask.contains("index = dampedDragAnimation.value"))
+        assertTrue(tabs.contains("provides if (replaceContentUnderThumb) tabScale else pressScale"))
+        assertTrue(tabs.contains("backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)"))
+        assertTrue(tabs.substring(sampledRow).contains("content = if (cleanSelectionMask) EmptyTabContent else content"))
+    }
+
+    @Test
+    fun pageChangesActivelyScheduleSharedBackdropRefreshAndCloseCancelsIt() {
+        val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
+        assertTrue(tablet.contains("val wanted = topWanted || miniWanted"))
+        assertTrue(tablet.contains("if (topSelectedId != selected) { topSelectedId = selected requestBackdropRefresh() }"))
+        assertTrue(tablet.contains("topLayoutDirty = true requestBackdropRefresh()"))
+        assertTrue(tablet.contains("source.postDelayed(topCaptureCallback, maxOf(0L, scheduled - now))"))
+        assertTrue(tablet.contains("topCaptureSource?.removeCallbacks(topCaptureCallback)"))
+        assertTrue(tablet.contains("topCaptureRefresh.setVisible(false, SystemClock.uptimeMillis())"))
+        assertFalse(tablet.contains("topCaptureSettle"))
     }
 }

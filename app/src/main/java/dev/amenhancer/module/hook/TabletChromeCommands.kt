@@ -18,6 +18,7 @@ internal interface TabletChromeCommands {
 
     val shuffleAvailable: Boolean
     val repeatAvailable: Boolean
+    val moreAvailable: Boolean
 
     fun isPlaying(): Boolean
 
@@ -53,6 +54,8 @@ internal interface TabletChromeCommands {
 
     /** Opens the host's own queue pane. */
     fun openQueue(activity: Activity)
+
+    fun openSongMenu(activity: Activity)
 
     /**
      * Observes host state changes (play state, shuffle, repeat, current item). The returned handle

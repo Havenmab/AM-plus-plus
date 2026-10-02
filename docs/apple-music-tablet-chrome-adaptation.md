@@ -5,7 +5,7 @@
 
 ## 1. 需求与产品决策
 
-在**官方平板**上增加一种可选界面风格：顶部导航胶囊（主页 / 新发现 / 广播 / 资料库 用文字，搜索用图标；**不还原**最左侧的侧边栏切换按钮）+ 底部迷你播放器胶囊（随机 / 上一曲 / 播放暂停 / 下一曲 / 循环三态、中部封面+歌曲名+艺人名、右侧歌词按钮点击展开完整播放器、右侧队列按钮）。
+在**官方平板**上增加一种可选界面风格：顶部导航胶囊（主页 / 新发现 / 广播 / 资料库 用文字，搜索用图标；**不还原**最左侧的侧边栏切换按钮）+ 底部迷你播放器胶囊（随机 / 上一曲 / 播放暂停 / 下一曲 / 循环三态、中部封面+歌曲名+艺人名、右侧更多歌曲操作 / 歌词 / 队列；歌词按钮点击展开完整播放器）。
 
 用户确认的四项决策：
 
@@ -94,7 +94,7 @@
 | `hook/TabletChromeFeature.kt` | 门控：液态玻璃开关 + iPad 风格 + Android 13 + 目标是否可用 |
 | `hook/TabletChromeSession.kt` | 会话：顶栏胶囊挂载、隐藏原生底栏、顶部占位、触摸命中、横竖屏 |
 | `hook/TabletChromeLayoutPolicy.kt` | 纯策略（可单测）：顶栏高度/占位/命中 |
-| `glass/…/TopBarGeometry.kt`、`GlassTopNavigation.kt`、`GlassMiniPlayer.kt` | 材质组件（胶囊随内容收窄；搜索为图标；迷你播放器 7 个控件自绘） |
+| `glass/…/TopBarGeometry.kt`、`GlassTopNavigation.kt`、`GlassMiniPlayer.kt` | 材质组件（胶囊随内容收窄；搜索为图标；迷你播放器 8 个控件使用宿主图标） |
 | `PhoneGlassRuntime.createSession` | 路由：iPad 分支先于双栏分支；双栏分支显式排除 iPad 风格（两套玻璃永不同时写几何） |
 | `FeatureInstallation` | 登记新能力，资源期发现仍由既有玻璃 hook 完成 |
 
@@ -290,3 +290,21 @@
 上下边缘各增加系统 inset 外 28dp 的渐变，使用宿主浅/深色 `background_color` 向透明过渡。Drawable 放在 navigation host 的原生 ViewOverlay 中，随窗口位置换算坐标；它不是新的 View，不接管任何触摸，也不替换原生背景。顶部胶囊退场时同步淡出，完整播放器和设置页不保留白色覆盖；关闭或重建会话时移除。
 
 设备验收重点：连续展开/收起、播放/暂停与切换歌词/队列时封面保持正确大小；资料库六个分类逐个可点，滚动时大标题和设备音乐开关稳定且可用；返回资料库与进入专辑/艺人详情后布局不串页；小字消失而大字保留；浅/深色短渐变、横竖屏、后台恢复，以及既有封面收起衔接无回退。编译、lint 与完整 JVM 测试交由 PR Actions，动画观感仍由用户设备反馈确认。
+
+## 13. 真机验收后的图标与歌曲菜单（2026-10-02）
+
+用户确认上一轮构建已通过设备测试。本轮仅修改迷你播放器的控件图标与更多歌曲操作入口，不修改玻璃渲染器、顶栏、资料库策略、渐变或封面动画。
+
+### 13.1 随机和循环只改变图标颜色
+
+6.5.3 资源 `ic_nowplaying_shuffleon`、`ic_nowplaying_repeaton` 和 `ic_nowplaying_repeatoneon` 自带圆角方块，并不是组件另加了红色背景。去掉这些选中态 Drawable 槽位；随机在开关两态都用 `ic_nowplaying_shuffle`，循环 off/all 用 `ic_nowplaying_repeat`，one 用独立的无底块 `ic_nowplaying_repeatone`。开启时只应用 accent tint，关闭时恢复前景色；循环三态和播放命令不变。
+
+### 13.2 横向三点与原生歌曲操作单
+
+`ic_actionsheet_more.xml` 是宿主自带的 24dp 横向三个实心点，无圆形底色；它与 `ic_nowplaying_more` / `ic_navbar_platter_more` 的竖向三点不同。直接加载该资源，不重画、不旋转。新按钮位于歌词按钮左侧，歌曲文字列仍按剩余宽度省略；封面测量槽与播放器展开/收起的几何不变。
+
+通过已验证的 `PlayerActivity.f1()` 取得当前播放器，再用 6.5.3/1599 精确档案的 `player.fragment.v0.z1()` 取得实时 song/lyrics/queue pane。仅在该 pane 的 `getView()` 子树中按资源名查找 `list_left_icon`，调用它现有的 `callOnClick()`，不做整个 Activity 的同名 ID 搜索，也不缓存上一首歌曲或旧 pane 的按钮。符号缺失时只禁用更多按钮，不猜其他版本的混淆入口。
+
+逆向已核实 `n7.eb`（song binding）的 callback 1 从当前 binding 读取 PlaybackItem 与 CollectionItemView，调用 `player.d1.t0(..., bindingRoot.getContext())`，再走 `common.l.Q` / `n0` 及 `ActionSheetDialogFragment.show(activity.C(), "actionsheet")`。该菜单路径不读取被点击按钮的屏幕坐标，不依赖完整播放器已展开，也不以隐藏原生按钮作为弹窗锚点，因此可以复用折叠状态下保留的原生回调。菜单内容和下载、资料库、播放列表、分享、制作人员、电台、喜爱等行为均交给宿主按当前歌曲和账号状态处理，不另造菜单项。
+
+新增无底块图标、右侧按钮顺序、独立分发、实时 pane 作用域与精确版本符号测试。设备验收重点：随机开关及循环 off/all/one 只有图标变色；三点打开原生操作单而不展开播放器；连续切歌和播放队列/歌词返回后菜单显示当前歌曲；菜单关闭后底栏仍可操作；深色、横竖屏和既有封面动画无回退。

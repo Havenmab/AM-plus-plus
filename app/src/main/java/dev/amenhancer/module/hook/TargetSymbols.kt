@@ -274,6 +274,7 @@ internal enum class TargetSymbolId {
     MEDIA_PLAYBACK_SERVICE_CONTROLLER_HOLDER_FIELD,
     PLAYER_ACTIVITY_EXPAND_PLAYER,
     PLAYER_ACTIVITY_PLAYER_FRAGMENT,
+    PLAYER_CONTROLLER_CURRENT_FRAGMENT,
     QUEUE_BUNDLE_ARG_KEY_OWNER,
     QUEUE_BUNDLE_ARG_KEY_FIELD,
 }
@@ -425,6 +426,7 @@ private object AppleMusicProfiles {
             TargetSymbolId.MEDIA_PLAYBACK_SERVICE_ON_CREATE to "onCreate",
             TargetSymbolId.PLAYER_ACTIVITY_EXPAND_PLAYER to "v1",
             TargetSymbolId.PLAYER_ACTIVITY_PLAYER_FRAGMENT to "f1",
+            TargetSymbolId.PLAYER_CONTROLLER_CURRENT_FRAGMENT to "z1",
         ),
         exactFields = mapOf(
             TargetSymbolId.PLAYER_ACTIVITY_BEHAVIOR_FIELD to "c1",
@@ -2084,6 +2086,24 @@ internal object AppleMusicSymbols {
         contract = ::isPlayerActivityPlayerFragment,
     )
 
+    val TabletPlayerControllerCurrentFragment = TargetSymbolKey<Method>(
+        id = "tablet-player-controller-current-fragment",
+        profilePolicy = ProfilePolicy.EXACT_REQUIRED,
+        profileCandidates = { profile ->
+            runCatching {
+                val owner = profile?.exactClasses?.get(TargetSymbolId.PLAYER_CONTROLLER)
+                val name = profile?.exactMethods?.get(TargetSymbolId.PLAYER_CONTROLLER_CURRENT_FRAGMENT)
+                if (owner == null || name == null) emptyList() else {
+                    load(owner)?.declaredMethods?.filter { method ->
+                        method.name == name && isPlayerControllerCurrentFragment(method)
+                    }.orEmpty()
+                }
+            }.getOrDefault(emptyList())
+        },
+        structuralCandidates = { emptyList() },
+        identity = ::methodIdentity,
+    )
+
     val TabletQueueBundleArgKeyOwner = classSymbol(
         id = "tablet-queue-bundle-arg-key-owner",
         profileId = TargetSymbolId.QUEUE_BUNDLE_ARG_KEY_OWNER,
@@ -2200,6 +2220,16 @@ private fun isPlayerActivityPlayerFragment(method: Method): Boolean =
         method.name == "f1" &&
         method.parameterTypes.isEmpty() &&
         method.returnType.name == PLAYER_CONTROLLER_653_CLASS
+
+private fun isPlayerControllerCurrentFragment(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.parameterTypes.isEmpty() &&
+        method.returnType.name.startsWith("androidx.fragment.app.") &&
+        method.returnType.methods.any { getter ->
+            getter.name == "getView" &&
+                getter.parameterTypes.isEmpty() &&
+                getter.returnType == View::class.java
+        }
 
 private fun hasQueueBundleArgKeyField(candidate: Class<*>): Boolean =
     candidate.declaredFields.any(::isQueueBundleArgKeyField)

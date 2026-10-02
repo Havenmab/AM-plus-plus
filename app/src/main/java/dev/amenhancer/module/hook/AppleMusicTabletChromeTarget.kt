@@ -2,6 +2,8 @@ package dev.amenhancer.module.hook
 
 import android.app.Activity
 import android.os.Bundle
+import android.view.View
+import dev.amenhancer.module.ModuleConstants
 import java.lang.reflect.Field
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
@@ -69,6 +71,9 @@ internal class AppleMusicTabletChromeTarget(
     override val repeatAvailable: Boolean
         get() = seams?.repeatResolved == true
 
+    override val moreAvailable: Boolean
+        get() = seams?.moreResolved == true
+
     /**
      * Resolves every seam and installs the controller capture hook. Idempotent: a repeated call
      * returns the first outcome instead of double-registering the hook.
@@ -134,6 +139,7 @@ internal class AppleMusicTabletChromeTarget(
         val artistResolution = symbols.resolve(AppleMusicSymbols.TabletPlayerMediaItemGetArtistName)
         val expandResolution = symbols.resolve(AppleMusicSymbols.TabletPlayerActivityExpandPlayer)
         val fragmentResolution = symbols.resolve(AppleMusicSymbols.TabletPlayerActivityPlayerFragment)
+        val currentFragmentResolution = symbols.resolve(AppleMusicSymbols.TabletPlayerControllerCurrentFragment)
         val selectPaneResolution = symbols.resolve(AppleMusicSymbols.PlayerControllerSelectPane)
         val queueKeyOwnerResolution = symbols.resolve(AppleMusicSymbols.TabletQueueBundleArgKeyOwner)
         val queueKeyFieldResolution = symbols.resolve(AppleMusicSymbols.TabletQueueBundleArgKeyField)
@@ -166,6 +172,7 @@ internal class AppleMusicTabletChromeTarget(
             "mediaItemGetArtist" to artistResolution,
             "expandPlayer" to expandResolution,
             "playerFragment" to fragmentResolution,
+            "currentFragment" to currentFragmentResolution,
             "selectPane" to selectPaneResolution,
             "queueArgKeyOwner" to queueKeyOwnerResolution,
             "queueArgKeyField" to queueKeyFieldResolution,
@@ -214,6 +221,7 @@ internal class AppleMusicTabletChromeTarget(
             mediaItemGetArtist = artistResolution.valueOrNull(),
             expandPlayer = expandResolution.valueOrNull(),
             playerFragment = fragmentResolution.valueOrNull(),
+            currentFragment = currentFragmentResolution.valueOrNull(),
             selectPane = selectPaneResolution.valueOrNull(),
             queueArgKey = queueKeyFieldResolution.valueOrNull(),
             summary = summary,
@@ -368,6 +376,28 @@ internal class AppleMusicTabletChromeTarget(
         openPane(activity, QUEUE_PANE, extras, "openQueue")
     }
 
+    override fun openSongMenu(activity: Activity) {
+        if (!available || !moreAvailable || activity.isFinishing || activity.isDestroyed) return
+        runCatching {
+            val resolved = seams ?: return@runCatching
+            val accessor = resolved.playerFragment ?: return@runCatching
+            if (!accessor.declaringClass.isInstance(activity)) return@runCatching
+            val player = checkNotNull(accessor.invoke(activity)) { "player fragment unavailable" }
+            val pane = checkNotNull(resolved.currentFragment?.invoke(player)) { "current player pane unavailable" }
+            val root = checkNotNull(resolved.fragmentView?.invoke(pane) as? View) { "current player view unavailable" }
+            if (!root.isAttachedToWindow) return@runCatching
+            val id = activity.resources.getIdentifier("list_left_icon", "id", ModuleConstants.TARGET_PACKAGE)
+            check(id != 0) { "native song menu resource unavailable" }
+            val button = checkNotNull(root.findViewById<View>(id)) { "native song menu button unavailable" }
+            if (!button.isEnabled || !button.hasOnClickListeners()) {
+                debug("tablet chrome openSongMenu: native menu callback unavailable")
+                return@runCatching
+            }
+            val invoked = button.callOnClick()
+            debug("tablet chrome openSongMenu invoked=$invoked")
+        }.onFailure { debug("tablet chrome openSongMenu failed: $it") }
+    }
+
     override fun addListener(listener: () -> Unit): AutoCloseable {
         val target = controller
         val resolved = seams
@@ -491,6 +521,7 @@ internal class AppleMusicTabletChromeTarget(
         val mediaItemGetArtist: Method?,
         val expandPlayer: Method?,
         val playerFragment: Method?,
+        val currentFragment: Method?,
         val selectPane: Method?,
         val queueArgKey: Field?,
         val summary: String,
@@ -518,6 +549,12 @@ internal class AppleMusicTabletChromeTarget(
 
         val repeatResolved: Boolean = getRepeat != null && setRepeat != null
 
+        val fragmentView: Method? = runCatching {
+            currentFragment?.returnType?.getMethod("getView")
+        }.getOrNull()
+
+        val moreResolved: Boolean = playerFragment != null && currentFragment != null && fragmentView != null
+
         fun prepare() {
             listOfNotNull(
                 play,
@@ -541,6 +578,8 @@ internal class AppleMusicTabletChromeTarget(
                 mediaItemGetArtist,
                 expandPlayer,
                 playerFragment,
+                currentFragment,
+                fragmentView,
                 selectPane,
             ).forEach { method -> runCatching { method.isAccessible = true } }
             listOfNotNull(controllerField, holderField, queueArgKey).forEach { field ->

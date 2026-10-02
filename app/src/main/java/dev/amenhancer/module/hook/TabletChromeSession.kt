@@ -257,15 +257,13 @@ internal class TabletChromeSession(
     private var miniIcons by mutableStateOf(
         GlassMiniPlayerIcons(
             shuffle = null,
-            shuffleOn = null,
             previous = null,
             play = null,
             pause = null,
             next = null,
             repeat = null,
-            repeatOn = null,
             repeatOne = null,
-            repeatOneOn = null,
+            more = null,
             lyrics = null,
             queue = null,
         ),
@@ -1118,6 +1116,7 @@ internal class TabletChromeSession(
                 shuffleOn = commands.shuffleEnabled(),
                 repeatMode = TabletChromeLayoutPolicy.repeatModeOf(commands.repeatMode()),
                 enabled = true,
+                moreEnabled = commands.moreAvailable,
             )
         }
         if (next != miniState) miniState = next
@@ -1137,17 +1136,13 @@ internal class TabletChromeSession(
         miniIconsConfiguration = topHostConfiguration
         val next = GlassMiniPlayerIcons(
             shuffle = hostDrawable("ic_nowplaying_shuffle"),
-            shuffleOn = hostDrawable("ic_nowplaying_shuffleon"),
             previous = hostDrawable("ic_nowplaying_mp_rewind"),
             play = hostDrawable("ic_nowplaying_mp_play"),
             pause = hostDrawable("ic_nowplaying_mp_pause"),
             next = hostDrawable("ic_nowplaying_mp_fforward"),
             repeat = hostDrawable("ic_nowplaying_repeat"),
-            repeatOn = hostDrawable("ic_nowplaying_repeaton"),
-            // The host ships one "repeat one, on" asset; seed both one-state slots with it so
-            // whichever variant the component reads always paints the selected one glyph.
-            repeatOne = hostDrawable("ic_nowplaying_repeatoneon"),
-            repeatOneOn = hostDrawable("ic_nowplaying_repeatoneon"),
+            repeatOne = hostDrawable("ic_nowplaying_repeatone"),
+            more = hostDrawable("ic_actionsheet_more"),
             lyrics = hostDrawable("selector_nowplaying_lyrics"),
             queue = hostDrawable("selector_nowplaying_queue"),
         )
@@ -1293,6 +1288,7 @@ internal class TabletChromeSession(
 
                     GlassMiniPlayerCommand.NEXT -> commands.skipToNext()
                     GlassMiniPlayerCommand.REPEAT -> commands.cycleRepeatMode()
+                    GlassMiniPlayerCommand.MORE -> commands.openSongMenu(activity)
                     // The lyrics button expands the full player, per the product decision.
                     GlassMiniPlayerCommand.LYRICS -> commands.expandPlayer(activity)
                     // The queue pane only exists inside the full player (the host's own queue

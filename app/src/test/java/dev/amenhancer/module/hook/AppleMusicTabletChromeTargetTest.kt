@@ -17,6 +17,7 @@ class AppleMusicTabletChromeTargetTest {
         assertFalse(target.available)
         assertFalse(target.shuffleAvailable)
         assertFalse(target.repeatAvailable)
+        assertFalse(target.moreAvailable)
         assertEquals(0, target.repeatMode())
         assertFalse(target.isPlaying())
         assertFalse(target.shuffleEnabled())

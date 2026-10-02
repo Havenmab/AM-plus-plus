@@ -47,7 +47,7 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
 
 /** Every transport/auxiliary action the tablet mini capsule can request from its host. */
-enum class GlassMiniPlayerCommand { SHUFFLE, PREVIOUS, PLAY_PAUSE, NEXT, REPEAT, LYRICS, QUEUE }
+enum class GlassMiniPlayerCommand { SHUFFLE, PREVIOUS, PLAY_PAUSE, NEXT, REPEAT, MORE, LYRICS, QUEUE }
 
 enum class GlassRepeatMode { OFF, ALL, ONE }
 
@@ -56,20 +56,19 @@ data class GlassMiniPlayerState(
     val shuffleOn: Boolean,
     val repeatMode: GlassRepeatMode,
     val enabled: Boolean = true,
+    val moreEnabled: Boolean = enabled,
 )
 
 /** Host drawables loaded by the caller from the Apple Music package; anything null draws nothing. */
 data class GlassMiniPlayerIcons(
     val shuffle: Drawable?,
-    val shuffleOn: Drawable?,
     val previous: Drawable?,
     val play: Drawable?,
     val pause: Drawable?,
     val next: Drawable?,
     val repeat: Drawable?,
-    val repeatOn: Drawable?,
     val repeatOne: Drawable?,
-    val repeatOneOn: Drawable?,
+    val more: Drawable?,
     val lyrics: Drawable?,
     val queue: Drawable?,
 )
@@ -212,7 +211,7 @@ fun GlassMiniPlayer(
                 command = GlassMiniPlayerCommand.SHUFFLE,
                 label = "随机播放",
                 enabled = state.enabled,
-                icon = if (state.shuffleOn) icons.shuffleOn else icons.shuffle,
+                icon = icons.shuffle,
                 tint = if (state.shuffleOn) accent else foreground,
                 onCommand = onCommand,
             )
@@ -247,8 +246,8 @@ fun GlassMiniPlayer(
                 enabled = state.enabled,
                 icon = when (state.repeatMode) {
                     GlassRepeatMode.OFF -> icons.repeat
-                    GlassRepeatMode.ALL -> icons.repeatOn
-                    GlassRepeatMode.ONE -> icons.repeatOneOn
+                    GlassRepeatMode.ALL -> icons.repeat
+                    GlassRepeatMode.ONE -> icons.repeatOne
                 },
                 tint = if (state.repeatMode == GlassRepeatMode.OFF) foreground else accent,
                 onCommand = onCommand,
@@ -299,6 +298,14 @@ fun GlassMiniPlayer(
             horizontalArrangement = Arrangement.spacedBy(CONTROL_GAP_DP.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            MiniPlayerControl(
+                command = GlassMiniPlayerCommand.MORE,
+                label = "更多歌曲操作",
+                enabled = state.enabled && state.moreEnabled,
+                icon = icons.more,
+                tint = foreground,
+                onCommand = onCommand,
+            )
             MiniPlayerControl(
                 command = GlassMiniPlayerCommand.LYRICS,
                 label = "歌词",

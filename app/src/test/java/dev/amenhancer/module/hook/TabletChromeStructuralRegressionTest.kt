@@ -131,9 +131,22 @@ class TabletChromeStructuralRegressionTest {
         )
 
         val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
-        assertTrue(
-            "the tablet top bar must opt into the accent tint",
+        // The tablet top bar must stay on the author's path too. The library's own accentOverride
+        // already tints the cells under the droplet, and its layer recording is the refraction
+        // source the thumb's lens samples — passing either opt-in broke the glass on device
+        // (docs/apple-music-tablet-chrome-adaptation.md §6.4), so the guard now forbids both and
+        // pins the author's capsule height instead.
+        assertFalse(
+            "the tablet top bar must not opt into the accent tint",
             tablet.contains("tintSelectedWithAccent = true"),
+        )
+        assertFalse(
+            "the tablet top bar must not skip the component's refraction recording",
+            tablet.contains("cleanSelectionMask = true"),
+        )
+        assertTrue(
+            "the top capsule must reuse the author's capsule height",
+            tablet.contains("GlassPolicy.NAV_HEIGHT_DP"),
         )
     }
 }

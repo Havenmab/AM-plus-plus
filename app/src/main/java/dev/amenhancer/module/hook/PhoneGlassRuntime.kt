@@ -161,6 +161,8 @@ internal object PhoneGlassRuntime {
         // thumbnail and then writes it each slide frame. Apply the tablet-only
         // source alignment after that write, leaving its scale and the glass
         // transition untouched. The callback is optional on other host builds.
+        // The seam is virtual on the session surface, so every live session is
+        // offered the frame; the stacked phone form's default is a no-op.
         runCatching {
             val callbackName = checkNotNull(AppleMusicSymbols.playerArtworkSlideCallbackClassName(build)) {
                 "No artwork slide callback profile for ${build.displayName}"
@@ -173,7 +175,7 @@ internal object PhoneGlassRuntime {
                     val artwork = artworkField.get(param.thisObject) as? View ?: return
                     val progress = (param.args[0] as? Number)?.toFloat() ?: return
                     sessions.values.forEach { session ->
-                        (session as? TabletDualPaneGlassSession)?.alignNativeArtworkStart(artwork, progress)
+                        session.alignNativeArtwork(artwork, progress)
                     }
                 }
             })

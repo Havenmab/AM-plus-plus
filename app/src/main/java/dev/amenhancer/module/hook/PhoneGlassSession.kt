@@ -139,6 +139,18 @@ internal open class PhoneGlassSession(
     protected open fun playerFragmentsAlphaFactor(progress: Float, materialProgress: Float): Float = materialProgress
 
     /**
+     * Artwork-origin correction seam, driven by the runtime's artwork-slide hook after Apple's
+     * own per-frame write. The stacked phone host has no `artwork_container` visual translation,
+     * so the phone form deliberately does not correct: this empty default is what keeps the
+     * phone path unchanged. Both tablet forms override it (the dual-pane row and the centred
+     * iPad seat each restore the thumbnail's true screen origin).
+     *
+     * Runs per slide frame, so an override must stay allocation-free and must not scan the
+     * hierarchy.
+     */
+    override fun alignNativeArtwork(artwork: View, slide: Float) = Unit
+
+    /**
      * Horizontal slot of a floating capsule as [left, right] margins. The phone
      * keeps the tuned symmetric margins; the tablet row carves asymmetric slots
      * (nav pill left, mini pill right) inside one centered row.

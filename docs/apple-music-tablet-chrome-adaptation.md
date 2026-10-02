@@ -160,6 +160,24 @@
 
 仍未完成：平板封面飞入原点校正（见 §6.3.7）。本轮验证：`test` 897/0，CI 全绿。
 
+## 6.5 第四轮：顶栏回到库自身的路径（关键教训）
+
+上一轮我用 `cleanSelectionMask` 去重影，结果把玻璃效果一起去掉了。回读上游库与原作者用法后确认：
+
+| 事实 | 证据 |
+| --- | --- |
+| 上游 `LiquidBottomTabs` 是**示例组件**，材料/透镜/色散/按压全部**写死为绝对 dp**，**没有任何参数 API** | 上游 README 明示不提供高层组件；`effects { vibrancy(); blur(8dp); lens(24dp,24dp) }`、拇指 `lens(10dp·p, 14dp·p, chromaticAberration=true)`、按压 `lerp(1,1.2,p)` 皆为常量 |
+| ⇒ 唯一能间接影响效果的外部量是**胶囊尺寸** | 透镜/挤压常量是绝对 dp，胶囊变矮它们就相对过大 |
+| 原作者底栏参数：`panelHeight = 56dp`、全宽−2×16dp、**无**自定义 tint、**保留**单元格录制层 | `PhoneGlassSession.kt:286` + `GlassPolicy.NAV_HEIGHT_DP` |
+| **那层录制正是折射源** | 拇指 `lens(..., chromaticAberration=true)` 采样 `tabsBackdrop`，而该层由 `.alpha(0f).layerBackdrop(...)` 那一行录制；`alpha(0f)` 在 `layerBackdrop` 之前，只淡化合成输出，录制内容仍是实心 |
+| `cleanSelectionMask` 让透镜只能采样**平滑模糊面** ⇒ 必然平灰 | 平滑面没有高频边缘，位移与色散都无从显现 |
+
+**结论与改动**：顶栏改回作者路径 —— 高度取 `GlassPolicy.NAV_HEIGHT_DP`(56dp)，不再传 `tintSelectedWithAccent`（组件自身的 `accentOverride` 已经给水珠下的单元格上色）与 `cleanSelectionMask`，只保留有意收窄的宽度。`TabletChromeStructuralRegressionTest` 现在**断言禁止**这两个开关再次被传、并断言复用作者的胶囊高度。
+
+## 6.6 平板封面飞入原点校正（已完成）
+
+原来只有 `TabletDualPaneGlassSession` 有该校正，且 `PhoneGlassRuntime` 通过 `as? TabletDualPaneGlassSession` **硬转**调用 —— iPad 会话是它的**兄弟**（都直接继承 `PhoneGlassSession`），因此永远拿不到，展开/收起时封面原点有偏差。现改为：把校正提升为 `GlassSession` 上的 seam（手机侧空实现、双栏实现体不变），运行时对每个活跃会话虚调用；iPad 会话按自己的**居中半宽座位**推导 Y 向校正量。
+
 ## 6.1 未在设备上验证的已知风险
 
 1. ~~**隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。~~ 自绘胶囊与 `hideSeam(miniRoot)` 已删除，此条已不适用。

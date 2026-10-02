@@ -161,10 +161,13 @@ fun LiquidBottomTabs(
      * The reference provides `lerp(1f, 1.2f, pressProgress)` to [LocalLiquidBottomTabScale], so a
      * press on the bar grows every cell — including an icon-only cell such as a search glyph. The
      * iPad-style top bar must stay still while pressed, so that session turns this off with `false`.
-     * With it off the cells are held at `1f` during the press, and only the one cell the thumb
-     * settles on grows, briefly, once the settle animation has carried the thumb onto it (after a
-     * tap or a completed drag). Defaulted to `true`, so the shipped phone/dual-pane bar keeps the
-     * reference's press animation byte-identically.
+     * With it off the *visible* cells are held at `1f` during the press, and only the one cell the
+     * thumb settles on grows, briefly, once the settle animation has carried the thumb onto it
+     * (after a tap or a completed drag). The opt-out is deliberately visible-row-only: the invisible
+     * row recorded for the thumb's lens always keeps `lerp(1f, 1.2f, pressProgress)`, so the
+     * refracted copy magnifies about its own cell centre and lands in place under the crisp label.
+     * Defaulted to `true`, so the shipped phone/dual-pane bar keeps the reference's press animation
+     * byte-identically.
      */
     pressScalesCells: Boolean = true,
     /**
@@ -326,14 +329,24 @@ fun LiquidBottomTabs(
                 }
         }
 
-        // AM++: what every cell's scale lambda resolves to. The shipped path is the reference's own
-        // press squeeze on every cell; `pressScalesCells = false` holds the cells at 1x while the
-        // thumb is pressed and scales only the one cell the thumb has settled on, by the brief
-        // `settlePulse`. Both branches are read inside the cells' `graphicsLayer` blocks, so the
-        // animation invalidates just those layers and never recomposes the row.
-        val tabScale: (Int) -> Float = if (pressScalesCells) {
-            { _ -> lerp(1f, 1.2f, dampedDragAnimation.pressProgress) }
-        } else {
+        // AM++: the author's own press squeeze on every cell — `lerp(1f, 1.2f, pressProgress)`,
+        // exactly as upstream provides it. The recorded (sampled) row always uses this, whatever
+        // `pressScalesCells` says: the droplet's lens must refract a copy magnified about its own
+        // cell centre, so the sampled label lands in place under the crisp one. With a constant 1f
+        // here the sampled copy was instead magnified only by the thumb's bloom, whose pivot is the
+        // thumb/layer origin above the droplet, so it drifted down-and-outward.
+        val pressScale: (Int) -> Float = { _ ->
+            lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
+        }
+
+        // AM++: what the *visible* cells resolve to. The shipped path is `pressScale`, so the phone
+        // and dual-pane bars are unchanged; `pressScalesCells = false` holds the visible cells at 1x
+        // while the thumb is pressed and scales only the one cell the thumb has settled on, by the
+        // brief `settlePulse` — pressing must not grow the labels or a search glyph. This row's
+        // lambda, and only this one, honours the opt-out. Both are read inside the cells'
+        // `graphicsLayer` blocks, so the animation invalidates just those layers and never
+        // recomposes the row.
+        val tabScale: (Int) -> Float = if (pressScalesCells) pressScale else {
             { index ->
                 if (index == settleIndex) lerp(1f, SETTLE_PULSE_SCALE, settlePulse.value) else 1f
             }
@@ -405,7 +418,9 @@ fun LiquidBottomTabs(
         // or colour-fringe, which is how the earlier attempt ended up a flat grey shape. The visible
         // panel keeps its blur; only the recorded refraction source is left sharp.
         CompositionLocalProvider(
-            LocalLiquidBottomTabScale provides tabScale
+            // AM++: the recorded copy keeps the author's press curve unconditionally, so the
+            // sampled cells magnify about their own centres no matter what the visible row does.
+            LocalLiquidBottomTabScale provides pressScale
         ) {
             Row(
                 Modifier

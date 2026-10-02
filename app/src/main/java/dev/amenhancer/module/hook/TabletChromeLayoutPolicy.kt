@@ -13,7 +13,9 @@ import dev.amenhancer.glass.TopBarGeometry
  * glass floats over the scene, so there is **no** reserved top padding: the reference chrome has no
  * blank strip and the page keeps scrolling under the glass. [TopBarGeometry] stays the single
  * source of truth for the status-bar inset, the reference gap and the host's own
- * `dimen/navigation_tabs_height`, exactly like `GlassPolicy.occupiedHeight` is for the bottom
+ * `dimen/navigation_tabs_height` (which still seats the capsule through
+ * [capsuleTopMarginPx] — the capsule's own height is the thin [TOP_CAPSULE_HEIGHT_DP], not the
+ * host's bottom-strip dimension), exactly like `GlassPolicy.occupiedHeight` is for the bottom
  * glass. No `android.*` type may appear here, so the host bridge and a JVM regression test share
  * one truth.
  */
@@ -23,22 +25,40 @@ internal object TabletChromeLayoutPolicy {
     const val TOP_BAR_SIDE_GAP_DP = 16
 
     /**
+     * Height of the floating top capsule, in whole dp.
+     *
+     * The reference iPad bar measures ~42–43dp (Apple's nominal 44pt), so the capsule must be its
+     * own thin value rather than the host's `dimen/navigation_tabs_height` — that 56dp dimension
+     * belongs to the native **bottom** tab strip and reads as "太胖" when reused on top.
+     */
+    const val TOP_CAPSULE_HEIGHT_DP = 44
+
+    /**
      * Width one top-nav tab reserves inside the floating capsule, as a fraction of the window.
      *
      * Derived from the reference: the whole capsule spans roughly 22.5% of the window over five
      * visible cells (including the sidebar toggle we deliberately omit), i.e. about 4.5% per cell.
      * It is a fraction rather than a fixed dp so the bar keeps that proportion on narrower tablets
-     * instead of looking inflated — ~58dp on a 1280dp tablet, ~36dp on an 800dp one.
+     * instead of looking inflated. Raised to 5.0% because the top bar's label is deliberately
+     * bigger/heavier than the shared phone tab label (see [TOP_TAB_LABEL_SIZE_SP]) and the user
+     * accepted a slightly wider bar to give those labels room.
      */
-    const val TOP_TAB_CELL_FRACTION = 0.045f
+    const val TOP_TAB_CELL_FRACTION = 0.05f
 
     /**
      * Bounds for [TOP_TAB_CELL_FRACTION] in dp. The floor keeps a three-character CJK label at the
-     * shared 11sp tab size legible (its glyphs measure ~33dp) plus padding; the ceiling stops a very
-     * wide window from stretching the bar into a slab.
+     * top bar's own [TOP_TAB_LABEL_SIZE_SP] legible (its glyphs measure ~39dp) plus padding; the
+     * ceiling stops a very wide window from stretching the bar into a slab.
      */
-    const val TOP_TAB_CELL_MIN_DP = 44
-    const val TOP_TAB_CELL_MAX_DP = 58
+    const val TOP_TAB_CELL_MIN_DP = 48
+    const val TOP_TAB_CELL_MAX_DP = 62
+
+    /**
+     * Label size of the top bar's tab cells, in sp. Bigger than the 11sp label the shared phone
+     * bar uses (the user's 「文字太小也太细」); GlassNavigation's own default stays 11sp so the
+     * phone/dual-pane bar is untouched, and only the iPad top bar opts into this value.
+     */
+    const val TOP_TAB_LABEL_SIZE_SP = 13f
 
     /** Sheet progress at which the top capsule has completely faded for the expanded player. */
     const val EXPAND_FADE_END = 0.35f

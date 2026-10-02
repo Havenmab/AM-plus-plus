@@ -20,8 +20,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
@@ -59,9 +61,12 @@ private const val TAB_LABEL_SIZE_SP = 11f
  *
  * The material, the sliding translucent selection mask, the press/"灵动" squeeze animation and the
  * free thumb drag all come from the library's [LiquidBottomTabs]; this composable only decides what
- * each cell paints. Cells normally keep [foreground]; the iPad top bar opts into
- * [tintSelectedWithAccent] so its selected label and search glyph take the host accent, and into
- * [cleanSelectionMask] so the mask never refracts a ghost copy of the selected label.
+ * each cell paints. Cells keep [foreground] unless the caller opts into [tintSelectedWithAccent]
+ * (the shipped sessions do not). The iPad top bar opts into [cleanSelectionMask] so the mask never
+ * refracts a ghost copy of the selected label, and into a bigger/heavier
+ * [tabLabelSize]/[tabLabelWeight] plus a thin [panelHeight] with a 56dp [effectReferenceHeight] so
+ * the library's absolute-dp effects keep their proportions; every one of those defaults to the
+ * shipped phone/dual-pane value.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.
@@ -77,6 +82,28 @@ fun GlassNavigation(
     panelHeight: Dp = GlassPolicy.NAV_HEIGHT_DP.dp,
     panelBlur: Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     /**
+     * The panel height the library's absolute-dp lens/squeeze constants were authored for.
+     *
+     * The vendored component hardcodes its refraction and press constants in absolute dp, tuned
+     * against the reference bar's height (the shipped phone bar is 56dp), so a thinner capsule makes
+     * them look oversized. Defaulted to [panelHeight], i.e. a scale of exactly 1 — the shipped
+     * phone/dual-pane bar is unchanged; the thin iPad top bar passes the reference height it wants
+     * to keep the proportions of.
+     */
+    effectReferenceHeight: Dp = panelHeight,
+    /**
+     * Size of each cell's title, in sp. Defaults to the shared phone tab label's 11sp so the
+     * shipped phone/dual-pane bar is byte-identical; the iPad top bar opts into a bigger size
+     * because the user found the top-bar text 「太小」.
+     */
+    tabLabelSize: TextUnit = TAB_LABEL_SIZE_SP.sp,
+    /**
+     * Weight of each cell's title. Defaults to `null`, which is `TextStyle`'s own default (normal)
+     * and therefore exactly the phone bar's current rendering; the iPad top bar opts into a heavier
+     * face because the user found its text 「太细」.
+     */
+    tabLabelWeight: FontWeight? = null,
+    /**
      * Paints the selected cell's title and icon with [accent] instead of [foreground].
      *
      * Off by default so the shipped phone/dual-pane bar keeps its exact rendering: there the
@@ -91,10 +118,10 @@ fun GlassNavigation(
      * The library's capsule draws its cells twice: once visibly and once — invisible but recorded —
      * into the layer the sliding thumb samples. The thumb's lens then displaces, colour-fringes and
      * press-scales that recorded copy, so a pressed selection mask shows the selected label/icon
-     * duplicated and smeared inside itself. This switch stops the cells from ever being recorded and
-     * has the mask refract the panel's own exported surface — the page material seen through the
-     * bar's glass — so the refraction/lensing the reference shows is kept, while the one visible
-     * copy of the cells is drawn on top of the mask.
+     * duplicated and smeared inside itself. This switch stops the cells from ever being recorded: the
+     * recorded layer keeps only the panel's own page material — the content behind the bar plus the
+     * container tint, unblurred so the lens still has edges to displace and colour-fringe — while the
+     * one visible copy of the cells is drawn on top of the mask.
      *
      * The mask itself, the press/"灵动" squeeze and the free thumb drag are unchanged. Off by
      * default, so the shipped phone/dual-pane bar keeps the reference layer and animation exactly.
@@ -124,6 +151,7 @@ fun GlassNavigation(
             accentOverride = accent,
             panelHeight = panelHeight,
             panelBlur = panelBlur,
+            effectReferenceHeight = effectReferenceHeight,
             cleanSelectionMask = cleanSelectionMask,
         ) {
             tabs.forEach { tab ->
@@ -141,10 +169,10 @@ fun GlassNavigation(
                         when (tab.display) {
                             GlassTabDisplay.ICON_AND_TEXT -> {
                                 TabIcon(tab.icon, tint)
-                                TabLabel(tab.title, tint)
+                                TabLabel(tab.title, tint, tabLabelSize, tabLabelWeight)
                             }
 
-                            GlassTabDisplay.TEXT -> TabLabel(tab.title, tint)
+                            GlassTabDisplay.TEXT -> TabLabel(tab.title, tint, tabLabelSize, tabLabelWeight)
                             GlassTabDisplay.ICON -> TabIcon(tab.icon, tint)
                         }
                     }
@@ -173,10 +201,17 @@ private fun TabIcon(icon: Drawable?, tint: Color) {
     }
 }
 
-/** The 11.sp one-line title, tinted with the cell's colour. */
+/**
+ * The one-line title, tinted with the cell's colour.
+ *
+ * [fontSize] and [fontWeight] are the caller's opt-ins: the shared phone bar leaves them at the
+ * original 11sp / default weight, and the iPad top bar passes bigger and heavier values.
+ */
 @Composable
-private fun TabLabel(title: String, tint: Color) {
-    val style = remember(tint) { TextStyle(color = tint, fontSize = TAB_LABEL_SIZE_SP.sp) }
+private fun TabLabel(title: String, tint: Color, fontSize: TextUnit, fontWeight: FontWeight?) {
+    val style = remember(tint, fontSize, fontWeight) {
+        TextStyle(color = tint, fontSize = fontSize, fontWeight = fontWeight)
+    }
     BasicText(title, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 

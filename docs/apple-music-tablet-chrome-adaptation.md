@@ -178,6 +178,20 @@
 
 原来只有 `TabletDualPaneGlassSession` 有该校正，且 `PhoneGlassRuntime` 通过 `as? TabletDualPaneGlassSession` **硬转**调用 —— iPad 会话是它的**兄弟**（都直接继承 `PhoneGlassSession`），因此永远拿不到，展开/收起时封面原点有偏差。现改为：把校正提升为 `GlassSession` 上的 seam（手机侧空实现、双栏实现体不变），运行时对每个活跃会话虚调用；iPad 会话按自己的**居中半宽座位**推导 Y 向校正量。
 
+## 6.7 第五轮：静置纯白的真正根因，以及细胶囊下的正确做法
+
+§6.4/§6.5 的结论需要修正：**「静置纯白、划一下才取色」不是参数问题**。
+
+| 现象 | 真正根因 | 修复 |
+| --- | --- | --- |
+| 静置时玻璃一片纯白，手指划一下才开始取色 | `ViewBackdrop` 只在源视图**变脏/移动/尺寸变化**时重录；本会话把 `navFrame` 停掉后基类 `redirectedPadding` 为 0（`PhoneGlassSession.kt:745`），静态页面永不重排，于是**只录到最初一帧**并一直保留到滚动为止。手机底栏靠 `onPreDraw` 里的 `setCaptureEnabled` 反复重新武装，平板侧从未做 | 挂载时先关闭 capture，在 `updateTopChrome` 中当胶囊可见时重新武装，并每次武装强制补录 2 帧（`CAPTURE_SETTLE_RECORDS`），保证首帧绘制之后必有一次录制。**可见性不再依赖 `ready`**（那正是 §6.2「胶囊永久 GONE」的原因） |
+| 重影（标签拷贝被水滴折射） | 录制层里含单元格 | `cleanSelectionMask` 语义修正为：**保留**录制行（折射源），但只录**面板材质本身**（`EmptyTabContent`，且不再 `blur()`），单元格只在最上层画一次。透镜作用于**顶栏后面那层有细节的页面**，而不是标签拷贝 |
+| 细胶囊下折射糊成一片 | 上游的透镜/挤压常量是**绝对 dp**，胶囊变矮后相对过大 | 新增 `effectReferenceHeight`（默认 = `panelHeight`）与 `effectScale = panelHeight / effectReferenceHeight`（夹 0.25..4），按比例缩放挤压 4dp、面板透镜 24dp、按压位移 16dp、录制层透镜 24dp、拇指透镜 10/14dp、内阴影 8dp。平板传 44/56 → 0.786；**默认值为 1，手机/双栏逐字节不变** |
+| 顶栏文字太小太细 | 顶栏复用了手机底栏的 11sp | `GlassNavigation` 新增 `tabLabelSize: TextUnit = 11sp`、`tabLabelWeight: FontWeight? = null`；平板传 **13sp + SemiBold**；每格宽度 `TOP_TAB_CELL_FRACTION .045→.05`、`MIN 44→48`、`MAX 58→62`（1280dp 上 5 格约 288→310dp） |
+| 高度 | 用户明确要求**细** | `TabletChromeLayoutPolicy.TOP_CAPSULE_HEIGHT_DP = 44` 驱动视图高度、`panelHeight` 与度量刷新；座位不受影响（`capsuleTopMarginPx` 会抵消高度变化） |
+
+调参点：`TOP_CAPSULE_HEIGHT_DP`、`TOP_TAB_LABEL_SIZE_SP`、`TOP_TAB_CELL_MIN/MAX_DP`、`TOP_TAB_CELL_FRACTION`、`effectReferenceHeight`。
+
 ## 6.1 未在设备上验证的已知风险
 
 1. ~~**隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。~~ 自绘胶囊与 `hideSeam(miniRoot)` 已删除，此条已不适用。

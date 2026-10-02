@@ -38,9 +38,11 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.backdrops.ViewBackdrop
 import dev.amenhancer.glass.GlassCapsuleBounds
 import dev.amenhancer.glass.GlassGeometry
@@ -60,6 +62,7 @@ import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.reflect.Method
+import kotlin.math.roundToInt
 
 /**
  * iPad-style tablet chrome: [GlassNavigation] renders the navigation as one floating capsule at
@@ -86,6 +89,18 @@ internal class TabletChromeSession(
     /** Mirrors the ~500 ms settings cadence PhoneGlassSession already uses for its own re-checks. */
     private companion object {
         const val TOP_REFRESH_INTERVAL_MS = 500L
+
+        /**
+         * Extra forced page recordings owed right after the shared backdrop's capture is armed.
+         *
+         * The recording an arming triggers happens in the same pre-draw traversal, which on a cold
+         * start is before the window has drawn once — and the activation frame itself cancels the
+         * draw (`PhoneGlassSession.onPreDraw` returns false after `activate()`). A ViewBackdrop only
+         * re-records when the page is dirty, and a static page never dirties itself, so the shot
+         * taken too early is what stays on screen. These few forced recordings are therefore taken
+         * after the page has certainly been drawn. Bounded and one-shot per arming: never per-frame.
+         */
+        const val CAPTURE_SETTLE_RECORDS = 2
 
         /** Slide progress that means "the full player owns the screen". */
         const val EXPANDED_SLIDE = 1f
@@ -129,6 +144,9 @@ internal class TabletChromeSession(
     private var topBarHeightPx = 0
     private var topBarMarginPx = 0
     private var topPanelBlurDp = GlassPolicy.PANEL_BLUR_DP.toInt()
+
+    /** Forced page recordings still owed after the shared backdrop's capture was armed. */
+    private var topCaptureSettle = 0
 
     /**
      * Latest sheet progress, mirrored from [onSlide]. A plain float so the pre-draw path can read
@@ -438,11 +456,13 @@ internal class TabletChromeSession(
         val glassContext = navGlass?.context ?: return
         val content = find("navigation_host_group") as? ViewGroup ?: return
         val navigation = find("bottom_navigation") ?: return
-        // The author's own capsule height — the very constant the working bottom bar uses. The
-        // library's lens, squeeze and thumb constants are absolute dp (there is no parameter API),
-        // so a shorter capsule makes them oversized and the droplet refraction reads as a smeared
-        // duplicate rather than glass. Matching the author's geometry is what keeps it looking right.
-        val navHeight = (GlassPolicy.NAV_HEIGHT_DP * density).toInt()
+        // The capsule's own thin height (the reference iPad bar), never the host's
+        // `dimen/navigation_tabs_height` (56dp): that dimension belongs to the native *bottom* tab
+        // strip and made the top capsule read as "太胖". The library's lens/squeeze constants are
+        // absolute dp authored for its 56dp sample panel, so the component is told that reference
+        // height and scales them down with the panel — a thin capsule then keeps the reference's
+        // proportions instead of smearing the refraction.
+        val navHeight = (TabletChromeLayoutPolicy.TOP_CAPSULE_HEIGHT_DP * density).roundToInt()
         if (navHeight <= 0) return
         val parent = topMountParent(content) ?: return
 
@@ -456,12 +476,15 @@ internal class TabletChromeSession(
         refreshMiniIcons()
 
         // Exact original pattern (PhoneGlassSession.attachAvailableViews): the backdrop samples the
-        // page content and is started so it captures before the capsule is revealed. A ViewBackdrop
-        // that is never started, or whose capture is disabled, never becomes ready and the capsule
-        // renders no glass at all.
+        // page content and is started before the capsule is revealed. Unlike the base, the capture
+        // is held off until a consumer is actually on screen (see updateTopChrome): a ViewBackdrop
+        // records once on the first pre-draw after start() and then only when the source is dirty,
+        // so a capture taken before the page has drawn stays the window background — the reported
+        // 一片纯白 — and nothing re-records it until the user scrolls.
         val backdrop = ViewBackdrop(content, ::scheduleTopFailure).also {
             topBackdrop = it
             it.start()
+            it.setCaptureEnabled(false)
         }
         val glass = GlassHostView(glassContext).also { topGlass = it }
         glass.alpha = 0f
@@ -486,11 +509,24 @@ internal class TabletChromeSession(
                         onSelect = ::selectTopTab,
                         panelHeight = panelHeight,
                         panelBlur = topPanelBlurDp.dp,
-                        // Author parity on purpose: the component already tints the cells under the
-                        // droplet through its own accentOverride, and its layer recording is the
-                        // refraction source the thumb's lens/chromatic aberration samples. Both of
-                        // our earlier opt-ins were deviations that broke that effect, so neither is
-                        // passed here; the phone/dual-pane bar keeps exactly this path too.
+                        // The library's lens/squeeze constants are absolute dp authored for the
+                        // 56dp reference panel; this capsule is thin, so it keeps the proportions
+                        // by declaring that reference height.
+                        effectReferenceHeight = GlassPolicy.NAV_HEIGHT_DP.dp,
+                        // The top bar's labels are deliberately bigger and heavier than the shared
+                        // phone tab label (11sp / default): the user's 「文字太小也太细」. Both are
+                        // opt-in, so the phone/dual-pane bar stays byte-identical.
+                        tabLabelSize = TabletChromeLayoutPolicy.TOP_TAB_LABEL_SIZE_SP.sp,
+                        tabLabelWeight = FontWeight.SemiBold,
+                        // Author parity where it matters, except for the ghost: the component's
+                        // default recording puts the cells into the layer the thumb refracts, which
+                        // is what the lens turns into a smeared duplicate of the label
+                        // (「重影又回来了」). With this on the recorded layer keeps only the panel's
+                        // page material — the content behind the bar, unblurred so the lens still
+                        // has edges — and the one copy of the cells is drawn once, above it. The
+                        // phone/dual-pane bar keeps the reference recording exactly (the parameter
+                        // defaults to false).
+                        cleanSelectionMask = true,
                     )
                 }
             }
@@ -1203,10 +1239,13 @@ internal class TabletChromeSession(
     }
 
     private fun refreshTopMetrics() {
-        topBarHeightPx = dimen("navigation_tabs_height")
+        // The floating capsule is the thin reference height (see [TabletChromeLayoutPolicy]).
+        // [TabletChromeLayoutPolicy.capsuleTopMarginPx] cancels the capsule height, so the host's
+        // own `dimen/navigation_tabs_height` is still the documented seat input there.
+        topBarHeightPx = (TabletChromeLayoutPolicy.TOP_CAPSULE_HEIGHT_DP * density).roundToInt()
         if (topBarHeightPx <= 0) return
         val topInset = statusBarInset()
-        topBarMarginPx = TabletChromeLayoutPolicy.capsuleTopMarginPx(topBarHeightPx, topInset, density)
+        topBarMarginPx = TabletChromeLayoutPolicy.capsuleTopMarginPx(dimen("navigation_tabs_height"), topInset, density)
     }
 
     private fun statusBarInset(): Int =
@@ -1237,11 +1276,52 @@ internal class TabletChromeSession(
         // The expanded full player owns the screen: the floating top bar fades out of the way and
         // is restored the moment the sheet collapses again.
         val hide = TabletChromeLayoutPolicy.expandHideFactor(effectiveSlide())
-        val ready = activated && glassMenuReady && onTabPage() && hide < 1f
+        val shown = activated && glassMenuReady && onTabPage() && hide < 1f
+        // Page-capture lifecycle, mirroring the base (PhoneGlassSession.onPreDraw ->
+        // ViewBackdrop.setCaptureEnabled): the shared backdrop is armed only while one of its two
+        // consumers is actually on screen. The cause of the 一片纯白 at rest was that the top
+        // backdrop was started with capture enabled and recorded exactly once, on its first
+        // pre-draw, and nothing ever re-armed it. Unlike the phone form, this session parks
+        // `navFrame`, so the base's `updateUnderlap` writes no content padding and the page is
+        // never re-laid-out: a static page never marks the source dirty, so the backdrop's own
+        // dirty-based re-capture never fires and the capsule keeps that first shot until a scroll
+        // dirties the page. Arming the capture resets its `ready` flag and posts an invalidate, and
+        // this session's pre-draw listener runs *before* the backdrop's in the same traversal, so
+        // the fresh recording of the real page lands in this very frame; CAPTURE_SETTLE_RECORDS
+        // then forces one or two more shots taken after the page has certainly been drawn. The
+        // backdrop is shared with the mini capsule, so it stays armed while that capsule draws even
+        // when the top bar is hidden.
+        val captureWanted = shown || miniCapsuleOnScreen()
+        val backdrop = topBackdrop
+        if (backdrop != null) {
+            val armed = backdrop.setCaptureEnabled(captureWanted)
+            if (!captureWanted) {
+                topCaptureSettle = 0
+            } else if (armed) {
+                topCaptureSettle = CAPTURE_SETTLE_RECORDS
+            } else if (topCaptureSettle > 0) {
+                topCaptureSettle--
+                // Disable/enable to force a recording now, instead of waiting for the page to
+                // become dirty (which it never does at rest).
+                backdrop.setCaptureEnabled(false)
+                backdrop.setCaptureEnabled(true)
+            }
+        }
+        val ready = shown
         val alpha = if (ready) 1f - hide else 0f
         if (glass.alpha != alpha) glass.alpha = alpha
         val visibility = if (ready) View.VISIBLE else View.GONE
         if (glass.visibility != visibility) glass.visibility = visibility
+    }
+
+    /**
+     * True while the bottom mini capsule draws the shared page backdrop. Keeps the capture armed
+     * when the top bar is parked (settings/account pages, the expanded-player hand-off) but the
+     * mini capsule is still on screen. One View and its own flags — no per-frame hierarchy scan.
+     */
+    private fun miniCapsuleOnScreen(): Boolean {
+        val glass = miniGlass ?: return false
+        return glass.isShown && glass.alpha > 0f && glass.width > 0 && glass.height > 0
     }
 
     /**
@@ -1267,6 +1347,7 @@ internal class TabletChromeSession(
     private fun releaseTopChrome() {
         topObserver?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(topLayoutListener)
         topObserver = null
+        topCaptureSettle = 0
         topBackdrop?.close()
         topBackdrop = null
         topGlass?.let { glass -> (glass.parent as? ViewGroup)?.removeView(glass) }

@@ -4,9 +4,11 @@
  * 65ab177e90e5c1d8c62e70cf7755841982da65f6, Apache License 2.0.
  * Changed by AM++: optional host accent, tap-only native reselection, free thumb dragging with
  * multi-finger hand-over, a panel highlight pinned to the thumb's centre (the reference draws
- * the same light a row inset to the left), and an opt-in `cleanSelectionMask` that keeps the tab
- * cells out of the layer the thumb refracts — the mask samples the panel's exported surface
- * instead — so the cells are never smeared into a ghost and the glass still refracts.
+ * the same light a row inset to the left), an opt-in `cleanSelectionMask` that keeps the tab
+ * cells out of the layer the thumb refracts — the masked row records the panel's page material
+ * instead of the cells — so the cells are never smeared into a ghost and the glass still refracts,
+ * and an opt-in `effectReferenceHeight` that scales the reference's absolute-dp lens/squeeze
+ * constants from the panel height so a thinner capsule keeps the same proportions.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -90,18 +92,31 @@ fun LiquidBottomTabs(
     panelHeight: androidx.compose.ui.unit.Dp = 64f.dp,
     panelBlur: androidx.compose.ui.unit.Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     /**
+     * AM++: the panel height the reference's absolute-dp effect constants were authored for.
+     *
+     * Upstream hardcodes its lens radii, press squeeze, press nudge and inner-shadow radius in
+     * absolute dp, tuned against the reference bar's height (the shipped phone bar is 56dp). On a
+     * shorter capsule those absolutes stay the same physical size and smear the refraction, so every
+     * one of them is multiplied by `panelHeight / effectReferenceHeight`. The default is
+     * [panelHeight] itself, i.e. a scale of exactly 1, so the shipped phone/dual-pane bar is
+     * unchanged; a thin bar passes the reference height it wants to keep the proportions of.
+     */
+    effectReferenceHeight: androidx.compose.ui.unit.Dp = panelHeight,
+    /**
      * AM++: keep the tab cells out of the layer the selection thumb refracts.
      *
      * The reference draws the cells twice: once visibly, and once as an invisible row that is
      * recorded into the layer backdrop the thumb samples with its lens. That second copy is what
      * makes the selected cell look duplicated and smeared inside the sliding mask once the thumb
      * is pressed, because the lens displaces, colour-fringes and press-scales it into a ghost of
-     * the label. With this on the cells are never recorded: the thumb instead refracts the panel's
-     * own exported surface — the recorded backdrop, blur and container tint, i.e. the page material
-     * seen through the bar — so the mask keeps the glass the reference shows, and the single
-     * visible copy of the cells is drawn last, on top of the thumb, so it stays crisp.
+     * the label. With this on the cells are never recorded: the invisible row records only the
+     * panel's own material — the page backdrop seen through the bar, plus the container tint, left
+     * unblurred so the lens has high-frequency edges to act on — so the mask keeps the refraction
+     * the reference shows (displacement and chromatic fringing are visible because the recorded page
+     * has edges, not because a copy of a cell is smeared), and the single visible copy of the cells
+     * is drawn last, on top of the thumb, so it stays crisp.
      *
-     * Off by default, so the shipped phone/dual-pane bar keeps the reference material and the
+     * Off by default, so the shipped phone/dual-pane bar keeps the reference layer and the
      * reference press animation exactly as they are.
      */
     cleanSelectionMask: Boolean = false,
@@ -123,7 +138,15 @@ fun LiquidBottomTabs(
     val density = LocalDensity.current
     val animationScope = rememberCoroutineScope()
     val offsetAnimation = remember { Animatable(0f) }
-    val squeeze = with(density) { 4f.dp.toPx() }
+    // AM++: every absolute-dp effect constant below is multiplied by this, so a thinner capsule
+    // keeps the reference's proportions instead of smearing the lens/squeeze (see
+    // [effectReferenceHeight]). Exactly 1 under the default (reference == panel height), which is
+    // what keeps the shipped phone/dual-pane bar byte-identical.
+    val effectScale = run {
+        val scale = panelHeight.value / effectReferenceHeight.value
+        if (scale.isFinite() && scale > 0f) scale.coerceIn(0.25f, 4f) else 1f
+    }
+    val squeeze = with(density) { (4f.dp * effectScale).toPx() }
     val panelInset = with(density) { 4f.dp.toPx() }
 
     // AM++: the squeeze nudge is read by both the panel layer and the highlight, so it lives
@@ -243,21 +266,17 @@ fun LiquidBottomTabs(
                     effects = {
                         vibrancy()
                         blur(panelBlur.toPx())
-                        lens(24f.dp.toPx(), 24f.dp.toPx())
+                        lens(24f.dp.toPx() * effectScale, 24f.dp.toPx() * effectScale)
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
-                        val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                        val scale = lerp(1f, 1f + 16f.dp.toPx() * effectScale / size.width, progress)
                         scaleX = scale
                         scaleY = scale
                     },
-                    // AM++: with the clean mask the row below no longer records anything, so the
-                    // thumb's lens would sample the bare page and read as a flat grey shape. The
-                    // panel exports its own surface instead: the exported layer is recorded from
-                    // the backdrop, the blur and the container tint *before* `drawContent`, so the
-                    // mask refracts the page material seen through the bar and never a copy of a
-                    // cell. The default path passes null and keeps recording the row below.
-                    exportedBackdrop = if (cleanSelectionMask) tabsBackdrop else null,
+                    // AM++: the panel itself keeps the reference's own material. The clean mask no
+                    // longer needs an exported surface: the invisible row below records the panel's
+                    // page material, without the cells, for the thumb to refract.
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .then(interactiveHighlight.modifier)
@@ -274,49 +293,56 @@ fun LiquidBottomTabs(
         // AM++: the reference records this row — the panel material *and* the cells — into the layer
         // the thumb refracts. The row itself is alpha(0f), but layerBackdrop records the content
         // before alpha is applied, so the cells end up in that layer and the thumb's lens turns
-        // them into a displaced, colour-fringed, press-scaled ghost of the label/icon. The clean
-        // mask skips it entirely and takes the panel's exported surface instead.
-        if (!cleanSelectionMask) {
-            CompositionLocalProvider(
-                LocalLiquidBottomTabScale provides {
-                    lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
-                }
-            ) {
-                Row(
-                    Modifier
-                        .clearAndSetSemantics {}
-                        .alpha(0f)
-                        .layerBackdrop(tabsBackdrop)
-                        .graphicsLayer {
-                            translationX = panelOffset
-                        }
-                        .drawBackdrop(
-                            backdrop = backdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                val progress = dampedDragAnimation.pressProgress
-                                vibrancy()
-                                blur(panelBlur.toPx())
-                                lens(
-                                    24f.dp.toPx() * progress,
-                                    24f.dp.toPx() * progress
-                                )
-                            },
-                            highlight = {
-                                val progress = dampedDragAnimation.pressProgress
-                                Highlight.Default.copy(alpha = progress)
-                            },
-                            onDrawSurface = { drawRect(containerColor) }
-                        )
-                        .then(interactiveHighlight.modifier)
-                        .height(panelHeight - 8f.dp)
-                        .fillMaxWidth()
-                        .padding(horizontal = 4f.dp)
-                        .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = content
-                )
+        // them into a displaced, colour-fringed, press-scaled ghost of the label/icon.
+        //
+        // With `cleanSelectionMask` the row is kept but its *cells* are dropped: what it records is
+        // then only the panel's own material — the page backdrop seen through the bar plus the
+        // container tint — so the lens still refracts the page content behind the bar, never a copy
+        // of a cell. The blur is dropped from that recording too: the mask must refract something
+        // with high-frequency edges, and a pre-blurred surface leaves the lens nothing to displace
+        // or colour-fringe, which is how the earlier attempt ended up a flat grey shape. The visible
+        // panel keeps its blur; only the recorded refraction source is left sharp.
+        CompositionLocalProvider(
+            LocalLiquidBottomTabScale provides {
+                lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
             }
+        ) {
+            Row(
+                Modifier
+                    .clearAndSetSemantics {}
+                    .alpha(0f)
+                    .layerBackdrop(tabsBackdrop)
+                    .graphicsLayer {
+                        translationX = panelOffset
+                    }
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { Capsule() },
+                        effects = {
+                            val progress = dampedDragAnimation.pressProgress
+                            vibrancy()
+                            if (!cleanSelectionMask) blur(panelBlur.toPx())
+                            lens(
+                                24f.dp.toPx() * progress * effectScale,
+                                24f.dp.toPx() * progress * effectScale
+                            )
+                        },
+                        highlight = {
+                            val progress = dampedDragAnimation.pressProgress
+                            Highlight.Default.copy(alpha = progress)
+                        },
+                        onDrawSurface = { drawRect(containerColor) }
+                    )
+                    .then(interactiveHighlight.modifier)
+                    .height(panelHeight - 8f.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 4f.dp)
+                    .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
+                verticalAlignment = Alignment.CenterVertically,
+                // With the clean mask the cells are never recorded: the one visible copy is drawn
+                // by the row above the selection mask, on top of it.
+                content = if (cleanSelectionMask) EmptyTabContent else content
+            )
         }
 
         Box(
@@ -333,8 +359,8 @@ fun LiquidBottomTabs(
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
                         lens(
-                            10f.dp.toPx() * progress,
-                            14f.dp.toPx() * progress,
+                            10f.dp.toPx() * progress * effectScale,
+                            14f.dp.toPx() * progress * effectScale,
                             chromaticAberration = true
                         )
                     },
@@ -349,7 +375,7 @@ fun LiquidBottomTabs(
                     innerShadow = {
                         val progress = dampedDragAnimation.pressProgress
                         InnerShadow(
-                            radius = 8f.dp * progress,
+                            radius = 8f.dp * (progress * effectScale),
                             alpha = progress
                         )
                     },
@@ -377,8 +403,9 @@ fun LiquidBottomTabs(
         // AM++: the one and only copy of the cells, drawn last so it sits on top of the thumb and
         // is never sampled by it. Placed with the same inset, height, squeeze and cell scale as the
         // reference's front row, so the cells stay exactly where they were; only the refracted
-        // ghost of them is gone. `tabsBackdrop` carries the panel's exported surface — the page
-        // material through the bar's glass, never the cells — so the mask still refracts.
+        // ghost of them is gone. The layer the thumb refracts is the invisible row's recording of
+        // the panel material — the page behind the bar, never the cells — so the lens still has real
+        // content to displace and colour-fringe.
         if (cleanSelectionMask) {
             CompositionLocalProvider(
                 LocalLiquidBottomTabScale provides {
@@ -403,7 +430,9 @@ fun LiquidBottomTabs(
 
 /**
  * AM++: the cells are painted exactly once while `cleanSelectionMask` is on — by the row drawn above
- * the selection mask — so the panel row is laid out without them instead of double-painting them.
+ * the selection mask — so both rows underneath are laid out without them: the panel row, so the
+ * cells are not double-painted, and the recorded refraction row, so the mask cannot refract a ghost
+ * of a cell.
  */
 private val EmptyTabContent: @Composable RowScope.() -> Unit = {}
 

@@ -131,22 +131,27 @@ class TabletChromeStructuralRegressionTest {
         )
 
         val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
-        // The tablet top bar must stay on the author's path too. The library's own accentOverride
-        // already tints the cells under the droplet, and its layer recording is the refraction
-        // source the thumb's lens samples — passing either opt-in broke the glass on device
-        // (docs/apple-music-tablet-chrome-adaptation.md §6.4), so the guard now forbids both and
-        // pins the author's capsule height instead.
+        // The tablet top bar takes two deliberate, defaulted opt-ins on the shared component:
+        // cleanSelectionMask now keeps the refraction recording but excludes the cells (so the
+        // droplet refracts the page instead of duplicating the labels), and the effect constants
+        // scale with the capsule height so a thin bar still looks right. The accent tint stays off
+        // — the library's own accentOverride already colours the cells under the droplet.
         assertFalse(
             "the tablet top bar must not opt into the accent tint",
             tablet.contains("tintSelectedWithAccent = true"),
         )
-        assertFalse(
-            "the tablet top bar must not skip the component's refraction recording",
+        assertTrue(
+            "the tablet top bar must keep the refraction recording without the cells",
             tablet.contains("cleanSelectionMask = true"),
         )
         assertTrue(
-            "the top capsule must reuse the author's capsule height",
-            tablet.contains("GlassPolicy.NAV_HEIGHT_DP"),
+            "the top capsule height must come from the tablet policy, not the host bottom row",
+            tablet.contains("TOP_CAPSULE_HEIGHT_DP"),
+        )
+        // The phone and dual-pane bars must not take either opt-in.
+        assertFalse(
+            "the phone session must not take the tablet-only opt-ins",
+            phone.contains("cleanSelectionMask") || phone.contains("TOP_CAPSULE_HEIGHT_DP"),
         )
     }
 }

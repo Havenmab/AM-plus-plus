@@ -151,6 +151,7 @@ internal class TabletChromeSession(
     private val topCaptureRefresh = TabletChromeBackdropRefreshPolicy()
     private var topCaptureActive = true
     private var topCaptureSource: View? = null
+    private val topHeader = TabletChromeTopHeader { resourceId(it, "id") }
     private var topCaptureScheduledAt: Long? = null
     private val topCaptureCallback = Runnable {
         topCaptureScheduledAt = null
@@ -463,12 +464,13 @@ internal class TabletChromeSession(
             // The capture is driven from both consumers of the shared backdrop, independently of
             // the top capsule's own geometry/visibility updates below (see updateBackdropCapture).
             attachMiniCapsule()
+            val headerNeedsLayout = updateTopHeader()
             updateBackdropCapture()
             updateTopChrome()
             updateMiniChrome()
             val artworkOwned = nativeArtworkOwnsMiniCover
             updateNativeArtworkAlignment()
-            if (artworkOwned != nativeArtworkOwnsMiniCover) return false
+            if (headerNeedsLayout || artworkOwned != nativeArtworkOwnsMiniCover) return false
             // A one-tap queue request waits here for the sheet to reach the full player.
             flushQueuePaneRequest()
         } catch (error: Throwable) {
@@ -1495,7 +1497,18 @@ internal class TabletChromeSession(
         else -> root.isShown && root.visibility == View.VISIBLE
     }
 
+    override fun shouldIgnoreTopHeaderDependency(view: View, dependency: View): Boolean =
+        activated && onTabPage() && topHeader.ignoresDependency(view, dependency)
+
+    private fun updateTopHeader(): Boolean {
+        val enabled = TabletChromeHeaderPolicy.enabled(activated, glassMenuReady, topGlass != null, onTabPage())
+        val changed = topHeader.update(find("app_bar_layout"), find("navigation_host_group"), enabled)
+        if (changed) requestBackdropRefresh()
+        return changed
+    }
+
     private fun releaseTopChrome() {
+        topHeader.close()
         topObserver?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(topLayoutListener)
         topObserver = null
         topCaptureSource?.removeCallbacks(topCaptureCallback)

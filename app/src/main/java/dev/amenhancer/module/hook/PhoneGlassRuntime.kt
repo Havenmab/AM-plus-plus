@@ -201,6 +201,20 @@ internal object PhoneGlassRuntime {
                     ?.let { param.args[0] = it }
             }
         })
+        runCatching {
+            val behavior = loader.loadClass("com.apple.android.music.common.behavior.PlayerScrollingViewBehavior")
+            val coordinator = loader.loadClass("androidx.coordinatorlayout.widget.CoordinatorLayout")
+            val dependsOn = behavior.getDeclaredMethod("c", coordinator, View::class.java, View::class.java)
+            ModernXposedRuntime.hookMethod(dependsOn, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val view = param.args[1] as? View ?: return
+                    val dependency = param.args[2] as? View ?: return
+                    if (sessions.values.any { it.shouldIgnoreTopHeaderDependency(view, dependency) }) {
+                        param.result = false
+                    }
+                }
+            })
+        }.onFailure { ModernXposedRuntime.log("liquid glass top-header dependency hook unavailable for ${build.displayName}", it) }
         hooksInstalled = true
     }
 

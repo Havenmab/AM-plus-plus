@@ -248,3 +248,21 @@
 每次宿主回调前先还原上一次的原生变换，回调后缓存新的原生值。布局和 pre-draw 再校正时都从该缓存计算，不从已经校正的值继续累加。关闭会话还原变换；重建胶囊清除旧布局坐标。有效且可见的原生封面接管滑动期间的绘制，Compose 缩略图只停止画图、保留布局；sheet 判定收起后立即交回 Compose，不等待可能滞后一帧的 artwork 回调归零。缺少回调、槽位、有效尺寸或可见原生封面时不隐藏缩略图，也不强制 fragments alpha。
 
 新增纯 JVM 几何/所有权测试与接线回归测试。真机需验证：首次展开后慢速下滑至底、反向拖回和取消、连续多次展开/收起、封面最终的位置和大小、展开态封面不贴底，以及横竖屏、切歌和缺失封面的回退。Android 编译、lint 和完整测试由分支 PR 的 Actions 验证；动画观感仍待设备反馈。
+
+## 11. 字号、缩略图与透明顶端（2026-10-02）
+
+按新的灰底参考图，将 iPad 顶栏字号从 13sp 提到 15sp，仍为 SemiBold，胶囊高度仍为 44dp。窄屏单格最小宽度从 48dp 提到 52dp，为三个汉字留出空间；宽屏上限 62dp 不变，手机/原作者双栏仍使用默认 11sp。mini 封面边长从胶囊高度的 74% 调到 68%，圆角半径从边长的 1/6 调到 22%。原生动画继续测量该实际槽位，不需要另改飞入终点。
+
+### 11.1 用户提供的 6.5.3 xapk 逆向证据
+
+只提取基础包作分析，不修改或重签 Apple Music。资源表的 `activity_main_content_layout` 中，`navigation_host_group` 与 `app_bar_layout` 是 CoordinatorLayout 的兄弟节点；AppBar 使用 `toolbar_collapsing_actionbar`，包含 `collapsing_toolbar_layout`、`toolbar_actionbar`、大标题容器和分隔线。背景不只有一个 Drawable，还包括 CollapsingToolbarLayout 的 content/status-bar scrim；其 draw/drawChild 会重新写 scrim alpha，单独把背景颜色变透明不足以消除白色覆盖。
+
+`res/values/strings.xml` 指定滚动行为为 `com.apple.android.music.common.behavior.PlayerScrollingViewBehavior`。基础包中它覆写 `c(CoordinatorLayout, View, View): Boolean` 判定 AppBar 依赖；详情页可走“不依赖 AppBar”的分支，普通 tab 页面仍依赖它，因此内容 viewport 位于头部下方。只删背景、不改变依赖关系，顶栏背后仍可能是空白。
+
+### 11.2 iPad 会话限定的修复
+
+在已挂载、菜单可用且宿主仍显示主导航时，只让这一个 navigation host 不再依赖它同父级的 AppBar，由 CoordinatorLayout 原生测量/布局把页面延伸到工具栏下。没有固定负 translation、强写页面高度或改变滚动 padding，也不影响底部 player 依赖、其他 Activity、手机或原作者双栏。挂载/释放时明确 requestLayout，并重新安排 backdrop 补录。
+
+只透明化明确命名的头部容器背景、content/status-bar scrim 和 AppBar status-bar foreground，分隔线仅 alpha 隐藏。背景先 mutate 隔离共享状态，再保持原 Drawable 类型以兼容宿主 Material 行为；宿主换背景或重设 scrim 时重新记录，并在离开主导航/关闭会话时恢复。原生 Toolbar、大标题、返回按钮、收藏、溢出菜单的 View、可见性与触摸布局均保留。
+
+新增开关/身份隔离与接线恢复回归测试。真机重点验证：主页/新发现/广播/资料库滚动内容能经过顶栏背后，详情页效果仍正常，原生返回/收藏/菜单可点，设置和账号页恢复宿主头部，横竖屏/深色模式，以及 mini 新尺寸下的展开收起衔接。

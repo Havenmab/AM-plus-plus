@@ -206,6 +206,26 @@ class TabletChromeStructuralRegressionTest {
     }
 
     @Test
+    fun tabletLabelsGrowWithoutChangingTheSharedPhoneLabelsOrCapsuleHeight() {
+        val layout = normalized(source("dev/amenhancer/module/hook/TabletChromeLayoutPolicy.kt"))
+        val navigation = normalized(glassSource("dev/amenhancer/glass/GlassNavigation.kt"))
+        assertTrue(layout.contains("const val TOP_TAB_LABEL_SIZE_SP = 15f"))
+        assertTrue(layout.contains("const val TOP_TAB_CELL_MIN_DP = 52"))
+        assertTrue(layout.contains("const val TOP_CAPSULE_HEIGHT_DP = 44"))
+        assertTrue(navigation.contains("private const val TAB_LABEL_SIZE_SP = 11f"))
+    }
+
+    @Test
+    fun miniArtworkIsSlightlySmallerAndRounderWithoutLosingItsMeasuredHandoff() {
+        val mini = normalized(glassSource("dev/amenhancer/glass/GlassMiniPlayer.kt"))
+        val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
+        assertTrue(mini.contains("private const val COVER_SIZE_FRACTION = 0.68f"))
+        assertTrue(mini.contains("private const val COVER_CORNER_FRACTION = 0.22f"))
+        assertTrue(mini.contains("Box(Modifier.size(coverSize).clip(coverShape))"))
+        assertTrue(tablet.contains(".onGloballyPositioned(::recordMiniCoverFrame)"))
+    }
+
+    @Test
     fun pageChangesActivelyScheduleSharedBackdropRefreshAndCloseCancelsIt() {
         val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
         assertTrue(tablet.contains("val wanted = topWanted || miniWanted"))

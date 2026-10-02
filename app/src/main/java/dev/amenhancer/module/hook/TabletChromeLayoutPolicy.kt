@@ -47,10 +47,10 @@ internal object TabletChromeLayoutPolicy {
 
     /**
      * Bounds for [TOP_TAB_CELL_FRACTION] in dp. The floor keeps a three-character CJK label at the
-     * top bar's own [TOP_TAB_LABEL_SIZE_SP] legible (its glyphs measure ~39dp) plus padding; the
+     * top bar's own [TOP_TAB_LABEL_SIZE_SP] legible (its glyphs measure ~45dp) plus padding; the
      * ceiling stops a very wide window from stretching the bar into a slab.
      */
-    const val TOP_TAB_CELL_MIN_DP = 48
+    const val TOP_TAB_CELL_MIN_DP = 52
     const val TOP_TAB_CELL_MAX_DP = 62
 
     /**
@@ -58,7 +58,7 @@ internal object TabletChromeLayoutPolicy {
      * bar uses (the user's 「文字太小也太细」); GlassNavigation's own default stays 11sp so the
      * phone/dual-pane bar is untouched, and only the iPad top bar opts into this value.
      */
-    const val TOP_TAB_LABEL_SIZE_SP = 13f
+    const val TOP_TAB_LABEL_SIZE_SP = 15f
 
     /** Sheet progress at which the top capsule has completely faded for the expanded player. */
     const val EXPAND_FADE_END = 0.35f

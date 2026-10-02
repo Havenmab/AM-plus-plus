@@ -24,6 +24,7 @@ internal interface GlassSession : AutoCloseable {
     fun peekHeight(): Int
     fun redirectedPadding(view: Any?): Int?
     fun redirectedLayerAlpha(view: Any?, alpha: Float): Float?
+    fun shouldIgnoreTopHeaderDependency(view: View, dependency: View): Boolean = false
 
     fun beforeNativeArtwork(artwork: View) = Unit
 

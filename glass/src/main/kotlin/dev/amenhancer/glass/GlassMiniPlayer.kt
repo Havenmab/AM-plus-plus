@@ -81,8 +81,8 @@ private const val PLACEHOLDER_ALPHA = 0.08f
 // iPad reference proportions, all measured against the capsule's own height H (86px art / 56dp bar
 // here): the artwork is a small rounded square, the transport glyphs are pitched ~0.70H apart, and
 // the centre block is separated from the transport and aux groups without being a lone cluster.
-private const val COVER_SIZE_FRACTION = 0.74f // iPad: artwork edge ~0.74 x capsule height
-private const val COVER_CORNER_FRACTION = 1f / 6f // iPad: corner ~1/6 of the artwork's own edge
+private const val COVER_SIZE_FRACTION = 0.68f
+private const val COVER_CORNER_FRACTION = 0.22f
 private const val PANEL_PADDING_DP = 15 // iPad: ~0.28 x capsule height of glass at each end
 private const val CONTROL_GAP_DP = 11 // iPad: glyph pitch ~0.70H less the 28dp control box
 private const val CENTER_GAP_DP = 10 // iPad: ~0.19 x capsule height around the centre block

@@ -62,11 +62,12 @@ private const val TAB_LABEL_SIZE_SP = 11f
  * The material, the sliding translucent selection mask, the press/"灵动" squeeze animation and the
  * free thumb drag all come from the library's [LiquidBottomTabs]; this composable only decides what
  * each cell paints. Cells keep [foreground] unless the caller opts into [tintSelectedWithAccent]
- * (the shipped sessions do not). The iPad top bar opts into [cleanSelectionMask] so the mask never
- * refracts a ghost copy of the selected label, and into a bigger/heavier
- * [tabLabelSize]/[tabLabelWeight] plus a thin [panelHeight] with a 56dp [effectReferenceHeight] so
- * the library's absolute-dp effects keep their proportions; every one of those defaults to the
- * shipped phone/dual-pane value.
+ * (the shipped sessions do not). The iPad top bar keeps the library's own cell-layer recording — the
+ * reference's refraction source, so the droplet refracts the labels themselves — and opts into
+ * [tintSelectedWithAccent] for the accent-selected label, a bigger/heavier
+ * [tabLabelSize]/[tabLabelWeight], a thin [panelHeight] with a 56dp [effectReferenceHeight] so
+ * the library's absolute-dp effects keep their proportions, and `pressScalesCells = false` so a
+ * press does not grow every cell; every one of those defaults to the shipped phone/dual-pane value.
  *
  * Selection is hoisted: [onSelect] returns the id the host accepted, and only a tap whose return
  * value equals the tab's id may move the highlight.
@@ -125,8 +126,23 @@ fun GlassNavigation(
      *
      * The mask itself, the press/"灵动" squeeze and the free thumb drag are unchanged. Off by
      * default, so the shipped phone/dual-pane bar keeps the reference layer and animation exactly.
+     *
+     * The iPad top bar deliberately does **not** use this: its reference refracts the labels
+     * themselves, and the library's own recording is what the droplet's lens samples. This switch
+     * remains for a caller that prefers to refract the page material instead.
      */
     cleanSelectionMask: Boolean = false,
+    /**
+     * Scales every cell while the thumb is pressed, exactly as the reference does.
+     *
+     * The reference provides `lerp(1f, 1.2f, pressProgress)`, so a press grows the label of every
+     * cell — an icon-only cell such as the search glyph included. The iPad top bar must stay still
+     * under the finger, so it passes `false`; with it off the cells hold at 1x during the press and
+     * only the one cell the thumb settles on grows, briefly, once the settle animation has carried
+     * the thumb onto it (after a tap or a completed drag). Defaulted to `true`, so the shipped
+     * phone/dual-pane bar keeps the reference's press animation byte-identically.
+     */
+    pressScalesCells: Boolean = true,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -153,14 +169,16 @@ fun GlassNavigation(
             panelBlur = panelBlur,
             effectReferenceHeight = effectReferenceHeight,
             cleanSelectionMask = cleanSelectionMask,
+            pressScalesCells = pressScalesCells,
         ) {
-            tabs.forEach { tab ->
+            tabs.forEachIndexed { cellIndex, tab ->
                 // Keep each cell's remembered tinted drawable keyed to the tab, so a menu swap can
                 // never hand a cell the previous menu's clone.
                 key(tab.id) {
                     val tint = if (tintSelectedWithAccent && tab.id == selectedId) accent else foreground
                     LiquidBottomTab(
                         onClick = { request(tab) },
+                        index = cellIndex,
                         modifier = Modifier.semantics {
                             selected = tab.id == selectedId
                             contentDescription = tab.title

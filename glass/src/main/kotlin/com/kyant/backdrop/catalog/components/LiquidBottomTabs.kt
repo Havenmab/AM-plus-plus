@@ -8,7 +8,9 @@
  * cells out of the layer the thumb refracts — the masked row records the panel's page material
  * instead of the cells — so the cells are never smeared into a ghost and the glass still refracts,
  * and an opt-in `effectReferenceHeight` that scales the reference's absolute-dp lens/squeeze
- * constants from the panel height so a thinner capsule keeps the same proportions.
+ * constants from the panel height so a thinner capsule keeps the same proportions,
+ * and an opt-in `pressScalesCells = false` that holds the cells still while pressed and replaces
+ * that all-cell squeeze with a brief pulse on the one cell the thumb settles on.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -17,6 +19,7 @@ package com.kyant.backdrop.catalog.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -75,9 +78,21 @@ import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
+
+/**
+ * AM++: how far the settled cell grows during its brief pulse while `pressScalesCells` is off. The
+ * reference's press squeeze is 1.2x applied to every cell; the settled pulse is deliberately a
+ * smaller, one-cell "landed" accent.
+ */
+private const val SETTLE_PULSE_SCALE = 1.12f
+
+/** AM++: milliseconds the settled cell takes to ease back to 1x after its pulse peak. */
+private const val SETTLE_PULSE_MS = 180
 
 @Composable
 fun LiquidBottomTabs(
@@ -120,6 +135,18 @@ fun LiquidBottomTabs(
      * reference press animation exactly as they are.
      */
     cleanSelectionMask: Boolean = false,
+    /**
+     * AM++: scale the cells while the thumb is pressed, exactly as the reference does.
+     *
+     * The reference provides `lerp(1f, 1.2f, pressProgress)` to [LocalLiquidBottomTabScale], so a
+     * press on the bar grows every cell — including an icon-only cell such as a search glyph. The
+     * iPad-style top bar must stay still while pressed, so that session turns this off with `false`.
+     * With it off the cells are held at `1f` during the press, and only the one cell the thumb
+     * settles on grows, briefly, once the settle animation has carried the thumb onto it (after a
+     * tap or a completed drag). Defaulted to `true`, so the shipped phone/dual-pane bar keeps the
+     * reference's press animation byte-identically.
+     */
+    pressScalesCells: Boolean = true,
     content: @Composable RowScope.() -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -185,7 +212,12 @@ fun LiquidBottomTabs(
         var currentIndex by remember(selectedTabIndex) {
             mutableIntStateOf(selectedTabIndex())
         }
-        val dampedDragAnimation = remember(animationScope) {
+        // AM++: the settle pulse used when `pressScalesCells` is off. `settlePulse` runs 1 -> 0 and
+        // `settleIndex` names the one cell it applies to; both are plain Compose state, so the cells'
+        // scale lambdas observe them inside their `graphicsLayer` blocks without any per-frame work.
+        val settlePulse = remember { Animatable(0f) }
+        var settleIndex by remember { mutableIntStateOf(-1) }
+        val dampedDragAnimation = remember(animationScope, pressScalesCells) {
             DampedDragAnimation(
                 animationScope = animationScope,
                 initialValue = selectedTabIndex().toFloat(),
@@ -204,6 +236,22 @@ fun LiquidBottomTabs(
                     val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
                     currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
+                    // AM++: the settled one-cell pulse. Waiting for the thumb's spring to reach the
+                    // target is what makes it fire when the droplet *lands* on the tab rather than
+                    // the instant the finger lifts; a tap on the thumb's own cell is already at rest
+                    // there, so it pulses on the tap itself. Off in the shipped `pressScalesCells`
+                    // path, whose cells are scaled by `pressProgress` instead.
+                    if (!pressScalesCells) {
+                        animationScope.launch {
+                            val restThreshold = ((tabsCount - 1) * 0.025f).coerceAtLeast(0.001f)
+                            snapshotFlow { value }
+                                .filter { abs(it - targetIndex) <= restThreshold }
+                                .first()
+                            settleIndex = targetIndex
+                            settlePulse.snapTo(1f)
+                            settlePulse.animateTo(0f, tween(SETTLE_PULSE_MS))
+                        }
+                    }
                     animationScope.launch {
                         offsetAnimation.animateTo(
                             0f,
@@ -235,6 +283,19 @@ fun LiquidBottomTabs(
                     dampedDragAnimation.animateToValue(index.toFloat())
                     onTabSelected(index)
                 }
+        }
+
+        // AM++: what every cell's scale lambda resolves to. The shipped path is the reference's own
+        // press squeeze on every cell; `pressScalesCells = false` holds the cells at 1x while the
+        // thumb is pressed and scales only the one cell the thumb has settled on, by the brief
+        // `settlePulse`. Both branches are read inside the cells' `graphicsLayer` blocks, so the
+        // animation invalidates just those layers and never recomposes the row.
+        val tabScale: (Int) -> Float = if (pressScalesCells) {
+            { _ -> lerp(1f, 1.2f, dampedDragAnimation.pressProgress) }
+        } else {
+            { index ->
+                if (index == settleIndex) lerp(1f, SETTLE_PULSE_SCALE, settlePulse.value) else 1f
+            }
         }
 
         // AM++: hand the thumb's live geometry to the highlight built above the box scope.
@@ -303,9 +364,7 @@ fun LiquidBottomTabs(
         // or colour-fringe, which is how the earlier attempt ended up a flat grey shape. The visible
         // panel keeps its blur; only the recorded refraction source is left sharp.
         CompositionLocalProvider(
-            LocalLiquidBottomTabScale provides {
-                lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
-            }
+            LocalLiquidBottomTabScale provides tabScale
         ) {
             Row(
                 Modifier
@@ -408,9 +467,7 @@ fun LiquidBottomTabs(
         // content to displace and colour-fringe.
         if (cleanSelectionMask) {
             CompositionLocalProvider(
-                LocalLiquidBottomTabScale provides {
-                    lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
-                }
+                LocalLiquidBottomTabScale provides tabScale
             ) {
                 Row(
                     Modifier

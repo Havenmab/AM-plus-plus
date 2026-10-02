@@ -131,27 +131,35 @@ class TabletChromeStructuralRegressionTest {
         )
 
         val tablet = normalized(source("dev/amenhancer/module/hook/TabletChromeSession.kt"))
-        // The tablet top bar takes two deliberate, defaulted opt-ins on the shared component:
-        // cleanSelectionMask now keeps the refraction recording but excludes the cells (so the
-        // droplet refracts the page instead of duplicating the labels), and the effect constants
-        // scale with the capsule height so a thin bar still looks right. The accent tint stays off
-        // — the library's own accentOverride already colours the cells under the droplet.
-        assertFalse(
-            "the tablet top bar must not opt into the accent tint",
+        // The tablet top bar takes three deliberate, defaulted opt-ins on the shared component,
+        // while staying on the author's default refraction path:
+        //  - the accent tint is ON, because the library's own accentOverride only colours the
+        //    *recorded* row and never the visible cells, so nothing else turns the selected tab red;
+        //  - the cell recording is NOT skipped, so the droplet refracts the labels themselves
+        //    (the reference look) instead of only the page behind the bar;
+        //  - the press scale is OFF, so pressing does not grow every label and glyph.
+        assertTrue(
+            "the tablet top bar must colour the selected label with the host accent",
             tablet.contains("tintSelectedWithAccent = true"),
         )
+        assertFalse(
+            "the tablet top bar must keep the author's cell recording so the droplet refracts the labels",
+            tablet.contains("cleanSelectionMask"),
+        )
         assertTrue(
-            "the tablet top bar must keep the refraction recording without the cells",
-            tablet.contains("cleanSelectionMask = true"),
+            "pressing the top bar must not scale the labels",
+            tablet.contains("pressScalesCells = false"),
         )
         assertTrue(
             "the top capsule height must come from the tablet policy, not the host bottom row",
             tablet.contains("TOP_CAPSULE_HEIGHT_DP"),
         )
-        // The phone and dual-pane bars must not take either opt-in.
+        // The phone and dual-pane bars must not take any of the tablet-only opt-ins.
         assertFalse(
             "the phone session must not take the tablet-only opt-ins",
-            phone.contains("cleanSelectionMask") || phone.contains("TOP_CAPSULE_HEIGHT_DP"),
+            phone.contains("cleanSelectionMask") ||
+                phone.contains("TOP_CAPSULE_HEIGHT_DP") ||
+                phone.contains("pressScalesCells = false"),
         )
     }
 }

@@ -94,13 +94,24 @@ internal class TabletChromeSession(
          * Extra forced page recordings owed right after the shared backdrop's capture is armed.
          *
          * The recording an arming triggers happens in the same pre-draw traversal, which on a cold
-         * start is before the window has drawn once — and the activation frame itself cancels the
-         * draw (`PhoneGlassSession.onPreDraw` returns false after `activate()`). A ViewBackdrop only
-         * re-records when the page is dirty, and a static page never dirties itself, so the shot
-         * taken too early is what stays on screen. These few forced recordings are therefore taken
-         * after the page has certainly been drawn. Bounded and one-shot per arming: never per-frame.
+         * start can be before the page's own content has drawn, and the activation frame itself
+         * cancels the draw (`PhoneGlassSession.onPreDraw` returns false after `activate()`). A
+         * ViewBackdrop only re-records when the source is dirty, and a static page never dirties
+         * itself, so a shot taken too early is what stays on screen. These forced recordings are
+         * therefore taken after the page has had time to draw. Bounded and one-shot per arming:
+         * never per-frame.
          */
         const val CAPTURE_SETTLE_RECORDS = 2
+
+        /**
+         * Minimum gap between the forced recordings above, in ms.
+         *
+         * They are spaced rather than taken on consecutive frames: a cold start's fragment content
+         * can land tens of frames after the first draw, and a single burst of frames would all
+         * sample the same still-empty page. Two gaps of this length keep the whole settle bounded
+         * (~400 ms, three recordings) while giving the page a real chance to paint underneath.
+         */
+        const val CAPTURE_SETTLE_INTERVAL_MS = 200L
 
         /** Slide progress that means "the full player owns the screen". */
         const val EXPANDED_SLIDE = 1f
@@ -147,6 +158,12 @@ internal class TabletChromeSession(
 
     /** Forced page recordings still owed after the shared backdrop's capture was armed. */
     private var topCaptureSettle = 0
+
+    /** Uptime at which the next owed forced recording may be taken; see [CAPTURE_SETTLE_INTERVAL_MS]. */
+    private var topCaptureSettleAt = 0L
+
+    /** Whether the bottom mini capsule was a backdrop consumer on the previous frame. */
+    private var miniCaptureWanted = false
 
     /**
      * Latest sheet progress, mirrored from [onSlide]. A plain float so the pre-draw path can read
@@ -424,8 +441,11 @@ internal class TabletChromeSession(
                 refreshMiniState()
                 refreshMiniCover()
             }
-            updateTopChrome()
+            // The capture is driven from both consumers of the shared backdrop, independently of
+            // the top capsule's own geometry/visibility updates below (see updateBackdropCapture).
             attachMiniCapsule()
+            updateBackdropCapture()
+            updateTopChrome()
             updateMiniChrome()
         } catch (error: Throwable) {
             scheduleTopFailure(error)
@@ -511,22 +531,35 @@ internal class TabletChromeSession(
                         panelBlur = topPanelBlurDp.dp,
                         // The library's lens/squeeze constants are absolute dp authored for the
                         // 56dp reference panel; this capsule is thin, so it keeps the proportions
-                        // by declaring that reference height.
+                        // by declaring that reference height. This is the compensation for the thin
+                        // bar: `effectScale = panelHeight / effectReferenceHeight` shrinks the lens
+                        // displacement and squeeze with the capsule, so the refracted copy of a cell
+                        // stays magnified in place under the label instead of landing beside it.
                         effectReferenceHeight = GlassPolicy.NAV_HEIGHT_DP.dp,
                         // The top bar's labels are deliberately bigger and heavier than the shared
                         // phone tab label (11sp / default): the user's 「文字太小也太细」. Both are
                         // opt-in, so the phone/dual-pane bar stays byte-identical.
                         tabLabelSize = TabletChromeLayoutPolicy.TOP_TAB_LABEL_SIZE_SP.sp,
                         tabLabelWeight = FontWeight.SemiBold,
-                        // Author parity where it matters, except for the ghost: the component's
-                        // default recording puts the cells into the layer the thumb refracts, which
-                        // is what the lens turns into a smeared duplicate of the label
-                        // (「重影又回来了」). With this on the recorded layer keeps only the panel's
-                        // page material — the content behind the bar, unblurred so the lens still
-                        // has edges — and the one copy of the cells is drawn once, above it. The
-                        // phone/dual-pane bar keeps the reference recording exactly (the parameter
-                        // defaults to false).
-                        cleanSelectionMask = true,
+                        // The reference turns the selected label — and the search glyph — the host
+                        // accent colour, and the library's own `accentOverride` does not do that: it
+                        // only tints the recorded copy the droplet samples. This is the switch that
+                        // actually colours the selected cell, and the colour it uses is the host
+                        // accent passed above. Off by default, so the phone/dual-pane bar keeps its
+                        // foreground-only cells.
+                        tintSelectedWithAccent = true,
+                        // A press on the bar must not grow the labels or the search glyph. The
+                        // library's reference squeeze scales every cell through
+                        // `LocalLiquidBottomTabScale`; with this off the cells hold still under the
+                        // finger and only the cell the droplet settles on pulses briefly. Defaults
+                        // to true, so the phone/dual-pane press animation is unchanged.
+                        pressScalesCells = false,
+                        // Author parity on purpose, including the cell recording: the library's
+                        // default records the cell row into the layer the thumb's lens samples, and
+                        // that recorded copy is exactly what the reference's droplet refracts. The
+                        // thumb is one cell wide and `panelHeight - 8` tall, so the copy is magnified
+                        // in place under the crisp label (see LiquidBottomTabs), and the phone/
+                        // dual-pane bar keeps precisely this path.
                     )
                 }
             }
@@ -1277,36 +1310,6 @@ internal class TabletChromeSession(
         // is restored the moment the sheet collapses again.
         val hide = TabletChromeLayoutPolicy.expandHideFactor(effectiveSlide())
         val shown = activated && glassMenuReady && onTabPage() && hide < 1f
-        // Page-capture lifecycle, mirroring the base (PhoneGlassSession.onPreDraw ->
-        // ViewBackdrop.setCaptureEnabled): the shared backdrop is armed only while one of its two
-        // consumers is actually on screen. The cause of the 一片纯白 at rest was that the top
-        // backdrop was started with capture enabled and recorded exactly once, on its first
-        // pre-draw, and nothing ever re-armed it. Unlike the phone form, this session parks
-        // `navFrame`, so the base's `updateUnderlap` writes no content padding and the page is
-        // never re-laid-out: a static page never marks the source dirty, so the backdrop's own
-        // dirty-based re-capture never fires and the capsule keeps that first shot until a scroll
-        // dirties the page. Arming the capture resets its `ready` flag and posts an invalidate, and
-        // this session's pre-draw listener runs *before* the backdrop's in the same traversal, so
-        // the fresh recording of the real page lands in this very frame; CAPTURE_SETTLE_RECORDS
-        // then forces one or two more shots taken after the page has certainly been drawn. The
-        // backdrop is shared with the mini capsule, so it stays armed while that capsule draws even
-        // when the top bar is hidden.
-        val captureWanted = shown || miniCapsuleOnScreen()
-        val backdrop = topBackdrop
-        if (backdrop != null) {
-            val armed = backdrop.setCaptureEnabled(captureWanted)
-            if (!captureWanted) {
-                topCaptureSettle = 0
-            } else if (armed) {
-                topCaptureSettle = CAPTURE_SETTLE_RECORDS
-            } else if (topCaptureSettle > 0) {
-                topCaptureSettle--
-                // Disable/enable to force a recording now, instead of waiting for the page to
-                // become dirty (which it never does at rest).
-                backdrop.setCaptureEnabled(false)
-                backdrop.setCaptureEnabled(true)
-            }
-        }
         val ready = shown
         val alpha = if (ready) 1f - hide else 0f
         if (glass.alpha != alpha) glass.alpha = alpha
@@ -1315,13 +1318,86 @@ internal class TabletChromeSession(
     }
 
     /**
-     * True while the bottom mini capsule draws the shared page backdrop. Keeps the capture armed
-     * when the top bar is parked (settings/account pages, the expanded-player hand-off) but the
-     * mini capsule is still on screen. One View and its own flags — no per-frame hierarchy scan.
+     * Page-capture lifecycle for the **shared** backdrop — the one both this session's top capsule
+     * and its re-skinned bottom mini consume.
+     *
+     * The cause of the 一片纯白 at rest was that the shared backdrop was started with capture enabled
+     * and recorded once, on its first pre-draw, and nothing re-armed it: a ViewBackdrop only
+     * re-records when its source is dirty, moved or resized, and this session parks `navFrame`, so
+     * the base's `updateUnderlap` writes no content padding, the page never re-lays-out, and a
+     * static page never dirties itself. Arming the capture resets its `ready` flag and posts an
+     * invalidate, and this session's pre-draw listener runs *before* the backdrop's in the same
+     * traversal, so the fresh recording lands in this very frame; [CAPTURE_SETTLE_RECORDS] then
+     * forces a bounded set of later shots, spaced by [CAPTURE_SETTLE_INTERVAL_MS], so the window's
+     * real content — not just its background — is what ends up recorded.
+     *
+     * This is deliberately driven by **both** consumers, not by the top capsule alone:
+     *  - the base re-arms its own `backdrop` from `PhoneGlassSession.onPreDraw`/`updateTransition`,
+     *    but this session re-skins the mini away from that instance, so the base's arming no longer
+     *    covers the surface the user actually sees at the bottom;
+     *  - the top capsule is parked whenever the host shows settings/account or the player is
+     *    expanding, while the mini band is still there, so `miniCapsuleWanted()` has to be able to
+     *    arm the capture on its own;
+     *  - `updateBackdropCapture` therefore runs from `onPreDraw` regardless of the top capsule's
+     *    geometry/visibility state, and re-owes a settle whenever the mini newly becomes a consumer
+     *    (playback starting) so a stale pre-playback shot cannot survive.
+     *
+     * Per-frame cost is three field reads plus, at most, one `setCaptureEnabled` compare; the forced
+     * recordings are bounded by the counters and never run per frame.
      */
-    private fun miniCapsuleOnScreen(): Boolean {
+    private fun updateBackdropCapture() {
+        val backdrop = topBackdrop ?: return
+        val topWanted = activated && glassMenuReady && onTabPage() &&
+            TabletChromeLayoutPolicy.expandHideFactor(effectiveSlide()) < 1f
+        val miniWanted = miniCapsuleWanted()
+        val wanted = topWanted || miniWanted
+        val now = SystemClock.uptimeMillis()
+        when {
+            !wanted -> {
+                topCaptureSettle = 0
+                topCaptureSettleAt = 0L
+                backdrop.setCaptureEnabled(false)
+            }
+
+            backdrop.setCaptureEnabled(true) -> {
+                // Newly armed: the recording this frame is taken before the page has necessarily
+                // painted, so owe the spaced settle shots that replace it.
+                topCaptureSettle = CAPTURE_SETTLE_RECORDS
+                topCaptureSettleAt = now + CAPTURE_SETTLE_INTERVAL_MS
+            }
+
+            miniWanted && !miniCaptureWanted -> {
+                // The mini band just became a backdrop consumer (playback started): its surface must
+                // not keep whatever the last arming recorded.
+                topCaptureSettle = CAPTURE_SETTLE_RECORDS
+                topCaptureSettleAt = now + CAPTURE_SETTLE_INTERVAL_MS
+            }
+
+            topCaptureSettle > 0 && now >= topCaptureSettleAt -> {
+                topCaptureSettle--
+                topCaptureSettleAt = now + CAPTURE_SETTLE_INTERVAL_MS
+                // Disable/enable to force a recording now, instead of waiting for the page to
+                // become dirty (which it never does at rest).
+                backdrop.setCaptureEnabled(false)
+                backdrop.setCaptureEnabled(true)
+            }
+        }
+        miniCaptureWanted = miniWanted
+    }
+
+    /**
+     * True while the re-skinned bottom mini capsule is a backdrop consumer: it is installed, the
+     * session has activated (its alpha is only written once the author transition runs) and the
+     * author glass is actually on screen. One View and its own flags — no per-frame hierarchy scan.
+     *
+     * Kept separate from the top capsule's `shown` so the mini's material records while the top bar
+     * is parked (settings/account pages, the expanded-player hand-off).
+     */
+    private fun miniCapsuleWanted(): Boolean {
+        if (!activated || miniStyledGlass == null) return false
         val glass = miniGlass ?: return false
-        return glass.isShown && glass.alpha > 0f && glass.width > 0 && glass.height > 0
+        if (!glass.isAttachedToWindow || glass.width <= 0 || glass.height <= 0) return false
+        return glass.isShown && glass.alpha > 0f
     }
 
     /**
@@ -1348,6 +1424,8 @@ internal class TabletChromeSession(
         topObserver?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(topLayoutListener)
         topObserver = null
         topCaptureSettle = 0
+        topCaptureSettleAt = 0L
+        miniCaptureWanted = false
         topBackdrop?.close()
         topBackdrop = null
         topGlass?.let { glass -> (glass.parent as? ViewGroup)?.removeView(glass) }

@@ -2,6 +2,7 @@ package dev.amenhancer.module.hook
 
 import android.graphics.drawable.Drawable
 import android.view.View
+import android.widget.TextView
 import java.lang.reflect.Method
 
 internal class TabletChromeTopHeader(private val resourceId: (String) -> Int) : AutoCloseable {
@@ -11,12 +12,16 @@ internal class TabletChromeTopHeader(private val resourceId: (String) -> Int) : 
     private var backgrounds = emptyList<Background>()
     private var scrims = emptyList<Scrim>()
     private var divider: Divider? = null
+    private var smallTitle: TabletChromeSmallTitle? = null
+    private var libraryHeader: TabletChromeLibraryHeader? = null
+    private var libraryPinned = false
 
     fun ignoresDependency(view: View, dependency: View): Boolean = TabletChromeHeaderPolicy.ignoresDependency(
         active, view === content, dependency === appBar, view.parent != null && view.parent === dependency.parent,
+        libraryPinned,
     )
 
-    fun update(bar: View?, page: View?, enabled: Boolean): Boolean {
+    fun update(bar: View?, page: View?, enabled: Boolean, pinLibrary: Boolean, selectedRootTitle: String?): Boolean {
         if (!enabled || bar == null || page == null || bar.parent == null || bar.parent !== page.parent) {
             return release()
         }
@@ -36,13 +41,24 @@ internal class TabletChromeTopHeader(private val resourceId: (String) -> Int) : 
                 Scrim.create(bar, "getStatusBarForeground", "setStatusBarForeground"),
             )
             divider = child(bar, "toolbar_divider")?.let(::Divider)
+            smallTitle = (child(bar, "main_title") as? TextView)?.let(::TabletChromeSmallTitle)
+            libraryHeader = collapsing?.let { TabletChromeLibraryHeader.create(bar, it) }
             active = true
             (page.parent as? View)?.requestLayout()
         }
+        var needsLayout = rebound
+        if (libraryPinned != pinLibrary) {
+            libraryPinned = pinLibrary
+            (page.parent as? View)?.requestLayout()
+            needsLayout = true
+        }
+        val headerChanged = if (pinLibrary) libraryHeader?.pin() == true else libraryHeader?.restore() == true
+        needsLayout = needsLayout || headerChanged
         backgrounds.forEach(Background::suppress)
         scrims.forEach(Scrim::suppress)
         divider?.suppress()
-        return rebound
+        smallTitle?.update(selectedRootTitle)
+        return needsLayout
     }
 
     private fun child(parent: View, name: String): View? = resourceId(name).takeIf { it != 0 }?.let {
@@ -55,12 +71,17 @@ internal class TabletChromeTopHeader(private val resourceId: (String) -> Int) : 
         backgrounds.forEach(Background::restore)
         scrims.forEach(Scrim::restore)
         divider?.restore()
+        smallTitle?.restore()
+        libraryHeader?.restore()
         (content?.parent as? View)?.requestLayout()
         appBar = null
         content = null
         backgrounds = emptyList()
         scrims = emptyList()
         divider = null
+        smallTitle = null
+        libraryHeader = null
+        libraryPinned = false
         return true
     }
 

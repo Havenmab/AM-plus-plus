@@ -41,6 +41,57 @@ class TabletChromeHeaderPolicyTest {
     }
 
     @Test
+    fun thePinnedLibraryHeaderKeepsItsNativeLayoutDependency() {
+        for (combination in 0 until 16) {
+            assertFalse(TabletChromeHeaderPolicy.ignoresDependency(
+                combination and 1 != 0, combination and 2 != 0, combination and 4 != 0, combination and 8 != 0,
+                libraryPinned = true,
+            ))
+        }
+    }
+
+    @Test
+    fun onlyTheMatchingRootNavigationSmallTitleIsHidden() {
+        for (title in listOf("主页", "新发现", "广播", "搜索", "Home", "New", "Radio", "Search")) {
+            assertTrue(TabletChromeHeaderPolicy.hidesSmallTitle(title, title))
+            assertFalse(TabletChromeHeaderPolicy.hidesSmallTitle("Artist name", title))
+            assertFalse(TabletChromeHeaderPolicy.hidesSmallTitle("Album name", title))
+        }
+        assertFalse(TabletChromeHeaderPolicy.hidesSmallTitle("资料库", null))
+        assertFalse(TabletChromeHeaderPolicy.hidesSmallTitle("", ""))
+        assertFalse(TabletChromeHeaderPolicy.hidesSmallTitle("主页", null))
+    }
+
+    @Test
+    fun libraryUsesNativeExpandedGeometryAndReleasesOnlyItsOwnScrollFlags() {
+        val library = source("TabletChromeLibraryHeader.kt")
+        val tablet = source("TabletChromeSession.kt")
+        assertTrue(library.contains("getScrollFlags"))
+        assertTrue(library.contains("setScrollFlags"))
+        assertTrue(library.contains("setExpanded.invoke(bar, true, false)"))
+        assertTrue(library.contains("setFlags.invoke(current, 0)"))
+        assertTrue(library.contains("collapsing.layoutParams === saved"))
+        assertTrue(library.contains("setFlags.invoke(saved, nativeFlags)"))
+        assertTrue(tablet.contains("find(\"library_container\")?.isShown == true"))
+        assertTrue(tablet.contains("find(\"sliding_tabs\")?.isShown == true"))
+        assertTrue(tablet.contains("val selectedRootTitle = if (librarySelected) null"))
+        assertFalse(library.contains("setPadding"))
+        assertFalse(library.contains("translationY"))
+    }
+
+    @Test
+    fun smallTitleMaskTargetsOnlyMainTitleAndRestoresNativeVisibility() {
+        val header = source("TabletChromeTopHeader.kt")
+        val title = source("TabletChromeSmallTitle.kt")
+        assertTrue(header.contains("child(bar, \"main_title\") as? TextView"))
+        assertFalse(title.contains("header_page_title"))
+        assertFalse(title.contains("View.GONE"))
+        assertTrue(title.contains("if (hidden && view.visibility == View.INVISIBLE) view.visibility = View.VISIBLE"))
+        assertTrue(header.contains("smallTitle?.restore()"))
+        assertTrue(header.contains("libraryHeader?.restore()"))
+    }
+
+    @Test
     fun runtimeHookIsOptionalAndAllOtherSessionsDefaultToNativeDependencies() {
         val runtime = source("PhoneGlassRuntime.kt")
         assertTrue(runtime.contains("loader.loadClass(\"com.apple.android.music.common.behavior.PlayerScrollingViewBehavior\")"))

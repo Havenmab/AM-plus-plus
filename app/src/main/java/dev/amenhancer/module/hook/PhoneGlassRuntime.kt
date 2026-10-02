@@ -184,6 +184,28 @@ internal object PhoneGlassRuntime {
                     }
                 }
             })
+            if (build.versionName == "6.5.3" && build.versionCode == 1599L) {
+                val reset = callback.getDeclaredMethod("d")
+                val snapshot = callback.getDeclaredMethod("e", View::class.java)
+                ModernXposedRuntime.hookMethod(reset, object : ModernMethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val artwork = artworkField.get(param.thisObject) as? View ?: return
+                        param.extras["tabletArtworkReset"] = artwork
+                        sessions.values.forEach { it.beforeNativeArtwork(artwork) }
+                    }
+
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val artwork = param.extras["tabletArtworkReset"] as? View ?: return
+                        sessions.values.forEach { it.afterNativeArtworkReset(artwork) }
+                    }
+                })
+                ModernXposedRuntime.hookMethod(snapshot, object : ModernMethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val artwork = param.args[0] as? View ?: return
+                        sessions.values.forEach { it.beforeNativeArtwork(artwork) }
+                    }
+                })
+            }
         }.onFailure { ModernXposedRuntime.log("liquid glass artwork alignment hook unavailable for ${build.displayName}", it) }
         // Apple's scrolling behavior reserves bottom padding on the content host.
         // Redirect it before setPadding rather than fighting it with another layout every frame.

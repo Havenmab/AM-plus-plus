@@ -22,7 +22,7 @@ class TabletChromeArtworkStructuralRegressionTest {
         assertTrue(source("GlassSession.kt").contains("fun beforeNativeArtwork(artwork: View) = Unit"))
         val tablet = source("TabletChromeSession.kt")
         assertTrue(tablet.contains("if (artwork === artworkAnchorView) restoreNativeArtworkTransform()"))
-        assertTrue(tablet.contains("val native = nativeArtworkTransform"))
+        assertTrue(tablet.contains("val native = artworkState.native"))
         assertTrue(tablet.contains("artwork.scaleX, artwork.scaleY, artwork.translationX, artwork.translationY"))
         assertFalse(tablet.contains("artwork.translationY +="))
     }
@@ -37,7 +37,7 @@ class TabletChromeArtworkStructuralRegressionTest {
         assertTrue(tablet.contains("artworkParentMatrix.invert(artworkParentInverse)"))
         assertTrue(tablet.contains("artwork.left - container.scrollX"))
         assertTrue(tablet.contains("artwork.width.toFloat(), artwork.height.toFloat(), artwork.pivotX, artwork.pivotY"))
-        assertTrue(tablet.contains("nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END"))
+        assertTrue(tablet.contains("artworkState.progress < TabletChromeArtworkPolicy.HANDOFF_END"))
     }
 
     @Test
@@ -56,16 +56,31 @@ class TabletChromeArtworkStructuralRegressionTest {
     fun closeRestoresHostTransformAndReinflationDropsStaleSlotCoordinates() {
         val tablet = source("TabletChromeSession.kt")
         assertTrue(tablet.contains("private fun releaseMiniCapsule() { restoreNativeArtworkTransform()"))
-        assertTrue(tablet.contains("artworkAnchorView = null nativeArtworkTransform = null"))
+        assertTrue(tablet.contains("artworkAnchorView = null artworkState.clear()"))
         assertTrue(tablet.contains("miniCoverCoordinates = null nativeArtworkOwnsMiniCover = false"))
     }
 
     @Test
     fun expandedModeDoesNotReplayCachedTransformsOverHostAnimations() {
         val tablet = source("TabletChromeSession.kt")
-        assertTrue(tablet.contains("if (nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END && aligned != null)"))
-        assertTrue(tablet.contains("artworkTransformApplied = aligned != native"))
-        assertTrue(tablet.contains("private fun restoreNativeArtworkTransform() { if (!artworkTransformApplied) return"))
+        assertTrue(tablet.contains("if (artworkState.progress < TabletChromeArtworkPolicy.HANDOFF_END && aligned != null)"))
+        assertTrue(tablet.contains("artworkState.recordApplied(aligned)"))
+        assertTrue(tablet.contains("artworkState.takeRestoration(artworkTransform(artwork)) ?: return"))
+        assertTrue(tablet.contains("if (!artworkState.owns(artworkTransform(artwork))) { artworkState.clear()"))
+    }
+
+    @Test
+    fun nativeResetAndLazyBaselineSnapshotArePartOfTheArtworkLifecycle() {
+        val runtime = source("PhoneGlassRuntime.kt")
+        val tablet = source("TabletChromeSession.kt")
+        assertTrue(runtime.contains("build.versionName == \"6.5.3\" && build.versionCode == 1599L"))
+        assertTrue(runtime.contains("callback.getDeclaredMethod(\"d\")"))
+        assertTrue(runtime.contains("callback.getDeclaredMethod(\"e\", View::class.java)"))
+        assertTrue(runtime.contains("param.extras[\"tabletArtworkReset\"] = artwork"))
+        assertTrue(runtime.contains("it.afterNativeArtworkReset(artwork)"))
+        assertTrue(tablet.contains("override fun afterNativeArtworkReset(artwork: View) { if (artwork !== artworkAnchorView) return artworkState.clear() artworkAnchorView = null nativeArtworkOwnsMiniCover = false"))
+        assertFalse(source("PhoneGlassSession.kt").contains("override fun afterNativeArtworkReset"))
+        assertFalse(source("TabletDualPaneGlassSession.kt").contains("override fun afterNativeArtworkReset"))
     }
 
     @Test

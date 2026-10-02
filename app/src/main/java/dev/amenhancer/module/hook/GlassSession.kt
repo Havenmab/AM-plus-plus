@@ -27,6 +27,7 @@ internal interface GlassSession : AutoCloseable {
     fun shouldIgnoreTopHeaderDependency(view: View, dependency: View): Boolean = false
 
     fun beforeNativeArtwork(artwork: View) = Unit
+    fun afterNativeArtworkReset(artwork: View) = Unit
 
     /**
      * Corrects the native full-player artwork's screen origin while the sheet slides

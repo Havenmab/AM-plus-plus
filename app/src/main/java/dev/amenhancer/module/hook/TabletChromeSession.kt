@@ -152,6 +152,7 @@ internal class TabletChromeSession(
     private var topCaptureActive = true
     private var topCaptureSource: View? = null
     private val topHeader = TabletChromeTopHeader { resourceId(it, "id") }
+    private val edgeFades = TabletChromeEdgeFades()
     private var topCaptureScheduledAt: Long? = null
     private val topCaptureCallback = Runnable {
         topCaptureScheduledAt = null
@@ -182,6 +183,7 @@ internal class TabletChromeSession(
     private var topAccent by mutableStateOf(Color(0xFFFA233B))
     private var topForeground by mutableStateOf(Color.Black)
     private var topHostConfiguration by mutableStateOf(Configuration(activity.resources.configuration))
+    private var edgeFadeColor = AndroidColor.WHITE
     private var topMenuKey: List<Any?> = emptyList()
 
     // ---- Bottom mini-player capsule ----------------------------------------------------------
@@ -214,9 +216,7 @@ internal class TabletChromeSession(
     private val artworkParentMatrix = Matrix()
     private val artworkParentInverse = Matrix()
     private var artworkAnchorView: View? = null
-    private var nativeArtworkTransform: TabletChromeArtworkPolicy.Transform? = null
-    private var nativeArtworkProgress = 0f
-    private var artworkTransformApplied = false
+    private val artworkState = TabletChromeArtworkState()
     private var nativeArtworkOwnsMiniCover by mutableStateOf(false)
 
     /**
@@ -465,6 +465,7 @@ internal class TabletChromeSession(
             // the top capsule's own geometry/visibility updates below (see updateBackdropCapture).
             attachMiniCapsule()
             val headerNeedsLayout = updateTopHeader()
+            updateEdgeFades()
             updateBackdropCapture()
             updateTopChrome()
             updateMiniChrome()
@@ -892,8 +893,7 @@ internal class TabletChromeSession(
     private fun releaseMiniCapsule() {
         restoreNativeArtworkTransform()
         artworkAnchorView = null
-        nativeArtworkTransform = null
-        nativeArtworkProgress = 0f
+        artworkState.clear()
         miniCoverCoordinates = null
         nativeArtworkOwnsMiniCover = false
         miniListener?.let { handle -> runCatching { handle.close() } }
@@ -937,6 +937,13 @@ internal class TabletChromeSession(
         if (artwork === artworkAnchorView) restoreNativeArtworkTransform()
     }
 
+    override fun afterNativeArtworkReset(artwork: View) {
+        if (artwork !== artworkAnchorView) return
+        artworkState.clear()
+        artworkAnchorView = null
+        nativeArtworkOwnsMiniCover = false
+    }
+
     override fun alignNativeArtwork(artwork: View, slide: Float) {
         if (!activated || topClosed || !slide.isFinite() || artwork !== find("fullplayerSongImage")) return
         val container = artwork.parent as? View ?: return
@@ -945,10 +952,7 @@ internal class TabletChromeSession(
             restoreNativeArtworkTransform()
             artworkAnchorView = artwork
         }
-        nativeArtworkTransform = TabletChromeArtworkPolicy.Transform(
-            artwork.scaleX, artwork.scaleY, artwork.translationX, artwork.translationY,
-        )
-        nativeArtworkProgress = slide.coerceIn(0f, 1f)
+        artworkState.capture(artworkTransform(artwork), slide)
         updateNativeArtworkAlignment()
     }
 
@@ -957,12 +961,17 @@ internal class TabletChromeSession(
 
     private fun updateNativeArtworkAlignment() {
         val artwork = artworkAnchorView
-        val native = nativeArtworkTransform
+        val native = artworkState.native
         val container = artwork?.parent as? View
         if (!activated || topClosed || artwork == null || native == null || container == null ||
             !artwork.isAttachedToWindow || artwork !== find("fullplayerSongImage")
         ) {
             restoreNativeArtworkTransform()
+            nativeArtworkOwnsMiniCover = false
+            return
+        }
+        if (!artworkState.owns(artworkTransform(artwork))) {
+            artworkState.clear()
             nativeArtworkOwnsMiniCover = false
             return
         }
@@ -973,17 +982,17 @@ internal class TabletChromeSession(
                 (artwork.top - container.scrollY).toFloat(),
                 artwork.width.toFloat(), artwork.height.toFloat(), artwork.pivotX, artwork.pivotY,
             ),
-            if (nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END) miniCoverFrame(container) else null,
-            nativeArtworkProgress,
+            if (artworkState.progress < TabletChromeArtworkPolicy.HANDOFF_END) miniCoverFrame(container) else null,
+            artworkState.progress,
         )
-        if (nativeArtworkProgress < TabletChromeArtworkPolicy.HANDOFF_END && aligned != null) {
+        if (artworkState.progress < TabletChromeArtworkPolicy.HANDOFF_END && aligned != null) {
             applyNativeArtworkTransform(artwork, aligned)
-            artworkTransformApplied = aligned != native
+            artworkState.recordApplied(aligned)
         } else {
             restoreNativeArtworkTransform()
         }
         nativeArtworkOwnsMiniCover = TabletChromeArtworkPolicy.ownsMiniCover(
-            nativeArtworkProgress, aligned != null, artwork.isShown && artwork.alpha > 0f, collapsed = isCollapsed,
+            artworkState.progress, aligned != null, artwork.isShown && artwork.alpha > 0f, collapsed = isCollapsed,
         )
     }
 
@@ -1012,12 +1021,14 @@ internal class TabletChromeSession(
     }
 
     private fun restoreNativeArtworkTransform() {
-        if (!artworkTransformApplied) return
         val artwork = artworkAnchorView ?: return
-        val native = nativeArtworkTransform ?: return
+        val native = artworkState.takeRestoration(artworkTransform(artwork)) ?: return
         applyNativeArtworkTransform(artwork, native)
-        artworkTransformApplied = false
     }
+
+    private fun artworkTransform(artwork: View) = TabletChromeArtworkPolicy.Transform(
+        artwork.scaleX, artwork.scaleY, artwork.translationX, artwork.translationY,
+    )
 
     private fun applyNativeArtworkTransform(artwork: View, transform: TabletChromeArtworkPolicy.Transform) {
         if (artwork.scaleX != transform.scaleX) artwork.scaleX = transform.scaleX
@@ -1335,6 +1346,8 @@ internal class TabletChromeSession(
         val selected = (ModernXposedRuntime.callMethod(navigation, "getSelectedItemId") as Number).toInt()
         val night = configuration.uiMode and 0x30 == 0x20
         val foreground = if (night) AndroidColor.WHITE else AndroidColor.BLACK
+        val backgroundId = resourceId("background_color", "color")
+        edgeFadeColor = if (backgroundId != 0) activity.getColor(backgroundId) else if (night) 0xff1c1c1e.toInt() else AndroidColor.WHITE
         val accentId = resourceId("color_primary", "color")
         val hostAccent = if (accentId != 0) activity.getColor(accentId) else 0xfffa233b.toInt()
         val items = (0 until menu.size()).map(menu::getItem).filter { it.isVisible }
@@ -1502,13 +1515,17 @@ internal class TabletChromeSession(
 
     private fun updateTopHeader(): Boolean {
         val enabled = TabletChromeHeaderPolicy.enabled(activated, glassMenuReady, topGlass != null, onTabPage())
-        val changed = topHeader.update(find("app_bar_layout"), find("navigation_host_group"), enabled)
+        val librarySelected = topSelectedId == resourceId("action_library", "id")
+        val pinLibrary = librarySelected && find("library_container")?.isShown == true && find("sliding_tabs")?.isShown == true
+        val selectedRootTitle = if (librarySelected) null else topTabs.firstOrNull { it.id == topSelectedId }?.title
+        val changed = topHeader.update(find("app_bar_layout"), find("navigation_host_group"), enabled, pinLibrary, selectedRootTitle)
         if (changed) requestBackdropRefresh()
         return changed
     }
 
     private fun releaseTopChrome() {
         topHeader.close()
+        edgeFades.close()
         topObserver?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(topLayoutListener)
         topObserver = null
         topCaptureSource?.removeCallbacks(topCaptureCallback)
@@ -1521,6 +1538,17 @@ internal class TabletChromeSession(
         topGlass?.let { glass -> (glass.parent as? ViewGroup)?.removeView(glass) }
         topGlass = null
         navView = null
+    }
+
+    private fun updateEdgeFades() {
+        val opacity = TabletChromeEdgeFadePolicy.opacity(
+            activated && glassMenuReady && topGlass != null && onTabPage(), effectiveSlide(),
+        )
+        edgeFades.update(
+            find("navigation_host_group"), activity.window.decorView,
+            TabletChromeEdgeFadePolicy.heightPx(density, statusBarInset()),
+            TabletChromeEdgeFadePolicy.heightPx(density, bottomInset), edgeFadeColor, opacity,
+        )
     }
 
     private fun officialTablet(): Boolean =

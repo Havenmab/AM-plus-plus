@@ -1194,6 +1194,7 @@ private object ConstraintLayoutPane {
     private const val PLAYER_SHEET_CONTAINER = "player_sheet_container"
     private const val PLAYER_CONTAINER_ELEVATION = "player_container_elevation"
     private const val ARTWORK_CONTAINER = "artwork_container"
+    private const val VIDEO_SURFACE = "video_surface"
     private const val METADATA_BARRIER_TOP = "metadata_barrier_top"
     private const val ARTWORK_LAYOUT_REAPPLY_MAX_PRE_DRAWS = 8
     private const val PLAYER_ROOT = "player_root"
@@ -1419,6 +1420,12 @@ private object ConstraintLayoutPane {
         fun apply(): Boolean {
             if (!TabletModeQualifier.isEligible(playerRoot.context)) return true
             val artwork = playerHost.findViewById<View>(artworkId) ?: return false
+            val videoSurfaceId = playerRoot.resources.getIdentifier(
+                VIDEO_SURFACE,
+                "id",
+                ModuleConstants.TARGET_PACKAGE,
+            )
+            val videoSurface = videoSurfaceId.takeIf { it != 0 }?.let(playerHost::findViewById)
             val barrier = playerHost.findViewById<View>(barrierId) ?: return false
             val parent = artwork.parent as? ViewGroup ?: return false
             if (parent.width <= 0 || parent.height <= 0 || artwork.width <= 0) return false
@@ -1472,6 +1479,13 @@ private object ConstraintLayoutPane {
             params.setInt("topToBottom", -1)
             artwork.layoutParams = params
             artwork.requestLayout()
+            if (videoSurface != null) {
+                val videoParams = videoSurface.layoutParams
+                videoParams.width = sizePx
+                videoParams.height = sizePx
+                videoSurface.layoutParams = videoParams
+                videoSurface.requestLayout()
+            }
             return true
         }
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }

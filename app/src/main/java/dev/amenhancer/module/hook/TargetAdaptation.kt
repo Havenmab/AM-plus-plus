@@ -196,8 +196,10 @@ internal object EditorialVideoFlavorPolicy {
         if (square < 0 || tall < 0 || square == 0) return null
         return flavors.copyOf().also {
             val value = it[square]
-            it[square] = it[tall]
-            it[tall] = value
+            @Suppress("UNCHECKED_CAST")
+            val reordered = it as Array<Any?>
+            reordered[square] = reordered[tall]
+            reordered[tall] = value
         }
     }
 }

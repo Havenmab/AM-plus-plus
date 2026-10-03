@@ -111,6 +111,8 @@ object AppleMusicHostFactory {
                         application = application,
                         classLoader = classLoader,
                         mode = settings.titleCorrectionMode,
+                        restoreCjkOriginalMetadata = settings.restoreCjkOriginalMetadata,
+                        localizedMetadataCache = settings.localizedMetadataCache,
                     ).install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)

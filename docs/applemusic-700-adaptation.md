@@ -53,11 +53,13 @@
 | 双栏 | 初始化/切页 → `j1(BagConfig)` / `s1(State,Bundle)`；左侧仍是原生 SONG/QUEUE，固定右 host 放独立歌词 Fragment；manager `E.Q/E`、transaction `a.m/e/f/h` 按实际描述符接入 |
 | 右歌词布局 | 当前 profile 的 `n0 / Z / f0 / l0 / E0,F0`；字号在行/词 XML 初次绑定前应用，`W1()` 后校正锚点，N1 抑制重复控制条。7.0 渐变只读取本 tuple 的 W/a0/b0/c0 字段组合 |
 | 元数据展示 | 37 个 hook 点、65 个精确目标；队列 `ea.a.w/k/v`，资料库 `LibraryMainContentEpoxyController.buildModels(I,…,Q7.e)`，主页 artwork `common.L.s(CollectionItemView)` |
-| 菜单、媒体库和目录请求 | 操作菜单 `player.h1.G0`（`q8.na` 调用）；媒体转换 `C9.F.b / C6.a.n,b`；原生 uncached `getMediaApi` → `w9.Q.F`，storefront 实例字段 t。请求本地化 `Q.q0` / HTTP `y9.a.a` |
+| 菜单、媒体库和目录请求 | 操作菜单 `player.h1.G0`（`q8.na` 调用）；媒体转换 `C9.F.b / C6.a.n,b`；原生 uncached `getMediaApi` → `w9.Q.F`，storefront 实例字段 t。请求本地化 `w9.Q#q0`；内容 HTTP `y9.a#a`（OkHttp network 拦截器）与 amp-api `y9.d#a`（application 拦截器，更早执行）；目录执行器 `x9.E/x9.u1/x9.t` 六个 7 参方法 |
 | 蜂窝 | settings2 的数据分类本身受账户条件控制，7.0 已无旧 SIM 显示门禁；保留默认关闭，仅按配置修改 `FuseConnectivityChecker.isCellularAvailable()`，不绕过登录条件 |
 | Editorial / DPI | Editorial `player.j1.e(Song,float,Flavor[])` 保留平板横屏限定；DPI 使用现有仅宿主冷启动与配置变化实现 |
 
 1606 的 HLE 解析只接受本 tuple 的候选，不跨旧 profile 寻找类、方法或 DexKit 修复成员。Indexed 方法和字段使用完整描述符。旧 HLE 的兼容回退及候选顺序保持原状。
+
+1606 的地区替换目标由该版本 DEX 推导后加入 profile，并经 `scripts/verify-host-profile.py` 对真实 7.0 原包做 262 项描述符校验（0 失败）。这一步只证明类/方法/字段与拦截器归属仍成立，没有证明五个改写层在设备上真的改写了请求：**本次移植没有真机验证，7.0 仅为描述符与结构通过**，地区切换效果、账号回退与加载速度仍待验收。
 
 ## 新平板玻璃
 

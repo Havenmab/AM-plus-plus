@@ -26,6 +26,24 @@
 
 旧 HLE 引擎的“版本名或版本号匹配”和已审核候选回退暂时保留，外层生产门禁始终精确匹配 tuple。不要直接收紧旧引擎后把未验证的旧功能失效当作正常重构。
 
+## 地区替换
+
+地区替换在 HLE 本地化钩子里，共五层，均只在“歌曲名显示修正”总开关开启且选中了带 storefront 的地区档位时才改写普通目录流量：
+
+1. MediaApi storefront 字段（`applyRegionConfiguration`）；
+2. MediaApi 请求参数表（`MEDIA_API_LOCALIZATION`）；
+3. 内容 HTTP 拦截（`CONTENT_HTTP_LOCALIZATION`，URL 与 `Accept-Language` / `X-Apple-Store-Front` 头）；
+4. 目录直连请求执行器参数（`MEDIA_API_CATALOG_REQUEST_EXECUTOR`）；
+5. amp-api 内容请求拦截（`MEDIA_API_AMP_HTTP_INTERCEPTOR`）。
+
+第 4、5 层先取 `AppleMusicHookProfiles.exactTargets`，为空即“本版本无已验证目标”，不安装也不回退整包 DexKit 扫描；第 3 层不走这个门禁（6.5.2 靠兼容候选链命中 6.5.1 的 `u8.a#a`）。因此前三层在四个 profile 都有声明或兼容候选，第 4、5 层仅 `6.5.3/1599` 与 `7.0.0-beta/1606` 声明。6.5.1/6.5.2 缺第 4、5 层的覆盖缺口见 `docs/refactor-degradations.md` 的 D3，未取证前不得补猜测目标。
+
+电台/歌词/播放这类账号权益相关请求在改写前先命中 `isAccountScopedPlaybackPath` / `isAppleLyricsRequestPath`，强制回退到 `accountStorefrontForPlaybackRequest()` 捕获的账号 storefront。
+
+代码入口：地区档位与映射 `core/src/main/kotlin/dev/amenhancer/module/config/TitleCorrectionMode.kt`（storefront/语言/缓存命名空间）；请求改写 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt`（五层安装与参数/URL 改写）；storefront 应用与账号回退 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogRegionAccess.kt` 与 `AppleInternalCatalogResolver.kt`（`applyRegionConfiguration` / `accountStorefrontForPlaybackRequest`）。
+
+`7.0.0-beta/1606` 上第 3 层是内容 HTTP 的 OkHttp **network** 拦截器（`y9.a#a`），第 5 层是 amp-api 的 **application** 拦截器（`y9.d#a`）；application 拦截器链路更靠前，先于 network 拦截器执行。目标描述符与 262 项/55 项原包校验见 `scripts/verify-host-profile.py`。
+
 ## 页面架构变化 / 7.x
 
 `PlayerSurfacePort` 分别提供导航、mini 和播放器区域及导航位置。`LegacyChromeHostBinding` 接现有 Activity；`FragmentPlayerSurfaceAdapter` 按 view 身份和配置 revision 创建/销毁会话。FragmentContainerView 的限制通过 `restrictedPlayerContainer` 明确表达；模块视图挂入允许的 sibling/普通容器，不能直接往受限容器塞 View。
@@ -44,6 +62,6 @@ Chrome ID、字段、方法在绑定时缓存；布局变化显式失效视图�
 
 ## 验证与回滚
 
-`./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleRelease`，CI 另运行架构/profile/玻璃参考源码校验。配置 schema 15、键、文件 ID、ZIP、目录、DB/cache namespace 不变，代码阶段回滚无需反向数据迁移。
+`./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleRelease`，CI 另运行架构/profile/玻璃参考源码校验。配置 schema 16、键、文件 ID、ZIP、目录、DB/cache namespace 不变，代码阶段回滚无需反向数据迁移。
 
-源码契约覆盖拆分后整个职责组件；实际行为测试仍执行原夹具。不可通过删断言、更新冻结快照或加入猜测候选消除失败。交付记录见 `docs/refactor-validation.md`，两处已有降级见 `docs/refactor-degradations.md`。
+源码契约覆盖拆分后整个职责组件；实际行为测试仍执行原夹具。不可通过删断言、更新冻结快照或加入猜测候选消除失败。交付记录见 `docs/refactor-validation.md`，既有降级与地区覆盖缺口见 `docs/refactor-degradations.md`。

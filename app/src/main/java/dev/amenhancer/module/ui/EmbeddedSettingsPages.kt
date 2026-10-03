@@ -420,7 +420,12 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 activity,
                 "歌曲名显示修正",
                 if (settings.titleCorrectionEnabled) {
-                    "${settings.titleCorrectionMode.displayName} · 重开 Apple Music 后生效"
+                    if (settings.titleCorrectionMode.replacesRegion) {
+                        "${settings.titleCorrectionMode.displayName} · " +
+                            "普通浏览请求会改到该地区 · 重开 Apple Music 后生效"
+                    } else {
+                        "${settings.titleCorrectionMode.displayName} · 重开 Apple Music 后生效"
+                    }
                 } else {
                     "关闭时跟随 Apple Music 账号 · 开启后选择修正地区"
                 },
@@ -449,6 +454,34 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     pageRefresh?.invoke()
                 }
             })
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
+                "替换中日韩歌曲信息为原地区原名",
+                if (settings.restoreCjkOriginalMetadata) {
+                    "中日韩歌曲按原地区语言显示原名"
+                } else {
+                    "保持 Apple Music 当前显示的名称"
+                },
+                settings.restoreCjkOriginalMetadata,
+                iconTint = EmbeddedSettingsPalette.accent,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.Translate,
+                    EmbeddedSettingsPalette.accent,
+                ),
+            ) { onSettingsChanged(settings.copy(restoreCjkOriginalMetadata = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
+                "创建检索库以提升替换体验",
+                "缓存已解析的地区歌曲信息，冷启动后无需重新抓取",
+                settings.localizedMetadataCache,
+                iconTint = EmbeddedSettingsPalette.accent,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.Document,
+                    EmbeddedSettingsPalette.accent,
+                ),
+            ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,

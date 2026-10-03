@@ -3,18 +3,31 @@ package dev.amenhancer.module.hook
 import dev.amenhancer.module.ModuleConstants
 
 /**
- * Legacy compatibility slot for the old global Catalog-language feature.
+ * Reports the state of the region-replacement capability.
  *
- * Fixed-region title correction now scopes the locale to HLE's tokenized
- * metadata requests. Installing the old process-wide hooks would change
- * ordinary Apple Music traffic (and can make account-available songs appear
- * unavailable), so this feature is intentionally inert for every mode.
+ * The rewrite itself lives in the HLE localization hooks (MediaApi storefront, catalog executor
+ * arguments, the content HTTP seam and the amp-api interceptor), which are installed by
+ * [HleMetadataRuntime].  This feature owns no hooks of its own — it only surfaces whether the
+ * selected profile actually redirects ordinary Apple Music traffic, so the health report cannot
+ * claim an active region while the account region is still in force.
  */
 internal class CatalogLanguageFeature : FeatureHook {
     override val key: String = ModuleConstants.FEATURE_CATALOG_LANGUAGE
 
-    override fun install(context: HookContext): FeatureInstallResult =
-        FeatureInstallResult.disabled(
-            "Scoped to HLE metadata requests; ordinary Apple Music requests follow the account",
+    override fun install(context: HookContext): FeatureInstallResult {
+        val settings = context.config.settings()
+        if (!settings.titleCorrectionEnabled) return FeatureInstallResult.disabled()
+
+        val mode = settings.titleCorrectionMode
+        if (!mode.replacesRegion) {
+            return FeatureInstallResult.active(
+                "No region selected; catalog requests follow the Apple Music account",
+            )
+        }
+        return FeatureInstallResult.active(
+            "Catalog requests are localized to ${mode.displayName} " +
+                "(${mode.catalogStorefront}); radio, lyrics and playback requests keep the " +
+                "account storefront",
         )
+    }
 }

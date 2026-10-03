@@ -1767,6 +1767,184 @@
         "resolutionPolicy": "exact-required"
       }
     ],
+    "MEDIA_API_CATALOG_REQUEST_EXECUTOR": [
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "b",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.E",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "e",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.E",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "b",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.u1",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 6,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "a",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.u1",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "d",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.t",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "hi.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "e",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "x9.t",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "MEDIA_API_AMP_HTTP_INTERCEPTOR": [
+      {
+        "parameterTypeNames": [
+          "pk.f"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "kk.D",
+        "allowFirstMatch": false,
+        "methodName": "a",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "y9.d",
+        "runtimeMemberNames": {
+          "CONTENT_HTTP_RESPONSE_STATUS_FIELD": "d",
+          "CONTENT_HTTP_REQUEST_BUILDER_URL_METHOD": "h",
+          "CONTENT_HTTP_REQUEST_URL_FIELD": "a",
+          "CONTENT_HTTP_RESPONSE_REQUEST_FIELD": "a",
+          "CONTENT_HTTP_HEADERS_GET_METHOD": "d",
+          "CONTENT_HTTP_HEADERS_VALUES_FIELD": "a",
+          "CONTENT_HTTP_REQUEST_BUILDER_HEADER_METHOD": "d",
+          "CONTENT_HTTP_REQUEST_HEADERS_FIELD": "c",
+          "CONTENT_HTTP_REQUEST_NEW_BUILDER_METHOD": "b",
+          "CONTENT_HTTP_RESPONSE_HEADERS_FIELD": "f",
+          "CONTENT_HTTP_REQUEST_BUILDER_BUILD_METHOD": "b",
+          "CONTENT_HTTP_CHAIN_REQUEST_FIELD": "e"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_AMP_HTTP_INTERCEPTOR",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "DEBUG_ATMOS_SV_AUDIO_PERIOD_ID": [],
     "LYRICS_COOKIE_JAR": [],
     "DEBUG_ATMOS_SV_AUDIO_STREAM_CHANGED": [],
@@ -2055,6 +2233,21 @@
         "l()V"
       ],
       "Ly9/a;": [
+        "a(Lpk/f;)Lkk/D;"
+      ],
+      "Lx9/E;": [
+        "b(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;",
+        "e(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;"
+      ],
+      "Lx9/u1;": [
+        "a(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;",
+        "b(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;"
+      ],
+      "Lx9/t;": [
+        "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;",
+        "e(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Lhi/c;)Ljava/lang/Object;"
+      ],
+      "Ly9/d;": [
         "a(Lpk/f;)Lkk/D;"
       ],
       "Lcom/apple/android/music/model/Album;": [],

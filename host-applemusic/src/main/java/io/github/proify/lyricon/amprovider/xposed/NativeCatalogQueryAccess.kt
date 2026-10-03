@@ -406,6 +406,9 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     null
                 }
                 if (localization != null) {
+                    // Capture before the field is temporarily switched below, otherwise the
+                    // module's own target storefront would be remembered as the account's.
+                    captureAccountStorefront(access)
                     requestToken = catalogRequestSequence.incrementAndGet().toString(36)
                     pendingCatalogRequests[requestToken] = localization
                 }

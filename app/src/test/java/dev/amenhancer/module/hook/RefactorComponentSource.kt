@@ -15,7 +15,7 @@ internal fun File.readRefactorComponent(): String {
         "HleMetadataSurfaceBridge.kt" -> listOf(hook+"HleMetadataSurfaceBridge.kt",hook+"MetadataHostAdapters.kt")
         "AppleInternalCatalogResolver.kt" -> listOf("AppleInternalCatalogResolver.kt","CatalogPersistentAccess.kt",
             "CatalogRequestScheduling.kt","CatalogOriginalResolution.kt","NativeCatalogQueryAccess.kt",
-            "CatalogResponseSnapshotAccess.kt").map { catalog+it }
+            "CatalogResponseSnapshotAccess.kt","CatalogRegionAccess.kt").map { catalog+it }
         "EmbeddedSettingsHost.kt" -> listOf("EmbeddedSettingsDesign.kt","EmbeddedSettingsState.kt","EmbeddedSafRouter.kt",
             "EmbeddedSettingsController.kt","EmbeddedSettingsHost.kt","EmbeddedSettingsPages.kt","EmbeddedSettingsWidgets.kt",
             "EmbeddedLyricsEditor.kt","EmbeddedSettingsOperations.kt").map { ui+it }

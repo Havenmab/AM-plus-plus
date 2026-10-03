@@ -16,7 +16,7 @@
 | 自定义歌词 | 获取ID、多ID、增删改查/禁用、TTML/指针校验、异步重应用 | CustomLyrics、Ttml 用例 | 待播放对照 |
 | 在线/自动 | 三手动来源；自动 AMLL→Lunabeat→AM-Lyrics；manual/disabled优先；generation/退避/哈希/ETag | Online、AutoLyrics、Lunabeat 用例 | 待网络/离线/切歌 |
 | 更新/ZIP | 批量、取消、进度、覆盖/保留冲突、事务恢复 | Update、Backup、Restore | 待恢复对照 |
-| 元数据 | 原地区/cn/jp、所有展示表面、ISRC/原名证据、离线/持久缓存/优先级 | Metadata、Catalog、Cache 用例 | 待三模式/页面 |
+| 元数据/地区替换 | 七档地区（原地区/cn/us/hk/tw/kr/jp）、原名还原与检索库独立开关、所有展示表面、广播/歌词/播放回退账号、ISRC/原名证据、离线/持久缓存/优先级；执行器参数与 amp-api 层仅 1599/1606 声明 | Metadata、Catalog、Cache、TitleCorrectionMode 用例 | 待真机对比/页面 |
 | 玻璃 | API33，1586/1599；手机/旧平板横屏、导航/mini/手势/过渡/采样/恢复 | Glass、TabletGlass、LayerAlpha | 待帧/视觉/手势 |
 | 玻璃参数/补偿 | gap16/0..48，blur4/0..24；独立恢复与显隐；玻璃接管补偿 | ModuleSettingsSchema、SettingsDraft | 待显隐/占位 |
 | 蜂窝 | 默认false，1586/1599；构建作用域仅一次；availability独立 | CellularDataEntry | 待原生入口 |
@@ -24,7 +24,7 @@
 | 设置 | 无launcher、原生入口、草稿/SAF归属/页面重建/清理 | EmbeddedSettings、EmbeddedOnlyArtifact | 待全流程 |
 | 存储/迁移 | 原键/目录/ID/marker/schema/ZIP/SQLite；ordinary不覆盖资产；原子发布；只读重试 | ConfigurationMigration/Session/Storage/Index/Transaction | 待升级/回滚 |
 
-1583 的玻璃/蜂窝保持不支持。6.5.0/1580 仅参考，不在生产注册范围。停用的全局目录语言功能不重新启用。
+1583 的玻璃/蜂窝保持不支持。6.5.0/1580 仅参考，不在生产注册范围。普通目录流量只在用户选中地区档位时改写；未选中时仍跟随账号地区。
 
 ## 既有降级（独立修复）
 

@@ -72,7 +72,7 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `new metadata lookups scope storefront and language rewriting to HLE tokens`() {
+    fun `region rewriting is opt-in and entitlement-bound requests keep the account storefront`() {
         val runtime = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt")
         val localization = source(
             "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
@@ -80,16 +80,40 @@ class HleMetadataIntegrationStructuralTest {
         val resolver = source(
             "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
         )
-        assertTrue(runtime.contains("mode.contentUiLanguageSelection"))
-        assertTrue(runtime.contains("cacheNamespace = mode.cacheNamespace"))
+        // The runtime applies the region profile and installs all four localization seams.
+        assertTrue(runtime.contains("applyRegionConfiguration("))
+        assertTrue(runtime.contains("regionReplacementRequested = mode.replacesRegion"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))
+        assertTrue(runtime.contains("contentLocalizationHooks.installCatalogRequestLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installContentHttpLocalization()"))
+        assertTrue(runtime.contains("contentLocalizationHooks.installAmpApiHttpLocalization()"))
+        // Module-owned lookups still win through their token.
         assertTrue(localization.contains("resolver.catalogRequestLocalization(requestToken)"))
         assertTrue(localization.contains("resolver.activeCatalogRequestLocalization()"))
-        assertTrue(localization.contains("if (requestLocalization == null) return@installHook"))
-        assertFalse(localization.contains("resolver.applyContentUiLanguage(selection)"))
+        // Ordinary traffic is only rewritten while the user enabled a region replacement.
+        assertTrue(
+            localization.contains(
+                "if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return",
+            ),
+        )
+        // Radio/station and lyrics requests are pulled back to the account storefront, and that
+        // check must run BEFORE the module-marker early return: the catalog executor can stamp
+        // a request it already redirected, and leaving such a request on the configured region
+        // is what makes account-available radio/lyrics unplayable.
+        assertTrue(localization.contains("AppleInternalCatalogResolver.isAccountScopedPlaybackPath"))
+        assertTrue(localization.contains("resolver.accountStorefrontForPlaybackRequest()"))
+        assertTrue(localization.contains("rewriteAccountScopedRequest("))
+        val accountScopedCheck = localization.indexOf("isAccountScopedPlaybackPath(pathSegments)")
+        val moduleMarkerCheck = localization.indexOf("if (carriesModuleMarker)")
+        assertTrue(accountScopedCheck >= 0)
+        assertTrue(moduleMarkerCheck >= 0)
+        assertTrue(accountScopedCheck < moduleMarkerCheck)
         assertTrue(localization.contains("Accept-Language"))
-        assertFalse(resolver.contains("restoreConfiguredStorefront(access)"))
+        // The storefront is written into MediaApi only through the account-preserving helper.
+        assertTrue(resolver.contains("restoreConfiguredStorefront(access)"))
+        assertTrue(resolver.contains("captureAccountStorefront(access)"))
+        assertTrue(resolver.contains("isAccountScopedPlaybackPath"))
+        assertFalse(resolver.contains("functionally disabled"))
     }
 
     @Test
@@ -317,11 +341,52 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `embedded settings expose profile selector without restoring refresh action`() {
+    fun `region seams stay uninstalled on hosts without verified targets`() {
+        val localization = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
+        )
+        // Both region-only seams must check for a verified target before resolving.  Without the
+        // gate they fall through to the DexKit structural layer, where the only outcomes are
+        // "hook an unverified method" or "fail" — and a failure is not cached, so on 6.5.2 the
+        // whole-DEX scan repeated on every cold start.
+        assertTrue(localization.contains("requireExactTargets: Boolean = false"))
+        assertTrue(localization.contains("requireExactTargets = true"))
+        assertTrue(
+            localization.contains(
+                "AppleMusicHookProfiles.exactTargets(runtime.hookResolver.version, hookPoint).isEmpty()",
+            ),
+        )
+        // The executor gate must run before the resolution it guards.
+        val catalogInstaller = localization
+            .substringAfter("fun installCatalogRequestLocalization()")
+            .substringBefore("private fun installContentHttpHook")
+        val gate = catalogInstaller.indexOf("if (exactTargets.isEmpty())")
+        val resolve = catalogInstaller.indexOf("resolveClasses(")
+        assertTrue(gate >= 0)
+        assertTrue(resolve >= 0)
+        assertTrue(gate < resolve)
+        // The content HTTP seam is deliberately exempt: 6.5.1/6.5.2 have no exact target for it
+        // either, but reach their verified owner through the compatibility chain, so gating it
+        // would disable a working hook.
+        assertTrue(localization.contains("Deliberately not applied to CONTENT_HTTP_LOCALIZATION"))
+        // The MediaApi parameter map belongs to the host and every native request passes through
+        // the after-hook, so the write must be idempotent.
+        assertTrue(localization.contains("if (params[\"l\"] == language) return@installHook"))
+    }
+
+    @Test
+    fun `embedded settings expose the region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
         assertTrue(embedded.contains("歌曲名显示修正"))
         assertTrue(embedded.contains("歌曲名修正模式"))
         assertTrue(embedded.contains("titleCorrectionMode"))
+        // The two HLE region extras must be reachable from the host settings page.
+        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
+        assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
+        assertTrue(embedded.contains("创建检索库以提升替换体验"))
+        assertTrue(embedded.contains("localizedMetadataCache"))
+        // The picker enumerates the model, so new profiles appear without a UI change.
+        assertTrue(embedded.contains("TitleCorrectionMode.values()"))
         assertFalse(embedded.contains("刷新资料库"))
     }
 
@@ -336,7 +401,7 @@ class HleMetadataIntegrationStructuralTest {
         assertTrue(schema.contains("KEY_TITLE_CORRECTION_TARGET_LANGUAGE"))
         assertTrue(target.contains("isHleResolverRequest"))
         assertTrue(target.contains("CATALOG_REQUEST_TOKEN_PARAM"))
-        assertTrue(target.contains("Global Catalog locale hooks disabled"))
+        assertTrue(target.contains("region rewrite is owned by the HLE localization hooks"))
         assertFalse(target.contains("ModernXposedRuntime.hookMethod"))
         assertTrue(bridge.contains("MediaMetadataCache.setProfile(profileId)"))
         assertTrue(bridge.contains("if (MediaMetadataCache.profile() != profileId)"))

@@ -116,6 +116,7 @@ class DualPaneStructuralRegressionTest {
 
     @Test
     fun `applies AMLL artwork size and title gap to the native left pane`() {
+        assertTrue(source.contains("private const val FULLPLAYER_ARTWORK = \"fullplayerSongImage\""))
         assertTrue(source.contains("private const val ARTWORK_CONTAINER = \"artwork_container\""))
         assertTrue(source.contains("private const val METADATA_BARRIER_TOP = \"metadata_barrier_top\""))
         assertTrue(source.contains("installTabletArtworkLayout(playerRoot, playerHost)"))
@@ -132,6 +133,9 @@ class DualPaneStructuralRegressionTest {
         assertTrue(source.contains("params.setInt(\"topToTop\", PARENT_ID)"))
         assertTrue(source.contains("params.setInt(\"topToBottom\", -1)"))
         assertTrue(source.contains("nativeSizePx = nativeSizePx.toFloat()"))
+        assertTrue(source.contains("alignVideoSurface(videoSurface, artwork)"))
+        assertTrue(source.contains("surface.translationX += deltaX"))
+        assertTrue(source.contains("surface.translationY += deltaY"))
     }
 
     @Test

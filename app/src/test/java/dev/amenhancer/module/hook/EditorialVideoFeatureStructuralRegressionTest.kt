@@ -6,8 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Guards the modified APK's Editorial Video suppression while keeping the
- * module's tablet-only scope and independent settings contract explicit.
+ * Guards the native Editorial Video path while keeping the legacy settings
+ * contract explicit.
  */
 class EditorialVideoFeatureStructuralRegressionTest {
     private fun source(relativePath: String): String = sequenceOf(
@@ -54,22 +54,26 @@ class EditorialVideoFeatureStructuralRegressionTest {
         assertTrue(symbols.contains("EditorialVideo\\\$Flavor"))
         assertTrue(symbols.contains("method.parameterTypes[2].isArray"))
         assertTrue(symbols.contains("method.returnType == String::class.java"))
+        assertTrue(symbols.contains("EditorialVideoMotionSetup"))
+        assertTrue(symbols.contains("android.util.Size"))
+        assertTrue(symbols.contains("EditorialVideoPlayerMetadataListener"))
         assertTrue(target.contains("AppleMusicSymbols.EditorialVideoUrlSelector"))
+        assertTrue(target.contains("AppleMusicSymbols.EditorialVideoMotionSetup"))
+        assertTrue(target.contains("AppleMusicSymbols.EditorialVideoPlayerMetadataListener"))
         assertFalse(target.contains("TextureView"))
+        assertTrue(target.contains("EditorialVideoFlavorPolicy.squareFirst"))
+        assertTrue(target.contains("Size(size.width, size.width)"))
     }
 
     @Test
-    fun `suppresses only in official tablet landscape when dual pane is enabled`() {
-        val qualifier = source("dev/amenhancer/module/hook/AppleMusicDualPaneTarget.kt")
+    fun `does not replace the host editorial video selector`() {
         val feature = source("dev/amenhancer/module/hook/EditorialVideoFeature.kt")
         val target = source("dev/amenhancer/module/hook/TargetAdaptation.kt")
 
-        assertTrue(qualifier.contains("fun isOfficialTabletLandscape(context: Context): Boolean"))
-        assertTrue(target.contains("TabletModeQualifier.isOfficialTabletLandscape(application)"))
-        assertTrue(target.contains("param.result = null"))
         assertTrue(feature.contains("dualPaneEnabled"))
-        assertFalse(feature.contains("disableEditorialVideoOnTablet"))
-        assertFalse(target.contains("TabletModeQualifier.isEligible"))
+        assertTrue(feature.contains("context.target.editorialVideo.install()"))
+        assertFalse(target.contains("param.result = null"))
+        assertFalse(target.contains("TabletModeQualifier.isOfficialTabletLandscape(application)"))
     }
 
     @Test
@@ -80,7 +84,7 @@ class EditorialVideoFeatureStructuralRegressionTest {
         assertTrue(constants.contains("FEATURE_EDITORIAL_VIDEO"))
         assertTrue(feature.contains("ModuleConstants.FEATURE_EDITORIAL_VIDEO"))
         assertTrue(feature.contains("settings().dualPaneEnabled"))
-        assertTrue(feature.contains("context.target.editorialVideo.install()"))
+        assertTrue(feature.contains("FeatureInstallResult.disabled()"))
         listOf("Class<", "Method", "Field", "TargetResolution", "AppleMusicSymbols").forEach {
             forbidden -> assertFalse("feature leaked $forbidden", feature.contains(forbidden))
         }

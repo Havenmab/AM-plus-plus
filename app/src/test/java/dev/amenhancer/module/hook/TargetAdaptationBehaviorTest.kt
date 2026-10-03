@@ -9,28 +9,54 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TargetAdaptationBehaviorTest {
+    private enum class EditorialFlavor {
+        DETAIL_TALL,
+        DETAIL_SQUARE,
+    }
+
     @Test
-    fun `capability results map to existing feature outcomes`() {
-        val active = EditorialVideoFeature().install(context(
-            dualPaneEnabled = true,
-            dualPane = DualPaneTarget { TargetCapabilityInstall.Degraded("unused") },
-            editorialVideo = EditorialVideoTarget { TargetCapabilityInstall.Active("installed") },
-            lyricBlur = BidirectionalLyricBlurTarget { TargetCapabilityInstall.Degraded("unused") },
-        ))
-        val degraded = EditorialVideoFeature().install(context(
+    fun `square flavor is inserted when selector receives only tall`() {
+        val reordered = EditorialVideoFlavorPolicy.squareFirst(
+            arrayOf(EditorialFlavor.DETAIL_TALL),
+        )
+
+        requireNotNull(reordered)
+        assertEquals(
+            listOf("DETAIL_SQUARE", "DETAIL_TALL"),
+            reordered.map { (it as EditorialFlavor).name },
+        )
+    }
+
+    @Test
+    fun `square flavor is moved ahead of tall without dropping fallback`() {
+        val reordered = EditorialVideoFlavorPolicy.squareFirst(
+            arrayOf(EditorialFlavor.DETAIL_TALL, EditorialFlavor.DETAIL_SQUARE),
+        )
+
+        requireNotNull(reordered)
+        assertEquals(
+            listOf("DETAIL_SQUARE", "DETAIL_TALL"),
+            reordered.map { (it as EditorialFlavor).name },
+        )
+    }
+
+    @Test
+    fun `editorial video feature installs the tablet adapter`() {
+        var targetCalls = 0
+        val context = context(
             dualPaneEnabled = true,
             dualPane = DualPaneTarget { TargetCapabilityInstall.Active("unused") },
-            editorialVideo = EditorialVideoTarget { TargetCapabilityInstall.Degraded("missing symbol") },
+            editorialVideo = EditorialVideoTarget {
+                targetCalls += 1
+                TargetCapabilityInstall.Active("installed")
+            },
             lyricBlur = BidirectionalLyricBlurTarget { TargetCapabilityInstall.Active("unused") },
-        ))
-
-        assertEquals(FeatureState.ACTIVE, active.state)
-        assertEquals("installed", active.message)
-        assertEquals(
-            FeatureState.DEGRADED,
-            degraded.state,
         )
-        assertEquals("missing symbol", degraded.message)
+
+        val result = EditorialVideoFeature().install(context)
+
+        assertEquals(FeatureState.ACTIVE, result.state)
+        assertEquals(1, targetCalls)
     }
 
     @Test
@@ -43,35 +69,6 @@ class TargetAdaptationBehaviorTest {
         }
     }
 
-    @Test
-    fun `editorial feature calls only editorial capability`() {
-        var dualPaneCalls = 0
-        var editorialCalls = 0
-        var lyricBlurCalls = 0
-        val context = context(
-            dualPaneEnabled = true,
-            dualPane = DualPaneTarget {
-                dualPaneCalls += 1
-                TargetCapabilityInstall.Active("dual pane")
-            },
-            editorialVideo = EditorialVideoTarget {
-                editorialCalls += 1
-                TargetCapabilityInstall.Degraded("selector unavailable")
-            },
-            lyricBlur = BidirectionalLyricBlurTarget {
-                lyricBlurCalls += 1
-                TargetCapabilityInstall.Active("lyric blur")
-            },
-        )
-
-        val result = EditorialVideoFeature().install(context)
-
-        assertEquals(FeatureState.DEGRADED, result.state)
-        assertEquals("selector unavailable", result.message)
-        assertEquals(0, dualPaneCalls)
-        assertEquals(1, editorialCalls)
-        assertEquals(0, lyricBlurCalls)
-    }
 
     @Test
     fun `disabled editorial feature never touches target adaptation`() {

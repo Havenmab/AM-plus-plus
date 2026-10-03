@@ -1193,7 +1193,9 @@ private object ConstraintLayoutPane {
     private const val PLAYER_CONTAINER = "player_container"
     private const val PLAYER_SHEET_CONTAINER = "player_sheet_container"
     private const val PLAYER_CONTAINER_ELEVATION = "player_container_elevation"
+    private const val FULLPLAYER_ARTWORK = "fullplayerSongImage"
     private const val ARTWORK_CONTAINER = "artwork_container"
+    private const val VIDEO_SURFACE = "video_surface"
     private const val METADATA_BARRIER_TOP = "metadata_barrier_top"
     private const val ARTWORK_LAYOUT_REAPPLY_MAX_PRE_DRAWS = 8
     private const val PLAYER_ROOT = "player_root"
@@ -1396,19 +1398,31 @@ private object ConstraintLayoutPane {
     }
 
     /**
-     * Keep Apple's native cover size, but center it in the vertical interval
-     * from the left pane top to Apple's metadata barrier (the title row).
+     * Keep the host's full-player card as the source of truth for the dynamic
+     * surface. Older layouts without that card ID retain the legacy container
+     * centering policy.
      */
     private fun installTabletArtworkLayout(
         playerRoot: ViewGroup,
         playerHost: View,
     ): (() -> Unit)? {
-        val artworkId = playerRoot.resources.getIdentifier(
-            ARTWORK_CONTAINER,
+        val fullplayerArtworkId = playerRoot.resources.getIdentifier(
+            FULLPLAYER_ARTWORK,
             "id",
             ModuleConstants.TARGET_PACKAGE,
         )
-        if (artworkId == 0) return null
+        val artworkId = fullplayerArtworkId.takeIf { it != 0 }
+            ?: playerRoot.resources.getIdentifier(
+                ARTWORK_CONTAINER,
+                "id",
+                ModuleConstants.TARGET_PACKAGE,
+            ).takeIf { it != 0 }
+            ?: return null
+        val videoSurfaceId = playerRoot.resources.getIdentifier(
+            VIDEO_SURFACE,
+            "id",
+            ModuleConstants.TARGET_PACKAGE,
+        )
         val barrierId = playerRoot.resources.getIdentifier(
             METADATA_BARRIER_TOP,
             "id",
@@ -1416,9 +1430,40 @@ private object ConstraintLayoutPane {
         )
         if (barrierId == 0) return null
         val nativeSizeByArtwork = WeakHashMap<View, Int>()
+
+        fun alignVideoSurface(surface: View, target: View) {
+            if (!surface.isAttachedToWindow || !target.isAttachedToWindow) return
+            val surfaceLocation = IntArray(2).also(surface::getLocationInWindow)
+            val targetLocation = IntArray(2).also(target::getLocationInWindow)
+            val deltaX = targetLocation[0] - surfaceLocation[0]
+            val deltaY = targetLocation[1] - surfaceLocation[1]
+            if (kotlin.math.abs(deltaX) > 0.5f) {
+                surface.translationX += deltaX
+            }
+            if (kotlin.math.abs(deltaY) > 0.5f) {
+                surface.translationY += deltaY
+            }
+            surface.post {
+                if (!surface.isAttachedToWindow || !target.isAttachedToWindow) return@post
+                val refreshedSurfaceLocation = IntArray(2).also(surface::getLocationInWindow)
+                val refreshedTargetLocation = IntArray(2).also(target::getLocationInWindow)
+                val refreshedDeltaX = refreshedTargetLocation[0] - refreshedSurfaceLocation[0]
+                val refreshedDeltaY = refreshedTargetLocation[1] - refreshedSurfaceLocation[1]
+                if (kotlin.math.abs(refreshedDeltaX) > 0.5f) {
+                    surface.translationX += refreshedDeltaX
+                }
+                if (kotlin.math.abs(refreshedDeltaY) > 0.5f) {
+                    surface.translationY += refreshedDeltaY
+                }
+            }
+        }
+
         fun apply(): Boolean {
             if (!TabletModeQualifier.isEligible(playerRoot.context)) return true
             val artwork = playerHost.findViewById<View>(artworkId) ?: return false
+            val videoSurface = videoSurfaceId.takeIf { it != 0 }?.let { id ->
+                playerHost.findViewById<View>(id)
+            }
             val barrier = playerHost.findViewById<View>(barrierId) ?: return false
             val parent = artwork.parent as? ViewGroup ?: return false
             if (parent.width <= 0 || parent.height <= 0 || artwork.width <= 0) return false
@@ -1447,32 +1492,53 @@ private object ConstraintLayoutPane {
                 availableHeightPx = availableHeightPx,
                 nativeSizePx = nativeSizePx.toFloat(),
             ) ?: return false
-            val params = artwork.layoutParams as? ViewGroup.MarginLayoutParams ?: return true
-            if (constraintField(params.javaClass, "startToStart") == null) return true
-            val sizePx = (layout.sizePx + 0.5f).toInt().coerceAtLeast(1)
-            val desiredArtworkTopPx = intervalTopPx + layout.edgeGapPx
-            val artworkDeltaPx = desiredArtworkTopPx - artworkLocation[1]
-            if (kotlin.math.abs(artworkDeltaPx) > 0.5f) {
-                artwork.translationY += artworkDeltaPx
+            val isFullplayerArtwork = artworkId == fullplayerArtworkId
+            val sizePx = if (isFullplayerArtwork) {
+                artwork.width
+            } else {
+                (layout.sizePx + 0.5f).toInt().coerceAtLeast(1)
             }
-            val alreadyApplied =
-                params.width == sizePx &&
-                    params.height == sizePx &&
-                    params.topMargin == 0 &&
-                    params.bottomMargin == 0 &&
-                    constraintField(params.javaClass, "topToTop")?.getInt(params) == PARENT_ID &&
-                    constraintField(params.javaClass, "topToBottom")?.getInt(params) == -1
-            if (alreadyApplied) return true
-            params.width = sizePx
-            params.height = sizePx
-            params.topMargin = 0
-            params.bottomMargin = 0
-            params.setObject("dimensionRatio", null)
-            params.setInt("topToTop", PARENT_ID)
-            params.setInt("topToBottom", -1)
-            artwork.layoutParams = params
-            artwork.requestLayout()
-            return true
+            var artworkChanged = false
+            if (!isFullplayerArtwork) {
+                val params = artwork.layoutParams as? ViewGroup.MarginLayoutParams
+                    ?: return true
+                if (constraintField(params.javaClass, "startToStart") == null) return true
+                val desiredArtworkTopPx = intervalTopPx + layout.edgeGapPx
+                val artworkDeltaPx = desiredArtworkTopPx - artworkLocation[1]
+                if (kotlin.math.abs(artworkDeltaPx) > 0.5f) {
+                    artwork.translationY += artworkDeltaPx
+                }
+                val alreadyApplied =
+                    params.width == sizePx &&
+                        params.height == sizePx &&
+                        params.topMargin == 0 &&
+                        params.bottomMargin == 0 &&
+                        constraintField(params.javaClass, "topToTop")?.getInt(params) == PARENT_ID &&
+                        constraintField(params.javaClass, "topToBottom")?.getInt(params) == -1
+                artworkChanged = !alreadyApplied
+                if (artworkChanged) {
+                    params.width = sizePx
+                    params.height = sizePx
+                    params.topMargin = 0
+                    params.bottomMargin = 0
+                    params.setObject("dimensionRatio", null)
+                    params.setInt("topToTop", PARENT_ID)
+                    params.setInt("topToBottom", -1)
+                    artwork.layoutParams = params
+                    artwork.requestLayout()
+                }
+            }
+            if (videoSurface != null && videoSurface !== artwork) {
+                val videoParams = videoSurface.layoutParams
+                if (videoParams.width != sizePx || videoParams.height != sizePx) {
+                    videoParams.width = sizePx
+                    videoParams.height = sizePx
+                    videoSurface.layoutParams = videoParams
+                    videoSurface.requestLayout()
+                }
+                alignVideoSurface(videoSurface, artwork)
+            }
+            return artworkChanged || videoSurface != null
         }
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
         playerRoot.addOnLayoutChangeListener(listener)

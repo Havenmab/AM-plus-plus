@@ -35,6 +35,11 @@ internal data class TargetAdaptation(
     val hleMetadata: HleMetadataTarget = HleMetadataTarget {
         TargetCapabilityInstall.Degraded("HLE metadata target was not configured")
     },
+    /**
+     * Tablet iPad-style chrome adapter. Null until the adapter factory supplies it; the feature
+     * reports DEGRADED when the capability is absent instead of installing anything.
+     */
+    val tabletChrome: TabletChromeTarget? = null,
 ) {
     companion object {
         fun appleMusic(
@@ -106,6 +111,7 @@ internal data class TargetAdaptation(
                         )
                     }
                 },
+                tabletChrome = AppleMusicTabletChromeTarget(resolver, build),
             )
         }
     }
@@ -140,6 +146,18 @@ internal fun interface CurrentSongIdentityTarget {
 
 internal fun interface HleMetadataTarget {
     fun install(): TargetCapabilityInstall
+}
+
+/**
+ * Host adapter behind the tablet iPad-style chrome. [install] captures the host's live playback
+ * controller and installs the command seams; the adapter itself is the command surface the chrome
+ * session drives, so a partially resolved adapter degrades per command instead of failing whole.
+ */
+internal interface TabletChromeTarget : TabletChromeCommands {
+    fun install(): TargetCapabilityInstall
+
+    /** Which seams resolved, so the health message can name what is missing. */
+    val resolutionSummary: String
 }
 
 internal class AppleMusicEditorialVideoTarget(

@@ -2,6 +2,7 @@ package dev.amenhancer.module.model
 
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.ModuleConstants
+import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TitleCorrectionMode
 
 data class ModuleSettings(
@@ -13,6 +14,8 @@ data class ModuleSettings(
     val phoneLiquidGlassBottomGapDp: Int = GlassPolicy.BOTTOM_DP,
     /** Backdrop blur radius in dp shared by the nav panel and the mini-player. */
     val phoneLiquidGlassPanelBlurDp: Int = GlassPolicy.PANEL_BLUR_DP.toInt(),
+    /** Tablet chrome style; only consulted on official tablets. Defaults to the shipped glass style. */
+    val tabletChromeStyle: TabletChromeStyle = TabletChromeStyle.AUTHOR,
     val futureBlurEnabled: Boolean = true,
     /** Enables the native rush-gradient adaptation for CJK karaoke lyrics. */
     val cjkKaraokeAnimationEnabled: Boolean = true,

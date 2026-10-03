@@ -54,8 +54,8 @@ internal class TabletDualPaneGlassSession(
         if (mini) intArrayOf(frameWidth * 19 / 30, frameWidth / 6)
         else intArrayOf(frameWidth / 6, frameWidth * 2 / 5)
 
-    /** Keep Apple's scaled artwork inside the opening mini glass. */
-    internal fun alignNativeArtworkStart(artwork: View, slide: Float) {
+    /** Keep Apple's scaled artwork inside the opening mini glass (the dual-pane form of the seam). */
+    override fun alignNativeArtwork(artwork: View, slide: Float) {
         if (!activated || !slide.isFinite() || artwork !== find("fullplayerSongImage")) return
         val container = artwork.parent as? View ?: return
         if (container.id != resourceId("artwork_container", "id")) return

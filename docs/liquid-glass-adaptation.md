@@ -180,3 +180,23 @@
 - Old-version regression / new-version device matrix:
 - Automated checks actually run / remaining gaps:
 ```
+
+## 8. 平板 iPad 风格界面（新增，独立于手机底栏）
+
+iPad 风格是「液态玻璃底栏」的**子选项**（`tablet_chrome_style = ipad`），因此它继承同一份宿主资格（`GlassPolicy.SUPPORTED_BUILDS` + Android 13+），但有自己的一套接入层。逐项依赖见 [平板 iPad 风格界面](apple-music-tablet-chrome-adaptation.md)。
+
+跨版本必须复核的项：
+
+| 依赖 | 位置 | 失效表现 |
+| --- | --- | --- |
+| 顶栏标签来源 | 宿主 `BottomNavigationView.getMenu()` / `getSelectedItemId()` / `setSelectedItemId(I)` | 顶栏空白或点击无反应 |
+| 搜索项归属 | `resourceId("search_fragment", "id")` | 搜索被误渲染成文字项 |
+| 平板判定 | `bool/multiply_tablet_layout_enabled`（w640dp），回退 `bool/is_tablet` | 600–639dp 区间挂到手机布局 |
+| 平板根与 tabs 帧 | `bottom_navigation_root_flat` / `bottom_navigation_root_stacked`、`bottom_navigation_tabs_frame` | 顶栏挂不上或原生底栏隐藏不干净 |
+| 顶栏高度 | `dimen/navigation_tabs_height` | 胶囊高度与占位不一致，内容被压住 |
+| 播放命令 | `MediaPlayerController` 的 `play/pause/skipToNextItem/skipToPreviousItem/set|getShuffleMode/set|getRepeatMode/getPlaybackState` | 对应控件 DEGRADED |
+| 活动实例捕获 | `MediaPlaybackService#onCreate` → 字段 `N` → `player.m0#h` | 全部命令不可用 |
+| 展开 / 歌词 / 队列 | `PlayerActivity#v1(EXPAND_PLAYER)`、`player.fragment.v0#F1(LYRICS/QUEUE)` | 歌词与队列按钮无效 |
+| 队列 Bundle 键 | `utils.E` 静态字段 `o` | 队列面板参数缺失 |
+
+新增材质组件：`TopBarGeometry`（顶栏高度/占位/迷你槽位，纯策略）、`GlassTopNavigation`（胶囊随内容收窄、搜索为图标、无拖拽拇指）、`GlassMiniPlayer`（7 个控件自绘）。`glass/` 下的改动不在 `verify-glass-reference.py` 的哈希清单内（该脚本只覆盖 `backdrop/src`），但**禁止**修改 `backdrop/src`。

@@ -32,6 +32,7 @@ internal object ModuleSettingsSchema {
                     ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                 ) ?: GlassPolicy.PANEL_BLUR_DP.toInt(),
+            tabletChromeStyle = TabletChromeStyle.decode(values.string(KEY_TABLET_CHROME_STYLE)),
             futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
             cjkKaraokeAnimationEnabled = values.boolean(
                 KEY_CJK_KARAOKE_ANIMATION_ENABLED,
@@ -103,6 +104,7 @@ internal object ModuleSettingsSchema {
                 ModuleSettings.normalizePhoneLiquidGlassPanelBlurDp(
                     settings.phoneLiquidGlassPanelBlurDp,
                 ),
+            KEY_TABLET_CHROME_STYLE to settings.tabletChromeStyle.storageValue,
             KEY_FUTURE_BLUR to settings.futureBlurEnabled,
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
@@ -263,6 +265,7 @@ internal object ModuleSettingsSchema {
         KEY_PHONE_LIQUID_GLASS,
         KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
         KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+        KEY_TABLET_CHROME_STYLE,
         KEY_FUTURE_BLUR,
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
         KEY_NAVIGATION_COMPENSATION,
@@ -297,6 +300,7 @@ internal object ModuleSettingsSchema {
     private const val KEY_PHONE_LIQUID_GLASS = "phone_liquid_glass_enabled"
     private const val KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP = "phone_liquid_glass_bottom_gap_dp"
     private const val KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP = "phone_liquid_glass_panel_blur_dp"
+    private const val KEY_TABLET_CHROME_STYLE = "tablet_chrome_style"
     private const val KEY_FUTURE_BLUR = "future_blur_enabled"
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"

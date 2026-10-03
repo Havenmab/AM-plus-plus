@@ -13,6 +13,7 @@ import dev.amenhancer.glass.GlassHostForm
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.model.FeatureHealth
 import dev.amenhancer.module.model.FeatureState
 import java.lang.reflect.Method
@@ -58,13 +59,26 @@ internal object PhoneGlassRuntime {
     /** Routes the host form; null means no session may exist for this activity right now. */
     private fun createSession(activity: Activity, config: TargetConfigClient, onFail: (Throwable) -> Unit): GlassSession? {
         val build = targetBuild(activity)
-        if (config.settings().phoneLiquidGlassEnabled &&
+        val settings = config.settings()
+        // The iPad style is checked first: on a tablet it replaces the dual-pane row rather than
+        // stacking with it, and on a phone the tablet gate below leaves the phone path untouched.
+        // The session re-checks its own eligibility (style, orientation and the w640dp layout flag)
+        // and closes itself back to the native chrome when that does not hold.
+        if (settings.phoneLiquidGlassEnabled &&
+            settings.tabletChromeStyle == TabletChromeStyle.IPAD &&
+            TabletModeQualifier.isOfficialTablet(activity) &&
+            GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.TabletDualPane)
+        ) {
+            return TabletChromeSession(activity, config, onFail)
+        }
+        if (settings.phoneLiquidGlassEnabled &&
             !TabletModeQualifier.isOfficialTablet(activity) &&
             GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.PhoneStacked)
         ) {
             return PhoneGlassSession(activity, config, onFail)
         }
-        if (config.settings().phoneLiquidGlassEnabled &&
+        if (settings.phoneLiquidGlassEnabled &&
+            settings.tabletChromeStyle != TabletChromeStyle.IPAD &&
             TabletModeQualifier.isEligible(activity) &&
             GlassPolicy.supports(android.os.Build.VERSION.SDK_INT, build.versionCode, build.versionName, GlassHostForm.TabletDualPane)
         ) {
@@ -75,9 +89,13 @@ internal object PhoneGlassRuntime {
 
     private fun fail(activity: Activity, config: TargetConfigClient, error: Throwable) {
         failed += activity
-        sessions.remove(activity)?.close()
+        val session = sessions.remove(activity)
+        // Report under the session's own feature so the tablet iPad-style chrome does not
+        // surface its failures as phone liquid-glass failures.
+        val featureKey = session?.glassFeatureKey ?: ModuleConstants.FEATURE_PHONE_LIQUID_GLASS
+        session?.close()
         ModernXposedRuntime.log("liquid glass 1586 restored native UI", error)
-        config.reportHealth(FeatureHealth(ModuleConstants.FEATURE_PHONE_LIQUID_GLASS, FeatureState.FAILED,
+        config.reportHealth(FeatureHealth(featureKey, FeatureState.FAILED,
             "玻璃接入失败，已恢复原生界面：${error.javaClass.simpleName}: ${error.message}", targetBuild(activity).displayName))
     }
 
@@ -131,6 +149,18 @@ internal object PhoneGlassRuntime {
                 }
             }
         })
+        if (build.versionName == "6.5.3" && build.versionCode == 1599L) {
+            val base = loader.loadClass("com.google.android.material.bottomsheet.BottomSheetBehavior")
+            val touch = base.getDeclaredMethod("s", intercept.parameterTypes[0], View::class.java, MotionEvent::class.java)
+            ModernXposedRuntime.hookMethod(touch, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val event = param.args.getOrNull(2) as? MotionEvent ?: return
+                    if (sessions.values.any { it.playerBehavior === param.thisObject && it.shouldBypassPlayerTouch(event) }) {
+                        param.result = false
+                    }
+                }
+            })
+        }
         ModernXposedRuntime.hookMethod(peek, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 sessions.values.firstOrNull { it.playerBehavior === param.thisObject }?.let {
@@ -141,8 +171,10 @@ internal object PhoneGlassRuntime {
         })
         // Apple's artwork callback computes the cover transform from the mini
         // thumbnail and then writes it each slide frame. Apply the tablet-only
-        // source alignment after that write, leaving its scale and the glass
-        // transition untouched. The callback is optional on other host builds.
+        // source alignment after that write. The glass transition stays untouched,
+        // and the callback is optional on other host builds.
+        // The seam is virtual on the session surface, so every live session is
+        // offered the frame; the stacked phone form's default is a no-op.
         runCatching {
             val callbackName = checkNotNull(AppleMusicSymbols.playerArtworkSlideCallbackClassName(build)) {
                 "No artwork slide callback profile for ${build.displayName}"
@@ -151,14 +183,41 @@ internal object PhoneGlassRuntime {
             val artworkField = callback.getDeclaredField("a").apply { isAccessible = true }
             val slideMethod = callback.getDeclaredMethod("c", Float::class.javaPrimitiveType!!)
             ModernXposedRuntime.hookMethod(slideMethod, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val artwork = artworkField.get(param.thisObject) as? View ?: return
+                    sessions.values.forEach { session -> session.beforeNativeArtwork(artwork) }
+                }
+
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val artwork = artworkField.get(param.thisObject) as? View ?: return
                     val progress = (param.args[0] as? Number)?.toFloat() ?: return
                     sessions.values.forEach { session ->
-                        (session as? TabletDualPaneGlassSession)?.alignNativeArtworkStart(artwork, progress)
+                        session.alignNativeArtwork(artwork, progress)
                     }
                 }
             })
+            if (build.versionName == "6.5.3" && build.versionCode == 1599L) {
+                val reset = callback.getDeclaredMethod("d")
+                val snapshot = callback.getDeclaredMethod("e", View::class.java)
+                ModernXposedRuntime.hookMethod(reset, object : ModernMethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val artwork = artworkField.get(param.thisObject) as? View ?: return
+                        param.extras["tabletArtworkReset"] = artwork
+                        sessions.values.forEach { it.beforeNativeArtwork(artwork) }
+                    }
+
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val artwork = param.extras["tabletArtworkReset"] as? View ?: return
+                        sessions.values.forEach { it.afterNativeArtworkReset(artwork) }
+                    }
+                })
+                ModernXposedRuntime.hookMethod(snapshot, object : ModernMethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val artwork = param.args[0] as? View ?: return
+                        sessions.values.forEach { it.beforeNativeArtwork(artwork) }
+                    }
+                })
+            }
         }.onFailure { ModernXposedRuntime.log("liquid glass artwork alignment hook unavailable for ${build.displayName}", it) }
         // Apple's scrolling behavior reserves bottom padding on the content host.
         // Redirect it before setPadding rather than fighting it with another layout every frame.
@@ -176,6 +235,20 @@ internal object PhoneGlassRuntime {
                     ?.let { param.args[0] = it }
             }
         })
+        runCatching {
+            val behavior = loader.loadClass("com.apple.android.music.common.behavior.PlayerScrollingViewBehavior")
+            val coordinator = loader.loadClass("androidx.coordinatorlayout.widget.CoordinatorLayout")
+            val dependsOn = behavior.getDeclaredMethod("c", coordinator, View::class.java, View::class.java)
+            ModernXposedRuntime.hookMethod(dependsOn, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val view = param.args[1] as? View ?: return
+                    val dependency = param.args[2] as? View ?: return
+                    if (sessions.values.any { it.shouldIgnoreTopHeaderDependency(view, dependency) }) {
+                        param.result = false
+                    }
+                }
+            })
+        }.onFailure { ModernXposedRuntime.log("liquid glass top-header dependency hook unavailable for ${build.displayName}", it) }
         hooksInstalled = true
     }
 

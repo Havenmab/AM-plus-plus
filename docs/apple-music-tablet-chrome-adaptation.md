@@ -1,0 +1,336 @@
+# 平板 iPad 风格界面（行为变更记录）
+
+> 本文记录一次**行为变更**（新增能力），不是版本适配：`docs/apple-music-target-adaptation.md` §1.1 要求两者分开记录。
+> 分支 `feat/tablet-ipad-chrome`；目标宿主 Apple Music 6.5.3 (1599)；证据来自本次逆向（`re-tablet-topnav.md`、`re-tablet-miniplayer.md`）与主代理的 aapt2/DEX 取证。
+
+## 1. 需求与产品决策
+
+在**官方平板**上增加一种可选界面风格：顶部导航胶囊（主页 / 新发现 / 广播 / 资料库 用文字，搜索用图标；**不还原**最左侧的侧边栏切换按钮）+ 底部迷你播放器胶囊（随机 / 上一曲 / 播放暂停 / 下一曲 / 循环三态、中部封面+歌曲名+艺人名、右侧更多歌曲操作 / 歌词 / 队列；歌词按钮点击展开完整播放器）。
+
+用户确认的四项决策：
+
+| # | 决策 |
+| --- | --- |
+| 1 | iPad 风格下**隐藏**宿主原生底部导航标签栏，底部只留迷你播放器 |
+| 2 | **横屏 + 竖屏都生效**（官方平板） |
+| 3 | 该风格是「液态玻璃底栏」的**子选项**：必须先开启液态玻璃底栏 |
+| 4 | 队列/历史列表做不出来时**降级**为调用宿主原生队列界面 |
+
+**硬约束**：原作者已完成的手机与平板液态玻璃适配必须原样保留；默认风格为原作者风格，未选择新风格时全部既有行为不变。
+
+## 2. 宿主证据（6.5.3 / 1599）
+
+### 2.1 顶部导航：宿主本来没有，但菜单可直接复用
+
+- 宿主没有全局顶栏；顶层导航是 Material `BottomNavigationView`（`id/bottom_navigation`，`app:menu = menu/bottom_navigation_menu_multiply`）。平板只是把根 id 从 `bottom_navigation_root_stacked` 换成 `bottom_navigation_root_flat`，**位置仍在底部**；无 `NavigationRail`，无侧边栏切换按钮（未找到）。
+- 菜单**恰好就是需求中的 5 项**，顺序一致：
+
+| 宿主 item id | 标题 | 需求对应 |
+| --- | --- | --- |
+| `id/action_listen_now` | `string/listen_now` | 主页 |
+| `id/action_browse` | `string/new_tab_name` | 新发现 |
+| `id/action_multiply_radio` | `string/radio` | 广播 |
+| `id/action_library` | `string/setting_library` | 资料库 |
+| `id/search_fragment` | `string/search` | 搜索（图标） |
+
+- 模块**已经在用同一机制**：`PhoneGlassSession.refreshMenu/selectTab` 读 `getMenu()` / `getSelectedItemId()`，点击回写 `setSelectedItemId(I)`。因此顶栏不需要新的导航缝。
+- `STACKED_NAVIGATION_MENU`（`Kd.b`，6.5.3）的真实身份是被混淆的 Material `BottomNavigationMenuView`（`BottomNavigationView` 的子 View），**不是顶栏、也不是平板专属**；`Hd.b` 在 1599 不存在。
+- 平板布局有 `layout-w640dp-land-v13/bottom_navigation.xml` 与 `layout-w640dp-port-v13/bottom_navigation.xml` 两份，横竖屏各一。
+
+### 2.2 迷你播放器：原生只有 2 个按钮
+
+`res/layout/mini_player.xml`：封面（`NowPlayingContentView`）、歌曲名、艺人名都在，但按钮行只有 `mini_player_play_btn`、`mini_player_next_btn` 两个图标 —— **随机、上一曲、循环在原生命中不存在**，必须由模块自绘并调用宿主命令。
+
+### 2.3 播放命令面：接口未被混淆
+
+`Lcom/apple/android/music/playback/controller/MediaPlayerController;`（PUBLIC INTERFACE ABSTRACT）：
+
+| 需求 | 方法 |
+| --- | --- |
+| 播放 / 暂停 | `play()V` / `pause()V` |
+| 上一曲 / 下一曲 | `skipToPreviousItem()V` / `skipToNextItem()V` |
+| 随机 | `setShuffleMode(I)V` / `getShuffleMode()I` |
+| 循环 | `setRepeatMode(I)V` / `getRepeatMode()I` |
+| 能力查询 | `canSetShuffleMode()Z` / `canSetRepeatMode()Z` / `canSkipToNextItem()Z` / `canSkipToPreviousItem()Z` |
+| 播放状态 | `getPlaybackState()I` |
+| 当前项 | `getCurrentItem()Lcom/apple/android/music/playback/model/PlayerQueueItem;` |
+| 队列 | `getQueueItems()Ljava/util/List;` / `getAllQueueItems()Ljava/util/List;` |
+| 监听 | `addListener(...)V` / `removeListener(...)V` |
+
+常量：`PlaybackRepeatMode` OFF=0 / ONE=1 / ALL=2；`PlaybackShuffleMode` OFF=0 / SONGS=1 / INVALID=-1；`PlaybackState` STOPPED=0 / PLAYING=1 / PAUSED=2。
+循环三态切换映射：`0 → 2 → 1 → 0`。
+
+### 2.4 活动实例捕获链与面板缝
+
+- 捕获：`MediaPlaybackService#onCreate()V` after-hook → 字段 `MediaPlaybackService#N : player.m0` → 字段 `m0#h : MediaPlayerController`。（`MediaPlaybackService` 无独立 `android:process`。）
+- 展开完整播放器：`PlayerActivity#v1(Lcom/apple/android/music/common/activity/PlayerActivity$p;)V`，传枚举常量 `EXPAND_PLAYER`。
+- 歌词 / 队列：`player.fragment.v0#F1(Lcom/apple/android/music/player/fragment/v0$n;Landroid/os/Bundle;)V`，枚举常量 `LYRICS` / `QUEUE`（队列带 Bundle 布尔键 `utils.E#o`）。
+
+## 3. 新增符号档案
+
+全部为 6.5.3 (1599) 精确钉住：`ProfilePolicy.EXACT_REQUIRED` + `fallbackOwner = { false }`，6.5.0/6.5.1/6.5.2 与未知版本报告 `Missing`（不猜）。未混淆的库/模型方法走 `NO_PROFILE` + 精确描述符。
+
+| 符号 | owner（6.5.3） | 证据 |
+| --- | --- | --- |
+| `TabletMediaPlaybackService` | `com.apple.android.music.player.MediaPlaybackService` | 类存在，父类 `android.app.Service` |
+| `TabletMediaPlaybackServiceOnCreate` | 同上，`onCreate` | `onCreate()V` |
+| `TabletMediaPlaybackServiceControllerField` | 同上，字段 `N` | 类型 `player.m0`；`onCreate` 内 `new m0(service,handler)`→`iput N` |
+| `TabletMediaPlaybackServiceControllerHolder` | `com.apple.android.music.player.m0` | 类存在 |
+| `TabletMediaPlaybackServiceControllerHolderField` | `m0`，字段 `h` | 类型 `MediaPlayerController`；`m0.<init>` 调 `createLocalController` 后 `iput h` |
+| `TabletPlayerActivityExpandPlayer` | `PlayerActivity`，`v1` | `(PlayerActivity$p)V` |
+| `TabletPlayerActivityPlayerFragment` | `PlayerActivity`，`f1` | `()Lcom/apple/android/music/player/fragment/v0;` |
+| `TabletQueueBundleArgKeyField` | `com.apple.android.music.utils.E`，静态字段 `o` | 队列 Bundle 布尔键 |
+| `TabletMediaPlayerController` + 16 个方法 | `...playback.controller.MediaPlayerController` | 精确描述符（接口未混淆） |
+| `TabletPlayerQueueItemGetItem` / `TabletPlayerMediaItemGetTitle` / `GetArtistName` | `playback.model.*` | 精确描述符 |
+| 面板方法 | 复用既有 `AppleMusicSymbols.PlayerControllerSelectPane`（`v0#F1`） | — |
+
+## 4. 实现结构
+
+| 文件 | 职责 |
+| --- | --- |
+| `config/TabletChromeStyle.kt` | 风格枚举 `AUTHOR`（默认）/ `IPAD`，未知值回落 `AUTHOR` |
+| `hook/TabletChromeCommands.kt` | 命令面接口（播放/随机/循环/歌曲曲目文本/展开/歌词/队列/监听） |
+| `hook/AppleMusicTabletChromeTarget.kt` | 目标适配：解析上述符号、安装捕获 hook、实现命令面；缺失即 `DEGRADED` |
+| `hook/TabletChromeFeature.kt` | 门控：液态玻璃开关 + iPad 风格 + Android 13 + 目标是否可用 |
+| `hook/TabletChromeSession.kt` | 会话：顶栏胶囊挂载、隐藏原生底栏、顶部占位、触摸命中、横竖屏 |
+| `hook/TabletChromeLayoutPolicy.kt` | 纯策略（可单测）：顶栏高度/占位/命中 |
+| `glass/…/TopBarGeometry.kt`、`GlassTopNavigation.kt`、`GlassMiniPlayer.kt` | 材质组件（胶囊随内容收窄；搜索为图标；迷你播放器 8 个控件使用宿主图标） |
+| `PhoneGlassRuntime.createSession` | 路由：iPad 分支先于双栏分支；双栏分支显式排除 iPad 风格（两套玻璃永不同时写几何） |
+| `FeatureInstallation` | 登记新能力，资源期发现仍由既有玻璃 hook 完成 |
+
+## 5. 与原作者风格的关系
+
+- 默认 `tablet_chrome_style = author`：既有手机/平板液态玻璃路径**字节不变**，`GlassPolicy`、`PhoneGlassSession`、`TabletDualPaneGlassSession` 不改资格、不改几何。
+- 选择 `ipad` 时：`PhoneGlassRuntime` 创建新会话，双栏玻璃会话不再创建；`TabletGlassChrome` 单写者仲裁由新会话接管，退出时恢复原生。
+- 手机的 `PhoneGlassSession` 分支完全不受影响（iPad 分支的平板判定在手机上不成立）。
+
+## 6. 验证状态
+
+| 项 | 结果 |
+| --- | --- |
+| 静态符号校验（`scripts/verify-host-profile.py --glass --tablet-chrome`，针对用户提供的 XAPK） | **93 checks / 1 failure**：新增符号断言 5 条 + **新增资源断言 25 条**（11 drawable、9 id、`color_primary`、2 dimen、2 bool，全部按 name→type 解析通过）。唯一失败是既有的 `LGi/A$a; h`（`feat/region-port` 地区替换遗留，与本次无关）。资源检查只证明「名字仍以该类型存在」，不证明取值、配置限定符或运行时 `getIdentifier()` 结果 |
+| 结构回归（`TabletChromeStructuralRegressionTest`） | 已加：路由顺序与互斥、门控、单键无迁移、能力接口 |
+| JVM 全量测试 | **896 tests / 0 failures / 0 errors**（基线 871 + 本能力 25：`TopBarGeometryTest` 7、`TabletChromeStyleTest` 6、`AppleMusicTabletChromeTargetTest` 3、`TabletChromeMiniPlayerPolicyTest` 5、`TabletChromeStructuralRegressionTest` 4） |
+| `verify-glass-reference.py` | PASS：33 个 `backdrop/src` 文件哈希一致，1 个已声明补丁命中（本次未改 `backdrop`） |
+| `git diff --check` | 无空白错误 |
+| lint（`:app:lintDebug :app:lintVitalRelease :glass:lintDebug`） | **PASS（GitHub Actions PR 运行）**：`./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :app:assembleDebug --no-daemon` 全部成功，并产出 `AM-plus-plus-debug` APK。本机离线首次运行曾因缺少缓存的 `io.github.libxposed:interface:102.0.0`（仅 `debugLintChecksClasspath` 需要）解析失败——环境问题，非代码问题 |
+| `push` 触发的 release 路径 | 失败于 `Verify release signature`：fork 上未配置 `AMPP_RELEASE_*` 签名 secrets，release APK 落回 debug 证书时工作流按设计拒绝。与本次代码无关；验证以 PR 运行为准 |
+| 真机验收 | **未做**（无设备） |
+
+## 6.2 真机首轮验收与修复（2026-10-01）
+
+首轮真机（平板）暴露的缺陷与修复：
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 顶栏**完全没有玻璃** | 会话自建 `ViewBackdrop` 后立刻 `setCaptureEnabled(false)`，`ready` 永远为假，激活门控不过 → 胶囊始终 `GONE` | 改为原版做法：`ViewBackdrop(navigation_host_group).also { topBackdrop = it; it.start() }`，不做 capture 门控 |
+| 顶栏下方**莫名空白且不随滚动** | 会话给内容根加了顶部 padding 预留空间，胶囊悬在空白上（既无内容可折射，也挡不住内容） | 删除全部顶部 padding 及其快照/恢复，顶栏改为**纯悬浮覆盖**，页面内容从其下方滚过 |
+| 按压无灵动触动、选中项是**红色实心块**、文字不变色 | 自绘 `GlassTopNavigation` 绕开了库的 `LiquidBottomTabs`（拖动拇指/按压动画都在那里），且强调色被写死成 `Color.Red` | 顶栏改用 `GlassNavigation`（库提供半透明选中遮罩 + 按压/灵动 + 拖拽）；强调色取宿主 `color_primary`（回退 `0xFFFA233B`）；`GlassNavigation` 新增按选中态着色：选中项的**文字与图标**用强调色 |
+| 进入完整播放器后**顶栏仍在** | 顶栏未订阅 slide 进度 | 覆写 `onSlide`，`1 - smoothstep(0, 0.35, progress)` 淡出并在阈值后 `GONE`（迷你胶囊 0.35→0.6 淡出） |
+| 迷你播放器**图标不对、间距差** | 控件图标是模块自绘矢量 | 改用宿主真实资源（按资源名解析）：`ic_nowplaying_shuffle/shuffleon`、`ic_nowplaying_mp_rewind`、`ic_nowplaying_mp_play/mp_pause`、`ic_nowplaying_mp_fforward`、`ic_nowplaying_repeat/repeaton/repeatoneon`、`selector_nowplaying_lyrics`、`selector_nowplaying_queue`；间距统一为 8dp 外插值 + 4dp 均匀间隔 |
+| 迷你播放器**封面缺失** | 原生 mini 子树被 `GONE`，且封面查找路径不对 | 容器取 `mini_player_content → video_surface`；优先 `getArtworkView()`，否则取第一个带 drawable 的 `ImageView`；隐藏方式改为 `INVISIBLE + alpha 0`（不用 `GONE`），保证原生仍更新封面 |
+| 歌词/播放列表**点了没反应**、点本体**不能展开**（只能上拉） | 胶囊的 DOWN 被宿主 `StaticCollapsedBottomSheetBehavior` 吃掉，Compose 收不到事件 | 命中胶囊的 DOWN 时 `shouldBypassPlayerIntercept` 返回 true；在 `player_sheet_container`/`player_root` 上把 DOWN/MOVE/UP 平移转发给 Compose 胶囊；胶囊本体 `onExpand` → `PlayerActivity#v1(EXPAND_PLAYER)` |
+| 收起时与底栏**对齐偏差** | 迷你胶囊没有对齐原生折叠座位 | 折叠态下读取原生 mini root 在 `player_sheet_container` 内的偏移，作为 `topMargin`（`miniPlayerSeatPx`）；`miniPlayerTopPx` 保留为 0 调参点 |
+
+修复后：`test` **896 / 0 失败**。仍未在真机验证的项见 §6.1 与 §6.3。
+
+## 6.3 修复后仍待真机确认
+
+1. 顶栏玻璃与按压实效、选中项强调色（本轮修复的目标，需复测）。
+2. 顶栏宽度按参考图比例推导：**每格占窗口 4.5%**（整条约 22.5% ÷ 5 格），夹在 `TOP_TAB_CELL_MIN_DP = 44` .. `TOP_TAB_CELL_MAX_DP = 58`。窄平板等比收窄，不再是固定 dp。
+2.1 `GlassNavigation` 的「选中项用强调色」是**可选参数** `tintSelectedWithAccent`（默认 false）。原版手机/双栏栏只靠库的半透明拇指表达选中，因此**不得**默认开启；只有 iPad 顶栏传 true。`TabletChromeStructuralRegressionTest` 有回归断言守护这一点。
+2.2 `cleanSelectionMask`（默认 false，仅 iPad 顶栏传 true）：库会把标签内容**录进拇指折射用的图层**（`alpha(0f)` 在 `layerBackdrop` 之前，只淡化合成输出，录进图层的内容仍是实心），于是拇指的 `lens` 把这份拷贝位移+色散成重影。开启后不再录那一遍、标签在拇指之后只画一次；lens/高亮/阴影/按压动画不变。
+3. `peekHeight()`：删除自绘胶囊、不再 `GONE` miniRoot 之后，`miniVisible == true`，基类恢复按 mini 高度测量座位与 peek —— 本节此前的 3dp 残差结论已不再适用，需真机复核。
+4. 命中胶囊后不再由宿主 sheet 处理拖拽，即**从胶囊上拉不再展开**（改为点击展开）——若希望两者都支持需再调整拦截条件。
+5. ~~若会话挂载时播放器已处于展开态，`topSlide` 在首个 slide 回调前仍为 0。~~ 已修：渲染改用 `effectiveSlide()`。
+6. **设置/账户页顶栏作用域**：判据取宿主自身信号 —— `settings.fragment.p.onStart()` → `MainContentActivity.Q1(0, true)` 会把 `bottom_navigation_root_flat` 置 GONE，回到标签页的 `common.fragment.a.onStart()` 再恢复；顶栏因此跟随 `hostRoot.isShown`。已知边角：资料库标签页在「加入播放列表」会话中宿主同样会隐藏该根（`LibraryComposeContentFragment.shouldHideBottomNav()`），此时顶栏一并隐藏，与宿主自身行为一致。
+7. **迷你播放器连贯形变**：已按原版机制改造 —— 不再自绘固定尺寸胶囊，而是**重皮宿主那唯一会形变的玻璃表面**（`miniGlass`），几何/座位/alpha/可见性全部回到原版 `updateTransition` 驱动；`GlassMiniPlayer` 新增默认 `expansion`，圆角按 `NativeLiquidButton` 的 `Capsule()`→24dp 插值。**未完成**：平板封面飞入的原点校正（原 `TabletDualPaneGlassSession.alignNativeArtworkStart`）需要把该校正在 `PhoneGlassSession` 提为 `protected open` 并改 `PhoneGlassRuntime` 的广播，超出本次改动范围，封面原点可能有轻微偏差。
+8. 待真机判定的两个前提（静态读代码无法确定）：平板下 `player_sheet_container` 是否等于 `mini_player`（若是，基类的几何形变整段被跳过，只剩淡出）；以及 `mini_player_content` 被置 INVISIBLE 后宿主是否仍刷新封面 drawable。
+
+## 6.4 第三轮真机反馈与修复
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 迷你播放器**下方多出一片空白** | 重皮原版形变面后 `miniVisible` 恢复为 true，而 `geometry` 仍带底部标签栏的 `navHeightDp=56` 与 `gapDp=8`，`GlassPolicy.occupiedHeight` 于是又为「已不在底部的标签栏」预留高度 | 我们的 `geometry` 覆盖改为 `navHeightDp=0 / gapDp=0`；并覆写 `peekHeight()` 去掉宿主 `shadow_height`（本会话不渲染那条底栏 scrim） |
+| 顶栏**太厚**（用户澄清：横向长度合适，是纵向） | 直接复用了宿主 `dimen/navigation_tabs_height`(56dp) —— 那是**底部**标签栏的高度 | 新增 `TabletChromeLayoutPolicy.TOP_BAR_HEIGHT_DP = 44`；按参考图实测约 42–43dp、且等于 Apple 标称 44pt |
+| 顶栏按压时**玻璃扭曲效果消失** | 开启 `cleanSelectionMask` 后跳过了文件里唯一的 `layerBackdrop` 录制，`LayerBackdrop` 走到 `layerCoordinates == null` 提前返回，拇指 `lens` 只折射到裸的 ViewBackdrop（顶栏后方是白底）→ 看起来是平的灰块 | 可见面板改为 `exportedBackdrop = tabsBackdrop`：录制的是**面板自身的材质**（背景/模糊/容器色），**从不录制标签**；默认路径该参数为 null，手机/双栏材质逐字节不变 |
+| 播放键是**红色** | 我把 play/pause 也映射成了 accent | 改为与相邻控件相同的 `foreground`；accent 只保留给真正「开启」的状态（随机开、循环非关） |
+| **播放键要更大**、歌名/艺人要更大更粗 | 原来 play 与相邻同尺寸；13sp/11sp 偏小 | play 独立 `PlayControlSize = 48dp`（参考图 1.73×相邻）；标题 15sp、艺人 13sp，均 `FontWeight.Medium` |
+| 字体要用 **AM 内置字体**（西文/标点 SF Pro，其余回落系统） | 之前用 Compose 默认字体 | `GlassMiniPlayer` 新增 `labelTypeface: android.graphics.Typeface? = null`；会话从宿主原生 `mini_player_title` 读取其 `Typeface` 传入，模块不自带字体 |
+
+仍未完成：平板封面飞入原点校正（见 §6.3.7）。本轮验证：`test` 897/0，CI 全绿。
+
+## 6.5 第四轮：顶栏回到库自身的路径（关键教训）
+
+上一轮我用 `cleanSelectionMask` 去重影，结果把玻璃效果一起去掉了。回读上游库与原作者用法后确认：
+
+| 事实 | 证据 |
+| --- | --- |
+| 上游 `LiquidBottomTabs` 是**示例组件**，材料/透镜/色散/按压全部**写死为绝对 dp**，**没有任何参数 API** | 上游 README 明示不提供高层组件；`effects { vibrancy(); blur(8dp); lens(24dp,24dp) }`、拇指 `lens(10dp·p, 14dp·p, chromaticAberration=true)`、按压 `lerp(1,1.2,p)` 皆为常量 |
+| ⇒ 唯一能间接影响效果的外部量是**胶囊尺寸** | 透镜/挤压常量是绝对 dp，胶囊变矮它们就相对过大 |
+| 原作者底栏参数：`panelHeight = 56dp`、全宽−2×16dp、**无**自定义 tint、**保留**单元格录制层 | `PhoneGlassSession.kt:286` + `GlassPolicy.NAV_HEIGHT_DP` |
+| **那层录制正是折射源** | 拇指 `lens(..., chromaticAberration=true)` 采样 `tabsBackdrop`，而该层由 `.alpha(0f).layerBackdrop(...)` 那一行录制；`alpha(0f)` 在 `layerBackdrop` 之前，只淡化合成输出，录制内容仍是实心 |
+| `cleanSelectionMask` 让透镜只能采样**平滑模糊面** ⇒ 必然平灰 | 平滑面没有高频边缘，位移与色散都无从显现 |
+
+**结论与改动**：顶栏改回作者路径 —— 高度取 `GlassPolicy.NAV_HEIGHT_DP`(56dp)，不再传 `tintSelectedWithAccent`（组件自身的 `accentOverride` 已经给水珠下的单元格上色）与 `cleanSelectionMask`，只保留有意收窄的宽度。`TabletChromeStructuralRegressionTest` 现在**断言禁止**这两个开关再次被传、并断言复用作者的胶囊高度。
+
+## 6.6 平板封面飞入原点校正（已完成）
+
+原来只有 `TabletDualPaneGlassSession` 有该校正，且 `PhoneGlassRuntime` 通过 `as? TabletDualPaneGlassSession` **硬转**调用 —— iPad 会话是它的**兄弟**（都直接继承 `PhoneGlassSession`），因此永远拿不到，展开/收起时封面原点有偏差。现改为：把校正提升为 `GlassSession` 上的 seam（手机侧空实现、双栏实现体不变），运行时对每个活跃会话虚调用；iPad 会话按自己的**居中半宽座位**推导 Y 向校正量。
+
+## 6.7 第五轮：静置纯白的真正根因，以及细胶囊下的正确做法
+
+§6.4/§6.5 的结论需要修正：**「静置纯白、划一下才取色」不是参数问题**。
+
+| 现象 | 真正根因 | 修复 |
+| --- | --- | --- |
+| 静置时玻璃一片纯白，手指划一下才开始取色 | `ViewBackdrop` 只在源视图**变脏/移动/尺寸变化**时重录；本会话把 `navFrame` 停掉后基类 `redirectedPadding` 为 0（`PhoneGlassSession.kt:745`），静态页面永不重排，于是**只录到最初一帧**并一直保留到滚动为止。手机底栏靠 `onPreDraw` 里的 `setCaptureEnabled` 反复重新武装，平板侧从未做 | 挂载时先关闭 capture，在 `updateTopChrome` 中当胶囊可见时重新武装，并每次武装强制补录 2 帧（`CAPTURE_SETTLE_RECORDS`），保证首帧绘制之后必有一次录制。**可见性不再依赖 `ready`**（那正是 §6.2「胶囊永久 GONE」的原因） |
+| 重影（标签拷贝被水滴折射） | 录制层里含单元格 | `cleanSelectionMask` 语义修正为：**保留**录制行（折射源），但只录**面板材质本身**（`EmptyTabContent`，且不再 `blur()`），单元格只在最上层画一次。透镜作用于**顶栏后面那层有细节的页面**，而不是标签拷贝 |
+| 细胶囊下折射糊成一片 | 上游的透镜/挤压常量是**绝对 dp**，胶囊变矮后相对过大 | 新增 `effectReferenceHeight`（默认 = `panelHeight`）与 `effectScale = panelHeight / effectReferenceHeight`（夹 0.25..4），按比例缩放挤压 4dp、面板透镜 24dp、按压位移 16dp、录制层透镜 24dp、拇指透镜 10/14dp、内阴影 8dp。平板传 44/56 → 0.786；**默认值为 1，手机/双栏逐字节不变** |
+| 顶栏文字太小太细 | 顶栏复用了手机底栏的 11sp | `GlassNavigation` 新增 `tabLabelSize: TextUnit = 11sp`、`tabLabelWeight: FontWeight? = null`；平板传 **13sp + SemiBold**；每格宽度 `TOP_TAB_CELL_FRACTION .045→.05`、`MIN 44→48`、`MAX 58→62`（1280dp 上 5 格约 288→310dp） |
+| 高度 | 用户明确要求**细** | `TabletChromeLayoutPolicy.TOP_CAPSULE_HEIGHT_DP = 44` 驱动视图高度、`panelHeight` 与度量刷新；座位不受影响（`capsuleTopMarginPx` 会抵消高度变化） |
+
+调参点：`TOP_CAPSULE_HEIGHT_DP`、`TOP_TAB_LABEL_SIZE_SP`、`TOP_TAB_CELL_MIN/MAX_DP`、`TOP_TAB_CELL_FRACTION`、`effectReferenceHeight`。
+
+## 6.1 未在设备上验证的已知风险
+
+1. ~~**隐藏原生 tabs 帧**使 `navFrame.isShown == false`，基类据此计算底部占用为 0，迷你播放器的位置 / peek / 滚动避让可能改变。~~ 自绘胶囊与 `hideSeam(miniRoot)` 已删除，此条已不适用。
+2. **隐藏 `mini_player_touch_panel`** 让基类 `miniVisible == false`，模块 peek 从约 123dp 缩到约 72dp+inset；胶囊按 `Gravity.TOP` 落到折叠带顶部，可能需要改为底部对齐（`TabletChromeLayoutPolicy.miniPlayerTopPx` 是唯一调节点）。
+3. 原生 mini root 被 GONE 后，宿主是否仍刷新 `mini_player_content` 的封面（胶囊封面直接读该原生 View 的 drawable）。
+4. 平板 flat holder 的 `BottomSheetBehavior` 拦截可能吃掉胶囊点击（本会话未覆写 `shouldBypassPlayerIntercept`）。
+5. 状态栏 inset 在非 edge-to-edge 下是否重复计算。
+6. 给 `navigation_host_group` 加顶部 padding 后，顶栏胶囊的背景采样源不再绘制到胶囊后方，可能退化为平面底色。
+7. 展开完整播放器时顶栏不随 slide 隐藏（按 iPad 观感应属预期）。
+
+## 7. 未验证项与限制
+
+- **无真机**：顶栏位置/状态栏 inset、隐藏原生底栏后的播放器 peek 与拖拽几何、竖屏布局、玻璃观感均未在设备上验证。
+- 队列/历史：队列**可达**（`getQueueItems`/`getAllQueueItems`/`getCurrentItem`），但**历史播放列表未找到任何存储**；按用户决策，队列按钮调用宿主原生队列界面，不自绘列表。
+- 6.5.3 profile 中 `PLAYER_ACTIVITY_BEHAVIOR_FIELD` 钉的 `c1` 是死条目（该字段实为 `Llg/d$a;`），真正的 Behavior 字段是 `a1`；目前靠 `EXACT_PREFERRED` 结构回退兜住，未致故障。
+
+## 8. 跨版本维护提示
+
+1. 顶栏标签一律运行时读宿主 `Menu`，**不得硬编码**标题/图标/顺序；搜索项按 `resourceId("search_fragment","id")` 判定。
+2. 平板判定优先读 `bool/multiply_tablet_layout_enabled`（w640dp，正是平板底栏布局的开关），回退 `bool/is_tablet`；**不要**用只覆盖 w600dp 的 `bool/isTablet`。
+3. 捕获链（服务字段名 `N`、holderr 字段名 `h`）与面板枚举常量名（`EXPAND_PLAYER`/`LYRICS`/`QUEUE`）都是按名解析，跨版本必须重新取证。
+4. 新增符号必须同步补 `scripts/verify-host-profile.py` 断言（本次已补 5 条）。
+
+## 9. 2026-10-02：折射文字替换与切页主动采样
+
+本轮目标以用户新提供的现状与 iPad 参考截图为准：保留水滴内的红色文字折射、边缘色散与页面采样；不实现侧边栏。前面各轮将问题归因于缩放参数或直接去掉标签采样的结论，不作为本轮的实现约束。
+
+### 9.1 单一可见文字，而不是两份文字叠加
+
+原路径把普通黑色标签画在面板上，又把录制行的红色标签通过透镜画上去。录制行并不等于最终画面应有两份文字：面板材质和录制行都可能有透明像素，导致黑色原字从红色折射字下方透出。
+
+新增默认关闭的 `replaceContentUnderThumb`，仅 iPad 顶栏启用。普通标签单独绘制到一个小的离屏层，再用 `DstOut` 清除水滴覆盖的那一块；玻璃面板、背景和录制行不被清除。随后水滴继续采样包含标签的 `tabsBackdrop`：水滴外显示普通字，水滴内显示折射字，不把两份可见字叠在一起。遮罩复用水滴的实时浮点位置、RTL、按压膨胀和速度剪切，不能只清除“当前选中格”的固定矩形。两行标签在该模式下共享同一个缩放曲线，避免上一轮“原字固定、录制字另行放大”的配准差异。
+
+不启用 `cleanSelectionMask`，不修改透镜常量、色散、玻璃模糊参数或上游渲染器。手机和原作者双栏会话不启用新开关；默认渲染路径保持原样。
+
+轮廓直接复用 `Capsule().createOutline`，而不是用普通圆角矩形近似：Shapes 1.2.1 的默认胶囊是连续曲率路径。轮廓在 `drawWithCache` 中缓存，动画只更新绘制变换，不逐帧重建曲线路径。
+
+### 9.2 切页后即使静止，也安排后续录制
+
+原补录计数只在 `onPreDraw` 中检查时钟，没有投递定时回调。页面静止后若没有新的 traversal，200ms 到期并不会自动再绘制。另外，顶栏与 mini 持续可见时，切换 tab 不会触发重新武装。
+
+改为纯 JVM 可测试的 `TabletChromeBackdropRefreshPolicy`：切换宿主选中项、布局变化、消费者重新可见或 mini 新出现时，安排约 0/80/320/960ms 的有限补录。每个时间点通过源 View 的 `postDelayed` 主动唤醒采样，不依赖用户滚动，也不是永久逐帧抓取。密集布局事件合并，强制录制至少间隔 64ms；延迟执行时不会在同一帧连续补齐多次录制。顶栏和 mini 仍共享同一个页面 backdrop；切后台、消费者隐藏和会话关闭时取消回调。
+
+新增几何、调度与接线回归测试。JVM/CI 能验证坐标、时序、编译和默认路径隔离，不能替代真机 GPU 验收。安装后应重点检查：长按五项并慢拖、快速切页后不滚动、返回已缓存页面、数据稍后加载、顶栏隐藏时 mini 的玻璃、播放器展开/收起以及后台返回。
+
+## 10. 底栏封面收起衔接（2026-10-02）
+
+用户已确认顶栏修复，本轮不改顶栏或玻璃渲染器。截图中的大封面落在左侧播放按钮上，小封面却在按钮组右侧：宿主动画仍以隐藏的原生缩略图为目标，与居中胶囊的实际封面槽位不同，尺寸也不同。
+
+本轮保留原作者的原生 artwork slide 回调，并借用其“识别到原生封面后不再让 fragments 额外淡入”的交接方式；原作者右下角双栏会话本身不改。iPad 会话在 Canvas 的布局回调读取真实槽位，通过 ComposeView 和 artwork 父容器的全局矩阵映射到同一坐标系，包含 GlassHostView 的出血边距、宿主父容器平移和滚动。位置和宽高同时校正，缩放时按原生 pivot 补偿，不猜运输按钮的固定宽度。
+
+校正只在 slide 0–0.35 的 mini 材质段生效：收起端精确匹配当前槽位，smoothstep 衰减后在 0.35 完全接回宿主原始轨迹，完整播放器的位置、尺寸、玻璃几何与时序均保留。没有固定屏幕 Y 下限，也不依赖第一次必须收到 slide=0 的回调；这替代了 §6.6 曾声称完成、后来因展开态偏移而撤销的旧校正。
+
+每次宿主回调前先还原上一次的原生变换，回调后缓存新的原生值。布局和 pre-draw 再校正时都从该缓存计算，不从已经校正的值继续累加。关闭会话还原变换；重建胶囊清除旧布局坐标。有效且可见的原生封面接管滑动期间的绘制，Compose 缩略图只停止画图、保留布局；sheet 判定收起后立即交回 Compose，不等待可能滞后一帧的 artwork 回调归零。缺少回调、槽位、有效尺寸或可见原生封面时不隐藏缩略图，也不强制 fragments alpha。
+
+新增纯 JVM 几何/所有权测试与接线回归测试。真机需验证：首次展开后慢速下滑至底、反向拖回和取消、连续多次展开/收起、封面最终的位置和大小、展开态封面不贴底，以及横竖屏、切歌和缺失封面的回退。Android 编译、lint 和完整测试由分支 PR 的 Actions 验证；动画观感仍待设备反馈。
+
+## 11. 字号、缩略图与透明顶端（2026-10-02）
+
+按新的灰底参考图，将 iPad 顶栏字号从 13sp 提到 15sp，仍为 SemiBold，胶囊高度仍为 44dp。窄屏单格最小宽度从 48dp 提到 52dp，为三个汉字留出空间；宽屏上限 62dp 不变，手机/原作者双栏仍使用默认 11sp。mini 封面边长从胶囊高度的 74% 调到 68%，圆角半径从边长的 1/6 调到 22%。原生动画继续测量该实际槽位，不需要另改飞入终点。
+
+### 11.1 用户提供的 6.5.3 xapk 逆向证据
+
+只提取基础包作分析，不修改或重签 Apple Music。资源表的 `activity_main_content_layout` 中，`navigation_host_group` 与 `app_bar_layout` 是 CoordinatorLayout 的兄弟节点；AppBar 使用 `toolbar_collapsing_actionbar`，包含 `collapsing_toolbar_layout`、`toolbar_actionbar`、大标题容器和分隔线。背景不只有一个 Drawable，还包括 CollapsingToolbarLayout 的 content/status-bar scrim；其 draw/drawChild 会重新写 scrim alpha，单独把背景颜色变透明不足以消除白色覆盖。
+
+`res/values/strings.xml` 指定滚动行为为 `com.apple.android.music.common.behavior.PlayerScrollingViewBehavior`。基础包中它覆写 `c(CoordinatorLayout, View, View): Boolean` 判定 AppBar 依赖；详情页可走“不依赖 AppBar”的分支，普通 tab 页面仍依赖它，因此内容 viewport 位于头部下方。只删背景、不改变依赖关系，顶栏背后仍可能是空白。
+
+### 11.2 iPad 会话限定的修复
+
+在已挂载、菜单可用且宿主仍显示主导航时，只让这一个 navigation host 不再依赖它同父级的 AppBar，由 CoordinatorLayout 原生测量/布局把页面延伸到工具栏下。没有固定负 translation、强写页面高度或改变滚动 padding，也不影响底部 player 依赖、其他 Activity、手机或原作者双栏。挂载/释放时明确 requestLayout，并重新安排 backdrop 补录。
+
+只透明化明确命名的头部容器背景、content/status-bar scrim 和 AppBar status-bar foreground，分隔线仅 alpha 隐藏。背景先 mutate 隔离共享状态，再保持原 Drawable 类型以兼容宿主 Material 行为；宿主换背景或重设 scrim 时重新记录，并在离开主导航/关闭会话时恢复。原生 Toolbar、大标题、返回按钮、收藏、溢出菜单的 View、可见性与触摸布局均保留。
+
+新增开关/身份隔离与接线恢复回归测试。真机重点验证：主页/新发现/广播/资料库滚动内容能经过顶栏背后，详情页效果仍正常，原生返回/收藏/菜单可点，设置和账号页恢复宿主头部，横竖屏/深色模式，以及 mini 新尺寸下的展开收起衔接。
+
+## 12. 真机反馈：封面重置、资料库与边缘渐变（2026-10-02）
+
+本轮对照用户的 10.39 秒资料库录屏和三张截图，继续只修改 iPad 会话，不修改 Apple Music 安装包或固定的玻璃渲染器。
+
+### 12.1 封面偶发停在缩略图大小
+
+6.5.3 基础包的 `player.fragment.v0$k.c(float)` 在没有有效 baseline 时调用 `e(View)`，将当时的 scaleX/scaleY 记为完整封面基准。`d()` 则恢复该基准、清空 artwork 引用；播放器切换面板和播放/暂停状态变化都可调用它。此前 iPad pre-draw 的缓存不知道原生 reset 已发生，仍可能把上一段 mini 变换重新写入，下一次 lazy snapshot 就可能拿到缩略图尺度。
+
+现在给已验证的 6.5.3/1599 接入 reset/snapshot 生命周期：snapshot 前还原尚归模块所有的临时写入；reset 前还原、reset 后彻底释放缓存和绘制所有权。状态对象记录精确的上一次模块变换，只有当前值仍等于模块写入时才能还原；若宿主动画已改变它，则不再重放旧缓存。完整播放器和原作者双栏的行为不改，不设置一个强制的“全尺寸 = 1”去干涉宿主暂停/播放缩放。新增纯 JVM 的 reset → baseline、宿主外部写入、连续展开收起状态测试。该路径的修复仍须真机验证。
+
+### 12.2 资料库使用固定、透明的原生标题区
+
+`fragment_library_tabbed.xml` 的 `sliding_tabs` 是 `navigation_host_group` 内部的内容，不是 AppBar 子项。统一取消 AppBar 依赖后，它会从窗口顶端开始，挤进系统状态栏并与上层 Toolbar 的触摸区重叠；与此同时 AppBar 仍在接受原生 nested-scroll 折叠事件，大标题和设备音乐开关的淡入淡出与内容位置不再一致。
+
+资料库根页面且原生分类栏可见时，恢复内容对其同父 AppBar 的原生布局依赖，只将 CollapsingToolbar 子项的原生 scrollFlags 暂设为 0，并调用原生 `setExpanded(true, false)`。背景和 scrim 仍透明，但大标题与设备音乐开关留在固定的原生标题区，分类栏处于它下面，不再挤进状态栏或与顶栏胶囊重叠。保留所有原生选项、开关、监听器和内容测量，没有手写内容高度、padding 或负平移。离开资料库根页、进入编辑/设置、关闭会话时释放 scrollFlags；详情页、其他标签、手机和原作者双栏不采用这个固定标题策略。
+
+### 12.3 小标题和短渐变
+
+仅匹配当前非资料库主导航标签的 `toolbar_actionbar/main_title` 小字设为 INVISIBLE，保留占位并可恢复；`header_page_title` 大字、详情页标题和菜单不隐藏。
+
+上下边缘各增加系统 inset 外 28dp 的渐变，使用宿主浅/深色 `background_color` 向透明过渡。Drawable 放在 navigation host 的原生 ViewOverlay 中，随窗口位置换算坐标；它不是新的 View，不接管任何触摸，也不替换原生背景。顶部胶囊退场时同步淡出，完整播放器和设置页不保留白色覆盖；关闭或重建会话时移除。
+
+设备验收重点：连续展开/收起、播放/暂停与切换歌词/队列时封面保持正确大小；资料库六个分类逐个可点，滚动时大标题和设备音乐开关稳定且可用；返回资料库与进入专辑/艺人详情后布局不串页；小字消失而大字保留；浅/深色短渐变、横竖屏、后台恢复，以及既有封面收起衔接无回退。编译、lint 与完整 JVM 测试交由 PR Actions，动画观感仍由用户设备反馈确认。
+
+## 13. 真机验收后的图标与歌曲菜单（2026-10-02）
+
+用户确认上一轮构建已通过设备测试。本轮仅修改迷你播放器的控件图标与更多歌曲操作入口，不修改玻璃渲染器、顶栏、资料库策略、渐变或封面动画。
+
+### 13.1 随机和循环只改变图标颜色
+
+6.5.3 资源 `ic_nowplaying_shuffleon`、`ic_nowplaying_repeaton` 和 `ic_nowplaying_repeatoneon` 自带圆角方块，并不是组件另加了红色背景。去掉这些选中态 Drawable 槽位；随机在开关两态都用 `ic_nowplaying_shuffle`，循环 off/all 用 `ic_nowplaying_repeat`，one 用独立的无底块 `ic_nowplaying_repeatone`。开启时只应用 accent tint，关闭时恢复前景色；循环三态和播放命令不变。
+
+### 13.2 横向三点与原生歌曲操作单
+
+`ic_actionsheet_more.xml` 是宿主自带的 24dp 横向三个实心点，无圆形底色；它与 `ic_nowplaying_more` / `ic_navbar_platter_more` 的竖向三点不同。直接加载该资源，不重画、不旋转。新按钮位于歌词按钮左侧，歌曲文字列仍按剩余宽度省略；封面测量槽与播放器展开/收起的几何不变。
+
+通过已验证的 `PlayerActivity.f1()` 取得当前播放器，再用 6.5.3/1599 精确档案的 `player.fragment.v0.z1()` 取得实时 song/lyrics/queue pane。仅在该 pane 的 `getView()` 子树中按资源名查找 `list_left_icon`，调用它现有的 `callOnClick()`，不做整个 Activity 的同名 ID 搜索，也不缓存上一首歌曲或旧 pane 的按钮。符号缺失时只禁用更多按钮，不猜其他版本的混淆入口。
+
+逆向已核实 `n7.eb`（song binding）的 callback 1 从当前 binding 读取 PlaybackItem 与 CollectionItemView，调用 `player.d1.t0(..., bindingRoot.getContext())`，再走 `common.l.Q` / `n0` 及 `ActionSheetDialogFragment.show(activity.C(), "actionsheet")`。该菜单路径不读取被点击按钮的屏幕坐标，不依赖完整播放器已展开，也不以隐藏原生按钮作为弹窗锚点，因此可以复用折叠状态下保留的原生回调。菜单内容和下载、资料库、播放列表、分享、制作人员、电台、喜爱等行为均交给宿主按当前歌曲和账号状态处理，不另造菜单项。
+
+新增无底块图标、右侧按钮顺序、独立分发、实时 pane 作用域与精确版本符号测试。设备验收重点：随机开关及循环 off/all/one 只有图标变色；三点打开原生操作单而不展开播放器；连续切歌和播放队列/歌词返回后菜单显示当前歌曲；菜单关闭后底栏仍可操作；深色、横竖屏和既有封面动画无回退。
+
+## 14. 缩略封面与真实手指拖动（2026-10-03）
+
+本轮依据用户提供的 14.16 秒录屏。约 2 秒处从大封面切换到队列页缩略封面；约 4 秒、9.5 秒处慢慢收起时，原生队列封面仍停在胶囊左上方，胶囊内又画了一份 mini 封面。问题并非单纯的暂停缩放：此前对齐条件只接受 `fullplayerSongImage`，跳过了原生队列/歌词页的封面容器。
+
+### 14.1 大封面与缩略封面共用实际 mini 终点
+
+6.5.3 的 `v0.s1()` 通过当前 pane 的 shared-element map 查找 `COVER_ART_CONTAINER`。song 对应 `fullplayerSongImage`；歌词对应 `lyrics_thumbnail_container`；新队列页对应 `queue_thumbnail_container`。后两者都是包住 `thumbnail` 和 video surface 的 MaterialCardView，不是歌曲大封面的 `artwork_container` 子项。
+
+现在对 native artwork callback 传入的实际 View，仅在 `player_fragments_host` 子树内接受这三个已验证容器。所有形态都复用既有 Compose 封面槽测量、双 ancestry 矩阵映射、0..0.35 的平滑终点修正和单一绘制所有权；不全局搜索同名 thumbnail，不修正分享弹窗或队列行的封面。保留已验收的 reset/snapshot 保护和“宿主已写入就不覆盖旧缓存”的逻辑。新增 40/48/72px 缩略容器、暂停缩放、反向拖动和终点尺寸测试。
+
+### 14.2 上拖移交原生事件流，不再调用展开命令
+
+之前超过触摸阈值后直接 `expandPlayer()`，等价于点击，因此并不跟手。现在 DOWN 仍交给 Compose，保留控制按钮和点击展开；仅按下在实际胶囊内、向上移动超过 touch slop 且以垂直方向为主时，取消 Compose 点击/按压，向宿主重放原始 DOWN，再连续发送 MOVE、pointer、UP/CANCEL。
+
+逆向已验证原生 `PlayerBottomSheetBehavior.h(CoordinatorLayout, View, MotionEvent)` 为拦截入口，继承的 `BottomSheetBehavior.s(...)` 为触摸入口。原始 event 的时间、指针和位移保留，坐标从 raw screen 转为 native CoordinatorLayout 坐标；由宿主 ViewDragHelper 移动 sheet，松手后的速度判断与吸附仍由宿主负责。不强写 top、slide、缩放或播放页状态，也不在 MOVE 调用展开命令。新 DOWN、取消、会话重建/关闭均释放旧事件并取消尚未结束的原生拖动。
+
+### 14.3 胶囊外按下的手势只交给页面
+
+collapsed iPad 会话同时门控原生 intercept 与 onTouch，覆盖 player sheet、player root 和原生 mini root 的全宽触摸层。胶囊外的 DOWN 返回不处理，整段手势透传给后面的页面；即使后来移入胶囊，也不会变成播放器拖动。胶囊内已开始的拖动可继续移出胶囊、反向和收回。完整播放器正常手势不受这个 collapsed 门控影响；新增 onTouch 接口的默认实现为 false，手机和原作者双栏不启用它。
+
+### 14.4 连续曲率，不是增大圆角半径
+
+mini 封面的尺寸仍为胶囊高度的 68%，圆角尺度仍为封面边长的 22%。只把圆弧 `RoundedCornerShape` 替换为项目已依赖的 Kyant Shapes 1.2.1 `RoundedRectangle(..., RoundedCornerStyle.Continuous)`，使直边与圆角通过连续曲率过渡，不再用加大圆弧半径来模拟“更圆润”。没有新增依赖或修改固定玻璃渲染器。
+
+设备验收：song 大封面、歌词/队列缩略封面分别慢慢收起；按住胶囊慢慢向上拖并停住、反向、松手；胶囊左右空白和圆端外侧按下，上下划动不得展开播放器，进入胶囊也不得重新接管；胶囊内按钮点击和点击展开仍正常；连续曲率封面在浅/深色和横/竖屏下不影响既有封面大小与对齐。真实手势和动画仍以安装后的设备反馈为准。

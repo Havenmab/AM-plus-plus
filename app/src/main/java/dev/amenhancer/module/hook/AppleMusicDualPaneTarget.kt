@@ -1490,7 +1490,7 @@ private object ConstraintLayoutPane {
                     videoSurface.requestLayout()
                 }
             }
-            return artworkChanged || videoSurface != null
+            return artworkChanged || videoSurface?.let { surface ->\n                val surfaceParams = surface.layoutParams\n                surfaceParams.width == sizePx && surfaceParams.height == sizePx\n            } == true
         }
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
         playerRoot.addOnLayoutChangeListener(listener)

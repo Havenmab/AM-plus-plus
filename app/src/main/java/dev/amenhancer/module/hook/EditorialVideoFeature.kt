@@ -2,13 +2,7 @@ package dev.amenhancer.module.hook
 
 import dev.amenhancer.module.ModuleConstants
 
-/**
- * Mirrors the modified APK's c1.e(...) prefix, but only while Apple Music's
- * own tablet resource qualifier is active in landscape and the tablet
- * dual-pane player is enabled. Returning null here
- * suppresses the Editorial Video URL while preserving its static preview
- * frame and the separate Music Video playback path.
- */
+/** Keeps Apple's Editorial Video path intact for the tablet player. */
 internal class EditorialVideoFeature : FeatureHook {
     override val key: String = ModuleConstants.FEATURE_EDITORIAL_VIDEO
 
@@ -16,6 +10,6 @@ internal class EditorialVideoFeature : FeatureHook {
         if (!context.config.settings().dualPaneEnabled) {
             return FeatureInstallResult.disabled()
         }
-        return context.target.editorialVideo.install().toFeatureInstallResult()
+        return FeatureInstallResult.disabled()
     }
 }

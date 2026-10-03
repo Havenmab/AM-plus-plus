@@ -54,9 +54,15 @@ class EditorialVideoFeatureStructuralRegressionTest {
         assertTrue(symbols.contains("EditorialVideo\\\$Flavor"))
         assertTrue(symbols.contains("method.parameterTypes[2].isArray"))
         assertTrue(symbols.contains("method.returnType == String::class.java"))
+        assertTrue(symbols.contains("EditorialVideoMotionSetup"))
+        assertTrue(symbols.contains("android.util.Size"))
+        assertTrue(symbols.contains("EditorialVideoPlayerMetadataListener"))
         assertTrue(target.contains("AppleMusicSymbols.EditorialVideoUrlSelector"))
+        assertTrue(target.contains("AppleMusicSymbols.EditorialVideoMotionSetup"))
+        assertTrue(target.contains("AppleMusicSymbols.EditorialVideoPlayerMetadataListener"))
         assertFalse(target.contains("TextureView"))
         assertTrue(target.contains("EditorialVideoFlavorPolicy.squareFirst"))
+        assertTrue(target.contains("Size(size.width, size.width)"))
     }
 
     @Test

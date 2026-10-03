@@ -634,6 +634,36 @@ internal object AppleMusicSymbols {
         contract = ::isEditorialVideoUrlSelector,
     )
 
+    val EditorialVideoMotionSetup = methodSymbol(
+        id = "editorial-video-motion-setup",
+        profileOwner = TargetSymbolId.EDITORIAL_VIDEO_OWNER,
+        profilePolicy = ProfilePolicy.EXACT_PREFERRED,
+        fallbackOwner = { name ->
+            name.startsWith("com.apple.android.music.player.") &&
+                name.substringAfterLast('.').substringBefore('$').length <= 3
+        },
+        contract = ::isEditorialVideoMotionSetup,
+    )
+
+    val EditorialVideoPlayerMetadataListener = TargetSymbolKey(
+        id = "editorial-video-player-metadata-listener",
+        stableCandidates = {
+            load("com.apple.android.music.player.fragment.PlayerSongViewFragment\$PlayerListener")
+                ?.declaredMethods
+                ?.filter(::isEditorialVideoPlayerMetadataListener)
+                .orEmpty()
+        },
+        structuralCandidates = {
+            methods(
+                namePredicate = {
+                    it.endsWith(".PlayerSongViewFragment\$PlayerListener")
+                },
+                contract = ::isEditorialVideoPlayerMetadataListener,
+            )
+        },
+        identity = ::methodIdentity,
+    )
+
     val LyricsFragment = classSymbol(
         id = "lyrics-fragment",
         profileId = TargetSymbolId.LYRICS_FRAGMENT,
@@ -2488,6 +2518,24 @@ private fun isEditorialVideoUrlSelector(method: Method): Boolean =
         method.parameterTypes[2].isArray &&
         method.parameterTypes[2].componentType?.name ==
         "com.apple.android.music.mediaapi.models.internals.EditorialVideo\$Flavor"
+
+private fun isEditorialVideoMotionSetup(method: Method): Boolean =
+    Modifier.isStatic(method.modifiers) &&
+        method.returnType == Void.TYPE &&
+        method.parameterTypes.size == 7 &&
+        method.parameterTypes[0] == String::class.java &&
+        method.parameterTypes[1].name == "android.view.TextureView" &&
+        method.parameterTypes[2].name == "I6.a" &&
+        method.parameterTypes[3] == String::class.java &&
+        method.parameterTypes[4].name == "android.util.Size" &&
+        method.parameterTypes[5].name == "Pg.a" &&
+        method.parameterTypes[6].name == "Di.p"
+
+private fun isEditorialVideoPlayerMetadataListener(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.name == "onMediaMetadataChanged" &&
+        method.returnType == Void.TYPE &&
+        method.parameterTypes.singleOrNull()?.name == "v3.v"
 
 private fun isLyricsHighlightCallback(method: Method, vectorClass: Class<*>): Boolean =
     method.name == "call" &&

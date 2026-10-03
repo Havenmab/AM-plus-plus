@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import android.app.Application
+import android.util.Size
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.CustomLyricsEntry
 
@@ -164,28 +165,77 @@ internal class AppleMusicEditorialVideoTarget(
     private val application: Application,
     private val symbols: TargetSymbolResolver,
 ) : EditorialVideoTarget {
+    private val metadataRefreshDepth = ThreadLocal.withInitial { 0 }
+
     override fun install(): TargetCapabilityInstall {
+        val listenerResolution = symbols.resolve(
+            AppleMusicSymbols.EditorialVideoPlayerMetadataListener,
+        )
+        val listener = listenerResolution.valueOrNull()
+            ?: return TargetCapabilityInstall.Degraded(listenerResolution.summary)
         val resolution = symbols.resolve(AppleMusicSymbols.EditorialVideoUrlSelector)
         val selector = resolution.valueOrNull()
             ?: return TargetCapabilityInstall.Degraded(resolution.summary)
-        val installed = runCatching {
-            ModernXposedRuntime.hookMethod(selector, object : ModernMethodHook() {
+        val motionResolution = symbols.resolve(AppleMusicSymbols.EditorialVideoMotionSetup)
+        val motionSetup = motionResolution.valueOrNull()
+            ?: return TargetCapabilityInstall.Degraded(motionResolution.summary)
+
+        val listenerInstalled = runCatching {
+            ModernXposedRuntime.hookMethod(listener, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (!TabletModeQualifier.isEligible(application)) return
+                    metadataRefreshDepth.set(metadataRefreshDepth.get() + 1)
+                    param.extras[SCOPED_REFRESH] = true
+                }
+
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    if (param.extras[SCOPED_REFRESH] != true) return
+                    val depth = metadataRefreshDepth.get()
+                    if (depth <= 1) {
+                        metadataRefreshDepth.remove()
+                    } else {
+                        metadataRefreshDepth.set(depth - 1)
+                    }
+                }
+            })
+        }.getOrDefault(false)
+        val selectorInstalled = runCatching {
+            ModernXposedRuntime.hookMethod(selector, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (metadataRefreshDepth.get() == 0) return
                     val flavors = param.args.getOrNull(2) as? Array<*> ?: return
                     EditorialVideoFlavorPolicy.squareFirst(flavors)?.let { param.args[2] = it }
                 }
             })
         }.getOrDefault(false)
-        return if (installed) {
+        val motionInstalled = runCatching {
+            ModernXposedRuntime.hookMethod(motionSetup, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (metadataRefreshDepth.get() == 0) return
+                    val size = param.args.getOrNull(4) as? Size ?: return
+                    if (size.width > 0 && size.height > 0 && size.width != size.height) {
+                        param.args[4] = Size(size.width, size.width)
+                    }
+                }
+            })
+        }.getOrDefault(false)
+
+        return if (listenerInstalled && selectorInstalled && motionInstalled) {
             TargetCapabilityInstall.Active(
-                "Editorial Video square flavor enabled for tablet playback; ${resolution.summary}",
+                "Editorial Video square flavor enabled for tablet playback; " +
+                    "motion size normalized; ${listenerResolution.summary}; " +
+                    "${resolution.summary}; ${motionResolution.summary}",
             )
         } else {
             TargetCapabilityInstall.Degraded(
-                "Editorial Video square flavor hook failed; ${resolution.summary}",
+                "Editorial Video tablet hook incomplete; ${listenerResolution.summary}; " +
+                    "${resolution.summary}; ${motionResolution.summary}",
             )
         }
+    }
+
+    private companion object {
+        const val SCOPED_REFRESH = "ampp.editorial-video.scoped-refresh"
     }
 }
 
@@ -193,14 +243,30 @@ internal object EditorialVideoFlavorPolicy {
     fun squareFirst(flavors: Array<*>): Array<*>? {
         val square = flavors.indexOfFirst { (it as? Enum<*>)?.name == "DETAIL_SQUARE" }
         val tall = flavors.indexOfFirst { (it as? Enum<*>)?.name == "DETAIL_TALL" }
-        if (square < 0 || tall < 0 || square == 0) return null
-        return flavors.copyOf().also {
-            val value = it[square]
-            @Suppress("UNCHECKED_CAST")
-            val reordered = it as Array<Any?>
-            reordered[square] = reordered[tall]
-            reordered[tall] = value
+        if (square >= 0) {
+            if (square == 0) return null
+            return flavors.copyOf().also {
+                @Suppress("UNCHECKED_CAST")
+                val reordered = it as Array<Any?>
+                val value = reordered[0]
+                reordered[0] = reordered[square]
+                reordered[square] = value
+            }
         }
+        if (tall < 0) return null
+
+        val tallValue = flavors[tall] as? Enum<*> ?: return null
+        val squareValue = tallValue.javaClass.enumConstants
+            ?.firstOrNull { (it as? Enum<*>)?.name == "DETAIL_SQUARE" }
+            ?: return null
+        @Suppress("UNCHECKED_CAST")
+        val reordered = java.lang.reflect.Array.newInstance(
+            flavors.javaClass.componentType,
+            flavors.size + 1,
+        ) as Array<Any?>
+        reordered[0] = squareValue
+        flavors.forEachIndexed { index, value -> reordered[index + 1] = value }
+        return reordered
     }
 }
 

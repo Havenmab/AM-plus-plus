@@ -9,6 +9,37 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TargetAdaptationBehaviorTest {
+    private enum class EditorialFlavor {
+        DETAIL_TALL,
+        DETAIL_SQUARE,
+    }
+
+    @Test
+    fun `square flavor is inserted when selector receives only tall`() {
+        val reordered = EditorialVideoFlavorPolicy.squareFirst(
+            arrayOf(EditorialFlavor.DETAIL_TALL),
+        )
+
+        requireNotNull(reordered)
+        assertEquals(
+            listOf("DETAIL_SQUARE", "DETAIL_TALL"),
+            reordered.map { (it as EditorialFlavor).name },
+        )
+    }
+
+    @Test
+    fun `square flavor is moved ahead of tall without dropping fallback`() {
+        val reordered = EditorialVideoFlavorPolicy.squareFirst(
+            arrayOf(EditorialFlavor.DETAIL_TALL, EditorialFlavor.DETAIL_SQUARE),
+        )
+
+        requireNotNull(reordered)
+        assertEquals(
+            listOf("DETAIL_SQUARE", "DETAIL_TALL"),
+            reordered.map { (it as EditorialFlavor).name },
+        )
+    }
+
     @Test
     fun `editorial video feature installs the tablet adapter`() {
         var targetCalls = 0

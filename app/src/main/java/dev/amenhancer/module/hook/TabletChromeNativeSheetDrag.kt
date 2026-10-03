@@ -77,7 +77,7 @@ internal class TabletChromeNativeSheetDrag private constructor(
             val base = generateSequence(behavior.javaClass as Class<*>?) { it.superclass }
                 .firstOrNull { it.name == "com.google.android.material.bottomsheet.BottomSheetBehavior" }
                 ?: return@runCatching null
-            val intercept = PhoneGlassRuntime.method(behavior.javaClass, "h", coordinator, View::class.java, MotionEvent::class.java)
+            val intercept = findMethod(behavior.javaClass, "h", coordinator, View::class.java, MotionEvent::class.java)
             val touch = base.getDeclaredMethod("s", coordinator, View::class.java, MotionEvent::class.java)
             if (intercept.returnType != Boolean::class.javaPrimitiveType ||
                 touch.returnType != Boolean::class.javaPrimitiveType
@@ -86,5 +86,16 @@ internal class TabletChromeNativeSheetDrag private constructor(
             touch.isAccessible = true
             TabletChromeNativeSheetDrag(behavior, sheet, parent, intercept, touch)
         }.getOrNull()
+
+        private fun findMethod(type: Class<*>, name: String, vararg parameters: Class<*>): Method {
+            var current: Class<*>? = type
+            while (current != null) {
+                runCatching { current!!.getDeclaredMethod(name, *parameters) }.getOrNull()?.let {
+                    return it.apply { isAccessible = true }
+                }
+                current = current.superclass
+            }
+            throw NoSuchMethodException("No such method: " + type.name + "#" + name)
+        }
     }
 }

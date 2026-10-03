@@ -29,7 +29,8 @@ class TabletChromeMiniDragStructuralRegressionTest {
     fun nativeBridgeUsesVerifiedMethodsAndCoordinatorCoordinatesWithEventTimesIntact() {
         val native = source("TabletChromeNativeSheetDrag.kt")
         assertTrue(native.contains("\"androidx.coordinatorlayout.widget.CoordinatorLayout\""))
-        assertTrue(native.contains("PhoneGlassRuntime.method(behavior.javaClass, \"h\", coordinator, View::class.java, MotionEvent::class.java)"))
+        assertTrue(native.contains("findMethod(behavior.javaClass, \"h\", coordinator, View::class.java, MotionEvent::class.java)"))
+        assertTrue(native.contains("private fun findMethod(type: Class<*>, name: String"))
         assertTrue(native.contains("base.getDeclaredMethod(\"s\", coordinator, View::class.java, MotionEvent::class.java)"))
         assertTrue(native.contains("parent.getLocationOnScreen(parentLocation)"))
         assertTrue(native.contains("MotionEvent.obtain(event).apply { setLocation(event.rawX - parentLocation[0], event.rawY - parentLocation[1])"))

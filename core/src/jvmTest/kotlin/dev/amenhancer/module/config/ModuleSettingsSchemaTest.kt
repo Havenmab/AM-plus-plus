@@ -79,6 +79,8 @@ class ModuleSettingsSchemaTest {
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,
                 "title_correction_mode" to "original_hyper",
+                "restore_cjk_original_metadata" to true,
+                "localized_metadata_cache" to true,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "lyrics_font_enabled" to false,
@@ -118,6 +120,8 @@ class ModuleSettingsSchemaTest {
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,
                 "title_correction_mode" to "original_hyper",
+                "restore_cjk_original_metadata" to true,
+                "localized_metadata_cache" to true,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "lyrics_font_enabled" to false,
@@ -388,6 +392,116 @@ class ModuleSettingsSchemaTest {
         )
         assertEquals(TitleCorrectionMode.MAINLAND_CHINA, mainland.titleCorrectionMode)
         assertEquals(TitleCorrectionMode.ORIGINAL_HYPER, unsupported.titleCorrectionMode)
+    }
+
+    @Test
+    fun `region extras default to the behaviour a fresh configuration had before v16`() {
+        val decoded = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertEquals(true, decoded.restoreCjkOriginalMetadata)
+        assertEquals(true, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `a legacy fixed-region configuration never enables original-name restore`() {
+        // The pre-v16 profiles did not separate "replace the region" from "restore
+        // original names": restoring was implied by the no-region profile only.
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "original_hyper"),
+            ).restoreCjkOriginalMetadata,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "mainland_china"),
+            ).restoreCjkOriginalMetadata,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "japan"),
+            ).restoreCjkOriginalMetadata,
+        )
+    }
+
+    @Test
+    fun `an explicit region extra always wins over the derived default`() {
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf(
+                    "title_correction_mode" to "original_hyper",
+                    "restore_cjk_original_metadata" to false,
+                ),
+            ).restoreCjkOriginalMetadata,
+        )
+        // Combining a region replacement with original-name restore is allowed.
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(
+                mapOf(
+                    "title_correction_mode" to "japan",
+                    "restore_cjk_original_metadata" to true,
+                ),
+            ).restoreCjkOriginalMetadata,
+        )
+    }
+
+    @Test
+    fun `region extras round trip and can be turned off`() {
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                restoreCjkOriginalMetadata = false,
+                localizedMetadataCache = false,
+            ),
+        )
+        assertEquals(false, encoded["restore_cjk_original_metadata"])
+        assertEquals(false, encoded["localized_metadata_cache"])
+        val decoded = ModuleSettingsSchema.decode(encoded)
+        assertEquals(false, decoded.restoreCjkOriginalMetadata)
+        assertEquals(false, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `every region profile survives a settings round trip`() {
+        TitleCorrectionMode.values().forEach { mode ->
+            val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(
+                    titleCorrectionEnabled = true,
+                    titleCorrectionMode = mode,
+                    restoreCjkOriginalMetadata = !mode.replacesRegion,
+                ),
+            )
+            val decoded = ModuleSettingsSchema.decode(encoded)
+            assertEquals(mode, decoded.titleCorrectionMode)
+            assertEquals(mode.contentUiLanguageSelection, decoded.titleCorrectionMode.contentUiLanguageSelection)
+        }
+    }
+
+    @Test
+    fun `a v15 configuration upgrades to v16 without losing its profile behaviour`() {
+        val upgradedRegion = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 15,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgradedRegion?.get("schema_version"))
+        assertEquals(false, upgradedRegion?.get("restore_cjk_original_metadata"))
+        assertEquals("japan", upgradedRegion?.get("title_correction_mode"))
+
+        val upgradedOriginal = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 15,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "original_hyper",
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )
+        assertEquals(true, upgradedOriginal?.get("restore_cjk_original_metadata"))
     }
 
     @Test

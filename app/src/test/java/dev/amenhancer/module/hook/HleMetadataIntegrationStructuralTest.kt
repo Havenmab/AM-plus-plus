@@ -375,11 +375,18 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `embedded settings expose profile selector without restoring refresh action`() {
+    fun `embedded settings expose the region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
         assertTrue(embedded.contains("歌曲名显示修正"))
         assertTrue(embedded.contains("歌曲名修正模式"))
         assertTrue(embedded.contains("titleCorrectionMode"))
+        // The two HLE region extras must be reachable from the host settings page.
+        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
+        assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
+        assertTrue(embedded.contains("创建检索库以提升替换体验"))
+        assertTrue(embedded.contains("localizedMetadataCache"))
+        // The picker enumerates the model, so new profiles appear without a UI change.
+        assertTrue(embedded.contains("TitleCorrectionMode.values()"))
         assertFalse(embedded.contains("刷新资料库"))
     }
 

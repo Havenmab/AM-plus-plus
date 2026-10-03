@@ -1469,24 +1469,28 @@ private object ConstraintLayoutPane {
                     params.bottomMargin == 0 &&
                     constraintField(params.javaClass, "topToTop")?.getInt(params) == PARENT_ID &&
                     constraintField(params.javaClass, "topToBottom")?.getInt(params) == -1
-            if (alreadyApplied) return true
-            params.width = sizePx
-            params.height = sizePx
-            params.topMargin = 0
-            params.bottomMargin = 0
-            params.setObject("dimensionRatio", null)
-            params.setInt("topToTop", PARENT_ID)
-            params.setInt("topToBottom", -1)
-            artwork.layoutParams = params
-            artwork.requestLayout()
+            val artworkChanged = !alreadyApplied
+            if (artworkChanged) {
+                params.width = sizePx
+                params.height = sizePx
+                params.topMargin = 0
+                params.bottomMargin = 0
+                params.setObject("dimensionRatio", null)
+                params.setInt("topToTop", PARENT_ID)
+                params.setInt("topToBottom", -1)
+                artwork.layoutParams = params
+                artwork.requestLayout()
+            }
             if (videoSurface != null) {
                 val videoParams = videoSurface.layoutParams
-                videoParams.width = sizePx
-                videoParams.height = sizePx
-                videoSurface.layoutParams = videoParams
-                videoSurface.requestLayout()
+                if (videoParams.width != sizePx || videoParams.height != sizePx) {
+                    videoParams.width = sizePx
+                    videoParams.height = sizePx
+                    videoSurface.layoutParams = videoParams
+                    videoSurface.requestLayout()
+                }
             }
-            return true
+            return artworkChanged || videoSurface != null
         }
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
         playerRoot.addOnLayoutChangeListener(listener)

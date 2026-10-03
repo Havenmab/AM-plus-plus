@@ -268,6 +268,58 @@ class AppleMusic653ProfileTest {
                 .any { it.methodName == "B0" || it.methodName == "A0" },
         )
     }
+
+    @Test
+    fun `region seam targets are declared only where they were verified`() {
+        // Both region seams gate installation on exactTargets(...).isEmpty(), so an empty list has
+        // to mean "this build was never verified" and a non-empty one "this build's targets are
+        // pinned". 6.5.3 and 7.0.0-beta are the two verified builds; on 6.5.0-6.5.2 the seams must
+        // stay uninstalled instead of falling through to a whole-DEX structural scan.
+        fun executorOwners(version: AppleMusicVersion) = AppleMusicHookProfiles
+            .exactTargets(version, AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR)
+            .map { it.className }
+        fun ampOwner(version: AppleMusicVersion) = AppleMusicHookProfiles
+            .exactTargets(version, AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR)
+            .map { it.className }
+
+        val verified = listOf(
+            AppleMusicVersion("6.5.3", 1599L),
+            AppleMusicVersion("7.0.0-beta", 1606L),
+        )
+        val unverified = listOf(
+            AppleMusicVersion("6.5.0", 1580L),
+            AppleMusicVersion("6.5.1", 1583L),
+            AppleMusicVersion("6.5.2", 1586L),
+        )
+        verified.forEach { version ->
+            assertTrue(
+                "executor targets must be pinned on ${version.displayName}",
+                executorOwners(version).isNotEmpty(),
+            )
+            assertTrue(
+                "amp-api targets must be pinned on ${version.displayName}",
+                ampOwner(version).isNotEmpty(),
+            )
+        }
+        unverified.forEach { version ->
+            assertTrue(
+                "executor targets must stay empty on ${version.displayName}",
+                executorOwners(version).isEmpty(),
+            )
+            assertTrue(
+                "amp-api targets must stay empty on ${version.displayName}",
+                ampOwner(version).isEmpty(),
+            )
+        }
+
+        // Pin the transcribed owners so a mis-ordered or mis-copied JSON entry cannot pass on
+        // "non-empty" alone.
+        val version700 = AppleMusicVersion("7.0.0-beta", 1606L)
+        assertEquals(listOf("v8.D", "v8.D", "A5.l", "A5.l", "Ic.n", "Ic.n"), executorOwners(version653))
+        assertEquals(listOf("x9.E", "x9.E", "x9.u1", "x9.u1", "x9.t", "x9.t"), executorOwners(version700))
+        assertEquals(listOf("w8.d"), ampOwner(version653))
+        assertEquals(listOf("y9.d"), ampOwner(version700))
+    }
 }
 
 private class Profile653FakeClassSource(

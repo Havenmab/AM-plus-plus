@@ -104,6 +104,8 @@ internal enum class AppleMusicHookPoint {
     LISTEN_NOW_CUSTOM_IMAGE_VIEW,
     LISTEN_NOW_MEDIA_ENTITY,
     LISTEN_NOW_COLLECTION_ITEM_VIEW,
+    MEDIA_API_CATALOG_REQUEST_EXECUTOR,
+    MEDIA_API_AMP_HTTP_INTERCEPTOR,
 }
 
 internal enum class AppleMusicRuntimeMember {
@@ -404,7 +406,10 @@ internal object AppleMusicHookProfiles {
         dev.amenhancer.host.applemusic.AppleMusicHostProfiles.all.map { profile ->
             val points = profile.document.getJSONObject("hookTargets")
             val targets = AppleMusicHookPoint.entries.associateWith { point ->
-                val entries = points.getJSONArray(point.name)
+                // A profile only declares the targets its build actually verifies, so a hook
+                // point may be absent from a given document (the region executors are declared
+                // for 6.5.3 only): decode it as "no target" instead of failing every profile.
+                val entries = points.optJSONArray(point.name) ?: return@associateWith emptyList()
                 List(entries.length()) { index -> decodeTarget(point, entries.getJSONObject(index)) }
             }
             AppleMusicHookProfile(profile.document.getString("hookProfileId"), profile.versionName,
@@ -879,6 +884,15 @@ internal class AppleMusicHookResolver(
             AppleMusicHookPoint.PLAYER_LYRICS_VIEW_MODEL_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ARTIST_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ALBUM_CLASS -> true
+
+            // Catalog executors are verified by full descriptor in the profile; the structural
+            // fallback only has to reject obviously wrong shapes so a renamed sibling cannot be
+            // hooked in their place.
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR ->
+                method.parameterCount in 6..7 &&
+                    method.parameterTypes.any { Map::class.java.isAssignableFrom(it) }
+
+            AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR -> method.parameterCount == 1
 
             AppleMusicHookPoint.MEDIA_API_REPOSITORY_HOLDER_CLASS -> true
 

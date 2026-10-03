@@ -8,6 +8,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleMetadataOverrideStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicProviderRuntime
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
+import io.github.proify.lyricon.amprovider.xposed.applyRegionConfiguration
 import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
 import io.github.proify.lyricon.amprovider.xposed.ProviderLogger
 import io.github.proify.lyricon.amprovider.xposed.hooks.AppleFrameworkMetadataHooks
@@ -40,6 +41,14 @@ internal class HleMetadataRuntime(
     private val application: Application,
     private val classLoader: ClassLoader,
     private val mode: TitleCorrectionMode = TitleCorrectionMode.ORIGINAL_HYPER,
+    /**
+     * Restores CJK songs to their original-region names.  Independent of [mode]:
+     * the user may combine it with a region replacement.  Defaults to the legacy
+     * coupling so existing construction sites keep their behaviour.
+     */
+    private val restoreCjkOriginalMetadata: Boolean = mode == TitleCorrectionMode.ORIGINAL_HYPER,
+    /** Persist region/original metadata lookups in SQLite across cold starts. */
+    private val localizedMetadataCache: Boolean = true,
 ) {
     private val version = runCatching {
         val info = application.packageManager.getPackageInfo(
@@ -134,8 +143,13 @@ internal class HleMetadataRuntime(
     fun install(): TargetCapabilityInstall {
         runtime.attach(application, hookResolver)
         MediaMetadataCache.setProfile(mode.cacheNamespace)
-        catalogResolver.applyContentUiLanguage(mode.contentUiLanguageSelection)
-        catalogResolver.setPersistentLocalizedCacheEnabled(true)
+        catalogResolver.applyRegionConfiguration(
+            selection = mode.contentUiLanguageSelection,
+            // Only a profile that names a storefront redirects ordinary Apple Music traffic;
+            // the no-region profile keeps the account storefront and only restores names.
+            regionReplacementRequested = mode.replacesRegion,
+            localizedMetadataCacheEnabled = localizedMetadataCache,
+        )
 
         contentLocalizationHooks = AppleContentLocalizationHooks(
             runtime = runtime,
@@ -143,8 +157,12 @@ internal class HleMetadataRuntime(
         )
         runCatching { contentLocalizationHooks.installMediaApiLocalization() }
             .onFailure { ProviderLogger.error("HLE MediaApi localization hook failed", it) }
+        runCatching { contentLocalizationHooks.installCatalogRequestLocalization() }
+            .onFailure { ProviderLogger.error("HLE catalog executor localization hook failed", it) }
         runCatching { contentLocalizationHooks.installContentHttpLocalization() }
             .onFailure { ProviderLogger.error("HLE content HTTP localization hook failed", it) }
+        runCatching { contentLocalizationHooks.installAmpApiHttpLocalization() }
+            .onFailure { ProviderLogger.error("HLE amp-api localization hook failed", it) }
 
         frameworkHooks = AppleFrameworkMetadataHooks(
             runtime = runtime,
@@ -389,7 +407,7 @@ internal class HleMetadataRuntime(
             queueMetadataHooks = queueMetadataHooks,
             actionSheetMetadataHooks = actionSheetMetadataHooks,
             configuredContentUiLanguage = mode.contentUiLanguageSelection,
-            restoreOriginalMetadata = mode == TitleCorrectionMode.ORIGINAL_HYPER,
+            restoreOriginalMetadata = restoreCjkOriginalMetadata,
             profileId = mode.cacheNamespace,
         )
         installedBridge.install()
@@ -413,6 +431,8 @@ internal class HleMetadataRuntime(
 
         return TargetCapabilityInstall.Active(
             "HLE metadata runtime installed for ${version.displayName}; " +
+                "region=${mode.catalogStorefront ?: "account"}, " +
+                "restoreOriginal=$restoreCjkOriginalMetadata, " +
                 "original metadata + persistent SQLite cache enabled",
         )
     }
@@ -439,7 +459,7 @@ internal class HleMetadataRuntime(
         override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
             mode.catalogLanguage != null
         override fun shouldRestoreCjkOriginalMetadata(metadata: MediaMetadataCache.Metadata): Boolean =
-            mode == TitleCorrectionMode.ORIGINAL_HYPER &&
+            restoreCjkOriginalMetadata &&
                 AppleOriginalMetadataPolicy.shouldProbeCjkOriginalMetadata(
                 mediaId = metadata.id,
                 title = metadata.title,
@@ -471,7 +491,7 @@ internal class HleMetadataRuntime(
                     originalMetadata = originalMetadata,
                     originalMetadataConfirmed = originalMetadataConfirmed,
                 )
-            } else if (originalMetadata && mode != TitleCorrectionMode.ORIGINAL_HYPER) {
+            } else if (originalMetadata && !restoreCjkOriginalMetadata) {
                 return
             } else if (originalMetadata) {
                 metadataStore.rememberOriginalMetadata(mediaId, alias, originalMetadataConfirmed)
@@ -513,7 +533,7 @@ internal class HleMetadataRuntime(
             }
         }
         override fun isRestoreOriginalMetadataEnabled(): Boolean =
-            mode == TitleCorrectionMode.ORIGINAL_HYPER
+            restoreCjkOriginalMetadata
     }
 
     private fun effectiveAlias(mediaId: String): AppleInternalCatalogResolver.Alias? =

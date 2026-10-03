@@ -1425,7 +1425,9 @@ private object ConstraintLayoutPane {
                 "id",
                 ModuleConstants.TARGET_PACKAGE,
             )
-            val videoSurface = videoSurfaceId.takeIf { it != 0 }?.let(playerHost::findViewById)
+            val videoSurface = videoSurfaceId.takeIf { it != 0 }?.let { id ->
+                playerHost.findViewById<View>(id)
+            }
             val barrier = playerHost.findViewById<View>(barrierId) ?: return false
             val parent = artwork.parent as? ViewGroup ?: return false
             if (parent.width <= 0 || parent.height <= 0 || artwork.width <= 0) return false

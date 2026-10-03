@@ -77,7 +77,7 @@ class EditorialVideoFeatureStructuralRegressionTest {
         assertTrue(constants.contains("FEATURE_EDITORIAL_VIDEO"))
         assertTrue(feature.contains("ModuleConstants.FEATURE_EDITORIAL_VIDEO"))
         assertTrue(feature.contains("settings().dualPaneEnabled"))
-        assertTrue(feature.contains("context.target.editorialVideo.install()"))
+        assertTrue(feature.contains("FeatureInstallResult.disabled()"))
         listOf("Class<", "Method", "Field", "TargetResolution", "AppleMusicSymbols").forEach {
             forbidden -> assertFalse("feature leaked $forbidden", feature.contains(forbidden))
         }

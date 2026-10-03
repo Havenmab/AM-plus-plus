@@ -166,18 +166,12 @@ internal class AppleMusicEditorialVideoTarget(
 ) : EditorialVideoTarget {
     override fun install(): TargetCapabilityInstall {
         val resolution = symbols.resolve(AppleMusicSymbols.EditorialVideoUrlSelector)
-        val selector = resolution.valueOrNull()
+        resolution.valueOrNull()
             ?: return TargetCapabilityInstall.Degraded(resolution.summary)
 
-        ModernXposedRuntime.hookMethod(selector, object : ModernMethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (!TabletModeQualifier.isOfficialTabletLandscape(application)) return
-                param.result = null
-            }
-        })
         return TargetCapabilityInstall.Active(
-            "Installed tablet-landscape Editorial Video URL suppression on " +
-                "${selector.declaringClass.name}.${selector.name}; ${resolution.summary}",
+            "Editorial Video URL selector resolved and left untouched for tablet playback; " +
+                resolution.summary,
         )
     }
 }

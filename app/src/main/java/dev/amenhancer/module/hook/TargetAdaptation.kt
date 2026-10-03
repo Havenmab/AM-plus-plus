@@ -166,13 +166,39 @@ internal class AppleMusicEditorialVideoTarget(
 ) : EditorialVideoTarget {
     override fun install(): TargetCapabilityInstall {
         val resolution = symbols.resolve(AppleMusicSymbols.EditorialVideoUrlSelector)
-        resolution.valueOrNull()
+        val selector = resolution.valueOrNull()
             ?: return TargetCapabilityInstall.Degraded(resolution.summary)
+        val installed = runCatching {
+            ModernXposedRuntime.hookMethod(selector, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!TabletModeQualifier.isEligible(application)) return
+                    val flavors = param.args.getOrNull(2) as? Array<*> ?: return
+                    EditorialVideoFlavorPolicy.squareFirst(flavors)?.let { param.args[2] = it }
+                }
+            })
+        }.getOrDefault(false)
+        return if (installed) {
+            TargetCapabilityInstall.Active(
+                "Editorial Video square flavor enabled for tablet playback; ${resolution.summary}",
+            )
+        } else {
+            TargetCapabilityInstall.Degraded(
+                "Editorial Video square flavor hook failed; ${resolution.summary}",
+            )
+        }
+    }
+}
 
-        return TargetCapabilityInstall.Active(
-            "Editorial Video URL selector resolved and left untouched for tablet playback; " +
-                resolution.summary,
-        )
+internal object EditorialVideoFlavorPolicy {
+    fun squareFirst(flavors: Array<*>): Array<*>? {
+        val square = flavors.indexOfFirst { (it as? Enum<*>)?.name == "DETAIL_SQUARE" }
+        val tall = flavors.indexOfFirst { (it as? Enum<*>)?.name == "DETAIL_TALL" }
+        if (square < 0 || tall < 0 || square == 0) return null
+        return flavors.copyOf().also {
+            val value = it[square]
+            it[square] = it[tall]
+            it[tall] = value
+        }
     }
 }
 

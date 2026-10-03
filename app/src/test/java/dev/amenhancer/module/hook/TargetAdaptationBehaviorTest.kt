@@ -10,22 +10,22 @@ import org.junit.Test
 
 class TargetAdaptationBehaviorTest {
     @Test
-    fun `editorial video feature leaves host playback path untouched`() {
+    fun `editorial video feature installs the tablet adapter`() {
         var targetCalls = 0
         val context = context(
             dualPaneEnabled = true,
             dualPane = DualPaneTarget { TargetCapabilityInstall.Active("unused") },
             editorialVideo = EditorialVideoTarget {
                 targetCalls += 1
-                TargetCapabilityInstall.Degraded("must not be installed")
+                TargetCapabilityInstall.Active("installed")
             },
             lyricBlur = BidirectionalLyricBlurTarget { TargetCapabilityInstall.Active("unused") },
         )
 
         val result = EditorialVideoFeature().install(context)
 
-        assertEquals(FeatureState.DISABLED, result.state)
-        assertEquals(0, targetCalls)
+        assertEquals(FeatureState.ACTIVE, result.state)
+        assertEquals(1, targetCalls)
     }
 
     @Test

@@ -56,6 +56,7 @@ class EditorialVideoFeatureStructuralRegressionTest {
         assertTrue(symbols.contains("method.returnType == String::class.java"))
         assertTrue(target.contains("AppleMusicSymbols.EditorialVideoUrlSelector"))
         assertFalse(target.contains("TextureView"))
+        assertTrue(target.contains("EditorialVideoFlavorPolicy.squareFirst"))
     }
 
     @Test
@@ -64,7 +65,7 @@ class EditorialVideoFeatureStructuralRegressionTest {
         val target = source("dev/amenhancer/module/hook/TargetAdaptation.kt")
 
         assertTrue(feature.contains("dualPaneEnabled"))
-        assertTrue(feature.contains("FeatureInstallResult.disabled()"))
+        assertTrue(feature.contains("context.target.editorialVideo.install()"))
         assertFalse(target.contains("param.result = null"))
         assertFalse(target.contains("TabletModeQualifier.isOfficialTabletLandscape(application)"))
     }

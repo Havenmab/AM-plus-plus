@@ -10,6 +10,6 @@ internal class EditorialVideoFeature : FeatureHook {
         if (!context.config.settings().dualPaneEnabled) {
             return FeatureInstallResult.disabled()
         }
-        return FeatureInstallResult.disabled()
+        return context.target.editorialVideo.install().toFeatureInstallResult()
     }
 }

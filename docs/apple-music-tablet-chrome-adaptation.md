@@ -308,3 +308,29 @@
 逆向已核实 `n7.eb`（song binding）的 callback 1 从当前 binding 读取 PlaybackItem 与 CollectionItemView，调用 `player.d1.t0(..., bindingRoot.getContext())`，再走 `common.l.Q` / `n0` 及 `ActionSheetDialogFragment.show(activity.C(), "actionsheet")`。该菜单路径不读取被点击按钮的屏幕坐标，不依赖完整播放器已展开，也不以隐藏原生按钮作为弹窗锚点，因此可以复用折叠状态下保留的原生回调。菜单内容和下载、资料库、播放列表、分享、制作人员、电台、喜爱等行为均交给宿主按当前歌曲和账号状态处理，不另造菜单项。
 
 新增无底块图标、右侧按钮顺序、独立分发、实时 pane 作用域与精确版本符号测试。设备验收重点：随机开关及循环 off/all/one 只有图标变色；三点打开原生操作单而不展开播放器；连续切歌和播放队列/歌词返回后菜单显示当前歌曲；菜单关闭后底栏仍可操作；深色、横竖屏和既有封面动画无回退。
+
+## 14. 缩略封面与真实手指拖动（2026-10-03）
+
+本轮依据用户提供的 14.16 秒录屏。约 2 秒处从大封面切换到队列页缩略封面；约 4 秒、9.5 秒处慢慢收起时，原生队列封面仍停在胶囊左上方，胶囊内又画了一份 mini 封面。问题并非单纯的暂停缩放：此前对齐条件只接受 `fullplayerSongImage`，跳过了原生队列/歌词页的封面容器。
+
+### 14.1 大封面与缩略封面共用实际 mini 终点
+
+6.5.3 的 `v0.s1()` 通过当前 pane 的 shared-element map 查找 `COVER_ART_CONTAINER`。song 对应 `fullplayerSongImage`；歌词对应 `lyrics_thumbnail_container`；新队列页对应 `queue_thumbnail_container`。后两者都是包住 `thumbnail` 和 video surface 的 MaterialCardView，不是歌曲大封面的 `artwork_container` 子项。
+
+现在对 native artwork callback 传入的实际 View，仅在 `player_fragments_host` 子树内接受这三个已验证容器。所有形态都复用既有 Compose 封面槽测量、双 ancestry 矩阵映射、0..0.35 的平滑终点修正和单一绘制所有权；不全局搜索同名 thumbnail，不修正分享弹窗或队列行的封面。保留已验收的 reset/snapshot 保护和“宿主已写入就不覆盖旧缓存”的逻辑。新增 40/48/72px 缩略容器、暂停缩放、反向拖动和终点尺寸测试。
+
+### 14.2 上拖移交原生事件流，不再调用展开命令
+
+之前超过触摸阈值后直接 `expandPlayer()`，等价于点击，因此并不跟手。现在 DOWN 仍交给 Compose，保留控制按钮和点击展开；仅按下在实际胶囊内、向上移动超过 touch slop 且以垂直方向为主时，取消 Compose 点击/按压，向宿主重放原始 DOWN，再连续发送 MOVE、pointer、UP/CANCEL。
+
+逆向已验证原生 `PlayerBottomSheetBehavior.h(CoordinatorLayout, View, MotionEvent)` 为拦截入口，继承的 `BottomSheetBehavior.s(...)` 为触摸入口。原始 event 的时间、指针和位移保留，坐标从 raw screen 转为 native CoordinatorLayout 坐标；由宿主 ViewDragHelper 移动 sheet，松手后的速度判断与吸附仍由宿主负责。不强写 top、slide、缩放或播放页状态，也不在 MOVE 调用展开命令。新 DOWN、取消、会话重建/关闭均释放旧事件并取消尚未结束的原生拖动。
+
+### 14.3 胶囊外按下的手势只交给页面
+
+collapsed iPad 会话同时门控原生 intercept 与 onTouch，覆盖 player sheet、player root 和原生 mini root 的全宽触摸层。胶囊外的 DOWN 返回不处理，整段手势透传给后面的页面；即使后来移入胶囊，也不会变成播放器拖动。胶囊内已开始的拖动可继续移出胶囊、反向和收回。完整播放器正常手势不受这个 collapsed 门控影响；新增 onTouch 接口的默认实现为 false，手机和原作者双栏不启用它。
+
+### 14.4 连续曲率，不是增大圆角半径
+
+mini 封面的尺寸仍为胶囊高度的 68%，圆角尺度仍为封面边长的 22%。只把圆弧 `RoundedCornerShape` 替换为项目已依赖的 Kyant Shapes 1.2.1 `RoundedRectangle(..., RoundedCornerStyle.Continuous)`，使直边与圆角通过连续曲率过渡，不再用加大圆弧半径来模拟“更圆润”。没有新增依赖或修改固定玻璃渲染器。
+
+设备验收：song 大封面、歌词/队列缩略封面分别慢慢收起；按住胶囊慢慢向上拖并停住、反向、松手；胶囊左右空白和圆端外侧按下，上下划动不得展开播放器，进入胶囊也不得重新接管；胶囊内按钮点击和点击展开仍正常；连续曲率封面在浅/深色和横/竖屏下不影响既有封面大小与对齐。真实手势和动画仍以安装后的设备反馈为准。

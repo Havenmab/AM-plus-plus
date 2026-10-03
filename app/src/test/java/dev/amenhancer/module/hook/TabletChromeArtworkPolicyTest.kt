@@ -48,6 +48,31 @@ class TabletChromeArtworkPolicyTest {
     }
 
     @Test
+    fun compactQueueAndLyricsCoversLandOnTheSameMeasuredMiniSlot() {
+        for (edge in listOf(40f, 48f, 72f)) {
+            val geometry = Layout(20f, 12f, edge, edge, edge / 2f, edge / 2f)
+            val compact = Transform(1f, 1f, -100f, 700f)
+            val aligned = checkNotNull(TabletChromeArtworkPolicy.align(compact, geometry, target, 0f))
+            assertFrame(target, frame(aligned, geometry))
+            assertTrue(TabletChromeArtworkPolicy.ownsMiniCover(0.01f, aligned = true, nativeVisible = true, collapsed = false))
+        }
+    }
+
+    @Test
+    fun compactArtworkHandoffPreservesTheNativeEndpointAndDoesNotAccumulateOnReversal() {
+        val geometry = Layout(24f, 16f, 48f, 48f, 24f, 24f)
+        val compact = Transform(0.9f, 0.9f, 10f, 250f)
+        val expected = checkNotNull(TabletChromeArtworkPolicy.align(compact, geometry, target, 0.1f))
+        repeat(50) {
+            for (progress in listOf(0f, 0.15f, 0.3499f, 0.35f, 0.2f, 0.01f)) {
+                assertNotNull(TabletChromeArtworkPolicy.align(compact, geometry, target, progress))
+            }
+            assertEquals(expected, TabletChromeArtworkPolicy.align(compact, geometry, target, 0.1f))
+        }
+        assertSame(compact, TabletChromeArtworkPolicy.align(compact, geometry, target, 0.35f))
+    }
+
+    @Test
     fun rectangularNativeLayoutStillMatchesBothSlotDimensions() {
         val geometry = layout.copy(width = 500f, height = 400f, pivotX = 250f, pivotY = 200f)
         val slot = target.copy(width = 48f, height = 46f)

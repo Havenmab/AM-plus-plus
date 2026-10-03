@@ -66,7 +66,6 @@ import dev.amenhancer.module.config.TabletChromeStyle
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.reflect.Method
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -194,12 +193,8 @@ internal class TabletChromeSession(
     // content that carries the host artwork, and the image view actually read from are cached
     // together, so a refresh never scans the hierarchy per frame.
     private val miniTouchGate = TabletGlassGestureGate()
+    private val collapsedPlayerTouchGate = TabletGlassGestureGate()
 
-    /**
-     * Owns the "should the host player behavior intercept this gesture" latch. A DOWN inside a
-     * capsule takes the whole gesture away from the behavior so the module's Compose view receives
-     * it; a DOWN outside leaves the behavior alone so the host page keeps its native handling.
-     */
     private val behaviorBypassGate = TabletGlassGestureGate()
 
     private val miniCapsuleFrame = CapsuleFrame()
@@ -274,15 +269,11 @@ internal class TabletChromeSession(
     private var redirectedMiniTarget: GlassHostView? = null
     private var redirectedMiniDownTime: Long? = null
 
-    // Drag-up hand-off: a gesture that starts on the collapsed capsule and turns into an upward
-    // drag expands the full player instead of dying on the capsule. See [maybeHandOffMiniDrag].
-    private var miniDragDownTime = Long.MIN_VALUE
-    private var miniDragDownX = 0f
-    private var miniDragDownY = 0f
-    private var miniDragHandedOff = false
-
-    /** Host touch slop, read once: the touch seam runs per event and must not query it again. */
-    private val miniDragSlop = ViewConfiguration.get(activity).scaledTouchSlop.toFloat()
+    private val miniDrag = TabletChromeMiniDragPolicy(ViewConfiguration.get(activity).scaledTouchSlop.toFloat())
+    private var miniDragDown: MotionEvent? = null
+    private var nativeMiniDrag: TabletChromeNativeSheetDrag? = null
+    private var forwardingNativeMiniTouch = false
+    private var dispatchingMiniTouch = false
 
     /** A queue-pane selection owed once the sheet has actually opened into the full player. */
     private var queuePanePending = false
@@ -633,28 +624,33 @@ internal class TabletChromeSession(
     override fun shouldPassThroughTouch(view: View, event: MotionEvent): Boolean {
         if (view === topGlass) return passesThroughTopBand(event)
         if (view === miniGlass) return passesThroughMiniBand(event)
+        if (view === playerSheet || view === miniRoot || view === find("player_root")) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                return collapsedPlayerTouchGate.start(
+                    event.downTime,
+                    hitCapsule = !ownsCollapsedMiniTouch() || miniCapsuleHit(event),
+                )
+            }
+            return collapsedPlayerTouchGate.isPassedThrough(event.downTime)
+        }
         return false
     }
 
-    /**
-     * The host player behavior must not swallow a gesture that starts on either capsule, otherwise
-     * the module's Compose view never sees the DOWN and every button plus tap-to-expand is dead.
-     * A DOWN outside both capsules leaves the behavior alone (the host page keeps its native
-     * drag/handling). The choice is latched by the DOWN for the whole gesture.
-     */
     override fun shouldBypassPlayerIntercept(event: MotionEvent): Boolean {
+        if (forwardingNativeMiniTouch) return false
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            return behaviorBypassGate.start(event.downTime, hitCapsule = !capsuleHitEither(event))
+            return behaviorBypassGate.start(
+                event.downTime,
+                hitCapsule = !ownsCollapsedMiniTouch() && !(topGlass?.isShown == true && capsuleHit(event)),
+            )
         }
         return behaviorBypassGate.isPassedThrough(event.downTime)
     }
 
-    private fun capsuleHitEither(event: MotionEvent): Boolean {
-        val top = topGlass?.takeIf { it.isShown && it.width > 0 && it.height > 0 }
-        if (top != null && capsuleHit(event)) return true
-        val mini = miniGlass?.takeIf { it.isShown && it.width > 0 && it.height > 0 }
-        return mini != null && miniCapsuleHit(event)
-    }
+    private fun ownsCollapsedMiniTouch(): Boolean =
+        activated && isCollapsed && miniGlass != null && miniStyledGlass === miniGlass && glassMenuReady
+
+    override fun shouldBypassPlayerTouch(event: MotionEvent): Boolean = shouldBypassPlayerIntercept(event)
 
     // The host field declares BottomSheetBehavior<FrameLayout> but runs PlayerBottomSheetBehavior
     // (and is the activity's only Behavior field). Prefer the value whose runtime class names it so
@@ -765,61 +761,96 @@ internal class TabletChromeSession(
      * returns null so the host page keeps the event.
      */
     override fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean? {
+        if (dispatchingMiniTouch) return null
         val capsule = miniGlass ?: return null
-        if (view !== playerSheet && view.id != resourceId("player_root", "id")) return null
+        if (view !== playerSheet && view !== find("player_root") && view !== capsule) return null
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            finishMiniGesture(cancelNative = true)
             redirectedMiniTarget = capsule.takeIf {
-                activated && isCollapsed && it.isShown && miniCapsuleHit(event)
+                ownsCollapsedMiniTouch() && it.isShown && miniCapsuleHit(event)
             }
             redirectedMiniDownTime = event.downTime.takeIf { redirectedMiniTarget != null }
-            // Arm the drag-up hand-off for every gesture on the collapsed band, whichever way the
-            // host routed its DOWN (its own mini subtree, or this capsule directly).
-            miniDragDownTime = event.downTime
-            miniDragDownX = event.rawX
-            miniDragDownY = event.rawY
-            miniDragHandedOff = false
+            miniDrag.start(event.downTime, event.rawX, event.rawY, hitCapsule = redirectedMiniTarget != null)
+            if (miniDrag.owns(event.downTime)) miniDragDown = MotionEvent.obtain(event)
         }
-        maybeHandOffMiniDrag(event)
         val target = redirectedMiniTarget?.takeIf { redirectedMiniDownTime == event.downTime } ?: return null
-        val location = IntArray(2).also(target::getLocationOnScreen)
-        val forwarded = MotionEvent.obtain(event)
-        forwarded.setLocation(event.rawX - location[0], event.rawY - location[1])
+        if (nativeMiniDrag == null && event.actionMasked == MotionEvent.ACTION_MOVE &&
+            miniDrag.move(event.downTime, event.rawX, event.rawY)
+        ) {
+            beginMiniDrag(target, event)
+        }
         return try {
-            target.dispatchTouchEvent(forwarded)
+            val native = nativeMiniDrag
+            if (native != null) {
+                forwardNativeMiniTouch { native.dispatch(event) }
+                true
+            } else if (miniDrag.dragging) {
+                true
+            } else if (view === target) {
+                null
+            } else {
+                dispatchMiniEvent(target, event)
+            }
         } finally {
-            forwarded.recycle()
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                redirectedMiniTarget = null
-                redirectedMiniDownTime = null
+                finishMiniGesture(cancelNative = false)
             }
         }
     }
 
-    /**
-     * The author's mini player expands on both a tap and an upward drag, and the capsule has to do
-     * both without losing its buttons: a tap (and a tap on a control) still belongs to the capsule,
-     * but once an upward gesture travels past host touch slop the host takes it and the full player
-     * opens.
-     *
-     * The capsule's DOWN is deliberately kept away from the host behavior — that bypass is what
-     * lets the module's Compose view see the gesture at all (see [shouldBypassPlayerIntercept]), and
-     * the bypass runs *before* the behavior's body, so its drag tracker never sees a DOWN and cannot
-     * pick the drag up on a later MOVE. The hand-off therefore drives the host's own expansion entry
-     * point; from there it is the host's sheet animation that opens the player.
-     *
-     * Compare-then-act per event, and one hand-off per gesture.
-     */
-    private fun maybeHandOffMiniDrag(event: MotionEvent) {
-        if (miniDragHandedOff || event.downTime != miniDragDownTime) return
-        if (event.actionMasked != MotionEvent.ACTION_MOVE) return
-        if (!activated || !isCollapsed) return
-        val dy = event.rawY - miniDragDownY
-        val dx = event.rawX - miniDragDownX
-        // Upward (raw Y shrinks) and more vertical than horizontal: a deliberate expand swipe, not
-        // a sloppy press on a control.
-        if (-dy <= miniDragSlop || -dy <= abs(dx)) return
-        miniDragHandedOff = true
-        expandPlayer()
+    private fun beginMiniDrag(target: GlassHostView, event: MotionEvent) {
+        dispatchMiniEvent(target, event, MotionEvent.ACTION_CANCEL)
+        val down = miniDragDown ?: return
+        val behavior = playerBehavior ?: return
+        val sheet = playerSheet ?: return
+        val native = TabletChromeNativeSheetDrag.resolve(behavior, sheet) ?: run {
+            ModernXposedRuntime.log("tablet chrome native mini drag seams unavailable")
+            return
+        }
+        nativeMiniDrag = native
+        val started = forwardNativeMiniTouch { native.start(down) }
+        if (!started) {
+            forwardNativeMiniTouch { native.cancel(); false }
+            nativeMiniDrag = null
+        }
+    }
+
+    private fun forwardNativeMiniTouch(action: () -> Boolean): Boolean {
+        forwardingNativeMiniTouch = true
+        return try {
+            runCatching(action).onFailure {
+                ModernXposedRuntime.log("tablet chrome native mini drag failed", it)
+            }.getOrDefault(false)
+        } finally {
+            forwardingNativeMiniTouch = false
+        }
+    }
+
+    private fun dispatchMiniEvent(target: GlassHostView, event: MotionEvent, action: Int = event.action): Boolean {
+        val location = IntArray(2).also(target::getLocationOnScreen)
+        val forwarded = MotionEvent.obtain(event).apply {
+            setLocation(event.rawX - location[0], event.rawY - location[1])
+            this.action = action
+        }
+        dispatchingMiniTouch = true
+        return try {
+            target.dispatchTouchEvent(forwarded)
+        } finally {
+            dispatchingMiniTouch = false
+            forwarded.recycle()
+        }
+    }
+
+    private fun finishMiniGesture(cancelNative: Boolean) {
+        nativeMiniDrag?.let { native ->
+            if (cancelNative) forwardNativeMiniTouch { native.cancel(); true } else native.finish()
+        }
+        nativeMiniDrag = null
+        miniDragDown?.recycle()
+        miniDragDown = null
+        miniDrag.clear()
+        redirectedMiniTarget = null
+        redirectedMiniDownTime = null
     }
 
     // ---- Bottom mini-player capsule ----------------------------------------------------------
@@ -889,6 +920,7 @@ internal class TabletChromeSession(
     }
 
     private fun releaseMiniCapsule() {
+        finishMiniGesture(cancelNative = true)
         restoreNativeArtworkTransform()
         artworkAnchorView = null
         artworkState.clear()
@@ -943,15 +975,21 @@ internal class TabletChromeSession(
     }
 
     override fun alignNativeArtwork(artwork: View, slide: Float) {
-        if (!activated || topClosed || !slide.isFinite() || artwork !== find("fullplayerSongImage")) return
-        val container = artwork.parent as? View ?: return
-        if (container.id != resourceId("artwork_container", "id")) return
+        if (!activated || topClosed || !slide.isFinite() || !isPlayerArtwork(artwork)) return
         if (artworkAnchorView !== artwork) {
             restoreNativeArtworkTransform()
             artworkAnchorView = artwork
         }
         artworkState.capture(artworkTransform(artwork), slide)
         updateNativeArtworkAlignment()
+    }
+
+    private fun isPlayerArtwork(artwork: View): Boolean {
+        val host = find("player_fragments_host") ?: return false
+        if (!contains(host, artwork)) return false
+        return artwork.id == resourceId("fullplayerSongImage", "id") ||
+            artwork.id == resourceId("lyrics_thumbnail_container", "id") ||
+            artwork.id == resourceId("queue_thumbnail_container", "id")
     }
 
     protected override fun playerFragmentsAlphaFactor(progress: Float, materialProgress: Float): Float =
@@ -962,7 +1000,7 @@ internal class TabletChromeSession(
         val native = artworkState.native
         val container = artwork?.parent as? View
         if (!activated || topClosed || artwork == null || native == null || container == null ||
-            !artwork.isAttachedToWindow || artwork !== find("fullplayerSongImage")
+            !artwork.isAttachedToWindow || !isPlayerArtwork(artwork)
         ) {
             restoreNativeArtworkTransform()
             nativeArtworkOwnsMiniCover = false

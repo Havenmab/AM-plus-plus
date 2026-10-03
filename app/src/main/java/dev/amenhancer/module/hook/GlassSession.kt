@@ -42,6 +42,7 @@ internal interface GlassSession : AutoCloseable {
 
     fun shouldPassThroughTouch(view: View, event: MotionEvent): Boolean
     fun shouldBypassPlayerIntercept(event: MotionEvent): Boolean
+    fun shouldBypassPlayerTouch(event: MotionEvent): Boolean = false
     /** Returns null for normal dispatch, or the native mini player's handled result. */
     fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean?
     fun observeTouch(event: MotionEvent)

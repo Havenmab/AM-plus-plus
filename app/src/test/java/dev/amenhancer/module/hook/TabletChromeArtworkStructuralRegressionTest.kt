@@ -55,7 +55,7 @@ class TabletChromeArtworkStructuralRegressionTest {
     @Test
     fun closeRestoresHostTransformAndReinflationDropsStaleSlotCoordinates() {
         val tablet = source("TabletChromeSession.kt")
-        assertTrue(tablet.contains("private fun releaseMiniCapsule() { restoreNativeArtworkTransform()"))
+        assertTrue(tablet.contains("private fun releaseMiniCapsule() { finishMiniGesture(cancelNative = true) restoreNativeArtworkTransform()"))
         assertTrue(tablet.contains("artworkAnchorView = null artworkState.clear()"))
         assertTrue(tablet.contains("miniCoverCoordinates = null nativeArtworkOwnsMiniCover = false"))
     }

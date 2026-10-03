@@ -45,6 +45,8 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
+import com.kyant.shapes.RoundedCornerStyle
+import com.kyant.shapes.RoundedRectangle
 
 /** Every transport/auxiliary action the tablet mini capsule can request from its host. */
 enum class GlassMiniPlayerCommand { SHUFFLE, PREVIOUS, PLAY_PAUSE, NEXT, REPEAT, MORE, LYRICS, QUEUE }
@@ -160,7 +162,7 @@ fun GlassMiniPlayer(
     }
     val coverSize = (panelHeight * COVER_SIZE_FRACTION).coerceAtLeast(0.dp)
     val coverShape = remember(coverSize) {
-        RoundedCornerShape(coverSize * COVER_CORNER_FRACTION)
+        RoundedRectangle(coverSize * COVER_CORNER_FRACTION, RoundedCornerStyle.Continuous)
     }
     val placeholderColor = remember(foreground) { foreground.copy(alpha = PLACEHOLDER_ALPHA) }
     val expand = rememberUpdatedState(onExpand)

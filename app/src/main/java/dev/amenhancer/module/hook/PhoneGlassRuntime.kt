@@ -149,6 +149,18 @@ internal object PhoneGlassRuntime {
                 }
             }
         })
+        if (build.versionName == "6.5.3" && build.versionCode == 1599L) {
+            val base = loader.loadClass("com.google.android.material.bottomsheet.BottomSheetBehavior")
+            val touch = base.getDeclaredMethod("s", intercept.parameterTypes[0], View::class.java, MotionEvent::class.java)
+            ModernXposedRuntime.hookMethod(touch, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val event = param.args.getOrNull(2) as? MotionEvent ?: return
+                    if (sessions.values.any { it.playerBehavior === param.thisObject && it.shouldBypassPlayerTouch(event) }) {
+                        param.result = false
+                    }
+                }
+            })
+        }
         ModernXposedRuntime.hookMethod(peek, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 sessions.values.firstOrNull { it.playerBehavior === param.thisObject }?.let {

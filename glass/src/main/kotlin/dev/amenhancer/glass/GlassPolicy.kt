@@ -37,11 +37,13 @@ object GlassPolicy {
      */
     const val TABLET_NAV_HEIGHT_FRACTION = 0.92f
     /**
-     * 0.9 rather than the initially chosen 0.8: measured against the reference bar the labels read
-     * cramped at 0.8, because the label size relative to the reduced capsule height is what makes
-     * the row look dense. Height is deliberately unchanged.
+     * 1.0 (no inset) is the widest the capsule can be without overflowing the anchor the host
+     * reports.  Measuring the reference bar showed its roomier label spacing comes from it having
+     * one fewer tab, not from a smaller glyph or a different style: normalised by glyph size the
+     * two bars' letters are the same and the gap difference is almost exactly one label's worth of
+     * width.  Since the host menu keeps its fourth entry, full width is as close as this bar gets.
      */
-    const val TABLET_NAV_WIDTH_FRACTION = 0.9f
+    const val TABLET_NAV_WIDTH_FRACTION = 1.0f
     const val MINI_HEIGHT_DP = 43
     const val HORIZONTAL_DP = 16
     const val GAP_DP = 8

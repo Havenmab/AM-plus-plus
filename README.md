@@ -39,16 +39,9 @@
 
 </details>
 
-## 版本适配重构
-
-架构和后续适配入口见 [适配手册](docs/host-adaptation-guide.md)，旧版重构验证见 [验证记录](docs/refactor-validation.md)。开发分支已为精确的 Apple Music **7.0.0-beta/1606** 实现 Fragment 接入和新平板玻璃，正在用户真机验收，详见 [1606 适配记录](docs/applemusic-700-adaptation.md)。其他 7.x 版本需要独立适配。
-
-
 ## 项目简介
 
-AM++ 通过 libxposed API 102 注入 Apple Music（`com.apple.android.music`）。它不替换播放器，只在保留原有播放流程的前提下补充增强能力。
-
-设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。首次启动时会把 Xposed remote preferences／remote file 中的旧配置迁移到 Apple Music 宿主私有目录，之后设置和文件都保存在那里。
+设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。
 
 ## 功能
 

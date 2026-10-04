@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -104,10 +105,18 @@ fun GlassNavigation(
                             } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
                         }
                     }
-                    if (style == GlassNavigationStyle.Stacked || tab.icon == null)
-                        BasicText(tab.title, style = TextStyle(color = foreground,
-                            fontSize = if (style == GlassNavigationStyle.Stacked) 11.sp else 14.sp),
+                    if (style == GlassNavigationStyle.Stacked || tab.icon == null) {
+                        // The tablet chrome overlays the host's top tab bar, whose own labels are
+                        // slightly larger and heavier than the phone bottom bar's; the two styles
+                        // therefore get different label typography.
+                        val labelStyle = if (style == GlassNavigationStyle.Stacked) {
+                            TextStyle(color = foreground, fontSize = 11.sp)
+                        } else {
+                            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                        BasicText(tab.title, style = labelStyle,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }

@@ -123,7 +123,7 @@ internal fun createAutoLyricsRuntime(
             cache.cachedIds().forEach { appleMusicId ->
                 if (appleMusicId in suppressedIds) return@forEach
                 val ttml = cache.read(appleMusicId)
-                    ?.takeIf(TtmlTimingPolicy::isWord)
+                    ?.takeIf(AutoLyricsTimingPolicy::isAcceptableAtSeam)
                     ?: return@forEach
                 when (
                     runCatching {

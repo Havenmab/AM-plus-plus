@@ -1,7 +1,7 @@
 package dev.amenhancer.module.lyrics.source
 
 import dev.amenhancer.module.hook.AutoLyricsCandidate
-import dev.amenhancer.module.hook.TtmlTimingPolicy
+import dev.amenhancer.module.hook.AutoLyricsTimingPolicy
 
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
@@ -41,7 +41,8 @@ data class AutoLyricsSource(
  * native parsing, caching, and publication.
  *
  * Word timing remains the default: only a source that opts in via
- * [AutoLyricsSource.acceptsLineTiming] is accepted with Line timing.
+ * [AutoLyricsSource.acceptsLineTiming] is accepted with Line timing, and only
+ * while [AutoLyricsTimingPolicy.SEARCH_ACCEPTS_LINE_TIMING] is on.
  */
 class AutoLyricsSourceResolver(
     private val sources: List<AutoLyricsSource>,
@@ -50,8 +51,7 @@ class AutoLyricsSourceResolver(
         if (appleMusicId <= 0L) return null
         sources.forEach { source ->
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
-            if (!TtmlInputPolicy.isAcceptable(ttml)) return@forEach
-            if (!source.acceptsLineTiming && !TtmlTimingPolicy.isWord(ttml)) return@forEach
+            if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
             return AutoLyricsCandidate(source.name, ttml)
         }
         return null

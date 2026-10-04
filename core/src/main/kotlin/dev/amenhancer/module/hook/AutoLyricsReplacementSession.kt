@@ -4,7 +4,6 @@ import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
-import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.model.CustomLyricsSources
 import java.io.File
 import java.io.FileInputStream
@@ -96,8 +95,7 @@ class FileAutoLyricsCache(
     override fun write(appleMusicId: Long, ttml: String): Boolean {
         if (
             appleMusicId <= 0L ||
-            !TtmlInputPolicy.isAcceptable(ttml) ||
-            !TtmlTimingPolicy.isWord(ttml)
+            !AutoLyricsTimingPolicy.isAcceptableAtSeam(ttml)
         ) return false
         val bytes = ttml.toByteArray(Charsets.UTF_8)
         val file = lyricFile(appleMusicId) ?: return false
@@ -398,8 +396,8 @@ class AutoLyricsReplacementSession(
         source: String,
         requestGeneration: Long,
     ): Any? {
-        if (!TtmlTimingPolicy.isWord(ttml)) {
-            logger("automatic lyrics candidate rejected as non-word source=$source id=$appleMusicId")
+        if (!AutoLyricsTimingPolicy.isAcceptableAtSeam(ttml)) {
+            logger("automatic lyrics candidate rejected by timing policy source=$source id=$appleMusicId")
             return null
         }
         val pointer = runCatching { parseTtml(ttml) }.getOrNull() ?: return null

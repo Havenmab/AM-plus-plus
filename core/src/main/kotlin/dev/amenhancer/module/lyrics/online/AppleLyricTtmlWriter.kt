@@ -14,6 +14,8 @@ data class AppleTtmlLine(
     val text: String,
     val words: List<AppleTtmlWord>,
     val translation: String? = null,
+    val backgroundTranslation: String? = null,
+    val romanization: String? = null,
 )
 
 /**
@@ -25,6 +27,15 @@ data class AppleTtmlLine(
  * Apple renders those with `lyrics_karaoke_non_breaking_span`, which stops long
  * lines from wrapping.
  *
+ * A line's [AppleTtmlLine.translation] / [AppleTtmlLine.romanization] are
+ * lifted into Apple's head tracks — `translations` and `transliterations`,
+ * linked back through `itunes:key` — the way `AmllTtmlFormatConverter` writes
+ * them: the track lists every keyed line, in key order, and a line without text
+ * still holds a single space so the entries stay contiguous. A line translated
+ * only in its background opens with that same space ahead of an `x-bg` span. A
+ * track no line contributed to is not opened at all, and a document with no
+ * translation or romanization lane is emitted exactly as before.
+ *
  * Pure and textual: whitespace between spans carries word separation, so only
  * markup is generated and lyric text is escaped verbatim.
  */
@@ -32,6 +43,17 @@ object AppleLyricTtmlWriter {
     private const val TTML_NAMESPACE = "http://www.w3.org/ns/ttml"
     private const val ITUNES_NAMESPACE = "http://music.apple.com/lyric-ttml-internal"
     private const val TTM_NAMESPACE = "http://www.w3.org/ns/ttml#metadata"
+
+    /** Pinned the way `AmllTtmlFormatConverter` pins Apple's track languages. */
+    private const val TRANSLATION_LANGUAGE = "zh-Hans"
+    private const val TRANSLITERATION_LANGUAGE = "ko-Latn"
+    private const val TRANSLATION_TYPE = "subtitle"
+
+    /** Stands in for a line the track has no text for, keeping the entry there. */
+    private const val ABSENT_TEXT = " "
+    private const val ROLE_BACKGROUND = "x-bg"
+
+    private val PARENTHESIZED = Regex("""^\s*[(（].*[)）]\s*$""", RegexOption.DOT_MATCHES_ALL)
 
     /** Adapts a parsed source line to the writer's input. */
     fun from(line: LyricsLine): AppleTtmlLine = AppleTtmlLine(
@@ -41,7 +63,20 @@ object AppleLyricTtmlWriter {
         words = line.words.map { AppleTtmlWord(it.start, it.end, it.text) },
     )
 
-    fun from(result: LyricsResult): List<AppleTtmlLine> = result.original.map(::from)
+    /**
+     * Adapts a provider result, carrying the translation/romanization lanes the
+     * provider already aligned (see [OnlineTranslationExtraction]).
+     */
+    fun from(result: LyricsResult): List<AppleTtmlLine> {
+        val lanes = OnlineTranslationExtraction.extract(result)
+        return result.original.mapIndexed { index, line ->
+            val lane = lanes.getOrNull(index)
+            from(line).copy(
+                translation = lane?.translation,
+                romanization = lane?.romanization,
+            )
+        }
+    }
 
     fun build(lines: List<AppleTtmlLine>, durationMs: Long): String {
         // A line-only source may carry a single pseudo word covering the whole
@@ -56,11 +91,9 @@ object AppleLyricTtmlWriter {
                 "itunes:timing=\"$timing\" xml:lang=\"zh-Hans\" " +
                 "xml:space=\"preserve\">"
         )
-        body.append(
-            "<head><metadata><ttm:agent type=\"person\" xml:id=\"v1\"/>" +
-                "<iTunesMetadata xmlns=\"$ITUNES_NAMESPACE\"/>" +
-                "</metadata></head>"
-        )
+        body.append("<head><metadata><ttm:agent type=\"person\" xml:id=\"v1\"/>")
+        body.append(iTunesMetadata(lines))
+        body.append("</metadata></head>")
         body.append("<body dur=\"${duration(durationMs)}\">")
         val firstBegin = lines.firstOrNull()?.begin ?: 0L
         val lastEnd = lines.lastOrNull()?.end ?: durationMs
@@ -104,6 +137,97 @@ object AppleLyricTtmlWriter {
         body.append("</tt>")
         return body.toString()
     }
+
+    /**
+     * The `<iTunesMetadata>` head element. It stays self-closing — byte for
+     * byte what the writer emitted before translation support — when no line
+     * carries an auxiliary lane.
+     */
+    private fun iTunesMetadata(lines: List<AppleTtmlLine>): String {
+        val tracks = buildTracks(lines)
+        return if (tracks.isEmpty()) {
+            "<iTunesMetadata xmlns=\"$ITUNES_NAMESPACE\"/>"
+        } else {
+            "<iTunesMetadata xmlns=\"$ITUNES_NAMESPACE\">$tracks</iTunesMetadata>"
+        }
+    }
+
+    private data class TrackEntry(
+        val key: String,
+        val main: String?,
+        val background: String?,
+    ) {
+        val hasText get() = main != null || background != null
+    }
+
+    private fun buildTracks(lines: List<AppleTtmlLine>): String {
+        val translations = lines.mapIndexed { index, line ->
+            TrackEntry(
+                key = "L${index + 1}",
+                main = OnlineTranslationContentPolicy.sanitize(line.translation),
+                background = OnlineTranslationContentPolicy.sanitize(
+                    line.backgroundTranslation,
+                ),
+            )
+        }
+        val transliterations = lines.mapIndexed { index, line ->
+            TrackEntry(
+                key = "L${index + 1}",
+                main = line.romanization?.trim()?.takeIf(String::isNotEmpty),
+                background = null,
+            )
+        }
+        return buildString {
+            appendTrack(
+                translations,
+                container = "translations",
+                item = "translation",
+                language = TRANSLATION_LANGUAGE,
+                type = TRANSLATION_TYPE,
+            )
+            appendTrack(
+                transliterations,
+                container = "transliterations",
+                item = "transliteration",
+                language = TRANSLITERATION_LANGUAGE,
+            )
+        }
+    }
+
+    private fun StringBuilder.appendTrack(
+        entries: List<TrackEntry>,
+        container: String,
+        item: String,
+        language: String,
+        type: String? = null,
+    ) {
+        // Nothing to say for this kind at all, so the track is not opened —
+        // rather than opened over a column of placeholders.
+        if (entries.none(TrackEntry::hasText)) return
+        append('<').append(container).append('>')
+        append('<').append(item)
+        if (type != null) append(" type=\"").append(type).append('"')
+        append(" xml:lang=\"").append(language).append("\">")
+        entries.forEach { entry ->
+            append("<text for=\"").append(entry.key).append("\">")
+            appendEntryText(entry)
+            append("</text>")
+        }
+        append("</").append(item).append('>')
+        append("</").append(container).append('>')
+    }
+
+    private fun StringBuilder.appendEntryText(entry: TrackEntry) {
+        append(entry.main?.let(::escape) ?: ABSENT_TEXT)
+        val background = entry.background ?: return
+        append("<span ttm:role=\"").append(ROLE_BACKGROUND).append("\">")
+        append(escape(parenthesized(background)))
+        append("</span>")
+    }
+
+    /** Apple parenthesizes a background track; AMLL leaves that to the reader. */
+    private fun parenthesized(text: String): String =
+        if (PARENTHESIZED.matches(text)) text else "($text)"
 
     /** Apple's real TTML uses decimal-seconds timestamps (`s.mmm`). */
     fun seconds(milliseconds: Long): String {

@@ -328,6 +328,22 @@ class LyricMatchPolicyTest {
         )
     }
 
+    @Test
+    fun `provenance aware global best keeps the caller's wrapper and its own pass floor`() {
+        data class Wrapper(val label: String, val candidate: ScoredSong)
+        val low = Wrapper("low", ScoredSong(candidate(title = "Low", source = Source.KUWO), 86))
+        val high = Wrapper("high", ScoredSong(candidate(title = "High", source = Source.QM), 99))
+        val failing = Wrapper("failing", ScoredSong(candidate(title = "Fail", source = Source.NE), 84))
+
+        assertEquals(
+            high,
+            LyricMatchPolicy.selectGlobalBestScored(listOf(low, high, failing)) { it.candidate.score },
+        )
+        assertNull(
+            LyricMatchPolicy.selectGlobalBestScored(listOf(failing)) { it.candidate.score },
+        )
+    }
+
     private fun candidate(
         title: String,
         artist: String = "Artist",

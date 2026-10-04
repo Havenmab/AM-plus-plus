@@ -53,7 +53,15 @@ object LyricMatchPolicy {
 
     /** Highest-scoring passing candidate; the seam for the later opt-in mode. */
     fun selectGlobalBest(candidates: List<ScoredSong>): SongSearchResult? =
-        candidates.filter { it.score >= PASS_SCORE }.maxByOrNull { it.score }?.song
+        selectGlobalBestScored(candidates, ScoredSong::score)?.song
+
+    /**
+     * Highest-scoring passing entry of [entries], keeping the caller's own
+     * wrapper type. The cross-source chain uses this to remember which provider
+     * produced the winner without the policy depending on the provider.
+     */
+    fun <T> selectGlobalBestScored(entries: List<T>, score: (T) -> Int): T? =
+        entries.filter { score(it) >= PASS_SCORE }.maxByOrNull(score)
 
     fun calculateScore(
         song: SongSearchResult,

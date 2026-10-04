@@ -16,8 +16,10 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
+import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.ModuleSettings
 import java.io.File
@@ -39,17 +41,32 @@ private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 /**
  * The opt-in online supplement chain is prepended only while its master setting
  * is on. [selection] carries the enabled, ordered source ids and the match
- * strategy; [sourceFor] constructs one provider per id. When the toggle is off
- * the factory is never invoked, so no provider is constructed and the resolver
- * list is exactly the fixed provider order the runtime had before the feature
- * existed.
+ * strategy, and this builds the single composite entry that owns all of them:
+ * its `fetch` implements both strategies, so the resolver still sees one
+ * leading source no matter how many providers are enabled. When the toggle is
+ * off the factory is never invoked, so no provider is constructed and the
+ * resolver list is exactly the fixed provider order the runtime had before the
+ * feature existed.
  */
 internal fun onlineLyricsLeadingSources(
     enabled: Boolean,
     selection: OnlineLyricSelection,
-    sourceFor: (String) -> AutoLyricsSource?,
-): List<AutoLyricsSource> =
-    if (enabled) selection.sources.mapNotNull(sourceFor) else emptyList()
+    currentTrack: () -> CurrentSongDetails? = { null },
+    providerFor: (String) -> SearchLyricsSource?,
+): List<AutoLyricsSource> {
+    if (!enabled) return emptyList()
+    val providers = selection.sources.mapNotNull { sourceId ->
+        providerFor(sourceId)?.let { OnlineLyricProvider(sourceId, it) }
+    }
+    if (providers.isEmpty()) return emptyList()
+    return listOf(
+        CompositeOnlineSearchAutoLyricsSource.create(
+            mode = selection.mode,
+            providers = providers,
+            currentTrack = currentTrack,
+        ).autoLyricsSource(),
+    )
+}
 
 internal fun createAutoLyricsRuntime(
     application: Application,
@@ -75,15 +92,16 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
+    val sessionStore: NeSessionStore by lazy { SharedPreferencesNeSessionStore(application) }
     val leading = onlineLyricsLeadingSources(
-        onlineLyricsSupplementEnabled,
-        onlineLyricsSelection,
+        enabled = onlineLyricsSupplementEnabled,
+        selection = onlineLyricsSelection,
+        currentTrack = currentTrack,
     ) { sourceId ->
-        onlineLyricSourceFor(
+        onlineLyricProviderFor(
             sourceId = sourceId,
             transport = lyricTransport,
-            mode = onlineLyricsSelection.mode,
-            currentTrack = currentTrack,
+            sessionStore = sessionStore,
         )
     }
     val resolver = AutoLyricsSourceResolver.fixed(

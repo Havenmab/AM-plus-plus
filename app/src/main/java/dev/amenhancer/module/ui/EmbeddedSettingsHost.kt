@@ -37,6 +37,8 @@ internal class EmbeddedSettingsHost private constructor(
     internal var activityReference: WeakReference<Activity>? = null
     internal var dialogReference: WeakReference<Dialog>? = null
     internal var pageRefresh: (() -> Unit)? = null
+    internal var plugins: dev.amenhancer.plugin.runtime.PluginManager? = null
+    internal val pluginDialogs = mutableListOf<WeakReference<Dialog>>()
     internal val customLyricsListState = CustomLyricsListState()
     internal var customLyricsSearchQuery = ""
     internal var pendingTtmlImport: ((String) -> Unit)? = null
@@ -545,6 +547,8 @@ internal class EmbeddedSettingsHost private constructor(
     }
 
     internal fun dismissDialog() {
+        pluginDialogs.toList().forEach { it.get()?.dismiss() }
+        pluginDialogs.clear()
         pendingTtmlImport = null
         dialogReference?.get()?.dismiss()
         dialogReference = null

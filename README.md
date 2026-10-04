@@ -41,6 +41,8 @@
 
 ## 版本适配重构
 
+开发分支新增 ZIP 插件导入与管理：作者使用独立 SDK 维护自己的功能与宿主适配。使用、打包和接入约定见 [插件开发手册](docs/plugin-development.md)，设备验收状态见 [插件验证记录](docs/plugin-validation.md)。
+
 架构和后续适配入口见 [适配手册](docs/host-adaptation-guide.md)，旧版重构验证见 [验证记录](docs/refactor-validation.md)。开发分支已为精确的 Apple Music **7.0.0-beta/1606** 实现 Fragment 接入和新平板玻璃，正在用户真机验收，详见 [1606 适配记录](docs/applemusic-700-adaptation.md)。其他 7.x 版本需要独立适配。
 
 

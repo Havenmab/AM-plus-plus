@@ -105,6 +105,7 @@ internal fun EmbeddedSettingsHost.launchSafPicker(
 internal fun EmbeddedSettingsHost.handleSafSelection(operation: EmbeddedSafOperation, uri: Uri) {
         val activity = currentActivity() ?: return
         when (operation) {
+            EmbeddedSafOperation.PluginZip -> importPluginZip(uri)
             EmbeddedSafOperation.Font -> runAsync(activity) { controller.importFont(uri) }
             EmbeddedSafOperation.Ttml -> {
                 val editorImport = pendingTtmlImport

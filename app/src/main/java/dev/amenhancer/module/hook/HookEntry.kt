@@ -177,6 +177,11 @@ class HookEntry : XposedModule() {
                         )
                         settingsHost = host
                         AppleMusicHostFactory.installSettingsEntry(application, targetClassLoader, host)
+                        runCatching {
+                            val plugins = dev.amenhancer.plugin.runtime.PluginManager(application, targetClassLoader)
+                            host.plugins = plugins
+                            plugins.start()
+                        }.onFailure { ModernXposedRuntime.log("plugin runtime unavailable", it) }
                     }.onFailure { error ->
                         ModernXposedRuntime.log("embedded initialization failed open: $error")
                     }

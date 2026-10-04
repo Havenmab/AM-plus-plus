@@ -12,6 +12,8 @@
 | host-applemusic | 两套旧解析引擎、DexKit、native TTML、双栏、设置入口和元数据接入 | app、glass |
 | app | APK 入口、装配、存储、业务开关、设置 View、玻璃会话呈现 | 功能/页面自行解析宿主成员 |
 | glass / backdrop | 材质呈现和固定上游源码 | Apple Music 版本白名单 |
+| plugin-api | 独立插件 SDK，入口/生命周期/Hook/存储接口 | 项目内部模块、libxposed、Apple Music 私有符号 |
+| plugin-runtime | ZIP 导入、动态加载、状态与冲突分析 | app、host-applemusic、宿主版本 profile |
 
 `AppleMusicHostFactory` 是 app 装配宿主实现的入口。设置页接收 `SettingsViewBridge`/`SettingsActivityMatcher`，不直接依赖 Apple Music 工厂。自动歌词源、发布器与存储仍由 app 注入，宿主模块不会反向读取 app 的内容管理器。
 

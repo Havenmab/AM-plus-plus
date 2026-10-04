@@ -18,4 +18,6 @@ object ModuleConstants {
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"
     const val FEATURE_APPLE_MUSIC_DPI = "apple_music_dpi"
+    /** Tablet iPad-style chrome: top navigation capsule plus the custom mini player. */
+    const val FEATURE_TABLET_CHROME = "tablet_chrome"
 }

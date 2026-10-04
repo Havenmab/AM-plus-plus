@@ -270,6 +270,9 @@ private fun productionFeatureInstallationModule(
                 feature = PhoneLiquidGlassFeature(),
                 registerResources = PhoneLiquidGlassResourceHook::install,
             ),
+            // Sub-option of the liquid-glass bar: the runtime session is created by the glass
+            // resource hook, and this plan records the tablet chrome's install health.
+            FeatureInstallationPlan(feature = TabletChromeFeature()),
             FeatureInstallationPlan(
                 feature = FutureLyricBlurFeature(),
                 registerResources = { LyricCreditsRowResourceHook.install() },

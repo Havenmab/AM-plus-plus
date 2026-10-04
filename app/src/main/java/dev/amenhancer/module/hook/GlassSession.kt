@@ -14,6 +14,9 @@ internal interface GlassSession : AutoCloseable {
     val playerBehavior: Any?
     val activated: Boolean
 
+    /** Feature key this session reports its mounted/failed health under. */
+    val glassFeatureKey: String
+
     fun attachAvailableViews()
     fun ownsCurrentHierarchy(): Boolean
     fun onSlide(progress: Float)
@@ -21,8 +24,25 @@ internal interface GlassSession : AutoCloseable {
     fun peekHeight(): Int
     fun redirectedPadding(view: Any?): Int?
     fun redirectedLayerAlpha(view: Any?, alpha: Float): Float?
+    fun shouldIgnoreTopHeaderDependency(view: View, dependency: View): Boolean = false
+
+    fun beforeNativeArtwork(artwork: View) = Unit
+    fun afterNativeArtworkReset(artwork: View) = Unit
+
+    /**
+     * Corrects the native full-player artwork's screen origin while the sheet slides
+     * ([slide] in `0..1`), called right after Apple's own per-frame artwork write.
+     *
+     * Only the tablet forms need it: that callback computes its rect with
+     * `offsetDescendantRectToMyCoords`, which omits the tablet `artwork_container`'s visual
+     * translation. The stacked phone host has no such translation, so
+     * [PhoneGlassSession]'s implementation is the empty default.
+     */
+    fun alignNativeArtwork(artwork: View, slide: Float)
+
     fun shouldPassThroughTouch(view: View, event: MotionEvent): Boolean
     fun shouldBypassPlayerIntercept(event: MotionEvent): Boolean
+    fun shouldBypassPlayerTouch(event: MotionEvent): Boolean = false
     /** Returns null for normal dispatch, or the native mini player's handled result. */
     fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean?
     fun observeTouch(event: MotionEvent)

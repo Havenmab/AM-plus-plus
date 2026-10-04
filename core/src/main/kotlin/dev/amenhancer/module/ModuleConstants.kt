@@ -8,8 +8,9 @@ object ModuleConstants {
      * 17 keeps this branch clear of the region work, which already reserves 16.
      * 18 adds the online lyric source chain: one enable flag per source, the
      * automatic-order flag, the stored order and the global-best flag.
+     * 19 adds the missing-translation enrichment toggle.
      */
-    const val CONFIG_SCHEMA_VERSION = 18
+    const val CONFIG_SCHEMA_VERSION = 19
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

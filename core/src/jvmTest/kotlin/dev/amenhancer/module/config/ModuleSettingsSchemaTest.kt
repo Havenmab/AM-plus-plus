@@ -90,6 +90,7 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_automatic_order_enabled" to true,
                 "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
                 "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -137,6 +138,7 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_automatic_order_enabled" to true,
                 "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
                 "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -454,6 +456,45 @@ class ModuleSettingsSchemaTest {
         assertEquals("netease,qq,kuwo,kugou", upgraded["online_lyrics_source_order"])
         assertEquals(false, upgraded["online_lyrics_global_best_enabled"])
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `a schema 18 store upgrades with the translation enrichment toggle off`() {
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 18,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+                "online_lyrics_global_best_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_global_best_enabled"])
+        assertEquals(false, upgraded["online_lyrics_translation_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `translation enrichment defaults off rejects malformed values and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).onlineLyricsTranslationEnabled,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_translation_enabled" to "not-a-boolean"),
+            ).onlineLyricsTranslationEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsTranslationEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_translation_enabled"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsTranslationEnabled,
+        )
     }
 
     @Test

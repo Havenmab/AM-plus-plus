@@ -55,6 +55,13 @@ data class ModuleSettings(
      * score floor; defaults off so the ported first-passing behaviour stays.
      */
     val onlineLyricsGlobalBestEnabled: Boolean = false,
+    /**
+     * Fills in a missing lyric translation from the online chain while Apple's
+     * document is showing. Defaults off, and only the translation lane is
+     * touched: Apple's own translation always wins, and a document that needs
+     * no translation is left exactly as it is.
+     */
+    val onlineLyricsTranslationEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,

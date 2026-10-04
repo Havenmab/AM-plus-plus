@@ -20,6 +20,7 @@ internal fun assembleAppleMusicTarget(
             application = application,
             suppressedIds = suppressed,
             onlineLyricsSupplementEnabled = settings.onlineLyricsSupplementEnabled,
+            onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled,
             onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings),
             currentTrack = { currentSong.current()?.details },
         )

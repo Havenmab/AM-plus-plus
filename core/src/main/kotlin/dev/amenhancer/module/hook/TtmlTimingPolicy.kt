@@ -141,10 +141,26 @@ class TtmlTimingObservationRegistry(
         ): Boolean = size > maxEntries.coerceAtLeast(1)
     }
 
+    /**
+     * Raw TTML for the same verified song IDs, bounded like the metadata map.
+     * The translation pass reads the displayed document back so an online lane
+     * can be merged into Apple's own lines.
+     */
+    private val rawTtmlById = object : LinkedHashMap<Long, String>(
+        maxEntries.coerceAtLeast(1),
+        0.75f,
+        true,
+    ) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<Long, String>?,
+        ): Boolean = size > maxEntries.coerceAtLeast(1)
+    }
+
     fun record(
         pointer: Any?,
         metadata: TtmlDocumentMetadata,
         appleMusicId: Long? = null,
+        rawTtml: String? = null,
     ) {
         if (pointer == null) return
         synchronized(observations) {
@@ -155,7 +171,10 @@ class TtmlTimingObservationRegistry(
             }
             while (observations.size >= maxEntries.coerceAtLeast(1)) observations.removeFirst()
             observations.addLast(Observation(java.lang.ref.WeakReference(pointer), metadata))
-            appleMusicId?.takeIf { it > 0L }?.let { idObservations[it] = metadata }
+            appleMusicId?.takeIf { it > 0L }?.let { id ->
+                idObservations[id] = metadata
+                rawTtml?.let { raw -> rawTtmlById[id] = raw }
+            }
         }
     }
 
@@ -180,6 +199,12 @@ class TtmlTimingObservationRegistry(
     fun metadataOfAppleMusicId(appleMusicId: Long): TtmlDocumentMetadata? {
         if (appleMusicId <= 0L) return null
         synchronized(observations) { return idObservations[appleMusicId] }
+    }
+
+    /** Returns the raw TTML observed for a verified song ID, or null. */
+    fun rawTtmlOfAppleMusicId(appleMusicId: Long): String? {
+        if (appleMusicId <= 0L) return null
+        synchronized(observations) { return rawTtmlById[appleMusicId] }
     }
 
     fun modeOf(pointer: Any?): TtmlTimingMode? {

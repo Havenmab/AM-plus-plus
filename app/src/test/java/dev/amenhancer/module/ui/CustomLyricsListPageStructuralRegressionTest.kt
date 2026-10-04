@@ -109,6 +109,7 @@ class CustomLyricsListPageStructuralRegressionTest {
 
         listOf(
             "onlineLyricsSupplementEnabled",
+            "onlineLyricsTranslationEnabled",
             "onlineLyricsAutomaticOrderEnabled",
             "onlineLyricsGlobalBestEnabled",
             "OnlineLyricSources.DEFAULT_ORDER.forEach",

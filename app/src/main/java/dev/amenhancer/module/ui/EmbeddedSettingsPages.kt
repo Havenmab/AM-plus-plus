@@ -552,6 +552,19 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             // Re-render so the source rows below enable/disable with the master.
             pageRefresh?.invoke()
         })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            "补全歌词翻译",
+            "Apple 歌词缺少翻译时用在线来源补齐；Apple 自带翻译优先，更改后重开 Apple Music 生效",
+            settings.onlineLyricsTranslationEnabled,
+            enabled = settings.customLyricsEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it)) })
 
         val chainEnabled = settings.customLyricsEnabled && settings.onlineLyricsSupplementEnabled
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))

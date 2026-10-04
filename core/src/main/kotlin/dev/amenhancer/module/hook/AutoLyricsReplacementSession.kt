@@ -59,6 +59,13 @@ data class AutoLyricsRuntime(
     val executor: Executor,
     val publisher: AutoLyricsPublisher? = null,
     val suppressedIds: Set<Long> = emptySet(),
+    /**
+     * Fetches and merges a missing translation lane for the displayed document:
+     * `(appleMusicId, rawAppleTtml) -> merged ttml`. Null while the translation
+     * toggle is off, so the target's automatic path is exactly the existing
+     * resolver lookup.
+     */
+    val translationEnricher: ((Long, String) -> String?)? = null,
 )
 
 /**

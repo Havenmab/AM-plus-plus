@@ -20,6 +20,16 @@ data class OnlineTranslationLine(
 )
 
 /**
+ * One online provider's lyric body, already flattened to the lanes the matcher
+ * consumes. The host chain collects these; the pure enrichment policy decides
+ * which one wins and merges it into the displayed document.
+ */
+data class OnlineTranslationCandidate(
+    val source: Source,
+    val lines: List<OnlineTranslationLine>,
+)
+
+/**
  * Metadata attached to a native line or document. HLE's `LyricMetadata` is a
  * `Map<String, String?>`; the delegate keeps `.entries`, iteration and lookup
  * identical while adding the one accessor the translation code uses.

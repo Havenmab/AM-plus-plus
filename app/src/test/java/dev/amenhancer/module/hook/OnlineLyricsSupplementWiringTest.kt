@@ -11,6 +11,8 @@ import dev.amenhancer.module.model.OnlineLyricSources
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,25 +25,6 @@ import org.junit.Test
 class OnlineLyricsSupplementWiringTest {
 
     @Test
-    fun `the master toggle off keeps every search provider absent instead of failing`() {
-        var constructed = false
-
-        val leading = onlineLyricsLeadingSources(
-            enabled = false,
-            selection = OnlineLyricSelection(
-                sources = OnlineLyricSources.DEFAULT_ORDER,
-                mode = LyricSelectionMode.FIRST_PASSING,
-            ),
-        ) { sourceId ->
-            constructed = true
-            provider(sourceId)
-        }
-
-        assertTrue(leading.isEmpty())
-        assertFalse(constructed)
-    }
-
-    @Test
     fun `the master toggle on builds one composite entry over the enabled sources in order`() {
         val selection = OnlineLyricSelection(
             sources = listOf(CustomLyricsSources.KUWO, CustomLyricsSources.NETEASE),
@@ -49,10 +32,14 @@ class OnlineLyricsSupplementWiringTest {
         )
         val constructed = mutableListOf<String>()
 
-        val leading = onlineLyricsLeadingSources(enabled = true, selection = selection) { sourceId ->
+        val leading = buildOnlineLyricsChain(
+            supplementEnabled = true,
+            translationEnabled = false,
+            selection = selection,
+        ) { sourceId ->
             constructed += sourceId
             provider(sourceId)
-        }
+        }.leading
 
         assertEquals(1, leading.size)
         assertEquals(ONLINE_SEARCH_LYRIC_SOURCE, leading.single().name)
@@ -67,9 +54,13 @@ class OnlineLyricsSupplementWiringTest {
             mode = LyricSelectionMode.FIRST_PASSING,
         )
 
-        val leading = onlineLyricsLeadingSources(enabled = true, selection = selection) { sourceId ->
+        val leading = buildOnlineLyricsChain(
+            supplementEnabled = true,
+            translationEnabled = false,
+            selection = selection,
+        ) { sourceId ->
             if (sourceId == "unknown") null else provider(sourceId)
-        }
+        }.leading
 
         assertEquals(1, leading.size)
         assertEquals(ONLINE_SEARCH_LYRIC_SOURCE, leading.single().name)
@@ -89,12 +80,73 @@ class OnlineLyricsSupplementWiringTest {
                 "onlineLyricsSupplementEnabled = settings.onlineLyricsSupplementEnabled",
             ),
         )
+        assertTrue(
+            assembly.contains(
+                "onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled",
+            ),
+        )
         assertTrue(assembly.contains("onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings)"))
         assertTrue(assembly.contains("currentTrack = { currentSong.current()?.details }"))
-        assertTrue(runtime.contains("onlineLyricsLeadingSources("))
+        assertTrue(runtime.contains("buildOnlineLyricsChain("))
         assertTrue(runtime.contains("onlineLyricProviderFor("))
         assertTrue(runtime.contains("SharedPreferencesNeSessionStore(application)"))
-        assertTrue(runtime.contains("leading = leading"))
+        assertTrue(runtime.contains("leading = chain.leading"))
+        assertTrue(runtime.contains("translationEnricher = chain.composite"))
+    }
+
+    @Test
+    fun `both online toggles off construct no provider and no enricher`() {
+        var constructed = false
+
+        val chain = buildOnlineLyricsChain(
+            supplementEnabled = false,
+            translationEnabled = false,
+            selection = OnlineLyricSelection(
+                sources = OnlineLyricSources.DEFAULT_ORDER,
+                mode = LyricSelectionMode.FIRST_PASSING,
+            ),
+        ) { sourceId ->
+            constructed = true
+            provider(sourceId)
+        }
+
+        assertTrue(chain.leading.isEmpty())
+        assertNull(chain.composite)
+        assertFalse(constructed)
+    }
+
+    @Test
+    fun `the translation toggle borrows the composite without prepending a supplement`() {
+        val selection = OnlineLyricSelection(
+            sources = listOf(CustomLyricsSources.KUWO),
+            mode = LyricSelectionMode.FIRST_PASSING,
+        )
+
+        val chain = buildOnlineLyricsChain(
+            supplementEnabled = false,
+            translationEnabled = true,
+            selection = selection,
+        ) { provider(it) }
+
+        assertTrue(chain.leading.isEmpty())
+        assertNotNull(chain.composite)
+    }
+
+    @Test
+    fun `the supplement toggle prepends one composite entry`() {
+        val selection = OnlineLyricSelection(
+            sources = listOf(CustomLyricsSources.KUWO),
+            mode = LyricSelectionMode.FIRST_PASSING,
+        )
+
+        val chain = buildOnlineLyricsChain(
+            supplementEnabled = true,
+            translationEnabled = false,
+            selection = selection,
+        ) { provider(it) }
+
+        assertEquals(listOf(ONLINE_SEARCH_LYRIC_SOURCE), chain.leading.map { it.name })
+        assertNotNull(chain.composite)
     }
 
     private fun provider(sourceId: String): SearchLyricsSource = object : SearchLyricsSource {

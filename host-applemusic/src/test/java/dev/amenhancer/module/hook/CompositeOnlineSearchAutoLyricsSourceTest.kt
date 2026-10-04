@@ -5,6 +5,7 @@ import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.LyricsLine
 import dev.amenhancer.module.lyrics.online.LyricsResult
 import dev.amenhancer.module.lyrics.online.LyricsWord
+import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.SongSearchResult
 import dev.amenhancer.module.lyrics.online.Source
@@ -237,6 +238,137 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         assertEquals(1, fast.lyricFetchCount)
     }
 
+    @Test
+    fun `a candidate carrying a translation passes the translation-required chain`() {
+        val translated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, translated)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertEquals(Source.QM, candidates.single().source)
+        assertEquals(1, translated.lyricFetchCount)
+    }
+
+    @Test
+    fun `translation required keeps looking past a provider whose lyrics carry none`() {
+        val untranslated = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO)),
+            lyrics = lyrics("original"),
+        )
+        val translated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, untranslated, translated)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.QM), candidates.map(OnlineTranslationCandidate::source))
+        assertEquals(1, untranslated.lyricFetchCount)
+        assertEquals(1, translated.lyricFetchCount)
+    }
+
+    @Test
+    fun `global best translation keeps only translation-bearing passing candidates`() {
+        val lowerScoreTranslated = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO, duration = 202_000L)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+        val higherScoreUntranslated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = lyrics("original"),
+        )
+
+        val candidates = chain(
+            LyricSelectionMode.GLOBAL_BEST,
+            lowerScoreTranslated,
+            higherScoreUntranslated,
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.KUWO), candidates.map(OnlineTranslationCandidate::source))
+        assertEquals(1, lowerScoreTranslated.lyricFetchCount)
+        assertEquals(1, higherScoreUntranslated.lyricFetchCount)
+    }
+
+    @Test
+    fun `global best translation ranks translation-bearing candidates by score`() {
+        val lower = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO, duration = 202_000L)),
+            lyrics = translatedLyrics("original", "甲"),
+        )
+        val higher = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "乙"),
+        )
+
+        val candidates = chain(LyricSelectionMode.GLOBAL_BEST, lower, higher)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.QM, Source.KUWO), candidates.map(OnlineTranslationCandidate::source))
+    }
+
+    @Test
+    fun `translation required is fail open when a provider throws during search`() {
+        val broken = fake(Source.KUWO, searchFailure = IllegalStateException("search down"))
+        val working = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, broken, working)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.QM), candidates.map(OnlineTranslationCandidate::source))
+        assertEquals(0, broken.lyricFetchCount)
+    }
+
+    @Test
+    fun `translation required returns nothing when no candidate reaches the pass floor`() {
+        val first = fake(
+            Source.KUWO,
+            songs = listOf(
+                song("1", Source.KUWO, title = "Other", artist = "Nobody", duration = 10_000L),
+            ),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        assertTrue(
+            chain(LyricSelectionMode.GLOBAL_BEST, first)
+                .fetchTranslationCandidates(TRACK.appleMusicId)
+                .isEmpty(),
+        )
+        assertEquals(0, first.lyricFetchCount)
+    }
+
+    @Test
+    fun `translation required searches nothing for a track mismatch`() {
+        val source = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        assertTrue(
+            chain(LyricSelectionMode.FIRST_PASSING, source)
+                .fetchTranslationCandidates(43L)
+                .isEmpty(),
+        )
+        assertEquals(0, source.searchCount)
+        assertEquals(0, source.lyricFetchCount)
+    }
+
     private fun chain(
         mode: LyricSelectionMode,
         vararg sources: FakeSearchSource,
@@ -298,6 +430,27 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             ),
         ),
         translated = null,
+        romanization = null,
+    )
+
+    private fun translatedLyrics(text: String, translation: String?): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            LyricsLine(
+                start = 0L,
+                end = 1_000L,
+                words = listOf(LyricsWord(start = 0L, end = 1_000L, text = text)),
+            ),
+        ),
+        translated = translation?.let {
+            listOf(
+                LyricsLine(
+                    start = 0L,
+                    end = 1_000L,
+                    words = listOf(LyricsWord(start = 0L, end = 1_000L, text = it)),
+                ),
+            )
+        },
         romanization = null,
     )
 

@@ -90,6 +90,10 @@ object ModuleSettingsSchema {
             KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
             default = false,
         ),
+        onlineLyricsTranslationEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
+            default = false,
+        ),
         fontManifest = values.fontManifest(),
         customLyricsManifest = values.customLyricsManifest(),
         schemaVersion = values.number(KEY_SCHEMA_VERSION)
@@ -146,6 +150,7 @@ object ModuleSettingsSchema {
                 OnlineLyricSources.normalizeOrder(settings.onlineLyricsSourceOrder)
                     .joinToString(","),
             KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED to settings.onlineLyricsGlobalBestEnabled,
+            KEY_ONLINE_LYRICS_TRANSLATION_ENABLED to settings.onlineLyricsTranslationEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return values
@@ -309,6 +314,7 @@ object ModuleSettingsSchema {
         KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED,
         KEY_ONLINE_LYRICS_SOURCE_ORDER,
         KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
+        KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
         KEY_FONT_FILE_ID,
@@ -357,6 +363,8 @@ object ModuleSettingsSchema {
     private const val KEY_ONLINE_LYRICS_SOURCE_ORDER = "online_lyrics_source_order"
     private const val KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED =
         "online_lyrics_global_best_enabled"
+    private const val KEY_ONLINE_LYRICS_TRANSLATION_ENABLED =
+        "online_lyrics_translation_enabled"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

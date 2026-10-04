@@ -9,6 +9,9 @@ import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.NeSource
+import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
+import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.QmSource
 import dev.amenhancer.module.lyrics.online.ScoredSong
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
@@ -35,6 +38,13 @@ data class OnlineLyricProvider(
  * previous per-provider ids into the same manually-managed bucket.
  */
 const val ONLINE_SEARCH_LYRIC_SOURCE = "online-search"
+
+/**
+ * The published source id for a translation lane the chain resolved. Only a
+ * provider whose lyrics carry a usable translation counts, and the merged
+ * document keeps Apple's displayed lines.
+ */
+const val ONLINE_TRANSLATION_LYRIC_SOURCE = "online-translation"
 
 /**
  * The whole search fan-out settles inside this budget. Four searches run with
@@ -68,6 +78,11 @@ private const val MAX_PARALLEL_SEARCHES = 4
  * candidate, and a throwing or empty lyric fetch makes the chain try the next
  * provider in first-passing mode or fall back to null in global-best mode. The
  * outer [fetch] never lets an exception escape.
+ *
+ * [fetchTranslationCandidates] is the translation-required variant of the same
+ * chain: a candidate whose fetched lyrics carry no usable translation lane does
+ * not pass, so first-passing keeps walking providers and global-best keeps only
+ * translation-bearing passers. It is fail-open too, returning an empty list.
  */
 class CompositeOnlineSearchAutoLyricsSource private constructor(
     private val mode: LyricSelectionMode,
@@ -88,13 +103,46 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     fun fetch(appleMusicId: Long): String? =
         runCatching { fetchOrNull(appleMusicId) }.getOrNull()
 
+    /**
+     * The translation-required variant of the same chain: only a provider whose
+     * fetched lyric body carries a usable translation lane counts as passing, so
+     * the chain keeps looking when a candidate has none. Never throws; an empty
+     * list means "no source could supply a translation".
+     *
+     * First-passing keeps the ordered walk and stops at the first provider that
+     * both passes the score floor and carries a translation. Global-best scores
+     * every provider, keeps the passing candidates in descending score order and
+     * returns every one that carries a translation, so the pure selector can rank
+     * them by translation quality.
+     */
+    fun fetchTranslationCandidates(appleMusicId: Long): List<OnlineTranslationCandidate> =
+        runCatching { translationCandidatesOrNull(appleMusicId) }.getOrDefault(emptyList())
+
+    private fun translationCandidatesOrNull(appleMusicId: Long): List<OnlineTranslationCandidate> {
+        if (appleMusicId <= 0L || providers.isEmpty()) return emptyList()
+        val request = searchRequest(appleMusicId) ?: return emptyList()
+        return when (mode) {
+            LyricSelectionMode.FIRST_PASSING -> firstPassingTranslations(request)
+            LyricSelectionMode.GLOBAL_BEST -> globalBestTranslations(request)
+        }
+    }
+
     private fun fetchOrNull(appleMusicId: Long): String? {
         if (appleMusicId <= 0L || providers.isEmpty()) return null
+        val request = searchRequest(appleMusicId) ?: return null
+        return when (mode) {
+            LyricSelectionMode.FIRST_PASSING -> firstPassing(request)
+            LyricSelectionMode.GLOBAL_BEST -> globalBest(request)
+        }
+    }
+
+    /** Resolves the verified current track into a search request, or null. */
+    private fun searchRequest(appleMusicId: Long): SearchRequest? {
         val track = currentTrack()?.takeIf { it.appleMusicId == appleMusicId } ?: return null
         val title = track.title?.trim().orEmpty()
         if (title.isEmpty()) return null
         val artist = track.artist?.trim().orEmpty()
-        val request = SearchRequest(
+        return SearchRequest(
             keyword = listOf(title, artist)
                 .filter(String::isNotEmpty)
                 .joinToString(" "),
@@ -105,11 +153,41 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 .filter(String::isNotEmpty),
             localFeatures = LyricMatchPolicy.featuresOf(title),
         )
-        return when (mode) {
-            LyricSelectionMode.FIRST_PASSING -> firstPassing(request)
-            LyricSelectionMode.GLOBAL_BEST -> globalBest(request)
-        }
     }
+
+    /** Ordered walk that skips any provider whose lyrics carry no translation. */
+    private fun firstPassingTranslations(request: SearchRequest): List<OnlineTranslationCandidate> {
+        providers.forEach { provider ->
+            val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
+                .orEmpty()
+            val selected = LyricMatchPolicy.selectFirstPassing(candidates) ?: return@forEach
+            val candidate = translationCandidate(provider, selected) ?: return@forEach
+            return listOf(candidate)
+        }
+        return emptyList()
+    }
+
+    /** Every passing candidate that carries a translation, best score first. */
+    private fun globalBestTranslations(request: SearchRequest): List<OnlineTranslationCandidate> {
+        val byProvider = searchBounded(providers, request)
+        val passing = byProvider.flatMap { searched ->
+            searched.candidates.map { ProviderCandidate(searched.provider, it) }
+        }
+            .filter { it.candidate.score >= LyricMatchPolicy.PASS_SCORE }
+            .sortedByDescending { it.candidate.score }
+        return passing.mapNotNull { entry -> translationCandidate(entry.provider, entry.candidate.song) }
+    }
+
+    /** One provider's aligned lanes, or null when it contributes no translation. */
+    private fun translationCandidate(
+        provider: OnlineLyricProvider,
+        song: SongSearchResult,
+    ): OnlineTranslationCandidate? = runCatching {
+        val result = provider.source.getLyrics(song) ?: return null
+        val lines = OnlineTranslationExtraction.extract(result)
+        if (lines.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) return null
+        OnlineTranslationCandidate(provider.source.sourceType, lines)
+    }.getOrNull()
 
     /** Ordered walk, short-circuiting on the first provider with usable lyrics. */
     private fun firstPassing(request: SearchRequest): String? {

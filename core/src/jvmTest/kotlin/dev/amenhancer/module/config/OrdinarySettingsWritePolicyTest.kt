@@ -124,6 +124,7 @@ class OrdinarySettingsWritePolicyTest {
                 "online_lyrics_automatic_order_enabled" to true,
                 "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
                 "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
                 "schema_version" to ModuleConstants.CONFIG_SCHEMA_VERSION,
             ),
             encoded,

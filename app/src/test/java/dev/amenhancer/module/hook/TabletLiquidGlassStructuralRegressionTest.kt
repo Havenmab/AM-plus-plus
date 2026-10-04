@@ -159,7 +159,7 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 18 adds the online lyric source chain; glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 18"))
+        // Schema 19 adds the translation-enrichment toggle; glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 19"))
     }
 }

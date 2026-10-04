@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidBottomTab
 import com.kyant.backdrop.catalog.components.LiquidBottomTabs
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 data class GlassTab(val id: Int, val title: String, val icon: Drawable?, val enabled: Boolean)
@@ -79,9 +80,10 @@ fun GlassNavigation(
         } else panelHeight
         // The tablet chrome overlays the host's top tab bar, whose own labels are slightly larger
         // and heavier than the phone bottom bar's; the two styles therefore get different label
-        // typography, and the tablet bar sizes each cell to the label it is about to draw.
+        // typography, and the tablet bar sizes each cell to the label it is about to draw. The
+        // reference's labels are heavier still, hence SemiBold on the tablet bar only.
         val labelStyle = if (tabletBar) {
-            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         } else {
             TextStyle(color = foreground, fontSize = 11.sp)
         }
@@ -100,6 +102,30 @@ fun GlassNavigation(
                 }
             }
         } else null
+        // An icon-only tab is exactly the tab that draws its icon and no label above, i.e. the one
+        // with a non-null icon; that flag is the caller's own data rather than a width heuristic.
+        val tabIconOnly = if (tabletBar) remember(tabs) { tabs.map { it.icon != null } } else null
+        val drawerWidth = if (onDrawer == null) 0.dp else barHeight - 8.dp
+        // The capsule is drawn at its content-derived width - the leading action, every padded
+        // cell and the row-inset on both sides - while the layout node still reports the anchor's
+        // full width. Unusable or oversized content clamps to the anchor and falls back to the
+        // full-width geometry, so nothing overflows.
+        val drawnWidthPx = if (tabletBar && tabContentWidths != null) {
+            remember(tabContentWidths, tabIconOnly, drawerWidth, density) {
+                with(density) {
+                    var total = drawerWidth.toPx() + 2f * GlassPolicy.TAB_ROW_INSET_DP.dp.toPx()
+                    tabContentWidths.forEachIndexed { index, width ->
+                        val padding = if (tabIconOnly?.get(index) == true) {
+                            GlassPolicy.TABLET_ICON_TAB_PADDING_DP
+                        } else {
+                            GlassPolicy.TABLET_TAB_PADDING_DP
+                        }
+                        total += width.toPx() + 2f * padding.dp.toPx()
+                    }
+                    total
+                }
+            }
+        } else 0f
         LiquidBottomTabs(
             selectedTabIndex = selection,
             onTabSelected = { i -> tabs.getOrNull(i)?.let { if (it.id != confirmedId.value) request(it) } },
@@ -107,13 +133,15 @@ fun GlassNavigation(
             isTabEnabled = { i -> tabs.getOrNull(i)?.enabled == true },
             backdrop = backdrop,
             tabsCount = tabs.size,
-            modifier = if (tabletBar) Modifier.insetToWidthFraction(GlassPolicy.TABLET_NAV_WIDTH_FRACTION) else Modifier,
+            modifier = if (tabletBar) {
+                Modifier.insetToDrawnWidth(drawnWidthPx, GlassPolicy.TABLET_NAV_WIDTH_FRACTION)
+            } else Modifier,
             accentOverride = accent,
             panelHeight = barHeight,
             panelBlur = panelBlur,
-            leadingWidth = if (onDrawer == null) 0.dp else barHeight - 8.dp,
+            leadingWidth = drawerWidth,
             leadingContent = onDrawer?.let { open -> {
-                Box(Modifier.width(barHeight - 8.dp).fillMaxHeight()
+                Box(Modifier.width(drawerWidth).fillMaxHeight()
                     .semantics { contentDescription = drawerDescription }
                     .clickable(onClick = open), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.size(24.dp)) {
@@ -125,6 +153,7 @@ fun GlassNavigation(
                 }
             } },
             tabContentWidths = tabContentWidths,
+            tabIconOnly = tabIconOnly,
         ) { index, weight ->
             val tab = tabs[index]
             LiquidBottomTab(
@@ -154,23 +183,33 @@ fun GlassNavigation(
 }
 
 /**
- * Draws the bar at [widthFraction] of the available width, inset evenly on both sides, while the
- * layout node itself keeps reporting the full width it was offered.
+ * Draws the bar at an explicit [drawnWidthPx], centred, while the layout node itself keeps
+ * reporting the full width it was offered. [drawnWidthPx] is clamped to [maxWidthFraction] of that
+ * width, so content that does not fit stays at the caller's full-width ceiling instead of
+ * overflowing.
  *
  * The tablet session's layout contract requires the measured Compose content width to equal the
  * glass host view width (`FragmentTabletGlassPolicy.navigationLayoutReady`), so the narrowing has
- * to happen inside the node rather than by sizing the node: a plain `fillMaxWidth(fraction)` would
- * leave the session's native navigation visible forever. The library computes its tab and touch
- * geometry from the constraints it receives, so the inset capsule and its gestures stay consistent.
+ * to happen inside the node rather than by sizing the node: a plain `width(...)` would leave the
+ * session's native navigation visible forever. The library computes its tab and touch geometry
+ * from the constraints it receives, so the content-hugging capsule and its gestures stay
+ * consistent with the narrower content box.
  */
-private fun Modifier.insetToWidthFraction(widthFraction: Float): Modifier = layout { measurable, constraints ->
-    if (!constraints.hasBoundedWidth) {
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-    } else {
-        val inset = ((constraints.maxWidth * (1f - widthFraction)) / 2f).roundToInt()
-        val width = (constraints.maxWidth - inset * 2).coerceAtLeast(0)
-        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
-        layout(constraints.maxWidth, placeable.height) { placeable.place(inset, 0) }
+private fun Modifier.insetToDrawnWidth(drawnWidthPx: Float, maxWidthFraction: Float = 1f): Modifier =
+    layout { measurable, constraints ->
+        if (!constraints.hasBoundedWidth) {
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        } else {
+            val ceiling = (constraints.maxWidth * maxWidthFraction).roundToInt()
+                .coerceIn(0, constraints.maxWidth)
+            // Round the content-derived width up so the dp -> px -> Int round trip cannot leave the
+            // measured cells a sub-pixel wider than the box and trip the fallback.
+            val width = if (drawnWidthPx.isFinite()) {
+                ceil(drawnWidthPx).toInt().coerceIn(0, ceiling)
+            } else ceiling
+            val inset = (constraints.maxWidth - width) / 2
+            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+            layout(constraints.maxWidth, placeable.height) { placeable.place(inset, 0) }
+        }
     }
-}

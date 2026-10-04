@@ -95,6 +95,9 @@ fun LiquidBottomTabs(
     // AM++: opt-in content-hugging cells. The caller supplies one intrinsic content width per tab
     // (its measured label or glyph); null keeps upstream's equal-width tabs for every other caller.
     tabContentWidths: List<androidx.compose.ui.unit.Dp>? = null,
+    // AM++: per-tab icon-only flags, parallel to tabContentWidths. A flagged tab takes the much
+    // smaller icon padding so a lone glyph keeps a tight capsule around itself.
+    tabIconOnly: List<Boolean>? = null,
     content: @Composable RowScope.(index: Int, weight: Float) -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -114,7 +117,11 @@ fun LiquidBottomTabs(
     val animationScope = rememberCoroutineScope()
     val offsetAnimation = remember { Animatable(0f) }
     val squeeze = with(density) { 4f.dp.toPx() }
-    val panelInset = with(density) { 4f.dp.toPx() }
+    val panelInset = with(density) { GlassPolicy.TAB_ROW_INSET_DP.dp.toPx() }
+    // AM++: the fixed per-side padding of a content-hugging cell, in px. Only consulted when the
+    // caller supplies measured content, so the equal-width callers are unaffected.
+    val textPadding = with(density) { GlassPolicy.TABLET_TAB_PADDING_DP.dp.toPx() }
+    val iconPadding = with(density) { GlassPolicy.TABLET_ICON_TAB_PADDING_DP.dp.toPx() }
 
     // AM++: the squeeze nudge is read by both the panel layer and the highlight, so it lives
     // in one place and is evaluated against whichever width is being drawn.
@@ -149,7 +156,10 @@ fun LiquidBottomTabs(
             ?.map { with(density) { it.toPx() } }
             .orEmpty()
         val geometry = dev.amenhancer.glass.GlassTabGeometry(
-            constraints.maxWidth.toFloat(), panelInset, leadingPx, tabsCount, measuredContent
+            constraints.maxWidth.toFloat(), panelInset, leadingPx, tabsCount, measuredContent,
+            textPadding = textPadding,
+            iconPadding = iconPadding,
+            iconOnly = tabIconOnly.orEmpty(),
         )
         val tabWidth = geometry.tabWidth
 
@@ -270,7 +280,7 @@ fun LiquidBottomTabs(
                 .then(interactiveHighlight.modifier)
                 .height(panelHeight)
                 .fillMaxWidth()
-                .padding(4f.dp),
+                .padding(GlassPolicy.TAB_ROW_INSET_DP.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = {
                 leadingContent?.invoke(this)
@@ -314,7 +324,7 @@ fun LiquidBottomTabs(
                     .then(interactiveHighlight.modifier)
                     .height(panelHeight - 8f.dp)
                     .fillMaxWidth()
-                    .padding(horizontal = 4f.dp)
+                    .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
                 content = {
@@ -326,7 +336,7 @@ fun LiquidBottomTabs(
 
         Box(
             Modifier
-                .padding(horizontal = 4f.dp)
+                .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                 .graphicsLayer {
                     translationX = if (geometry.uniform) {
                         // Upstream's equal-width pill: kept verbatim so the phone bar keeps its

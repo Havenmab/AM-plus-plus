@@ -37,13 +37,33 @@ object GlassPolicy {
      */
     const val TABLET_NAV_HEIGHT_FRACTION = 0.92f
     /**
-     * 1.0 (no inset) is the widest the capsule can be without overflowing the anchor the host
-     * reports.  Measuring the reference bar showed its roomier label spacing comes from it having
-     * one fewer tab, not from a smaller glyph or a different style: normalised by glyph size the
-     * two bars' letters are the same and the gap difference is almost exactly one label's worth of
-     * width.  Since the host menu keeps its fourth entry, full width is as close as this bar gets.
+     * The hard ceiling on the drawn capsule, as a fraction of the anchor width. 1.0 (no inset) is
+     * the widest the capsule may be without overflowing the anchor the host reports. The tablet
+     * bar is no longer always this wide: it is drawn at its content-derived width (see
+     * [TABLET_TAB_PADDING_DP]) and clamped here, so content that does not fit keeps the full-width
+     * fallback geometry rather than overflowing. The phone bottom bar keeps the anchor untouched.
      */
     const val TABLET_NAV_WIDTH_FRACTION = 1.0f
+    /**
+     * AM++: content-hugging tablet cells. A labelled tab's cell is its measured label plus this
+     * much padding per side, which lets the capsule wrap its content instead of filling the
+     * anchor. Adjacent labels then sit 2 x 18dp = 36dp apart. Measured against the screenshot the
+     * user compared: label gap divided by glyph height is 97.7px / 33.8px = 2.89 here versus
+     * 90px / 39px = 2.31 there, i.e. ~45dp of gap where ~36dp is wanted, so the 2.3 target lands
+     * at 2 x 18dp. The bar height and the glyph are already right, so the gap is the only lever.
+     */
+    const val TABLET_TAB_PADDING_DP = 18f
+    /**
+     * AM++: an icon-only tab (the reference's search magnifier) has no label to pad, so it takes
+     * this much per side and hugs its 24dp glyph: 24 + 2 x 6 = 36dp, a tight capsule around the
+     * icon instead of the ~67dp a two-character label now occupies.
+     */
+    const val TABLET_ICON_TAB_PADDING_DP = 6f
+    /**
+     * The tab row's own inset inside the capsule. Shared by the row's layout and the tablet
+     * capsule's content-derived width so the two cannot drift apart. Unchanged at 4dp.
+     */
+    const val TAB_ROW_INSET_DP = 4f
     const val MINI_HEIGHT_DP = 43
     const val HORIZONTAL_DP = 16
     const val GAP_DP = 8

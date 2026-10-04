@@ -10,11 +10,13 @@ import kotlin.math.roundToInt
  * upstream's behaviour and what the phone bottom bar ([GlassNavigationStyle.Stacked]) keeps.
  *
  * The tablet top bar ([GlassNavigationStyle.TabletLabels]) opts in by passing the measured
- * intrinsic content width of each tab. Each cell is then as wide as its own label (or icon) plus
- * an equal share of the leftover space, so a two-character label sits in a smaller box than a
- * three-character one, an icon-only tab is the narrowest, and the gaps between labels stay equal.
- * A caller that supplies unusable widths (wrong count, non-finite, or wider than the panel) falls
- * back to the equal-cell geometry rather than overflowing.
+ * intrinsic content width of each tab. A cell is then its own content plus a fixed padding per
+ * side ([textPadding], or the much smaller [iconPadding] for a tab flagged in [iconOnly]), so the
+ * capsule wraps its content instead of always filling the anchor and an icon-only tab hugs its
+ * glyph. The gaps between labels are therefore 2 x padding and no longer depend on the leftover
+ * space. When the padded cells do not fit the panel the previous content-plus-equal-share
+ * geometry is kept, and when even the bare content does not fit the equal-cell geometry is kept,
+ * so a long label set never clips or overflows.
  */
 data class GlassTabGeometry(
     val panelWidth: Float,
@@ -23,8 +25,18 @@ data class GlassTabGeometry(
     val count: Int,
     /** AM++: measured intrinsic content (label or glyph) per tab; empty selects equal cells. */
     val contentWidths: List<Float> = emptyList(),
+    /** AM++: fixed horizontal padding added per side of a labelled tab, in px. */
+    val textPadding: Float = 0f,
+    /** AM++: the same for a tab flagged in [iconOnly], in px; normally much smaller. */
+    val iconPadding: Float = 0f,
+    /** AM++: per-tab icon-only flags, parallel to [contentWidths]; only consulted for content. */
+    val iconOnly: List<Boolean> = emptyList(),
 ) {
     private val available: Float = panelWidth - 2f * inset - leadingWidth
+
+    /** Padding added on each side of cell [index]: the icon padding for an icon-only tab. */
+    fun cellPadding(index: Int): Float =
+        if (iconOnly.getOrElse(index) { false }) iconPadding else textPadding
 
     /** True when no usable measured content was supplied; upstream's single scalar cell width. */
     val uniform: Boolean = count <= 0 ||
@@ -33,15 +45,34 @@ data class GlassTabGeometry(
         contentWidths.any { !it.isFinite() || it < 0f } ||
         contentWidths.sum() > available
 
+    /** Total width of the padded cells, or NaN when the padding itself is unusable. */
+    private val paddedTotal: Float = if (uniform ||
+        !textPadding.isFinite() || !iconPadding.isFinite() ||
+        textPadding < 0f || iconPadding < 0f
+    ) Float.NaN else {
+        var total = 0f
+        for (index in 0 until count) total += contentWidths[index] + 2f * cellPadding(index)
+        total
+    }
+
+    /**
+     * AM++: true when every cell is its content plus the fixed per-side padding, so the capsule
+     * is narrower than the panel. False keeps the legacy behaviour: equal cells when no usable
+     * content was supplied, otherwise content plus an equal share of the leftover space.
+     */
+    val contentHugging: Boolean = paddedTotal.isFinite() && paddedTotal <= available
+
     /** Upstream's equal cell width; also the pill width in the default mode. */
     val tabWidth: Float get() = if (count > 0) (available / count).coerceAtLeast(0f) else 0f
 
     /** AM++: per-cell widths. Equal to [tabWidth] whenever [uniform]. */
-    private val widths: FloatArray = if (uniform) {
-        FloatArray(count) { tabWidth }
-    } else {
-        val extra = (available - contentWidths.sum()) / count
-        FloatArray(count) { contentWidths[it] + extra }
+    private val widths: FloatArray = when {
+        uniform -> FloatArray(count) { tabWidth }
+        contentHugging -> FloatArray(count) { contentWidths[it] + 2f * cellPadding(it) }
+        else -> {
+            val extra = (available - contentWidths.sum()) / count
+            FloatArray(count) { contentWidths[it] + extra }
+        }
     }
 
     /** Content-relative cell starts; [starts]`[0]` is 0, before the leading action. */

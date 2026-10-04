@@ -38,4 +38,13 @@ class GlassPolicyTest {
         assertEquals(286, GlassPolicy.occupiedHeight(2f, 24, true, bottomGapDp = 24))
         assertEquals(56, GlassPolicy.occupiedHeight(1f, 0, false, bottomGapDp = 0))
     }
+    @Test fun tabletCellPaddingMatchesTheReferenceLabelGap() {
+        // The reference screenshot sits adjacent labels 2 x 18dp = 36dp apart against a ~15.6dp
+        // glyph, i.e. gap / glyph ~ 2.31; the previous equal-share cells gave ~45dp (2.89).
+        assertEquals(36f, 2f * GlassPolicy.TABLET_TAB_PADDING_DP, 0f)
+        assertEquals(2.31f, 2f * GlassPolicy.TABLET_TAB_PADDING_DP / 15.6f, 0.05f)
+        // An icon-only cell hugs its 24dp glyph instead of taking a two-character label's padding.
+        assertTrue(GlassPolicy.TABLET_ICON_TAB_PADDING_DP < GlassPolicy.TABLET_TAB_PADDING_DP)
+        assertEquals(36f, 24f + 2f * GlassPolicy.TABLET_ICON_TAB_PADDING_DP, 0f)
+    }
 }

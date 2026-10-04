@@ -29,8 +29,7 @@ class PluginManager(private val application: Application, private val hostLoader
     private val tasks = PluginTasks()
     private val sessions = ConcurrentHashMap<String, Session>()
     private val started = AtomicBoolean()
-    private val evaluating = AtomicBoolean()
-    @Volatile private var prepared = false
+    private val conflictChecks = PluginConflictChecks(::evaluateConflicts)
     @Volatile private var conflicts = emptyList<PluginConflict>()
     @Volatile var startupError: String? = null
         private set
@@ -47,13 +46,16 @@ class PluginManager(private val application: Application, private val hostLoader
                 store.installed().filter { it.enabled }
             },
             load = { enabled ->
-                if (enabled.isEmpty()) { prepared = true; return@prepareAndLoad }
+                if (enabled.isEmpty()) return@prepareAndLoad
                 registryListener = HookRegistrations.listen(::checkConflicts)
-                for (installed in enabled) {
-                    val session = Session(installed) { action -> main.post { runCatching(action).onFailure {
+                val pending = enabled.map { installed ->
+                    Session(installed) { action -> main.post { runCatching(action).onFailure {
                         ModernXposedRuntime.log("Plugin stop failed: ${installed.manifest.id}", it)
-                    } } }; sessions[installed.manifest.id] = session
-                    try {
+                    } } }.also { sessions[installed.manifest.id] = it }
+                }
+                for (session in pending) tasks.loadPlugin(
+                    load = {
+                        val installed = session.installed
                         if (Build.VERSION.SDK_INT < installed.manifest.minAndroidApi) throw PluginUnsupportedException("Android 版本不足")
                         PluginStore.validateCode(File(installed.directory, "code.jar"))
                         val loader = DexClassLoader(File(installed.directory, "code.jar").path,
@@ -62,19 +64,17 @@ class PluginManager(private val application: Application, private val hostLoader
                         session.plugin = instance
                         session.stopAction = instance::onStop
                         instance.onLoad(context(session))
-                    } catch (failure: Throwable) { fail(session, failure) }
-                }
-                prepared = true
-                checkConflicts()
-                main.post {
-                    sessions.values.sortedBy { it.installed.manifest.id }.forEach { session ->
-                        if (!session.scope.isClosed) {
+                    },
+                    complete = {
+                        main.post {
                             try {
-                                session.start { session.plugin!!.onStart() }
+                                checkConflicts()
+                                if (!session.scope.isClosed) session.start { session.plugin!!.onStart() }
                             } catch (failure: Throwable) { fail(session, failure) }
                         }
-                    }
-                }
+                    },
+                    failed = { fail(session, it) }
+                )
             },
             failed = { failure ->
                 startupError = failure.message ?: failure.javaClass.simpleName
@@ -113,15 +113,15 @@ class PluginManager(private val application: Application, private val hostLoader
         ModernXposedRuntime.log("Plugin ${session.installed.manifest.id} failed", failure)
     }
     private fun checkConflicts() {
-        if (!prepared || !evaluating.compareAndSet(false, true)) return
-        try {
-            val found = PluginConflictAnalysis.analyze(HookRegistrations.snapshot())
-            // Keep the explanation after blocked registrations have been released.
-            conflicts = (conflicts.filter { it.blocking } + found).distinct()
-            found.filter { it.blocking }.flatMap { it.owners }.distinct().forEach { id ->
-                sessions[id]?.close(PluginRunState.BLOCKED, "存在独占冲突；调整启用选项后重启")
-            }
-        } finally { evaluating.set(false) }
+        conflictChecks.check()
+    }
+    private fun evaluateConflicts() {
+        val found = PluginConflictAnalysis.analyze(HookRegistrations.snapshot())
+        // Keep the explanation after blocked registrations have been released.
+        conflicts = (conflicts.filter { it.blocking } + found).distinct()
+        found.filter { it.blocking }.flatMap { it.owners }.distinct().forEach { id ->
+            sessions[id]?.close(PluginRunState.BLOCKED, "存在独占冲突；调整启用选项后重启")
+        }
     }
     private fun context(session: Session): PluginContext {
         val id = session.installed.manifest.id

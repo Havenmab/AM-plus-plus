@@ -163,7 +163,7 @@ public final class BasicPlugin extends AmppPlugin {
 
 | 阶段 | 线程与行为 |
 |---|---|
-| onLoad | 后台执行；读取环境、定位目标、登记 Hook，此时插件回调尚未激活 |
+| onLoad | 各插件在独立后台任务执行，可并发；读取环境、定位目标、登记 Hook，此时本插件回调尚未激活 |
 | 冲突检查 | 所有启用插件准备后分析注册；阻断冲突的插件不启动 |
 | onStart | 主线程；作用域已经激活，完成轻量启动工作 |
 | Hook before/after | 宿主调用目标的线程；不保证是主线程 |

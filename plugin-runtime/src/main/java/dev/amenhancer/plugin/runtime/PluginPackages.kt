@@ -138,6 +138,8 @@ class PluginStore(val root: File) {
                 removeTree(idRoot); removeTree(child(File(root, "data"), id)); removeTree(child(File(root, "cache"), id)); json.remove(id)
             } else idRoot.listFiles()?.filter { it.name != entry.getString("version") }?.forEach(::removeTree)
         }
+        // A killed first install may have moved its package before committing the index.
+        versions.listFiles()?.filter { !json.has(it.name) }?.forEach(::removeTree)
         writeIndex(json)
     }
     private fun versionDirectory(id: String, version: String) = child(child(versions, id), version)

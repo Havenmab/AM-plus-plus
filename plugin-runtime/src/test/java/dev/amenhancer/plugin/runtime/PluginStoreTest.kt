@@ -11,6 +11,9 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.Adler32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -54,6 +57,68 @@ class PluginStoreTest {
         assertEquals("keep", File(store.dataDirectory(first.manifest.id), "config").readText())
         store.cleanupAtStartup(); assertFalse(first.directory.exists())
         assertTrue(store.installed().single().directory.exists())
+    }
+    @Test fun blockedLoadingStillAllowsManagementAndStartupCleanupPrecedesImports() {
+        val store = store(); prepare(store).use { store.commit(it) }
+        val id = store.installed().single().manifest.id
+        store.setEnabled(id, true)
+        val stale = prepare(store, 2)
+        val entered = CountDownLatch(1); val release = CountDownLatch(1); val managed = CountDownLatch(1)
+        val failure = AtomicReference<Throwable>()
+        PluginTasks().use { tasks ->
+            try {
+                tasks.prepareAndLoad(
+                    prepare = { store.cleanupAtStartup(); store.installed() },
+                    load = { snapshot ->
+                        try {
+                            assertTrue(snapshot.single().enabled)
+                            entered.countDown()
+                            release.await()
+                        } catch (error: Throwable) { failure.set(error) }
+                    },
+                    failed = { failure.set(it); entered.countDown() }
+                )
+                tasks.execute {
+                    try {
+                        assertFalse(stale.directory.exists())
+                        assertTrue(entered.await(5, TimeUnit.SECONDS))
+                        assertEquals(id, store.installed().single().manifest.id)
+                        prepare(store, 2).use { store.commit(it) }
+                        store.setEnabled(id, false)
+                        assertFalse(store.installed().single().enabled)
+                        store.delete(id)
+                        assertTrue(store.installed().isEmpty())
+                    } catch (error: Throwable) { failure.set(error) }
+                    finally { managed.countDown() }
+                }
+                assertTrue("Management queued behind blocked plugin loading", managed.await(10, TimeUnit.SECONDS))
+                failure.get()?.let { throw AssertionError("Recovery failed", it) }
+            } finally { release.countDown(); stale.close() }
+        }
+    }
+    @Test fun startupRemovesInterruptedFirstInstallWithoutIndex() {
+        val store = store(); val pending = prepare(store)
+        val abandoned = File(store.root, "versions/${pending.manifest.id}/orphan-version")
+        assertTrue(abandoned.parentFile!!.mkdirs())
+        assertTrue(pending.directory.renameTo(abandoned))
+        assertFalse(File(store.root, "installed.json").exists())
+        store.cleanupAtStartup()
+        assertFalse(abandoned.parentFile!!.exists())
+        assertTrue(store.installed().isEmpty())
+    }
+    @Test fun startupRemovesUnindexedPluginIdsAndPreservesInstalledData() {
+        val store = store(); prepare(store).use { store.commit(it) }
+        val installed = store.installed().single()
+        File(store.dataDirectory(installed.manifest.id), "config").writeText("keep")
+        File(store.cacheDirectory(installed.manifest.id), "cache").writeText("keep-cache")
+        val abandoned = File(store.root, "versions/example.abandoned.plugin/orphan-version")
+        assertTrue(abandoned.mkdirs()); File(abandoned, "code.jar").writeText("orphan")
+        store.cleanupAtStartup()
+        assertFalse(abandoned.parentFile!!.exists())
+        assertTrue(installed.directory.exists())
+        assertEquals(installed.manifest.id, store.installed().single().manifest.id)
+        assertEquals("keep", File(store.dataDirectory(installed.manifest.id), "config").readText())
+        assertEquals("keep-cache", File(store.cacheDirectory(installed.manifest.id), "cache").readText())
     }
     @Test fun canceledImportAndInvalidUpdateKeepInstalledVersion() {
         val store = store(); prepare(store).use { store.commit(it) }

@@ -16,7 +16,6 @@ import java.io.InputStream
 import java.lang.reflect.Executable
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class PluginRunState { DISABLED, LOADING, ACTIVE, BLOCKED, UNSUPPORTED, FAILED }
@@ -27,7 +26,7 @@ data class PluginStatus(val installed: InstalledPlugin, val state: PluginRunStat
 class PluginManager(private val application: Application, private val hostLoader: ClassLoader) {
     val store = PluginStore(File(application.filesDir, "ampp-plugins-v1"))
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor { Thread(it, "ampp-plugins").apply { isDaemon = true } }
+    private val tasks = PluginTasks()
     private val sessions = ConcurrentHashMap<String, Session>()
     private val started = AtomicBoolean()
     private val evaluating = AtomicBoolean()
@@ -42,11 +41,13 @@ class PluginManager(private val application: Application, private val hostLoader
     }
     fun start() {
         if (!started.compareAndSet(false, true)) return
-        worker.execute {
-            try {
+        tasks.prepareAndLoad(
+            prepare = {
                 store.cleanupAtStartup()
-                val enabled = store.installed().filter { it.enabled }
-                if (enabled.isEmpty()) { prepared = true; return@execute }
+                store.installed().filter { it.enabled }
+            },
+            load = { enabled ->
+                if (enabled.isEmpty()) { prepared = true; return@prepareAndLoad }
                 registryListener = HookRegistrations.listen(::checkConflicts)
                 for (installed in enabled) {
                     val session = Session(installed) { action -> main.post { runCatching(action).onFailure {
@@ -74,15 +75,16 @@ class PluginManager(private val application: Application, private val hostLoader
                         }
                     }
                 }
-            } catch (failure: Throwable) {
+            },
+            failed = { failure ->
                 startupError = failure.message ?: failure.javaClass.simpleName
                 ModernXposedRuntime.log("Plugin startup failed", failure)
                 sessions.values.forEach { fail(it, failure) }
             }
-        }
+        )
     }
     /** Submit file/storage work; UI callers must not read archives on the main thread. */
-    fun execute(task: () -> Unit) { worker.execute(task) }
+    fun execute(task: () -> Unit) { tasks.execute(task) }
     fun statuses(): List<PluginStatus> = store.installed().map { installed ->
         val session = sessions[installed.manifest.id]
         val pending = if (session == null) installed.enabled else !installed.enabled || installed.directory != session.installed.directory

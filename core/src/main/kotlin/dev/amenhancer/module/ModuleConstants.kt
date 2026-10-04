@@ -5,12 +5,18 @@ object ModuleConstants {
     const val TARGET_PACKAGE = "com.apple.android.music"
     const val REMOTE_PREFERENCES_GROUP = "settings"
     /**
-     * Single merged schema version.  Both features bumped from 15 independently:
-     * v16 added the region-replacement extras (original-name restore + region
-     * cache) and v17 adds the online lyric supplement toggle.  The merged tree
-     * keeps both key sets under one final version, 17.
+     * Single merged schema version carrying every feature area at once.
+     *
+     * 16 added the region-replacement extras (original-name restore + region
+     * cache); 17 added the online lyric supplement toggle.  The integration
+     * branch resolved the two independent 16/17 bumps to that combined 17.
+     * The lyrics work then continued alone: 18 added the online lyric source
+     * chain (one enable flag per source, the automatic-order flag, the stored
+     * order and the global-best flag) and 19 adds the missing-translation
+     * enrichment toggle.  The merged tree keeps the region keys and the whole
+     * lyric chain under the single final version, 19.
      */
-    const val CONFIG_SCHEMA_VERSION = 17
+    const val CONFIG_SCHEMA_VERSION = 19
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

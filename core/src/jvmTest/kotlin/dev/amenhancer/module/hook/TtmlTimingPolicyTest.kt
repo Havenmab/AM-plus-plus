@@ -118,6 +118,37 @@ class TtmlTimingPolicyTest {
     }
 
     @Test
+    fun `identity registry keeps the raw document for the translation pass`() {
+        val pointer = Any()
+        val metadata = TtmlDocumentMetadata(
+            timingMode = TtmlTimingMode.WORD,
+            language = "ja",
+            hasTranslation = false,
+        )
+        val registry = TtmlTimingObservationRegistry()
+
+        registry.record(pointer, metadata, appleMusicId = 42L, rawTtml = "<tt>hello</tt>")
+
+        assertEquals("<tt>hello</tt>", registry.rawTtmlOfAppleMusicId(42L))
+        assertNull(registry.rawTtmlOfAppleMusicId(43L))
+        assertNull(registry.rawTtmlOfAppleMusicId(-1L))
+    }
+
+    @Test
+    fun `a record without raw ttml leaves no stale document behind`() {
+        val pointer = Any()
+        val registry = TtmlTimingObservationRegistry()
+
+        registry.record(
+            pointer,
+            TtmlDocumentMetadata(TtmlTimingMode.WORD, language = "ja", hasTranslation = false),
+            appleMusicId = 42L,
+        )
+
+        assertNull(registry.rawTtmlOfAppleMusicId(42L))
+    }
+
+    @Test
     fun `registry evicts oldest observation`() {
         val registry = TtmlTimingObservationRegistry(maxEntries = 1)
         val first = Any()

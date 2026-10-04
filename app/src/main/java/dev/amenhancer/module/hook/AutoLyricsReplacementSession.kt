@@ -16,7 +16,13 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.online.NeSessionStore
+import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
+import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
+import dev.amenhancer.module.lyrics.online.OnlineTranslationEnrichment
+import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.ModuleSettings
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -34,20 +40,70 @@ import org.json.JSONArray
 private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 
 /**
- * The opt-in Kuwo supplement is prepended only while its setting is on. When it
- * is off the factory is never invoked, so the source is absent from the chain
- * rather than present-and-failing, and the resolver list is exactly the fixed
- * provider order the runtime had before the feature existed.
+ * The single online chain plus the composite that owns it. One object serves
+ * both opt-ins: the supplement prepends it to the resolver, while the
+ * translation pass calls its translation-required variant directly.
  */
-internal fun onlineLyricsLeadingSources(
-    enabled: Boolean,
-    source: () -> AutoLyricsSource,
-): List<AutoLyricsSource> = if (enabled) listOf(source()) else emptyList()
+internal data class OnlineLyricsChain(
+    val leading: List<AutoLyricsSource>,
+    val composite: CompositeOnlineSearchAutoLyricsSource?,
+)
+
+/**
+ * Builds the composite entry when either online opt-in needs it. The master
+ * supplement toggle decides whether it is prepended to the resolver; the
+ * translation toggle only borrows the composite, so with both off no provider
+ * is constructed at all.
+ */
+internal fun buildOnlineLyricsChain(
+    supplementEnabled: Boolean,
+    translationEnabled: Boolean,
+    selection: OnlineLyricSelection,
+    currentTrack: () -> CurrentSongDetails? = { null },
+    providerFor: (String) -> SearchLyricsSource?,
+): OnlineLyricsChain {
+    if (!supplementEnabled && !translationEnabled) return OnlineLyricsChain(emptyList(), null)
+    val providers = selection.sources.mapNotNull { sourceId ->
+        providerFor(sourceId)?.let { OnlineLyricProvider(sourceId, it) }
+    }
+    if (providers.isEmpty()) return OnlineLyricsChain(emptyList(), null)
+    val composite = CompositeOnlineSearchAutoLyricsSource.create(
+        mode = selection.mode,
+        providers = providers,
+        currentTrack = currentTrack,
+    )
+    return OnlineLyricsChain(
+        leading = if (supplementEnabled) listOf(composite.autoLyricsSource()) else emptyList(),
+        composite = composite,
+    )
+}
+
+/**
+ * Never throws: a failed enrichment must leave the displayed document
+ * untouched. The composite supplies translation-bearing candidates only; the
+ * pure policy decides whether the document needs one and merges the winner.
+ */
+internal fun translationEnricher(
+    composite: CompositeOnlineSearchAutoLyricsSource,
+    currentTrack: () -> CurrentSongDetails?,
+): (Long, String) -> String? = { appleMusicId, rawTtml ->
+    runCatching {
+        OnlineTranslationEnrichment.enrich(
+            ttml = rawTtml,
+            candidates = composite.fetchTranslationCandidates(appleMusicId),
+            translationRequested = true,
+            durationMs = currentTrack()?.durationMs ?: 0L,
+        )?.ttml
+    }.getOrNull()
+}
 
 internal fun createAutoLyricsRuntime(
     application: Application,
     suppressedIds: Set<Long> = emptySet(),
     onlineLyricsSupplementEnabled: Boolean = false,
+    onlineLyricsTranslationEnabled: Boolean = false,
+    onlineLyricsSelection: OnlineLyricSelection =
+        OnlineLyricSourcePolicy.resolve(ModuleSettings()),
     currentTrack: () -> CurrentSongDetails? = { null },
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
@@ -66,9 +122,20 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
-    val leading = onlineLyricsLeadingSources(onlineLyricsSupplementEnabled) {
-        KuwoAutoLyricsSource.create(lyricTransport, currentTrack).autoLyricsSource()
+    val sessionStore: NeSessionStore by lazy { SharedPreferencesNeSessionStore(application) }
+    val chain = buildOnlineLyricsChain(
+        supplementEnabled = onlineLyricsSupplementEnabled,
+        translationEnabled = onlineLyricsTranslationEnabled,
+        selection = onlineLyricsSelection,
+        currentTrack = currentTrack,
+    ) { sourceId ->
+        onlineLyricProviderFor(
+            sourceId = sourceId,
+            transport = lyricTransport,
+            sessionStore = sessionStore,
+        )
     }
+    val leading = chain.leading
     val resolver = AutoLyricsSourceResolver.fixed(
         amll = AmllTtmlClient(lyricTransport),
         amLyrics = AmLyricsClient(lyricTransport),
@@ -147,6 +214,9 @@ internal fun createAutoLyricsRuntime(
         executor = executor,
         publisher = publisher,
         suppressedIds = suppressedIds,
+        translationEnricher = chain.composite
+            ?.takeIf { onlineLyricsTranslationEnabled }
+            ?.let { composite -> translationEnricher(composite, currentTrack) },
     )
 }
 

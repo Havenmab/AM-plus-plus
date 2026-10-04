@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 import android.app.Application
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 
 internal fun assembleAppleMusicTarget(
@@ -19,6 +20,8 @@ internal fun assembleAppleMusicTarget(
             application = application,
             suppressedIds = suppressed,
             onlineLyricsSupplementEnabled = settings.onlineLyricsSupplementEnabled,
+            onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled,
+            onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings),
             currentTrack = { currentSong.current()?.details },
         )
     } else null

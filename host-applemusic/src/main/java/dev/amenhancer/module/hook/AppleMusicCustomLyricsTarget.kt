@@ -121,7 +121,18 @@ internal class AppleMusicCustomLyricsTarget(
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
-                    runtime.resolver.fetch(appleMusicId)?.let { candidate ->
+                    val enrich = runtime.translationEnricher
+                    val displayedTtml = enrich?.let {
+                        runCatching {
+                            timingObservations.rawTtmlOfAppleMusicId(appleMusicId)
+                        }.getOrNull()
+                    }
+                    selectAutoLyricsFetch(
+                        enrich = enrich,
+                        displayedTtml = displayedTtml,
+                        appleMusicId = appleMusicId,
+                        resolverFetch = runtime.resolver::fetch,
+                    )?.let { fetched ->
                         val details = currentSong.current()
                             ?.takeIf { it.details.appleMusicId == appleMusicId }
                             ?.details
@@ -129,7 +140,7 @@ internal class AppleMusicCustomLyricsTarget(
                             details?.title?.takeIf(String::isNotBlank),
                             details?.artist?.takeIf(String::isNotBlank),
                         ).joinToString(" - ").ifBlank { null }
-                        candidate.copy(displayName = displayName)
+                        fetched.copy(displayName = displayName)
                     }
                 },
                 cache = runtime.cache,
@@ -177,7 +188,7 @@ internal class AppleMusicCustomLyricsTarget(
                         val pointer = param.result
                         val metadata = TtmlTimingPolicy.metadataOf(ttml)
                         val appleMusicId = pointer?.let(parser::adamIdOf)
-                        timingObservations.record(pointer, metadata, appleMusicId)
+                        timingObservations.record(pointer, metadata, appleMusicId, rawTtml = ttml)
                         if (
                             appleMusicId != null &&
                             currentSong.current()?.details?.appleMusicId == appleMusicId &&
@@ -442,6 +453,29 @@ internal fun shouldPrepareAutomaticLyrics(
     manualReplacement: Any?,
     autoEligible: Boolean,
 ): Boolean = manualReplacement == null && autoEligible
+
+/**
+ * Picks the candidate the automatic path should prepare.
+ *
+ * With the translation toggle on, [enrich] is non-null and a previously
+ * observed displayed document [displayedTtml] routes every lookup through it.
+ * Its result is then the only candidate: when enrichment returns null — no
+ * translation needed, no source found, or any failure — the displayed document
+ * stays untouched instead of being replaced by a translation-free document.
+ * Only when the toggle never exposed an enricher (or no displayed document was
+ * ever observed) does the fixed resolver run, exactly as before.
+ */
+internal fun selectAutoLyricsFetch(
+    enrich: ((Long, String) -> String?)?,
+    displayedTtml: String?,
+    appleMusicId: Long,
+    resolverFetch: (Long) -> AutoLyricsCandidate?,
+): AutoLyricsCandidate? = when {
+    enrich != null && displayedTtml != null ->
+        runCatching { enrich.invoke(appleMusicId, displayedTtml) }.getOrNull()
+            ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
+    else -> resolverFetch(appleMusicId)
+}
 
 internal fun shouldExposeCustomLyrics(
     nativeLyricsAvailable: Boolean,

@@ -6,6 +6,7 @@ import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModuleSettingsSchemaTest {
@@ -84,6 +85,14 @@ class ModuleSettingsSchemaTest {
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -126,6 +135,14 @@ class ModuleSettingsSchemaTest {
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -360,9 +377,15 @@ class ModuleSettingsSchemaTest {
 
     @Test
     fun `a region-era schema upgrades with the online toggle absent and off`() {
+        // The region-only state: v16 carried the region extras but none of the
+        // online lyric keys.  Its stored region values must survive the jump to 19.
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 16,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to false,
                 "custom_lyrics_enabled" to true,
                 "automatic_lyrics_enabled" to true,
             ),
@@ -371,7 +394,161 @@ class ModuleSettingsSchemaTest {
 
         assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
         assertEquals(true, upgraded["custom_lyrics_enabled"])
+        // v16 -> v19 transition: the region extras are preserved, not re-derived.
+        assertEquals("japan", upgraded["title_correction_mode"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertEquals(false, upgraded["localized_metadata_cache"])
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `the online lyric chain defaults on, uses the built-in order and round trips`() {
+        val decoded = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertTrue(decoded.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(decoded.onlineLyricsSourceQqEnabled)
+        assertTrue(decoded.onlineLyricsSourceKuwoEnabled)
+        assertTrue(decoded.onlineLyricsSourceKugouEnabled)
+        assertTrue(decoded.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(decoded.onlineLyricsGlobalBestEnabled)
+        assertEquals("netease,qq,kuwo,kugou", decoded.onlineLyricsSourceOrder)
+
+        // Malformed booleans fall back to the documented defaults; an unknown or
+        // partial order is normalized back to a permutation of the default order.
+        val malformed = ModuleSettingsSchema.decode(
+            mapOf(
+                "online_lyrics_source_netease_enabled" to "yes",
+                "online_lyrics_automatic_order_enabled" to 1,
+                "online_lyrics_global_best_enabled" to "on",
+                "online_lyrics_source_order" to "kugou,unknown",
+            ),
+        )
+        assertTrue(malformed.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(malformed.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(malformed.onlineLyricsGlobalBestEnabled)
+        assertEquals("kugou,netease,qq,kuwo", malformed.onlineLyricsSourceOrder)
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                onlineLyricsSourceNeteaseEnabled = false,
+                onlineLyricsSourceKugouEnabled = false,
+                onlineLyricsAutomaticOrderEnabled = false,
+                onlineLyricsSourceOrder = "kuwo,qq",
+                onlineLyricsGlobalBestEnabled = true,
+            ),
+        )
+        assertEquals(false, encoded["online_lyrics_source_netease_enabled"])
+        assertEquals(false, encoded["online_lyrics_source_kugou_enabled"])
+        assertEquals(false, encoded["online_lyrics_automatic_order_enabled"])
+        assertEquals("kuwo,qq,netease,kugou", encoded["online_lyrics_source_order"])
+        assertEquals(true, encoded["online_lyrics_global_best_enabled"])
+
+        val roundTripped = ModuleSettingsSchema.decode(encoded)
+        assertEquals(false, roundTripped.onlineLyricsSourceNeteaseEnabled)
+        assertEquals(false, roundTripped.onlineLyricsSourceKugouEnabled)
+        assertEquals(false, roundTripped.onlineLyricsAutomaticOrderEnabled)
+        assertEquals("kuwo,qq,netease,kugou", roundTripped.onlineLyricsSourceOrder)
+        assertEquals(true, roundTripped.onlineLyricsGlobalBestEnabled)
+    }
+
+    @Test
+    fun `a schema 17 store upgrades with the online lyric chain defaults`() {
+        // The previous integration state: v17 = region extras (16) + supplement.
+        // Its region values must survive while the newly added lyric chain takes
+        // its documented defaults.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 17,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to false,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        // v17 -> v19 transition: region values preserved.
+        assertEquals("japan", upgraded["title_correction_mode"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertEquals(false, upgraded["localized_metadata_cache"])
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_netease_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_qq_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kuwo_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kugou_enabled"])
+        assertEquals(true, upgraded["online_lyrics_automatic_order_enabled"])
+        assertEquals("netease,qq,kuwo,kugou", upgraded["online_lyrics_source_order"])
+        assertEquals(false, upgraded["online_lyrics_global_best_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `a schema 18 store upgrades with the translation enrichment toggle off`() {
+        // A store written by the lyrics-only branch: it has the lyric chain but
+        // no region keys.  The v18 -> v19 jump adds the translation toggle and
+        // derives the region extras from the stored profile.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 18,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+                "online_lyrics_global_best_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_global_best_enabled"])
+        assertEquals(false, upgraded["online_lyrics_translation_enabled"])
+        // No stored region values: the region keys land on their v16 derivation.
+        assertEquals(true, upgraded["restore_cjk_original_metadata"])
+        assertEquals(true, upgraded["localized_metadata_cache"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `a lyrics-only 19 store is already current and derives the region defaults`() {
+        // A lyrics-only store that reached the same version number is treated as
+        // current (no rewrite); the absent region keys decode to the pre-v16
+        // derivation instead of being invented.
+        val stored = mapOf<String, Any?>(
+            "schema_version" to 19,
+            "custom_lyrics_enabled" to true,
+            "title_correction_enabled" to true,
+            "title_correction_mode" to "japan",
+        )
+        assertNull(
+            ModuleSettingsSchema.upgrade(
+                storedValues = stored,
+                legacyValues = emptyMap<String, Any?>(),
+            ),
+        )
+
+        val decoded = ModuleSettingsSchema.decode(stored)
+        assertEquals(false, decoded.restoreCjkOriginalMetadata)
+        assertEquals(true, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `translation enrichment defaults off rejects malformed values and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).onlineLyricsTranslationEnabled,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_translation_enabled" to "not-a-boolean"),
+            ).onlineLyricsTranslationEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsTranslationEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_translation_enabled"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsTranslationEnabled,
+        )
     }
 
     @Test

@@ -95,4 +95,30 @@ class OnlineTranslationExtractionTest {
         assertEquals("第一", extracted[0].translation)
         assertNull(extracted[1].translation)
     }
+
+    @Test
+    fun `a compacted lane missing an early line stays keyed to its own start time`() {
+        // Kuwo's `secondary` drops lines without an auxiliary entry, so the lane
+        // is shorter than `original` and index-alignment would shift every
+        // translation after the first gap onto the wrong line.
+        val result = LyricsResult(
+            tags = emptyMap(),
+            original = listOf(
+                LyricsLine(12_000L, 15_000L, listOf(word(12_000L, 15_000L, "満ちてゆく"))),
+                LyricsLine(15_000L, 18_000L, listOf(word(15_000L, 18_000L, "Behind the clouds"))),
+                LyricsLine(18_000L, 21_000L, listOf(word(18_000L, 21_000L, "You were always"))),
+            ),
+            translated = listOf(
+                LyricsLine(15_000L, 18_000L, listOf(word(15_000L, 18_000L, "云层之后"))),
+                LyricsLine(18_000L, 21_000L, listOf(word(18_000L, 21_000L, "你从未离开"))),
+            ),
+            romanization = null,
+        )
+
+        val extracted = OnlineTranslationExtraction.extract(result)
+
+        assertNull(extracted[0].translation)
+        assertEquals("云层之后", extracted[1].translation)
+        assertEquals("你从未离开", extracted[2].translation)
+    }
 }

@@ -5,6 +5,7 @@ import android.os.Looper
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
+import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -118,6 +119,7 @@ internal class AppleMusicCustomLyricsTarget(
             ),
             logger = ModernXposedRuntime::log,
         )
+        val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
@@ -127,12 +129,28 @@ internal class AppleMusicCustomLyricsTarget(
                             timingObservations.rawTtmlOfAppleMusicId(appleMusicId)
                         }.getOrNull()
                     }
-                    selectAutoLyricsFetch(
+                    if (enrich != null) {
+                        translationLog.log(
+                            appleMusicId,
+                            "online-translation capture id=$appleMusicId " +
+                                "rawTtml=${if (displayedTtml != null) "present" else "absent"}",
+                        )
+                    }
+                    val fetched = selectAutoLyricsFetch(
                         enrich = enrich,
                         displayedTtml = displayedTtml,
                         appleMusicId = appleMusicId,
                         resolverFetch = runtime.resolver::fetch,
-                    )?.let { fetched ->
+                    )
+                    if (enrich != null) {
+                        translationLog.log(
+                            appleMusicId,
+                            "online-translation inject id=$appleMusicId " +
+                                "source=${fetched?.source ?: "none"} " +
+                                "published=${fetched != null}",
+                        )
+                    }
+                    fetched?.let { candidate ->
                         val details = currentSong.current()
                             ?.takeIf { it.details.appleMusicId == appleMusicId }
                             ?.details
@@ -140,7 +158,7 @@ internal class AppleMusicCustomLyricsTarget(
                             details?.title?.takeIf(String::isNotBlank),
                             details?.artist?.takeIf(String::isNotBlank),
                         ).joinToString(" - ").ifBlank { null }
-                        fetched.copy(displayName = displayName)
+                        candidate.copy(displayName = displayName)
                     }
                 },
                 cache = runtime.cache,
@@ -458,12 +476,13 @@ internal fun shouldPrepareAutomaticLyrics(
  * Picks the candidate the automatic path should prepare.
  *
  * With the translation toggle on, [enrich] is non-null and a previously
- * observed displayed document [displayedTtml] routes every lookup through it.
- * Its result is then the only candidate: when enrichment returns null — no
- * translation needed, no source found, or any failure — the displayed document
- * stays untouched instead of being replaced by a translation-free document.
- * Only when the toggle never exposed an enricher (or no displayed document was
- * ever observed) does the fixed resolver run, exactly as before.
+ * observed displayed document [displayedTtml] routes the lookup through it.
+ * When enrichment returns null — no translation needed, no source found, or any
+ * failure — the fixed resolver still runs, exactly as it did before the
+ * translation feature existed. Failing closed here would let enabling the
+ * translation toggle suppress a lyric supplement that otherwise worked.
+ * Only the merged document produced by a successful enrichment is attributed to
+ * [ONLINE_TRANSLATION_LYRIC_SOURCE].
  */
 internal fun selectAutoLyricsFetch(
     enrich: ((Long, String) -> String?)?,
@@ -474,6 +493,7 @@ internal fun selectAutoLyricsFetch(
     enrich != null && displayedTtml != null ->
         runCatching { enrich.invoke(appleMusicId, displayedTtml) }.getOrNull()
             ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
+            ?: resolverFetch(appleMusicId)
     else -> resolverFetch(appleMusicId)
 }
 

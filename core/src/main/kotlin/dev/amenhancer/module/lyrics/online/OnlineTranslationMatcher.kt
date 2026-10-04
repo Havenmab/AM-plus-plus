@@ -140,7 +140,21 @@ object OnlineTranslationMatcher {
         )
     }
 
-    fun apply(song: NativeLyricDocument, onlineLines: List<OnlineTranslationLine>): Result {
+    /**
+     * Aligns [onlineLines] to [song] and copies over the translation/romanization
+     * the song lacks.
+     *
+     * [untimedNative] is set when the displayed document carries no usable
+     * per-line timing (every line begins at 0), which happens for a plain-text
+     * Apple document. The time window and its content-contribution gate are then
+     * skipped and lines align on text alone, the same relaxation
+     * [matchUntimed] already uses.
+     */
+    fun apply(
+        song: NativeLyricDocument,
+        onlineLines: List<OnlineTranslationLine>,
+        untimedNative: Boolean = false,
+    ): Result {
         // 全中文歌词不接受在线翻译：在线源即使命中（翻译列常为伴唱标注等伪翻译），
         // 也只允许补充发音。fillMissing/composeContent 只会从候选结果拷贝翻译，
         // 因此在这里拦住即可覆盖计分、来源选择与重匹配全部路径。
@@ -180,7 +194,13 @@ object OnlineTranslationMatcher {
                 nativeIndex++
                 continue
             }
-            val plan = findBestPlan(nativeLyrics, nativeIndex, candidates, candidateStart)
+            val plan = findBestPlan(
+                nativeLyrics,
+                nativeIndex,
+                candidates,
+                candidateStart,
+                untimedNative = untimedNative,
+            )
             if (plan == null) {
                 nativeIndex++
                 continue

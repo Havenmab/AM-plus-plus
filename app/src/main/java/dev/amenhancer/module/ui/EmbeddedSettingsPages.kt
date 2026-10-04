@@ -556,9 +556,9 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSettingRow(
             activity,
             "补全歌词翻译",
-            "Apple 歌词缺少翻译时用在线来源补齐；Apple 自带翻译优先，更改后重开 Apple Music 生效",
+            "Apple 歌词缺少翻译时用在线来源补齐；Apple 自带翻译优先，需要开启“自动实时补全”，更改后重开 Apple Music 生效",
             settings.onlineLyricsTranslationEnabled,
-            enabled = settings.customLyricsEnabled,
+            enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
                 EmbeddedSettingsPalette.accent,
@@ -566,7 +566,10 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it)) })
 
-        val chainEnabled = settings.customLyricsEnabled && settings.onlineLyricsSupplementEnabled
+        // The translation pass borrows the same provider chain as the
+        // supplement, so the chain rows stay usable while either opt-in is on.
+        val chainEnabled = settings.customLyricsEnabled &&
+            (settings.onlineLyricsSupplementEnabled || settings.onlineLyricsTranslationEnabled)
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,

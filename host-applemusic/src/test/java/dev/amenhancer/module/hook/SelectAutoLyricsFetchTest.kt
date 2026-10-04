@@ -1,15 +1,14 @@
 package dev.amenhancer.module.hook
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
  * Pure-JVM coverage of the automatic-path decision introduced for translation
  * enrichment: with the toggle off (no enricher) the fixed resolver runs exactly
- * as before; with it on every lookup is routed through the enricher and a null
- * or throwing result leaves the displayed document untouched instead of falling
- * back to a translation-free replacement.
+ * as before; with it on a displayed document is routed through the enricher
+ * first, and a null or throwing result still falls back to the resolver so the
+ * feature can never suppress a supplement that worked before it existed.
  */
 class SelectAutoLyricsFetchTest {
 
@@ -59,7 +58,7 @@ class SelectAutoLyricsFetchTest {
     }
 
     @Test
-    fun `a failed enrichment leaves the document untouched`() {
+    fun `a failed enrichment falls back to the resolver`() {
         var resolverCalls = 0
 
         val result = selectAutoLyricsFetch(
@@ -72,12 +71,12 @@ class SelectAutoLyricsFetchTest {
             },
         )
 
-        assertNull(result)
-        assertEquals(0, resolverCalls)
+        assertEquals("resolved", result?.ttml)
+        assertEquals(1, resolverCalls)
     }
 
     @Test
-    fun `a throwing enrichment never escapes`() {
+    fun `a throwing enrichment falls back to the resolver`() {
         var resolverCalls = 0
 
         val result = selectAutoLyricsFetch(
@@ -90,8 +89,8 @@ class SelectAutoLyricsFetchTest {
             },
         )
 
-        assertNull(result)
-        assertEquals(0, resolverCalls)
+        assertEquals("resolved", result?.ttml)
+        assertEquals(1, resolverCalls)
     }
 
     @Test

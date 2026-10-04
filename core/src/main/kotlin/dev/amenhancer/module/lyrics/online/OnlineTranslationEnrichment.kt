@@ -34,46 +34,96 @@ object OnlineTranslationEnrichment {
         candidates: List<OnlineTranslationCandidate>,
         translationRequested: Boolean = true,
         durationMs: Long = 0L,
+        appleMusicId: Long = 0L,
+        diagnostic: (String) -> Unit = {},
     ): Outcome? = runCatching {
         enrichOrNull(
             ttml = ttml,
             candidates = candidates,
             translationRequested = translationRequested,
             durationMs = durationMs,
+            appleMusicId = appleMusicId,
+            diagnostic = diagnostic,
         )
-    }.getOrNull()
+    }.getOrElse { error ->
+        runCatching {
+            diagnostic(
+                "online-translation failed id=$appleMusicId " +
+                    "error=${error.javaClass.simpleName}",
+            )
+        }
+        null
+    }
 
     private fun enrichOrNull(
         ttml: String,
         candidates: List<OnlineTranslationCandidate>,
         translationRequested: Boolean,
         durationMs: Long,
+        appleMusicId: Long = 0L,
+        diagnostic: (String) -> Unit = {},
     ): Outcome? {
-        if (candidates.isEmpty()) return null
         val baseLines = AppleLyricTtmlReader.read(ttml)
-        if (baseLines.isEmpty()) return null
         val song = NativeLyricDocument(lyrics = baseLines.map(::nativeLine))
-        if (!OnlineEnrichmentPolicy.needsOnlineEnrichment(
-                document = TtmlTimingPolicy.metadataOf(ttml),
-                lines = song.lyrics.orEmpty(),
-                translationRequested = translationRequested,
-                pronunciationRequested = false,
-            )
-        ) {
-            return null
-        }
+        val lines = song.lyrics.orEmpty()
+        val document = TtmlTimingPolicy.metadataOf(ttml)
+        // A plain-text Apple document has no usable per-line timing; the matcher
+        // must then align on text alone instead of the Word-timing window.
+        val untimedNative = baseLines.none { it.begin > 0L }
+        diagnostic(
+            "online-translation track id=$appleMusicId timing=${document.timingMode} " +
+                "lang=${document.language ?: "-"} appleTranslation=${document.hasTranslation} " +
+                "needsFallback=${document.needsTranslationFallback} lines=${lines.size} " +
+                "untimed=$untimedNative chinese=${ChineseLyricsPolicy.isFullyChinese(lines)}",
+        )
+        val blocker = OnlineTranslationGate.firstBlocker(
+            candidateCount = candidates.size,
+            baseLineCount = baseLines.size,
+            document = document,
+            lines = lines,
+            translationRequested = translationRequested,
+        )
+        diagnostic(
+            "online-translation decision id=$appleMusicId " +
+                "candidates=${candidates.size} reason=${blocker.token}",
+        )
+        if (blocker != OnlineTranslationReason.PROCEED) return null
 
-        val totalLineCount = song.lyrics?.size ?: 0
+        val totalLineCount = lines.size
         val ranked = candidates.mapNotNull { candidate ->
-            selectorCandidate(song, candidate)
+            selectorCandidate(song, candidate, untimedNative)
         }
+        diagnostic(
+            "online-translation candidates id=$appleMusicId accepted=${ranked.size} " +
+                "rejected=${candidates.size - ranked.size}",
+        )
         val winner = OnlineTranslationSelector
             .rank(ranked, totalLineCount, candidates.map(OnlineTranslationCandidate::source).distinct())
             .firstOrNull()
-            ?: return null
+        if (winner == null) {
+            diagnostic(
+                "online-translation blocked id=$appleMusicId " +
+                    "reason=${OnlineTranslationReason.NO_CONTRIBUTING_CANDIDATE.token}",
+            )
+            return null
+        }
+        diagnostic(
+            "online-translation select id=$appleMusicId source=${winner.source} " +
+                "matched=${winner.matchedContentCount}/$totalLineCount",
+        )
 
         val merged = mergeTranslation(baseLines, winner.result.song.lyrics.orEmpty())
-        if (merged.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) return null
+        if (merged.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) {
+            diagnostic(
+                "online-translation blocked id=$appleMusicId " +
+                    "reason=${OnlineTranslationReason.NO_MEANINGFUL_MERGED_LINE.token}",
+            )
+            return null
+        }
+        diagnostic(
+            "online-translation publish id=$appleMusicId source=${winner.source} " +
+                "matched=${winner.matchedContentCount}/$totalLineCount lines=${merged.size}",
+        )
         return Outcome(
             ttml = AppleLyricTtmlWriter.build(
                 lines = merged,
@@ -97,8 +147,9 @@ object OnlineTranslationEnrichment {
     private fun selectorCandidate(
         song: NativeLyricDocument,
         candidate: OnlineTranslationCandidate,
+        untimedNative: Boolean,
     ): OnlineTranslationSelector.Candidate? {
-        val result = OnlineTranslationMatcher.apply(song, candidate.lines)
+        val result = OnlineTranslationMatcher.apply(song, candidate.lines, untimedNative)
         if (!OnlineTranslationMatcher.contributesTranslation(song, result)) return null
         return OnlineTranslationSelector.Candidate(
             source = candidate.source,

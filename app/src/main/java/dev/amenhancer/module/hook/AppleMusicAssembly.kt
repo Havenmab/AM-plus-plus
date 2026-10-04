@@ -23,6 +23,7 @@ internal fun assembleAppleMusicTarget(
             onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled,
             onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings),
             currentTrack = { currentSong.current()?.details },
+            logger = ModernXposedRuntime::log,
         )
     } else null
     return AppleMusicHostFactory.appleMusic(config, application, classLoader, lyricsTypefaceSession, currentSong, automatic)

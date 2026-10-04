@@ -90,6 +90,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     private val currentTrack: () -> CurrentSongDetails?,
     private val searchExecutor: ExecutorService,
     private val searchBudgetMs: Long,
+    private val diagnostic: (String) -> Unit = {},
 ) {
 
     /** The single chain entry; line timing is allowed because LRC may lack word markers. */
@@ -119,11 +120,17 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         runCatching { translationCandidatesOrNull(appleMusicId) }.getOrDefault(emptyList())
 
     private fun translationCandidatesOrNull(appleMusicId: Long): List<OnlineTranslationCandidate> {
-        if (appleMusicId <= 0L || providers.isEmpty()) return emptyList()
-        val request = searchRequest(appleMusicId) ?: return emptyList()
+        if (appleMusicId <= 0L || providers.isEmpty()) {
+            diagnostic("online-translation fetch id=$appleMusicId reason=no_provider")
+            return emptyList()
+        }
+        val request = searchRequest(appleMusicId) ?: run {
+            diagnostic("online-translation fetch id=$appleMusicId reason=no_track_identity")
+            return emptyList()
+        }
         return when (mode) {
-            LyricSelectionMode.FIRST_PASSING -> firstPassingTranslations(request)
-            LyricSelectionMode.GLOBAL_BEST -> globalBestTranslations(request)
+            LyricSelectionMode.FIRST_PASSING -> firstPassingTranslations(appleMusicId, request)
+            LyricSelectionMode.GLOBAL_BEST -> globalBestTranslations(appleMusicId, request)
         }
     }
 
@@ -156,36 +163,85 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }
 
     /** Ordered walk that skips any provider whose lyrics carry no translation. */
-    private fun firstPassingTranslations(request: SearchRequest): List<OnlineTranslationCandidate> {
+    private fun firstPassingTranslations(
+        appleMusicId: Long,
+        request: SearchRequest,
+    ): List<OnlineTranslationCandidate> {
         providers.forEach { provider ->
             val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
                 .orEmpty()
-            val selected = LyricMatchPolicy.selectFirstPassing(candidates) ?: return@forEach
-            val candidate = translationCandidate(provider, selected) ?: return@forEach
+            val selected = LyricMatchPolicy.selectFirstPassing(candidates)
+            diagnosticSearch(appleMusicId, provider, candidates, selected != null)
+            if (selected == null) return@forEach
+            val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
             return listOf(candidate)
         }
         return emptyList()
     }
 
     /** Every passing candidate that carries a translation, best score first. */
-    private fun globalBestTranslations(request: SearchRequest): List<OnlineTranslationCandidate> {
+    private fun globalBestTranslations(
+        appleMusicId: Long,
+        request: SearchRequest,
+    ): List<OnlineTranslationCandidate> {
         val byProvider = searchBounded(providers, request)
+        byProvider.forEach { searched ->
+            val selected = searched.candidates
+                .filter { it.score >= LyricMatchPolicy.PASS_SCORE }
+                .maxByOrNull(ScoredSong::score)
+            diagnosticSearch(appleMusicId, searched.provider, searched.candidates, selected != null)
+        }
         val passing = byProvider.flatMap { searched ->
             searched.candidates.map { ProviderCandidate(searched.provider, it) }
         }
             .filter { it.candidate.score >= LyricMatchPolicy.PASS_SCORE }
             .sortedByDescending { it.candidate.score }
-        return passing.mapNotNull { entry -> translationCandidate(entry.provider, entry.candidate.song) }
+        return passing.mapNotNull { entry ->
+            translationCandidate(entry.provider, entry.candidate.song, appleMusicId)
+        }
+    }
+
+    /** One line per source saying how many hits the search returned and how many passed. */
+    private fun diagnosticSearch(
+        appleMusicId: Long,
+        provider: OnlineLyricProvider,
+        candidates: List<ScoredSong>,
+        passed: Boolean,
+    ) {
+        diagnostic(
+            "online-translation source id=$appleMusicId source=${provider.sourceId} " +
+                "hits=${candidates.size} passing=" +
+                "${candidates.count { it.score >= LyricMatchPolicy.PASS_SCORE }} " +
+                "reason=${if (passed) "passing" else "below_score_floor"}",
+        )
     }
 
     /** One provider's aligned lanes, or null when it contributes no translation. */
     private fun translationCandidate(
         provider: OnlineLyricProvider,
         song: SongSearchResult,
+        appleMusicId: Long,
     ): OnlineTranslationCandidate? = runCatching {
-        val result = provider.source.getLyrics(song) ?: return null
+        val result = provider.source.getLyrics(song)
+        if (result == null) {
+            diagnostic(
+                "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
+                    "reason=no_lyrics",
+            )
+            return null
+        }
         val lines = OnlineTranslationExtraction.extract(result)
-        if (lines.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) return null
+        if (lines.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) {
+            diagnostic(
+                "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
+                    "reason=no_meaningful_translation lines=${lines.size}",
+            )
+            return null
+        }
+        diagnostic(
+            "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
+                "reason=accepted lines=${lines.size}",
+        )
         OnlineTranslationCandidate(provider.source.sourceType, lines)
     }.getOrNull()
 
@@ -296,6 +352,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             currentTrack: () -> CurrentSongDetails?,
             searchExecutor: ExecutorService = defaultSearchExecutor(providers.size),
             searchBudgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
+            diagnostic: (String) -> Unit = {},
         ): CompositeOnlineSearchAutoLyricsSource =
             CompositeOnlineSearchAutoLyricsSource(
                 mode = mode,
@@ -303,6 +360,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 currentTrack = currentTrack,
                 searchExecutor = searchExecutor,
                 searchBudgetMs = searchBudgetMs,
+                diagnostic = diagnostic,
             )
 
         /** Daemon pool sized to the provider count so a stalled search cannot leak a live thread. */

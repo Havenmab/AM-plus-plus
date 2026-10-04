@@ -1,9 +1,12 @@
 package dev.amenhancer.module.hook
 
 import dev.amenhancer.module.CurrentSongDetails
+import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.source.AutoLyricsSource
 import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
 import dev.amenhancer.module.lyrics.source.LyricHttpTransport
+import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.OnlineLyricSources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -11,11 +14,11 @@ import org.junit.Test
 import java.nio.charset.StandardCharsets
 
 /**
- * JVM coverage for the search-based Kuwo AutoLyricsSource: track identity,
- * the ported match policy, Apple TTML output and fail-open behaviour. All
- * network access is a fake transport.
+ * JVM coverage for the shared search-based AutoLyricsSource adapter: track
+ * identity, the ported match policy, Apple TTML output and fail-open behaviour.
+ * All network access is a fake transport; construction must stay offline.
  */
-class KuwoAutoLyricsSourceTest {
+class OnlineSearchAutoLyricsSourceTest {
 
     @Test
     fun `matches the current track and writes line timed Apple TTML`() {
@@ -54,29 +57,14 @@ class KuwoAutoLyricsSourceTest {
 
     @Test
     fun `a throwing transport yields null and cannot escape`() {
-        val transport = object : LyricHttpTransport {
-            override fun get(url: String): String? = throw IllegalStateException("network down")
-            override fun getBytes(url: String): ByteArray? =
-                throw IllegalStateException("network down")
-
-            override fun getBytes(url: String, headers: Map<String, String>): ByteArray? =
-                throw IllegalStateException("network down")
-        }
-        val source = source(transport, CurrentSongDetails(42L, "Song", "Artist", 215_000L))
+        val source = source(offlineTransport(), CurrentSongDetails(42L, "Song", "Artist", 215_000L))
 
         assertNull(source.fetch(42L))
     }
 
     @Test
-    fun `a throwing kuwo source leaves the other sources working`() {
-        val failing = source(
-            object : LyricHttpTransport {
-                override fun get(url: String): String? = throw IllegalStateException("network down")
-                override fun getBytes(url: String): ByteArray? =
-                    throw IllegalStateException("network down")
-            },
-            CurrentSongDetails(42L, "Song", "Artist", 215_000L),
-        )
+    fun `a throwing source leaves the other sources working`() {
+        val failing = source(offlineTransport(), CurrentSongDetails(42L, "Song", "Artist", 215_000L))
         val resolver = AutoLyricsSourceResolver(
             listOf(
                 failing,
@@ -87,10 +75,49 @@ class KuwoAutoLyricsSourceTest {
         assertEquals(AutoLyricsCandidate("amll", WORD_TTML), resolver.fetch(42L))
     }
 
+    @Test
+    fun `constructs one offline entry per known source id and none for an unknown id`() {
+        // Constructing a provider must not touch the network: every transport
+        // call here throws, and construction still has to succeed.
+        val offline = offlineTransport()
+
+        assertEquals(
+            OnlineLyricSources.DEFAULT_ORDER,
+            OnlineLyricSources.DEFAULT_ORDER.mapNotNull { sourceId ->
+                onlineLyricSourceFor(
+                    sourceId = sourceId,
+                    transport = offline,
+                    mode = LyricSelectionMode.FIRST_PASSING,
+                    currentTrack = { null },
+                )?.name
+            },
+        )
+        assertNull(
+            onlineLyricSourceFor(
+                sourceId = "unknown",
+                transport = offline,
+                mode = LyricSelectionMode.FIRST_PASSING,
+                currentTrack = { null },
+            ),
+        )
+    }
+
     private fun source(
         transport: LyricHttpTransport,
         details: CurrentSongDetails?,
-    ): AutoLyricsSource = KuwoAutoLyricsSource.create(transport, { details }).autoLyricsSource()
+        sourceId: String = CustomLyricsSources.KUWO,
+        mode: LyricSelectionMode = LyricSelectionMode.FIRST_PASSING,
+    ): AutoLyricsSource =
+        onlineLyricSourceFor(sourceId, transport, mode) { details }!!
+
+    private fun offlineTransport(): LyricHttpTransport = object : LyricHttpTransport {
+        override fun get(url: String): String? = throw IllegalStateException("network down")
+        override fun getBytes(url: String): ByteArray? =
+            throw IllegalStateException("network down")
+
+        override fun getBytes(url: String, headers: Map<String, String>): ByteArray? =
+            throw IllegalStateException("network down")
+    }
 
     /** Search succeeds, LRCX misses, and the plain lyric endpoint answers. */
     private fun transport(

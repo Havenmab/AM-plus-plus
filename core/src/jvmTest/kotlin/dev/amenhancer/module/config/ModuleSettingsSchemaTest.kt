@@ -6,6 +6,7 @@ import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModuleSettingsSchemaTest {
@@ -82,6 +83,13 @@ class ModuleSettingsSchemaTest {
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -122,6 +130,13 @@ class ModuleSettingsSchemaTest {
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -367,6 +382,77 @@ class ModuleSettingsSchemaTest {
 
         assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
         assertEquals(true, upgraded["custom_lyrics_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `the online lyric chain defaults on, uses the built-in order and round trips`() {
+        val decoded = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertTrue(decoded.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(decoded.onlineLyricsSourceQqEnabled)
+        assertTrue(decoded.onlineLyricsSourceKuwoEnabled)
+        assertTrue(decoded.onlineLyricsSourceKugouEnabled)
+        assertTrue(decoded.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(decoded.onlineLyricsGlobalBestEnabled)
+        assertEquals("netease,qq,kuwo,kugou", decoded.onlineLyricsSourceOrder)
+
+        // Malformed booleans fall back to the documented defaults; an unknown or
+        // partial order is normalized back to a permutation of the default order.
+        val malformed = ModuleSettingsSchema.decode(
+            mapOf(
+                "online_lyrics_source_netease_enabled" to "yes",
+                "online_lyrics_automatic_order_enabled" to 1,
+                "online_lyrics_global_best_enabled" to "on",
+                "online_lyrics_source_order" to "kugou,unknown",
+            ),
+        )
+        assertTrue(malformed.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(malformed.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(malformed.onlineLyricsGlobalBestEnabled)
+        assertEquals("kugou,netease,qq,kuwo", malformed.onlineLyricsSourceOrder)
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                onlineLyricsSourceNeteaseEnabled = false,
+                onlineLyricsSourceKugouEnabled = false,
+                onlineLyricsAutomaticOrderEnabled = false,
+                onlineLyricsSourceOrder = "kuwo,qq",
+                onlineLyricsGlobalBestEnabled = true,
+            ),
+        )
+        assertEquals(false, encoded["online_lyrics_source_netease_enabled"])
+        assertEquals(false, encoded["online_lyrics_source_kugou_enabled"])
+        assertEquals(false, encoded["online_lyrics_automatic_order_enabled"])
+        assertEquals("kuwo,qq,netease,kugou", encoded["online_lyrics_source_order"])
+        assertEquals(true, encoded["online_lyrics_global_best_enabled"])
+
+        val roundTripped = ModuleSettingsSchema.decode(encoded)
+        assertEquals(false, roundTripped.onlineLyricsSourceNeteaseEnabled)
+        assertEquals(false, roundTripped.onlineLyricsSourceKugouEnabled)
+        assertEquals(false, roundTripped.onlineLyricsAutomaticOrderEnabled)
+        assertEquals("kuwo,qq,netease,kugou", roundTripped.onlineLyricsSourceOrder)
+        assertEquals(true, roundTripped.onlineLyricsGlobalBestEnabled)
+    }
+
+    @Test
+    fun `a schema 17 store upgrades with the online lyric chain defaults`() {
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 17,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_netease_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_qq_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kuwo_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kugou_enabled"])
+        assertEquals(true, upgraded["online_lyrics_automatic_order_enabled"])
+        assertEquals("netease,qq,kuwo,kugou", upgraded["online_lyrics_source_order"])
+        assertEquals(false, upgraded["online_lyrics_global_best_enabled"])
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
     }
 

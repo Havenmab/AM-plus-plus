@@ -5,10 +5,11 @@ object ModuleConstants {
     const val TARGET_PACKAGE = "com.apple.android.music"
     const val REMOTE_PREFERENCES_GROUP = "settings"
     /**
-     * 17 keeps this branch clear of the region work, which already reserves 16;
-     * the online supplement is the only new setting key in this bump.
+     * 17 keeps this branch clear of the region work, which already reserves 16.
+     * 18 adds the online lyric source chain: one enable flag per source, the
+     * automatic-order flag, the stored order and the global-best flag.
      */
-    const val CONFIG_SCHEMA_VERSION = 17
+    const val CONFIG_SCHEMA_VERSION = 18
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

@@ -28,15 +28,56 @@ data class ModuleSettings(
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,
     /**
-     * Enables the Kuwo search supplement, which is prepended to the automatic
+     * Enables the online search supplement, which is prepended to the automatic
      * chain for tracks Apple Music reports as having no lyrics. Defaults off so
-     * the ported online source stays invisible until a user opts in.
+     * the ported online sources stay invisible until a user opts in. When it is
+     * on, every source enabled below participates.
      */
     val onlineLyricsSupplementEnabled: Boolean = false,
+    /** Netease Cloud Music participates in the online supplement chain. */
+    val onlineLyricsSourceNeteaseEnabled: Boolean = true,
+    /** QQ Music participates in the online supplement chain. */
+    val onlineLyricsSourceQqEnabled: Boolean = true,
+    /** Kuwo Music participates in the online supplement chain. */
+    val onlineLyricsSourceKuwoEnabled: Boolean = true,
+    /** Kugou Music participates in the online supplement chain. */
+    val onlineLyricsSourceKugouEnabled: Boolean = true,
+    /**
+     * Uses [OnlineLyricSources.DEFAULT_ORDER] rather than
+     * [onlineLyricsSourceOrder]; defaults on so the built-in order keeps the
+     * ported sources' original priority.
+     */
+    val onlineLyricsAutomaticOrderEnabled: Boolean = true,
+    /** User order of source ids when [onlineLyricsAutomaticOrderEnabled] is off. */
+    val onlineLyricsSourceOrder: String = OnlineLyricSources.DEFAULT_ORDER_STORAGE,
+    /**
+     * Scores every candidate instead of keeping the first one that passes the
+     * score floor; defaults off so the ported first-passing behaviour stays.
+     */
+    val onlineLyricsGlobalBestEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,
 ) {
+    /** Reads the per-source flag that gates [source] in the online chain. */
+    fun onlineLyricsSourceEnabled(source: String): Boolean = when (source) {
+        CustomLyricsSources.NETEASE -> onlineLyricsSourceNeteaseEnabled
+        CustomLyricsSources.QQ -> onlineLyricsSourceQqEnabled
+        CustomLyricsSources.KUWO -> onlineLyricsSourceKuwoEnabled
+        CustomLyricsSources.KUGOU -> onlineLyricsSourceKugouEnabled
+        else -> false
+    }
+
+    /** Returns a copy with the per-source flag for [source] replaced. */
+    fun withOnlineLyricsSourceEnabled(source: String, enabled: Boolean): ModuleSettings =
+        when (source) {
+            CustomLyricsSources.NETEASE -> copy(onlineLyricsSourceNeteaseEnabled = enabled)
+            CustomLyricsSources.QQ -> copy(onlineLyricsSourceQqEnabled = enabled)
+            CustomLyricsSources.KUWO -> copy(onlineLyricsSourceKuwoEnabled = enabled)
+            CustomLyricsSources.KUGOU -> copy(onlineLyricsSourceKugouEnabled = enabled)
+            else -> this
+        }
+
     companion object {
         const val MIN_LYRIC_BLUR_RADIUS_OFFSET_PX = -10
         const val MAX_LYRIC_BLUR_RADIUS_OFFSET_PX = 10
@@ -102,6 +143,48 @@ object CustomLyricsSources {
     const val LUNABEAT = "lunabeat-ttml-hub"
     /** Search-based Kuwo supplement; the source name published for its lyrics. */
     const val KUWO = "kuwo"
+    /** Search-based Netease Cloud Music supplement. */
+    const val NETEASE = "netease"
+    /** Search-based QQ Music supplement. */
+    const val QQ = "qq"
+    /** Search-based Kugou Music supplement. */
+    const val KUGOU = "kugou"
+}
+
+/**
+ * Plain-data description of the selectable online lyric chain.
+ *
+ * Deliberately lives in the model package with no provider, transport, or host
+ * dependency: the settings codec and the embedded settings UI both need the ids
+ * and the default order, and the UI must not import the network package.
+ */
+object OnlineLyricSources {
+    /** HyperLyricsEnhanced's `OnlineTranslationSourcePreferences.defaultOrder`. */
+    val DEFAULT_ORDER: List<String> = listOf(
+        CustomLyricsSources.NETEASE,
+        CustomLyricsSources.QQ,
+        CustomLyricsSources.KUWO,
+        CustomLyricsSources.KUGOU,
+    )
+
+    /** Storage form of [DEFAULT_ORDER]; the default of the order setting. */
+    val DEFAULT_ORDER_STORAGE: String = DEFAULT_ORDER.joinToString(",")
+
+    /** Every selectable source in the built-in default order. */
+    val ALL: List<String> = DEFAULT_ORDER
+
+    /**
+     * Canonicalizes a stored order: keeps the known ids in their written order
+     * and appends any missing default, so the result is always a permutation of
+     * [DEFAULT_ORDER] and is never empty.
+     */
+    fun normalizeOrder(raw: String): List<String> {
+        val parsed = raw.split(',')
+            .map(String::trim)
+            .filter { it in DEFAULT_ORDER }
+            .distinct()
+        return parsed + DEFAULT_ORDER.filterNot(parsed::contains)
+    }
 }
 
 enum class FeatureState {

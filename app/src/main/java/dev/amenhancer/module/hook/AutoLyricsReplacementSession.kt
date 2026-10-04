@@ -16,7 +16,10 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
+import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.ModuleSettings
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -34,20 +37,26 @@ import org.json.JSONArray
 private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 
 /**
- * The opt-in Kuwo supplement is prepended only while its setting is on. When it
- * is off the factory is never invoked, so the source is absent from the chain
- * rather than present-and-failing, and the resolver list is exactly the fixed
- * provider order the runtime had before the feature existed.
+ * The opt-in online supplement chain is prepended only while its master setting
+ * is on. [selection] carries the enabled, ordered source ids and the match
+ * strategy; [sourceFor] constructs one provider per id. When the toggle is off
+ * the factory is never invoked, so no provider is constructed and the resolver
+ * list is exactly the fixed provider order the runtime had before the feature
+ * existed.
  */
 internal fun onlineLyricsLeadingSources(
     enabled: Boolean,
-    source: () -> AutoLyricsSource,
-): List<AutoLyricsSource> = if (enabled) listOf(source()) else emptyList()
+    selection: OnlineLyricSelection,
+    sourceFor: (String) -> AutoLyricsSource?,
+): List<AutoLyricsSource> =
+    if (enabled) selection.sources.mapNotNull(sourceFor) else emptyList()
 
 internal fun createAutoLyricsRuntime(
     application: Application,
     suppressedIds: Set<Long> = emptySet(),
     onlineLyricsSupplementEnabled: Boolean = false,
+    onlineLyricsSelection: OnlineLyricSelection =
+        OnlineLyricSourcePolicy.resolve(ModuleSettings()),
     currentTrack: () -> CurrentSongDetails? = { null },
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
@@ -66,8 +75,16 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
-    val leading = onlineLyricsLeadingSources(onlineLyricsSupplementEnabled) {
-        KuwoAutoLyricsSource.create(lyricTransport, currentTrack).autoLyricsSource()
+    val leading = onlineLyricsLeadingSources(
+        onlineLyricsSupplementEnabled,
+        onlineLyricsSelection,
+    ) { sourceId ->
+        onlineLyricSourceFor(
+            sourceId = sourceId,
+            transport = lyricTransport,
+            mode = onlineLyricsSelection.mode,
+            currentTrack = currentTrack,
+        )
     }
     val resolver = AutoLyricsSourceResolver.fixed(
         amll = AmllTtmlClient(lyricTransport),

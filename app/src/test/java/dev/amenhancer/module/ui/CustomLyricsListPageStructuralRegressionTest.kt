@@ -100,4 +100,26 @@ class CustomLyricsListPageStructuralRegressionTest {
         assertFalse(embeddedHost.contains("syncEmbeddedGitHub"))
         assertFalse(embeddedHost.contains("syncFromGitHub"))
     }
+
+    @Test
+    fun `renders the online lyric chain toggles from plain source data only`() {
+        val embeddedHost = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt",
+        )
+
+        listOf(
+            "onlineLyricsSupplementEnabled",
+            "onlineLyricsAutomaticOrderEnabled",
+            "onlineLyricsGlobalBestEnabled",
+            "OnlineLyricSources.DEFAULT_ORDER.forEach",
+            "settings.onlineLyricsSourceEnabled(sourceId)",
+            "settings.withOnlineLyricsSourceEnabled(sourceId,",
+        ).forEach { fragment ->
+            assertTrue("missing chain row fragment: $fragment", embeddedHost.contains(fragment))
+        }
+        // The settings UI may read settings and plain model constants, but never
+        // the provider package or the host implementation.
+        assertFalse(embeddedHost.contains("import dev.amenhancer.module.lyrics.source."))
+        assertFalse(embeddedHost.contains("import dev.amenhancer.module.hook."))
+    }
 }

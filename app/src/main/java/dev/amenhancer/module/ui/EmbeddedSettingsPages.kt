@@ -28,6 +28,7 @@ import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.model.OnlineLyricSources
 import java.lang.ref.WeakReference
 
 internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
@@ -538,7 +539,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSettingRow(
             activity,
             "在线补充无歌词歌曲",
-            "无歌词时按歌名、歌手和时长从酷我搜索歌词；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            "无歌词时按歌名、歌手和时长在线搜索；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
             settings.onlineLyricsSupplementEnabled,
             enabled = settings.customLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
@@ -546,7 +547,57 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                 EmbeddedSettingsPalette.accent,
             ),
             compactWidePadding = true,
-        ) { onSettingsChanged(settings.copy(onlineLyricsSupplementEnabled = it)) })
+        ) {
+            onSettingsChanged(settings.copy(onlineLyricsSupplementEnabled = it))
+            // Re-render so the source rows below enable/disable with the master.
+            pageRefresh?.invoke()
+        })
+
+        val chainEnabled = settings.customLyricsEnabled && settings.onlineLyricsSupplementEnabled
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            "自动选择来源顺序",
+            "按内置顺序（网易云、QQ、酷我、酷狗）依次尝试；关闭后使用自定义顺序",
+            settings.onlineLyricsAutomaticOrderEnabled,
+            enabled = chainEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsAutomaticOrderEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            "全局最优匹配",
+            "开启后为命中的来源候选评分并取最高分；关闭则采用首个达到匹配分数的候选",
+            settings.onlineLyricsGlobalBestEnabled,
+            enabled = chainEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsGlobalBestEnabled = it)) })
+
+        OnlineLyricSources.DEFAULT_ORDER.forEach { sourceId ->
+            parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+            parent.addView(embeddedSettingRow(
+                activity,
+                embeddedOnlineLyricsSourceLabel(sourceId),
+                "无歌词时搜索该来源",
+                settings.onlineLyricsSourceEnabled(sourceId),
+                enabled = chainEnabled,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.DocumentSearch,
+                    EmbeddedSettingsPalette.accent,
+                ),
+                compactWidePadding = true,
+            ) {
+                onSettingsChanged(settings.withOnlineLyricsSourceEnabled(sourceId, it))
+            })
+        }
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
 
         val lyricsContent = LinearLayout(activity).apply {
@@ -865,6 +916,18 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsSourceName(source: String)
         CustomLyricsSources.AM_LYRICS -> "AM-Lyrics 仓库"
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
         CustomLyricsSources.KUWO -> "酷我"
+        CustomLyricsSources.NETEASE -> "网易云"
+        CustomLyricsSources.QQ -> "QQ 音乐"
+        CustomLyricsSources.KUGOU -> "酷狗"
         else -> "手动 TTML"
     }
+
+/** Display name for one selectable online chain source id. */
+internal fun embeddedOnlineLyricsSourceLabel(sourceId: String): String = when (sourceId) {
+    CustomLyricsSources.NETEASE -> "网易云音乐"
+    CustomLyricsSources.QQ -> "QQ 音乐"
+    CustomLyricsSources.KUWO -> "酷我音乐"
+    CustomLyricsSources.KUGOU -> "酷狗音乐"
+    else -> sourceId
+}
 

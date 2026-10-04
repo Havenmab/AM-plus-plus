@@ -5,6 +5,7 @@ import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.model.OnlineLyricSources
 
 object ModuleSettingsSchema {
     /** Keys removed by the profile migration. */
@@ -62,6 +63,33 @@ object ModuleSettingsSchema {
             KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
             default = false,
         ),
+        onlineLyricsSourceNeteaseEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
+            default = true,
+        ),
+        onlineLyricsSourceQqEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
+            default = true,
+        ),
+        onlineLyricsSourceKuwoEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED,
+            default = true,
+        ),
+        onlineLyricsSourceKugouEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED,
+            default = true,
+        ),
+        onlineLyricsAutomaticOrderEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED,
+            default = true,
+        ),
+        onlineLyricsSourceOrder = OnlineLyricSources.normalizeOrder(
+            values.string(KEY_ONLINE_LYRICS_SOURCE_ORDER),
+        ).joinToString(","),
+        onlineLyricsGlobalBestEnabled = values.boolean(
+            KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
+            default = false,
+        ),
         fontManifest = values.fontManifest(),
         customLyricsManifest = values.customLyricsManifest(),
         schemaVersion = values.number(KEY_SCHEMA_VERSION)
@@ -108,6 +136,16 @@ object ModuleSettingsSchema {
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
             KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED to settings.onlineLyricsSourceNeteaseEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED to settings.onlineLyricsSourceQqEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED to settings.onlineLyricsSourceKuwoEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED to settings.onlineLyricsSourceKugouEnabled,
+            KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED to
+                settings.onlineLyricsAutomaticOrderEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_ORDER to
+                OnlineLyricSources.normalizeOrder(settings.onlineLyricsSourceOrder)
+                    .joinToString(","),
+            KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED to settings.onlineLyricsGlobalBestEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return values
@@ -264,6 +302,13 @@ object ModuleSettingsSchema {
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
         KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED,
+        KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_ORDER,
+        KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
         KEY_FONT_FILE_ID,
@@ -299,6 +344,19 @@ object ModuleSettingsSchema {
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"
     private const val KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED =
         "online_lyrics_supplement_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED =
+        "online_lyrics_source_netease_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED =
+        "online_lyrics_source_qq_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED =
+        "online_lyrics_source_kuwo_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED =
+        "online_lyrics_source_kugou_enabled"
+    private const val KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED =
+        "online_lyrics_automatic_order_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_ORDER = "online_lyrics_source_order"
+    private const val KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED =
+        "online_lyrics_global_best_enabled"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

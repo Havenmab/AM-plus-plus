@@ -1,5 +1,6 @@
 package dev.amenhancer.module.lyrics.source
 
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -8,6 +9,8 @@ data class LyricHttpResponse(
     val statusCode: Int,
     val body: ByteArray?,
     val etag: String? = null,
+    /** Response headers, lower-cased names, last value wins. Empty when unknown. */
+    val headers: Map<String, String> = emptyMap(),
 )
 
 interface LyricHttpTransport {
@@ -29,6 +32,23 @@ interface LyricHttpTransport {
     /** Optional response metadata used by catalog clients for conditional GET. */
     fun getResponse(url: String, ifNoneMatch: String? = null): LyricHttpResponse? =
         getBytes(url)?.let { bytes -> LyricHttpResponse(HttpURLConnection.HTTP_OK, bytes) }
+
+    /**
+     * POST a request body, returning the whole response so callers can read
+     * response headers (Netease's anonymous session is seeded from
+     * `Set-Cookie`).
+     *
+     * The default throws instead of silently degrading to `null`: no existing
+     * fake or provider calls it, so nothing that compiles today changes
+     * behaviour, and a transport that cannot POST fails loudly at its
+     * provider's own fail-open boundary rather than looking like a network
+     * miss. [HttpLyricTransport] overrides it.
+     */
+    fun postFormResponse(
+        url: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): LyricHttpResponse? = throw UnsupportedOperationException("POST is not supported by this transport")
 }
 
 /**
@@ -57,6 +77,18 @@ class HttpLyricTransport(
     override fun getResponse(url: String, ifNoneMatch: String?): LyricHttpResponse? =
         requestResponse(url, ifNoneMatch)
 
+    override fun postFormResponse(
+        url: String,
+        body: String,
+        headers: Map<String, String>,
+    ): LyricHttpResponse? = requestResponse(
+        url = url,
+        ifNoneMatch = null,
+        headers = headers,
+        method = "POST",
+        formBody = body.toByteArray(Charsets.UTF_8),
+    )
+
     /** The shared headers for one request with [overrides] applied last. */
     internal fun effectiveRequestHeaders(
         overrides: Map<String, String> = emptyMap(),
@@ -66,10 +98,12 @@ class HttpLyricTransport(
         url: String,
         ifNoneMatch: String?,
         headers: Map<String, String> = emptyMap(),
+        method: String = "GET",
+        formBody: ByteArray? = null,
     ): LyricHttpResponse? = runCatching {
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
-            connection.requestMethod = "GET"
+            connection.requestMethod = method
             connection.connectTimeout = connectTimeoutMs
             connection.readTimeout = readTimeoutMs
             connection.instanceFollowRedirects = true
@@ -79,13 +113,18 @@ class HttpLyricTransport(
             if (!ifNoneMatch.isNullOrBlank()) {
                 connection.setRequestProperty("If-None-Match", ifNoneMatch)
             }
+            if (formBody != null) {
+                connection.doOutput = true
+                connection.setFixedLengthStreamingMode(formBody.size)
+                connection.outputStream.use { it.write(formBody) }
+            }
             val status = connection.responseCode
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED) {
                 return@runCatching LyricHttpResponse(status, body = null, etag = connection.etag())
             }
             if (status != HttpURLConnection.HTTP_OK) return@runCatching null
             val bytes = readBounded(connection) ?: return@runCatching null
-            LyricHttpResponse(status, bytes, connection.etag())
+            LyricHttpResponse(status, bytes, connection.etag(), connection.responseHeaders())
         } finally {
             connection.disconnect()
         }
@@ -93,8 +132,18 @@ class HttpLyricTransport(
 
     private fun HttpURLConnection.etag(): String? = getHeaderField("ETag")?.trim()
 
+    private fun HttpURLConnection.responseHeaders(): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+        headerFields.forEach { (name, values) ->
+            if (name == null) return@forEach
+            val value = values.lastOrNull() ?: return@forEach
+            result[name.lowercase()] = value
+        }
+        return result
+    }
+
     private fun readBounded(connection: HttpURLConnection): ByteArray? {
-        val buffer = java.io.ByteArrayOutputStream()
+        val buffer = ByteArrayOutputStream()
         connection.inputStream.use { input ->
             val chunk = ByteArray(8192)
             while (buffer.size() < maxResponseBytes) {

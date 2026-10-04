@@ -61,6 +61,17 @@ internal object KuwoNetwork {
     internal const val OPEN_LYRIC_URL = "https://www.kuwo.cn/openapi/v1/www/lyric/getlyric"
     internal const val LRCX_URL = "https://newlyric.kuwo.cn/newlyric.lrc"
 
+    /**
+     * Effective headers HLE sent on its own okhttp client. The shared AM++
+     * transport identifies as `AMPlusPlus/1.2.1` and lets the JVM negotiate
+     * gzip, and `newlyric.kuwo.cn` is known to answer that identity with a
+     * non-200/undecodable body; every Kuwo request therefore overrides both.
+     */
+    internal val REQUEST_HEADERS = mapOf(
+        "User-Agent" to "okhttp/3.10.0",
+        "Accept-Encoding" to "identity",
+    )
+
     fun search(
         transport: LyricHttpTransport,
         keyword: String,
@@ -113,12 +124,12 @@ internal object KuwoNetwork {
 
     private fun fetchLrcx(transport: LyricHttpTransport, rid: Long): String {
         val query = KuwoResponseDecoder.buildRequestQuery(rid)
-        val bytes = transport.getBytes("$LRCX_URL?$query") ?: ByteArray(0)
+        val bytes = transport.getBytes("$LRCX_URL?$query", REQUEST_HEADERS) ?: ByteArray(0)
         return KuwoResponseDecoder.decode(bytes).orEmpty()
     }
 
     private fun requestText(transport: LyricHttpTransport, url: String): String? =
-        transport.getBytes(url)?.toString(StandardCharsets.UTF_8)
+        transport.getBytes(url, REQUEST_HEADERS)?.toString(StandardCharsets.UTF_8)
 
     private fun formatTimestamp(timeMs: Long): String = String.format(
         Locale.ROOT,

@@ -3,6 +3,7 @@ package dev.amenhancer.module.lyrics.source
 import dev.amenhancer.module.hook.AutoLyricsCandidate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -68,6 +69,72 @@ class AutoLyricsSourceResolverTest {
         assertEquals(AutoLyricsCandidate("kuwo", LINE_TTML), resolver.fetch(42L))
         assertEquals(listOf("amll", "kuwo"), calls)
     }
+
+    @Test
+    fun `a throwing source is skipped and the next source still resolves`() {
+        val resolver = AutoLyricsSourceResolver(
+            listOf(
+                AutoLyricsSource("kuwo", acceptsLineTiming = true) { error("network down") },
+                AutoLyricsSource("amll") { WORD_TTML },
+            ),
+        )
+
+        assertEquals(AutoLyricsCandidate("amll", WORD_TTML), resolver.fetch(42L))
+    }
+
+    @Test
+    fun `a leading search source is consulted before every fixed provider`() {
+        val fixedRequests = mutableListOf<String>()
+        val resolver = AutoLyricsSourceResolver.fixed(
+            amll = AmllTtmlClient(recordingTransport(fixedRequests)),
+            amLyrics = AmLyricsClient(recordingTransport(fixedRequests)),
+            lunabeat = LunabeatClient(
+                indexTransport = recordingTransport(fixedRequests),
+                cache = { null },
+            ),
+            leading = listOf(AutoLyricsSource("kuwo", acceptsLineTiming = true) { LINE_TTML }),
+        )
+
+        assertEquals(AutoLyricsCandidate("kuwo", LINE_TTML), resolver.fetch(42L))
+        assertTrue(fixedRequests.isEmpty())
+    }
+
+    @Test
+    fun `without a leading source the fixed provider order is untouched`() {
+        val fixedRequests = mutableListOf<String>()
+        val resolver = AutoLyricsSourceResolver.fixed(
+            amll = AmllTtmlClient(recordingTransport(fixedRequests)),
+            amLyrics = AmLyricsClient(recordingTransport(fixedRequests)),
+            lunabeat = LunabeatClient(
+                indexTransport = recordingTransport(fixedRequests),
+                cache = { null },
+            ),
+        )
+
+        assertNull(resolver.fetch(42L))
+        assertEquals(
+            listOf(
+                "${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml",
+                LunabeatClient.MANIFEST_URL,
+                AmLyricsClient.AM_LYRICS_INDEX_URL,
+            ),
+            fixedRequests,
+        )
+    }
+
+    /** A transport that records every fixed-provider URL and answers nothing. */
+    private fun recordingTransport(requests: MutableList<String>): LyricHttpTransport =
+        object : LyricHttpTransport {
+            override fun get(url: String): String? {
+                requests += url
+                return null
+            }
+
+            override fun getBytes(url: String): ByteArray? {
+                requests += url
+                return null
+            }
+        }
 
     private companion object {
         const val WORD_TTML =

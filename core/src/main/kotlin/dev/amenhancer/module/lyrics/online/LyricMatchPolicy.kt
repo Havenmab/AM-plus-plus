@@ -95,8 +95,7 @@ object LyricMatchPolicy {
         val remoteAlbum = normalizeAlbumForComparison(song.album, toSimplified)
         score += albumScore(cleanLocalAlbum, remoteAlbum)
 
-        val songFeatures = listOf("live", "remastered", "翻唱", "cover")
-            .filter { song.title.lowercase().contains(it) }
+        val songFeatures = featuresOf(song.title)
 
         if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty()) {
             val commonFeatures = localFeatures.intersect(songFeatures.toSet())
@@ -107,6 +106,13 @@ object LyricMatchPolicy {
 
         return score
     }
+
+    /** Recording/version markers that are compared on top of the title match. */
+    val FEATURE_MARKERS = listOf("live", "remastered", "翻唱", "cover")
+
+    /** Markers present in [title]; the same list is applied to local and remote. */
+    fun featuresOf(title: String): List<String> =
+        FEATURE_MARKERS.filter { title.lowercase().contains(it) }
 
     /**
      * Album scoring. Whitespace is compacted while word boundaries still exist;

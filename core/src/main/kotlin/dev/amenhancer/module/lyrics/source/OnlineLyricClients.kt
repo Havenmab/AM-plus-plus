@@ -58,13 +58,21 @@ class AutoLyricsSourceResolver(
     }
 
     companion object {
-        /** Wires the fixed AMLL → Lunabeat → user's repository priority. */
+        /**
+         * Wires the fixed AMLL → Lunabeat → user's repository priority.
+         *
+         * [leading] is prepended verbatim for opt-in search sources; callers
+         * pass an empty list when the owning setting is off, so the provider
+         * chain is exactly the fixed one and the search client is never even
+         * constructed.
+         */
         fun fixed(
             amll: AmllTtmlClient,
             amLyrics: AmLyricsClient,
             lunabeat: LunabeatClient,
+            leading: List<AutoLyricsSource> = emptyList(),
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
-            listOf(
+            leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL) { raw ->
                     amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
                 },

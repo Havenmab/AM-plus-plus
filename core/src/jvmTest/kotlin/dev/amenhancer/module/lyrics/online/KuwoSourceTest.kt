@@ -196,6 +196,32 @@ class KuwoSourceTest {
         assertTrue(transport.requests.isEmpty())
     }
 
+    @Test
+    fun `every kuwo request carries the HLE okhttp identity and no gzip`() {
+        val seen = mutableListOf<Map<String, String>>()
+        val transport = object : LyricHttpTransport {
+            override fun get(url: String): String? = null
+            override fun getBytes(url: String): ByteArray? = null
+            override fun getBytes(url: String, headers: Map<String, String>): ByteArray? {
+                seen += headers
+                return null
+            }
+        }
+
+        val source = KuwoSource(transport)
+        source.search("hello world")
+        source.getLyrics(
+            SongSearchResult("123456", "Song", "Artist", "Album", 215_000L, Source.KUWO),
+        )
+
+        assertEquals(3, seen.size)
+        seen.forEach { overrides ->
+            assertEquals(KuwoNetwork.REQUEST_HEADERS, overrides)
+            assertEquals("okhttp/3.10.0", overrides["User-Agent"])
+            assertEquals("identity", overrides["Accept-Encoding"])
+        }
+    }
+
     private fun lineText(line: LyricsLine): String = line.words.joinToString("") { it.text }
 
     private class FakeTransport(

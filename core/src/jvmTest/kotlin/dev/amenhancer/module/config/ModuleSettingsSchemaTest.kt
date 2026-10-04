@@ -81,6 +81,7 @@ class ModuleSettingsSchemaTest {
                 "title_correction_mode" to "original_hyper",
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -120,6 +121,7 @@ class ModuleSettingsSchemaTest {
                 "title_correction_mode" to "original_hyper",
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -327,6 +329,45 @@ class ModuleSettingsSchemaTest {
             false,
             ModuleSettingsSchema.decode(encoded).automaticLyricsEnabled,
         )
+    }
+
+    @Test
+    fun `online lyrics supplement defaults off and round trips`() {
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).onlineLyricsSupplementEnabled,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_supplement_enabled" to "not-a-boolean"),
+            ).onlineLyricsSupplementEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsSupplementEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_supplement_enabled"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsSupplementEnabled,
+        )
+    }
+
+    @Test
+    fun `a region-era schema upgrades with the online toggle absent and off`() {
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 16,
+                "custom_lyrics_enabled" to true,
+                "automatic_lyrics_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["custom_lyrics_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
     }
 
     @Test

@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidBottomTab
 import com.kyant.backdrop.catalog.components.LiquidBottomTabs
+import kotlin.math.roundToInt
 
 data class GlassTab(val id: Int, val title: String, val icon: Drawable?, val enabled: Boolean)
 
@@ -64,6 +66,14 @@ fun GlassNavigation(
     // A menu replacement must discard gestures whose indices refer to the old menu.
     key(tabs.map { it.id }, rejectedSelection) {
         val selection = remember { { confirmedIndex.value } }
+        // The tablet chrome draws its own capsule over the host's top tab bar, which the
+        // reference shows noticeably more compact than the anchor it replaces. Only the
+        // TabletLabels style is trimmed; Stacked keeps the anchor's full geometry. The anchor
+        // height varies per device, so the height is a fraction of it rounded to whole dp.
+        val tabletBar = style == GlassNavigationStyle.TabletLabels
+        val barHeight = if (tabletBar) {
+            (panelHeight.value * GlassPolicy.TABLET_NAV_HEIGHT_FRACTION).roundToInt().dp
+        } else panelHeight
         LiquidBottomTabs(
             selectedTabIndex = selection,
             onTabSelected = { i -> tabs.getOrNull(i)?.let { if (it.id != confirmedId.value) request(it) } },
@@ -71,12 +81,13 @@ fun GlassNavigation(
             isTabEnabled = { i -> tabs.getOrNull(i)?.enabled == true },
             backdrop = backdrop,
             tabsCount = tabs.size,
+            modifier = if (tabletBar) Modifier.insetToWidthFraction(GlassPolicy.TABLET_NAV_WIDTH_FRACTION) else Modifier,
             accentOverride = accent,
-            panelHeight = panelHeight,
+            panelHeight = barHeight,
             panelBlur = panelBlur,
-            leadingWidth = if (onDrawer == null) 0.dp else panelHeight - 8.dp,
+            leadingWidth = if (onDrawer == null) 0.dp else barHeight - 8.dp,
             leadingContent = onDrawer?.let { open -> {
-                Box(Modifier.width(panelHeight - 8.dp).fillMaxHeight()
+                Box(Modifier.width(barHeight - 8.dp).fillMaxHeight()
                     .semantics { contentDescription = drawerDescription }
                     .clickable(onClick = open), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.size(24.dp)) {
@@ -120,5 +131,27 @@ fun GlassNavigation(
                 }
             }
         }
+    }
+}
+
+/**
+ * Draws the bar at [widthFraction] of the available width, inset evenly on both sides, while the
+ * layout node itself keeps reporting the full width it was offered.
+ *
+ * The tablet session's layout contract requires the measured Compose content width to equal the
+ * glass host view width (`FragmentTabletGlassPolicy.navigationLayoutReady`), so the narrowing has
+ * to happen inside the node rather than by sizing the node: a plain `fillMaxWidth(fraction)` would
+ * leave the session's native navigation visible forever. The library computes its tab and touch
+ * geometry from the constraints it receives, so the inset capsule and its gestures stay consistent.
+ */
+private fun Modifier.insetToWidthFraction(widthFraction: Float): Modifier = layout { measurable, constraints ->
+    if (!constraints.hasBoundedWidth) {
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    } else {
+        val inset = ((constraints.maxWidth * (1f - widthFraction)) / 2f).roundToInt()
+        val width = (constraints.maxWidth - inset * 2).coerceAtLeast(0)
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(inset, 0) }
     }
 }

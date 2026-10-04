@@ -28,6 +28,15 @@ data class GlassGeometry(
 /** Android-free invariants used by both the host bridge and regression tests. */
 object GlassPolicy {
     const val NAV_HEIGHT_DP = 56
+    /**
+     * The tablet top bar overlays the host's own top tab bar and is drawn at this fraction of
+     * the anchor the host reports, because the reference capsule is visibly more compact than
+     * the anchor. The phone bottom bar keeps the full anchor geometry ([GlassNavigationStyle.Stacked]).
+     * Height is a fraction of the anchor height (rounded to whole dp by the renderer), width a
+     * fraction of the anchor width, inset evenly on both sides.
+     */
+    const val TABLET_NAV_HEIGHT_FRACTION = 0.92f
+    const val TABLET_NAV_WIDTH_FRACTION = 0.8f
     const val MINI_HEIGHT_DP = 43
     const val HORIZONTAL_DP = 16
     const val GAP_DP = 8

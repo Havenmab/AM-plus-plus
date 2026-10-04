@@ -143,7 +143,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 16`() {
+    fun `keeps the glass configuration keys under schema 17`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -159,8 +159,8 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 16 adds the region-replacement extras (schema 15 was the independent
-        // cellular setting); glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 16"))
+        // Schema 17 merges the region-replacement extras (16) and the online lyric
+        // supplement (17); glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 17"))
     }
 }

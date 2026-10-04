@@ -3,13 +3,15 @@ package dev.amenhancer.module.hook
 import dev.amenhancer.module.CurrentSongDetails
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The verified current lyrics item identity seam: the I2 fragment's current
  * item field (`com.apple.android.music.player.fragment.m#c` of type
  * `com.apple.android.music.model.BaseContentItem`) read through `getId()` and
  * parsed with [parseCurrentItemAdamId]. The same item optionally supplies
- * `getTitle()` and `getArtistName()` for embedded current-song editing.
+ * `getTitle()` and `getArtistName()` for embedded current-song editing, and a
+ * numeric `getDuration()` for the online-lyric match score.
  *
  * Lyric replacement and current-song identity capability share this exact
  * contract; neither consumer may reinterpret the identity as a title or
@@ -24,6 +26,8 @@ internal class CurrentItemIdentitySeam(
     private lateinit var currentItemGetId: Method
     private var currentItemGetTitle: Method? = null
     private var currentItemGetArtistName: Method? = null
+    private var currentItemGetDuration: Method? = null
+    private val durationGetters = ConcurrentHashMap<Class<*>, Method>()
 
     /** The verified current item field resolution summary, or null before resolve. */
     var fieldSummary: String? = null
@@ -52,10 +56,12 @@ internal class CurrentItemIdentitySeam(
         currentItemGetId = getId
         currentItemGetTitle = resolveStringGetter(currentItemFieldValue.type, "getTitle")
         currentItemGetArtistName = resolveStringGetter(currentItemFieldValue.type, "getArtistName")
+        currentItemGetDuration = resolveNumericGetter(currentItemFieldValue.type)
         fieldSummary = currentItemResolution.summary
         metadataSummary = buildList {
             if (currentItemGetTitle == null) add("current-item-title-method unavailable")
             if (currentItemGetArtistName == null) add("current-item-artist-method unavailable")
+            if (currentItemGetDuration == null) add("current-item-duration-method unavailable")
         }.takeIf { it.isNotEmpty() }?.joinToString("; ")
         return null
     }
@@ -89,6 +95,10 @@ internal class CurrentItemIdentitySeam(
                 appleMusicId = appleMusicId,
                 title = invokeStringGetter(currentItemGetTitle, item),
                 artist = invokeStringGetter(currentItemGetArtistName, item),
+                durationMs = invokeLongGetter(
+                    durationGetterFor(item.javaClass) ?: currentItemGetDuration,
+                    item,
+                ),
             )
         }.getOrNull()
     }
@@ -101,10 +111,38 @@ internal class CurrentItemIdentitySeam(
             ?.apply { isAccessible = true }
     }.getOrNull()
 
+    /**
+     * Optional track length. The declared BaseContentItem type is checked first
+     * at resolve time, but the concrete PlaybackItem may be the one that
+     * declares it, so `detailsOfItem` re-resolves against the runtime class.
+     */
+    private fun resolveNumericGetter(itemType: Class<*>): Method? = runCatching {
+        itemType.methods.firstOrNull { method ->
+            method.parameterCount == 0 &&
+                method.name in DURATION_GETTER_NAMES &&
+                (method.returnType == Long::class.javaPrimitiveType ||
+                    method.returnType == Int::class.javaPrimitiveType)
+        }?.apply { isAccessible = true }
+    }.getOrNull()
+
+    private fun durationGetterFor(itemType: Class<*>): Method? =
+        durationGetters[itemType] ?: resolveNumericGetter(itemType)?.also { method ->
+            durationGetters[itemType] = method
+        }
+
     private fun invokeStringGetter(method: Method?, receiver: Any): String? = method
         ?.let { runCatching { it.invoke(receiver) as? String }.getOrNull() }
         ?.trim()
         ?.takeIf(String::isNotEmpty)
+
+    private fun invokeLongGetter(method: Method?, receiver: Any): Long = method
+        ?.let { runCatching { (it.invoke(receiver) as? Number)?.toLong() }.getOrNull() }
+        ?.coerceAtLeast(0L)
+        ?: 0L
+
+    private companion object {
+        val DURATION_GETTER_NAMES = setOf("getDuration", "getDurationMs", "getDurationInMillis")
+    }
 }
 
 /** Parses Apple's current item identity; only a positive Adam ID is accepted. */

@@ -568,6 +568,19 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(automaticLyricsEnabled = it)) })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            "在线补充无歌词歌曲",
+            "无歌词时按歌名、歌手和时长从酷我搜索歌词；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            settings.onlineLyricsSupplementEnabled,
+            enabled = settings.customLyricsEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsSupplementEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
 
         val lyricsContent = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -884,6 +897,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsSourceName(source: String)
         CustomLyricsSources.AMLL -> "AMLL"
         CustomLyricsSources.AM_LYRICS -> "AM-Lyrics 仓库"
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
+        CustomLyricsSources.KUWO -> "酷我"
         else -> "手动 TTML"
     }
 

@@ -118,6 +118,7 @@ class OrdinarySettingsWritePolicyTest {
                 "localized_metadata_cache" to true,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to false,
                 "schema_version" to ModuleConstants.CONFIG_SCHEMA_VERSION,
             ),
             encoded,

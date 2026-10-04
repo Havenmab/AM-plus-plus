@@ -6,7 +6,9 @@ import dev.amenhancer.module.lyrics.source.FileLunabeatCatalogCache
 import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
 import dev.amenhancer.module.lyrics.source.AmllTtmlClient
 import dev.amenhancer.module.lyrics.source.AmLyricsClient
+import dev.amenhancer.module.lyrics.source.AutoLyricsSource
 import android.app.Application
+import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
 import dev.amenhancer.module.config.EmbeddedContentManager
 import dev.amenhancer.module.config.HostPrivateEmbeddedStorage
@@ -31,9 +33,22 @@ import org.json.JSONArray
 
 private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 
+/**
+ * The opt-in Kuwo supplement is prepended only while its setting is on. When it
+ * is off the factory is never invoked, so the source is absent from the chain
+ * rather than present-and-failing, and the resolver list is exactly the fixed
+ * provider order the runtime had before the feature existed.
+ */
+internal fun onlineLyricsLeadingSources(
+    enabled: Boolean,
+    source: () -> AutoLyricsSource,
+): List<AutoLyricsSource> = if (enabled) listOf(source()) else emptyList()
+
 internal fun createAutoLyricsRuntime(
     application: Application,
     suppressedIds: Set<Long> = emptySet(),
+    onlineLyricsSupplementEnabled: Boolean = false,
+    currentTrack: () -> CurrentSongDetails? = { null },
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
     val lyricTransport = HttpLyricTransport(
@@ -51,10 +66,14 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
+    val leading = onlineLyricsLeadingSources(onlineLyricsSupplementEnabled) {
+        KuwoAutoLyricsSource.create(lyricTransport, currentTrack).autoLyricsSource()
+    }
     val resolver = AutoLyricsSourceResolver.fixed(
         amll = AmllTtmlClient(lyricTransport),
         amLyrics = AmLyricsClient(lyricTransport),
         lunabeat = lunabeat,
+        leading = leading,
     )
     val cache = FileAutoLyricsCache(root)
     val configuredContent = EmbeddedContentManager(
@@ -104,7 +123,7 @@ internal fun createAutoLyricsRuntime(
             cache.cachedIds().forEach { appleMusicId ->
                 if (appleMusicId in suppressedIds) return@forEach
                 val ttml = cache.read(appleMusicId)
-                    ?.takeIf(TtmlTimingPolicy::isWord)
+                    ?.takeIf(AutoLyricsTimingPolicy::isAcceptableAtSeam)
                     ?: return@forEach
                 when (
                     runCatching {

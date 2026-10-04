@@ -345,6 +345,7 @@ internal fun EmbeddedSettingsHost.embeddedLyricsSourceName(source: String): Stri
         CustomLyricsSources.AMLL -> "AMLL"
         CustomLyricsSources.AM_LYRICS -> "AM-Lyrics 仓库"
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
+        CustomLyricsSources.KUWO -> "酷我"
         else -> "手动 TTML"
     }
 

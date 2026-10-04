@@ -73,6 +73,10 @@ object ModuleSettingsSchema {
                 default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
             ),
             automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
+            onlineLyricsSupplementEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
+                default = false,
+            ),
             fontManifest = values.fontManifest(),
             customLyricsManifest = values.customLyricsManifest(),
             schemaVersion = values.number(KEY_SCHEMA_VERSION)
@@ -121,6 +125,7 @@ object ModuleSettingsSchema {
             KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
+            KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return values
@@ -278,6 +283,7 @@ object ModuleSettingsSchema {
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
+        KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
         KEY_FONT_FILE_ID,
@@ -313,6 +319,8 @@ object ModuleSettingsSchema {
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"
+    private const val KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED =
+        "online_lyrics_supplement_enabled"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

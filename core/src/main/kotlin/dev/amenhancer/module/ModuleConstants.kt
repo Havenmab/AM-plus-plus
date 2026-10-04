@@ -4,8 +4,13 @@ object ModuleConstants {
     const val MODULE_PACKAGE = "dev.amenhancer.module"
     const val TARGET_PACKAGE = "com.apple.android.music"
     const val REMOTE_PREFERENCES_GROUP = "settings"
-    /** v16 adds the region-replacement extras (original-name restore + region cache). */
-    const val CONFIG_SCHEMA_VERSION = 16
+    /**
+     * Single merged schema version.  Both features bumped from 15 independently:
+     * v16 added the region-replacement extras (original-name restore + region
+     * cache) and v17 adds the online lyric supplement toggle.  The merged tree
+     * keeps both key sets under one final version, 17.
+     */
+    const val CONFIG_SCHEMA_VERSION = 17
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

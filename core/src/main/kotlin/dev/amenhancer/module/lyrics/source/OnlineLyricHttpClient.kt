@@ -16,6 +16,16 @@ interface LyricHttpTransport {
     /** Raw response bytes for callers that must verify remote size and hash. */
     fun getBytes(url: String): ByteArray? = get(url)?.toByteArray(Charsets.UTF_8)
 
+    /**
+     * Raw response bytes with per-request header overrides.
+     *
+     * The default ignores [headers] so existing fakes and providers keep their
+     * behaviour; [HttpLyricTransport] applies them on top of its shared
+     * defaults for this one request. Used by upstreams (Kuwo) whose endpoints
+     * reject the module's default identity or need transparent gzip disabled.
+     */
+    fun getBytes(url: String, headers: Map<String, String>): ByteArray? = getBytes(url)
+
     /** Optional response metadata used by catalog clients for conditional GET. */
     fun getResponse(url: String, ifNoneMatch: String? = null): LyricHttpResponse? =
         getBytes(url)?.let { bytes -> LyricHttpResponse(HttpURLConnection.HTTP_OK, bytes) }
@@ -40,18 +50,32 @@ class HttpLyricTransport(
     override fun getBytes(url: String): ByteArray? =
         getResponse(url)?.takeIf { it.statusCode == HttpURLConnection.HTTP_OK }?.body
 
+    override fun getBytes(url: String, headers: Map<String, String>): ByteArray? =
+        requestResponse(url, ifNoneMatch = null, headers = headers)
+            ?.takeIf { it.statusCode == HttpURLConnection.HTTP_OK }?.body
+
     override fun getResponse(url: String, ifNoneMatch: String?): LyricHttpResponse? =
         requestResponse(url, ifNoneMatch)
 
-    private fun requestResponse(url: String, ifNoneMatch: String?): LyricHttpResponse? = runCatching {
+    /** The shared headers for one request with [overrides] applied last. */
+    internal fun effectiveRequestHeaders(
+        overrides: Map<String, String> = emptyMap(),
+    ): Map<String, String> = BASE_HEADERS + overrides
+
+    private fun requestResponse(
+        url: String,
+        ifNoneMatch: String?,
+        headers: Map<String, String> = emptyMap(),
+    ): LyricHttpResponse? = runCatching {
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "GET"
             connection.connectTimeout = connectTimeoutMs
             connection.readTimeout = readTimeoutMs
             connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", USER_AGENT)
-            connection.setRequestProperty("Accept", "text/plain, application/json;q=0.9, */*;q=0.5")
+            effectiveRequestHeaders(headers).forEach { (name, value) ->
+                connection.setRequestProperty(name, value)
+            }
             if (!ifNoneMatch.isNullOrBlank()) {
                 connection.setRequestProperty("If-None-Match", ifNoneMatch)
             }
@@ -88,5 +112,9 @@ class HttpLyricTransport(
         const val DEFAULT_READ_TIMEOUT_MS = 15_000
         const val DEFAULT_MAX_RESPONSE_BYTES = 1 shl 20
         private const val USER_AGENT = "AMPlusPlus/1.2.1"
+        private val BASE_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Accept" to "text/plain, application/json;q=0.9, */*;q=0.5",
+        )
     }
 }

@@ -42,6 +42,12 @@ data class ModuleSettings(
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,
+    /**
+     * Enables the Kuwo search supplement, which is prepended to the automatic
+     * chain for tracks Apple Music reports as having no lyrics. Defaults off so
+     * the ported online source stays invisible until a user opts in.
+     */
+    val onlineLyricsSupplementEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,
@@ -109,6 +115,8 @@ object CustomLyricsSources {
     const val AMLL = "amll-ttml-db"
     const val AM_LYRICS = "am-lyrics"
     const val LUNABEAT = "lunabeat-ttml-hub"
+    /** Search-based Kuwo supplement; the source name published for its lyrics. */
+    const val KUWO = "kuwo"
 }
 
 enum class FeatureState {

@@ -20,11 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -74,6 +77,29 @@ fun GlassNavigation(
         val barHeight = if (tabletBar) {
             (panelHeight.value * GlassPolicy.TABLET_NAV_HEIGHT_FRACTION).roundToInt().dp
         } else panelHeight
+        // The tablet chrome overlays the host's top tab bar, whose own labels are slightly larger
+        // and heavier than the phone bottom bar's; the two styles therefore get different label
+        // typography, and the tablet bar sizes each cell to the label it is about to draw.
+        val labelStyle = if (tabletBar) {
+            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        } else {
+            TextStyle(color = foreground, fontSize = 11.sp)
+        }
+        val density = LocalDensity.current
+        val textMeasurer = rememberTextMeasurer()
+        // Tablet cells hug their content: a label tab is as wide as its text, an icon tab as wide
+        // as its 24dp glyph. The phone bar passes null and keeps upstream's equal shares.
+        val tabContentWidths = if (tabletBar) {
+            remember(tabs, textMeasurer, density, labelStyle) {
+                tabs.map { tab ->
+                    if (tab.icon != null) 24.dp
+                    else with(density) {
+                        textMeasurer.measure(AnnotatedString(tab.title), labelStyle, maxLines = 1)
+                            .size.width.toDp()
+                    }
+                }
+            }
+        } else null
         LiquidBottomTabs(
             selectedTabIndex = selection,
             onTabSelected = { i -> tabs.getOrNull(i)?.let { if (it.id != confirmedId.value) request(it) } },
@@ -98,36 +124,29 @@ fun GlassNavigation(
                     }
                 }
             } },
-        ) {
-            tabs.forEach { tab ->
-                LiquidBottomTab(
-                    onClick = { request(tab) },
-                    modifier = Modifier.semantics {
-                        selected = tab.id == selectedId
-                        contentDescription = tab.title
-                    },
-                ) {
-                    if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
-                        tab.icon?.let { icon ->
-                            val save = drawContext.canvas.nativeCanvas.save()
-                            try {
-                                icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                                icon.draw(drawContext.canvas.nativeCanvas)
-                            } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
-                        }
+            tabContentWidths = tabContentWidths,
+        ) { index, weight ->
+            val tab = tabs[index]
+            LiquidBottomTab(
+                onClick = { request(tab) },
+                weight = weight,
+                modifier = Modifier.semantics {
+                    selected = tab.id == selectedId
+                    contentDescription = tab.title
+                },
+            ) {
+                if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
+                    tab.icon?.let { icon ->
+                        val save = drawContext.canvas.nativeCanvas.save()
+                        try {
+                            icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
+                            icon.draw(drawContext.canvas.nativeCanvas)
+                        } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
                     }
-                    if (style == GlassNavigationStyle.Stacked || tab.icon == null) {
-                        // The tablet chrome overlays the host's top tab bar, whose own labels are
-                        // slightly larger and heavier than the phone bottom bar's; the two styles
-                        // therefore get different label typography.
-                        val labelStyle = if (style == GlassNavigationStyle.Stacked) {
-                            TextStyle(color = foreground, fontSize = 11.sp)
-                        } else {
-                            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                        BasicText(tab.title, style = labelStyle,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+                }
+                if (style == GlassNavigationStyle.Stacked || tab.icon == null) {
+                    BasicText(tab.title, style = labelStyle,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

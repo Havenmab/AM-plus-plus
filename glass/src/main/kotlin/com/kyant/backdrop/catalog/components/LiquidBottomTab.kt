@@ -23,6 +23,9 @@ internal val LocalLiquidBottomTabScale =
 fun RowScope.LiquidBottomTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    // AM++: the tablet top bar hands each tab a weight derived from its own label width. The
+    // default 1f keeps the phone bar's equal shares exactly as upstream.
+    weight: Float = 1f,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val scale = LocalLiquidBottomTabScale.current
@@ -36,7 +39,7 @@ fun RowScope.LiquidBottomTab(
                 onClick = onClick
             )
             .fillMaxHeight()
-            .weight(1f)
+            .weight(weight)
             .graphicsLayer {
                 val scale = scale()
                 scaleX = scale

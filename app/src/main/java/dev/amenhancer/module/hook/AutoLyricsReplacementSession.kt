@@ -21,6 +21,7 @@ import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.lyrics.online.OnlineTranslationEnrichment
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
+import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.ModuleSettings
 import java.io.File
@@ -60,6 +61,7 @@ internal fun buildOnlineLyricsChain(
     translationEnabled: Boolean,
     selection: OnlineLyricSelection,
     currentTrack: () -> CurrentSongDetails? = { null },
+    diagnostic: (String) -> Unit = {},
     providerFor: (String) -> SearchLyricsSource?,
 ): OnlineLyricsChain {
     if (!supplementEnabled && !translationEnabled) return OnlineLyricsChain(emptyList(), null)
@@ -71,6 +73,7 @@ internal fun buildOnlineLyricsChain(
         mode = selection.mode,
         providers = providers,
         currentTrack = currentTrack,
+        diagnostic = diagnostic,
     )
     return OnlineLyricsChain(
         leading = if (supplementEnabled) listOf(composite.autoLyricsSource()) else emptyList(),
@@ -82,19 +85,27 @@ internal fun buildOnlineLyricsChain(
  * Never throws: a failed enrichment must leave the displayed document
  * untouched. The composite supplies translation-bearing candidates only; the
  * pure policy decides whether the document needs one and merges the winner.
+ * [logger] receives the bounded per-track decision lines through the module's
+ * existing log channel.
  */
 internal fun translationEnricher(
     composite: CompositeOnlineSearchAutoLyricsSource,
     currentTrack: () -> CurrentSongDetails?,
-): (Long, String) -> String? = { appleMusicId, rawTtml ->
-    runCatching {
-        OnlineTranslationEnrichment.enrich(
-            ttml = rawTtml,
-            candidates = composite.fetchTranslationCandidates(appleMusicId),
-            translationRequested = true,
-            durationMs = currentTrack()?.durationMs ?: 0L,
-        )?.ttml
-    }.getOrNull()
+    logger: (String) -> Unit = {},
+): (Long, String) -> String? {
+    val scoped = TrackScopedDiagnostics(logger)
+    return { appleMusicId, rawTtml ->
+        runCatching {
+            OnlineTranslationEnrichment.enrich(
+                ttml = rawTtml,
+                candidates = composite.fetchTranslationCandidates(appleMusicId),
+                translationRequested = true,
+                durationMs = currentTrack()?.durationMs ?: 0L,
+                appleMusicId = appleMusicId,
+                diagnostic = { line -> scoped.log(appleMusicId, line) },
+            )?.ttml
+        }.getOrNull()
+    }
 }
 
 internal fun createAutoLyricsRuntime(
@@ -105,6 +116,7 @@ internal fun createAutoLyricsRuntime(
     onlineLyricsSelection: OnlineLyricSelection =
         OnlineLyricSourcePolicy.resolve(ModuleSettings()),
     currentTrack: () -> CurrentSongDetails? = { null },
+    logger: (String) -> Unit = {},
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
     val lyricTransport = HttpLyricTransport(
@@ -128,6 +140,7 @@ internal fun createAutoLyricsRuntime(
         translationEnabled = onlineLyricsTranslationEnabled,
         selection = onlineLyricsSelection,
         currentTrack = currentTrack,
+        diagnostic = logger,
     ) { sourceId ->
         onlineLyricProviderFor(
             sourceId = sourceId,
@@ -208,15 +221,22 @@ internal fun createAutoLyricsRuntime(
             }
         }
     }
+    val enricher = chain.composite
+        ?.takeIf { onlineLyricsTranslationEnabled }
+        ?.let { composite -> translationEnricher(composite, currentTrack, logger) }
+    logger(
+        "online-translation runtime supplement=$onlineLyricsSupplementEnabled " +
+            "translation=$onlineLyricsTranslationEnabled " +
+            "sources=${onlineLyricsSelection.sources.joinToString(",")} " +
+            "enricher=${enricher != null}",
+    )
     return AutoLyricsRuntime(
         resolver = resolver,
         cache = cache,
         executor = executor,
         publisher = publisher,
         suppressedIds = suppressedIds,
-        translationEnricher = chain.composite
-            ?.takeIf { onlineLyricsTranslationEnabled }
-            ?.let { composite -> translationEnricher(composite, currentTrack) },
+        translationEnricher = enricher,
     )
 }
 

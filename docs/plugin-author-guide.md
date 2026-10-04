@@ -330,7 +330,7 @@ key 只有参与者一致声明时才有比较意义。它不自动寻找播放�
 在独立工程根目录执行：
 
 ```powershell
-.\gradlew.bat clean pluginZip '-PandroidSdk=C:/Users/21826/AppData/Local/Android/Sdk'
+.\gradlew.bat clean pluginZip '-PandroidSdk=C:/Android/Sdk'
 ```
 
 以上 SDK 路径换成自己的实际路径。若使用全局 Gradle，把命令开头换成 `gradle`。clean 用于避免修改依赖或包内容后留下旧 DEX。

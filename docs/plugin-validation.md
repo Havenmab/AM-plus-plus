@@ -7,7 +7,7 @@
 - SDK 导出、runtime/app 编译、独立 Gradle 示例 D8 ZIP 构建通过。
 - 全模块单元测试通过：1016 项，零失败、零跳过。其中 plugin-runtime 22 项，新增插件 SAF 路由测试也通过。
 - app lintDebug/lintVitalRelease、glass/host-applemusic/plugin-api/plugin-runtime lintDebug 通过。
-- app assembleDebug/assembleRelease 通过；隔离工作树没有签名配置，Release 为未签名产物。
+- app assembleDebug/assembleRelease 通过；初次隔离构建为未签名 Release。后续通过进程环境使用项目现有本地签名配置构建 Release，APK v2 签名验证通过，签名文件未加入仓库。
 
 - 仓库外样例构建通过：临时目录内仅携带示例源码与 SDK JAR，用独立 Gradle 工程构建 DEX ZIP；该输出在 PluginStore 测试中成功导入。
 - 最终架构检查通过，SDK 无内部模块/框架依赖，加载器无宿主私有符号；原 5 个精确 profile、316 个目标与冻结资料检查通过。
@@ -17,7 +17,7 @@
 ## 产物
 
 - `app/build/outputs/apk/debug/app-debug.apk`：调试签名，可用于设备验收。
-- `app/build/outputs/apk/release/app-release-unsigned.apk`：Release 构建验证产物，未签名。
+- `app/build/outputs/apk/release/app-release.apk`：使用项目现有 Release 密钥签名的用户测试产物。
 - `build/plugin-example/ampp-plugin-api-v1.jar`：独立插件编译 SDK。
 - `build/plugin-example/basic-plugin.zip`：仓库外构建并通过导入测试的示例。
 

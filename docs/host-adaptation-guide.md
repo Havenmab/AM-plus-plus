@@ -34,7 +34,7 @@
 
 `HostViewSessionController` 关闭旧会话后才发布新会话；旧 owner 的延迟 destroy 不能关闭新 owner。`OwnedHostProperty` 只恢复模块仍拥有的最后写入；原生暂停封面 scale、后续 alpha/translation 写入保留。旧 SONG/QUEUE 语义维持，不以新导航替换播放器状态。
 
-7.0.0-beta/1606 已新增精确生产 profile，为用户测试启用；历史 research 夹具继续留在测试目录。工厂按 `fragment-content` 分派 settings2、双栏与 Fragment 玻璃。新平板使用顶部导航和独立底部 mini 的原生边界，抽屉保留原生交互；玻璃不依赖双栏开关。新布局和渐变字段只从当前 tuple 读取。具体证据、测试范围和待验收项见 [1606 适配记录](applemusic-700-adaptation.md)。正式版和其他 beta 必须重新取证。此前实验 APK 没有整体合并。
+7.0.0-beta/1606 已新增精确生产 profile，为用户测试启用；历史 research 夹具继续留在测试目录。工厂按 `fragment-content` 分派 settings2、双栏与 Fragment 玻璃。新平板使用顶部导航和独立底部 mini 的原生边界，抽屉保留原生交互；玻璃不依赖双栏开关。新布局和渐变字段只从当前 tuple 读取。700 适配过程记录已从当前目录移除，可从 Git 历史查阅；真机验收仍需逐项确认。正式版和其他 beta 必须重新取证。此前实验 APK 没有整体合并。
 
 ## 热路径与安装
 

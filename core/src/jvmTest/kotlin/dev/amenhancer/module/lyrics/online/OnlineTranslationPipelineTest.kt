@@ -1,5 +1,6 @@
 package dev.amenhancer.module.lyrics.online
 
+import dev.amenhancer.module.hook.TtmlTimingPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -141,6 +142,28 @@ class OnlineTranslationPipelineTest {
             published[0].translation)
         assertEquals("云层之后", published[1].translation)
         assertEquals("你从未离开", published[2].translation)
+    }
+
+    @Test
+    fun `a timed but untranslated document is still enriched by the translation path`() {
+        // The search-replacement block keys off this same predicate; the
+        // translation lane must stay independent of it and keep augmenting the
+        // document Apple already shows.
+        assertTrue(TtmlTimingPolicy.hasTiming(APPLE_DOCUMENT))
+        val outcome = OnlineTranslationEnrichment.enrich(
+            ttml = APPLE_DOCUMENT,
+            candidates = listOf(
+                OnlineTranslationCandidate(
+                    source = Source.QM,
+                    lines = OnlineTranslationExtraction.extract(
+                        QrcParser.parse(original = QQ_ORIGINAL, translated = QQ_TRANSLATED),
+                    ),
+                ),
+            ),
+            durationMs = 30_000L,
+        )
+
+        assertNotNull("a timed document must still receive a translation lane", outcome)
     }
 
     @Test

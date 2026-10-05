@@ -12,6 +12,10 @@ internal fun assembleAppleMusicTarget(
     currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache(),
 ): TargetAdaptation {
     val settings = config.settings()
+    // One capture registry serves the whole target: the composite reads the
+    // displayed document back from it to enforce the timed-Apple-lyrics rule,
+    // and the custom-lyrics target records into the same instance.
+    val timingObservations = TtmlTimingObservationRegistry()
     val automatic = if (settings.customLyricsEnabled && settings.automaticLyricsEnabled) {
         val suppressed = runCatching { config.customLyricsManifest().entries
             .filterNot { it.enabled }.mapTo(mutableSetOf(), CustomLyricsEntry::appleMusicId)
@@ -24,7 +28,16 @@ internal fun assembleAppleMusicTarget(
             onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings),
             currentTrack = { currentSong.current()?.details },
             logger = ModernXposedRuntime::log,
+            displayedTtml = timingObservations::rawTtmlOfAppleMusicId,
         )
     } else null
-    return AppleMusicHostFactory.appleMusic(config, application, classLoader, lyricsTypefaceSession, currentSong, automatic)
+    return AppleMusicHostFactory.appleMusic(
+        config,
+        application,
+        classLoader,
+        lyricsTypefaceSession,
+        currentSong,
+        automatic,
+        timingObservations,
+    )
 }

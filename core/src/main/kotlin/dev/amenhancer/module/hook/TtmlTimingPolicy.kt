@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import java.util.LinkedHashMap
 
 /**
@@ -98,6 +99,27 @@ object TtmlTimingPolicy {
     fun modeOf(ttml: String): TtmlTimingMode = metadataOf(ttml).timingMode
 
     fun isWord(ttml: String): Boolean = modeOf(ttml) == TtmlTimingMode.WORD
+
+    /**
+     * True when Apple's document is actually synchronised with playback: at
+     * least one line or timed word starts at a positive begin time.
+     *
+     * A plain/unsynchronised document — text only, or lines that carry no
+     * positive begin anywhere — reports false, so it stays eligible for the
+     * third-party search path. Both the translation pass (its `untimed` flag)
+     * and the online search chain (which must not replace a timed document)
+     * derive their decision from this one predicate, so they cannot drift.
+     */
+    fun hasTiming(ttml: String): Boolean = AppleLyricTtmlReader.read(ttml).any { line ->
+        line.begin > 0L || line.words.any { word -> word.begin > 0L }
+    }
+
+    /**
+     * The document-facing timing token for diagnostics: `WORD` when Apple
+     * declares `itunes:timing="Word"`, otherwise `LINE`. Only meaningful while
+     * [hasTiming] is true.
+     */
+    fun timingKindOf(ttml: String): String = if (isWord(ttml)) "WORD" else "LINE"
 
     private fun timingModeOf(root: String?): TtmlTimingMode {
         if (root == null) return TtmlTimingMode.NON_WORD

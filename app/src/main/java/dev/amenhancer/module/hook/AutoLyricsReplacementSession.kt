@@ -55,6 +55,10 @@ internal data class OnlineLyricsChain(
  * supplement toggle decides whether it is prepended to the resolver; the
  * translation toggle only borrows the composite, so with both off no provider
  * is constructed at all.
+ *
+ * [displayedTtml] reads the raw document Apple is currently showing for a
+ * track; the composite uses it to skip the search path entirely for a document
+ * that already carries timing.
  */
 internal fun buildOnlineLyricsChain(
     supplementEnabled: Boolean,
@@ -62,6 +66,7 @@ internal fun buildOnlineLyricsChain(
     selection: OnlineLyricSelection,
     currentTrack: () -> CurrentSongDetails? = { null },
     diagnostic: (String) -> Unit = {},
+    displayedTtml: (Long) -> String? = { null },
     providerFor: (String) -> SearchLyricsSource?,
 ): OnlineLyricsChain {
     if (!supplementEnabled && !translationEnabled) return OnlineLyricsChain(emptyList(), null)
@@ -74,6 +79,7 @@ internal fun buildOnlineLyricsChain(
         providers = providers,
         currentTrack = currentTrack,
         diagnostic = diagnostic,
+        displayedTtml = displayedTtml,
     )
     return OnlineLyricsChain(
         leading = if (supplementEnabled) listOf(composite.autoLyricsSource()) else emptyList(),
@@ -124,6 +130,7 @@ internal fun createAutoLyricsRuntime(
         OnlineLyricSourcePolicy.resolve(ModuleSettings()),
     currentTrack: () -> CurrentSongDetails? = { null },
     logger: (String) -> Unit = {},
+    displayedTtml: (Long) -> String? = { null },
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
     val lyricTransport = HttpLyricTransport(
@@ -148,6 +155,7 @@ internal fun createAutoLyricsRuntime(
         selection = onlineLyricsSelection,
         currentTrack = currentTrack,
         diagnostic = logger,
+        displayedTtml = displayedTtml,
     ) { sourceId ->
         onlineLyricProviderFor(
             sourceId = sourceId,

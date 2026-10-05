@@ -9,6 +9,7 @@ import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.SongSearchResult
 import dev.amenhancer.module.lyrics.online.Source
+import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -369,6 +370,87 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         assertEquals(0, source.lyricFetchCount)
     }
 
+    @Test
+    fun `the region original album is supplied to the scorer and logged`() {
+        val lines = mutableListOf<String>()
+        val source = fake(
+            Source.QM,
+            songs = listOf(song("1", Source.QM, album = "Album", duration = 0L)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("qq", source)),
+            localAlbum = { "Album" },
+            diagnostic = lines::add,
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertTrue(
+            lines.any { it.startsWith("online-translation query") && it.contains("localAlbum=\"Album\"") },
+        )
+        assertTrue(
+            lines.any {
+                it.contains("score id=42 source=qq rank=0") &&
+                    it.contains("album=10") &&
+                    it.contains("total=105")
+            },
+        )
+    }
+
+    @Test
+    fun `an unresolved local album leaves the album component at zero`() {
+        val lines = mutableListOf<String>()
+        val source = fake(
+            Source.QM,
+            songs = listOf(song("1", Source.QM, album = "Album", duration = 0L)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("qq", source)),
+            localAlbum = { null },
+            diagnostic = lines::add,
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertTrue(
+            lines.any {
+                it.contains("score id=42 source=qq rank=0") &&
+                    it.contains("album=0") &&
+                    it.contains("total=95")
+            },
+        )
+    }
+
+    @Test
+    fun `the per candidate score diagnostics stay inside the per track budget`() {
+        val lines = mutableListOf<String>()
+        val providers = listOf(Source.KUWO, Source.QM, Source.KUGOU, Source.NE)
+            .mapIndexed { index, source ->
+                OnlineLyricProvider(
+                    "source-$index",
+                    fake(
+                        source,
+                        songs = (0 until 10).map { song("$index-$it", source) },
+                        lyrics = translatedLyrics("original", "译文"),
+                    ),
+                )
+            }
+
+        composite(LyricSelectionMode.GLOBAL_BEST, providers, diagnostic = lines::add)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        val sourceBudget = TrackScopedDiagnostics.DEFAULT_MAX_LINES_PER_TRACK
+        assertTrue(lines.isNotEmpty())
+        assertTrue(
+            "emitted ${lines.size} lines against a $sourceBudget budget",
+            lines.size <= sourceBudget,
+        )
+    }
+
     private fun chain(
         mode: LyricSelectionMode,
         vararg sources: FakeSearchSource,
@@ -390,10 +472,14 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
     private fun composite(
         mode: LyricSelectionMode,
         providers: List<OnlineLyricProvider>,
+        localAlbum: (Long) -> String? = { null },
+        diagnostic: (String) -> Unit = {},
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = providers,
         currentTrack = { TRACK },
+        localAlbum = localAlbum,
+        diagnostic = diagnostic,
     )
 
     private fun fake(
@@ -410,12 +496,13 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         source: Source,
         title: String = "Song",
         artist: String = "Artist",
+        album: String = "Album",
         duration: Long = 200_000L,
     ): SongSearchResult = SongSearchResult(
         id = id,
         title = title,
         artist = artist,
-        album = "Album",
+        album = album,
         duration = duration,
         source = source,
     )

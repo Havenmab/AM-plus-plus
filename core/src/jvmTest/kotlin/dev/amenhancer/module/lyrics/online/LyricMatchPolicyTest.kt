@@ -245,7 +245,11 @@ class LyricMatchPolicyTest {
     }
 
     @Test
-    fun `a candidate without duration stays neutral when the local duration is known`() {
+    fun `a candidate without a duration earns the neutral duration credit`() {
+        // The device chain now resolves the local duration, but many search APIs
+        // return no length. An absent candidate length is the provider's metadata
+        // gap, so the duration channel stays neutral instead of sinking a
+        // title-and-artist identity that cleared its title and artist components.
         val score = score(
             song = candidate(title = "Song", artist = "Artist", album = "", duration = 0L),
             cleanLocalTitle = "song",
@@ -254,8 +258,105 @@ class LyricMatchPolicyTest {
             cleanLocalAlbum = "",
         )
 
-        assertEquals(80, score)
-        assertTrue(score < LyricMatchPolicy.PASS_SCORE)
+        assertEquals(50 + 30 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+        assertTrue(score >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `the title and artist only case that used to score eighty now clears the floor`() {
+        // Exactly the rejected case from the device log: local album absent and
+        // candidate duration missing, so only title and artist can score. It was
+        // 80 against the 85 floor; with the neutral duration channel it passes.
+        val score = score(
+            song = candidate(title = "Song", artist = "Artist", album = "", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 215_000L,
+            cleanLocalAlbum = "",
+        )
+
+        assertEquals(95, score)
+        assertTrue(score >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `a matching local album is credited on top of title and artist`() {
+        val score = score(
+            song = candidate(title = "Song", artist = "Artist", album = "Album", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "album",
+        )
+
+        assertEquals(50 + 30 + 10 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+        assertTrue(score >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `an absent local album leaves the album component at zero`() {
+        val withAlbum = score(
+            song = candidate(title = "Song", artist = "Artist", album = "Album", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "album",
+        )
+        val withoutAlbum = score(
+            song = candidate(title = "Song", artist = "Artist", album = "Album", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "",
+        )
+
+        assertEquals(10, withAlbum - withoutAlbum)
+        assertEquals(95, withoutAlbum)
+        assertTrue(withoutAlbum >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `a candidate duration inside the drift window keeps the mid duration score`() {
+        val score = score(
+            song = candidate(title = "Song", artist = "Artist", album = "", duration = 202_000L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "",
+        )
+
+        assertEquals(50 + 30 + 10, score)
+    }
+
+    @Test
+    fun `the per component breakdown sums to the scored total`() {
+        val song = candidate(title = "Song (Live)", artist = "Artist", album = "Album", duration = 201_000L)
+        val breakdown = LyricMatchPolicy.scoreBreakdown(
+            song = song,
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localFeatures = listOf("live"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "album",
+        )
+
+        assertEquals(50, breakdown.title)
+        assertEquals(30, breakdown.artist)
+        assertEquals(10, breakdown.album)
+        assertEquals(15, breakdown.duration)
+        assertEquals(20, breakdown.features)
+        assertEquals(125, breakdown.total)
+        assertEquals(
+            LyricMatchPolicy.calculateScore(
+                song = song,
+                cleanLocalTitle = "song",
+                localArtists = listOf("artist"),
+                localFeatures = listOf("live"),
+                localDurationMs = 200_000L,
+                cleanLocalAlbum = "album",
+            ),
+            breakdown.total,
+        )
     }
 
     @Test

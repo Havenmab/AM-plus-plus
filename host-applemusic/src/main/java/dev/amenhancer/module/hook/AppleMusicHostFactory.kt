@@ -52,6 +52,7 @@ object AppleMusicHostFactory {
         lyricsTypefaceSession: LyricsTypefaceResourceBinding,
         currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache(),
         autoLyricsRuntime: AutoLyricsRuntime? = null,
+        timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
     ): TargetAdaptation {
         val build = targetBuild(application)
         val profile = checkNotNull(dev.amenhancer.host.applemusic.AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
@@ -91,6 +92,7 @@ object AppleMusicHostFactory {
                 symbols = resolver,
                 currentSong = currentSong,
                 autoLyricsRuntime = autoLyricsRuntime,
+                timingObservations = timingObservations,
             ),
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,

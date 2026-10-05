@@ -17,6 +17,12 @@ internal class AppleMusicCustomLyricsTarget(
     private val symbols: TargetSymbolResolver,
     private val currentSong: CurrentSongIdentityCache,
     private val autoLyricsRuntime: AutoLyricsRuntime? = null,
+    /**
+     * Shared capture of the displayed Apple documents. The same instance is
+     * read by the online search chain (to refuse replacing a timed document),
+     * so it must be the one the parse seam below records into.
+     */
+    private val timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
 ) : CustomLyricsTarget {
     private var installedResult: TargetCapabilityInstall? = null
     private val registration = HookRegistrationScope()
@@ -78,7 +84,6 @@ internal class AppleMusicCustomLyricsTarget(
                 ).joinToString("; "),
         )
         val parser = OpaqueTtmlParser(nativeParser)
-        val timingObservations = TtmlTimingObservationRegistry()
         val fileReader = CustomLyricsFileReader { fileId ->
             config.openFile(fileId)?.let { input ->
                 runCatching {

@@ -83,6 +83,14 @@ private const val MAX_PARALLEL_SEARCHES = 4
  * provider in first-passing mode or fall back to null in global-best mode. The
  * outer [fetch] never lets an exception escape.
  *
+ * The auto-lyrics [fetch] additionally refuses to replace a document Apple
+ * already synchronises: when the currently displayed document (see
+ * [displayedTtml]) carries per-line or per-word timing, the search path returns
+ * null without touching a provider and logs the skip. The
+ * translation-required [fetchTranslationCandidates] is deliberately not gated
+ * by that rule, because the translation lane only augments the displayed
+ * document.
+ *
  * [fetchTranslationCandidates] is the translation-required variant of the same
  * chain: a candidate whose fetched lyrics carry no usable translation lane does
  * not pass, so first-passing keeps walking providers and global-best keeps only
@@ -102,6 +110,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     private val searchExecutor: ExecutorService,
     private val searchBudgetMs: Long,
     private val diagnostic: (String) -> Unit = {},
+    /**
+     * Raw TTML of the document Apple Music is currently showing for the track,
+     * keyed by Adam ID — the same recorded document the translation pass reads.
+     * Null/absent means Apple has no document, so the search path stays open.
+     */
+    private val displayedTtml: (Long) -> String? = { null },
 ) {
 
     /** The scorer's own lines are bounded per track, like the rest of the chain's. */
@@ -153,6 +167,19 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     private fun fetchOrNull(appleMusicId: Long): String? {
         if (appleMusicId <= 0L || providers.isEmpty()) return null
+        // Product rule: the third-party search sources may only fill in when
+        // Apple has no document or only unsynchronised text. A document that
+        // already carries per-line or per-word timing is never replaced by a
+        // search result, so the providers are neither searched nor fetched.
+        val displayed = runCatching { displayedTtml(appleMusicId) }.getOrNull()
+        if (!displayed.isNullOrBlank() && TtmlTimingPolicy.hasTiming(displayed)) {
+            scopedDiagnostic.log(
+                appleMusicId,
+                "online-translation block id=$appleMusicId reason=apple_has_timed_lyrics " +
+                    "timing=${TtmlTimingPolicy.timingKindOf(displayed)}",
+            )
+            return null
+        }
         val request = searchRequest(appleMusicId) ?: return null
         return when (mode) {
             LyricSelectionMode.FIRST_PASSING -> firstPassing(appleMusicId, request)
@@ -571,6 +598,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             searchExecutor: ExecutorService = defaultSearchExecutor(providers.size),
             searchBudgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
             diagnostic: (String) -> Unit = {},
+            displayedTtml: (Long) -> String? = { null },
         ): CompositeOnlineSearchAutoLyricsSource =
             CompositeOnlineSearchAutoLyricsSource(
                 mode = mode,
@@ -580,6 +608,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 searchExecutor = searchExecutor,
                 searchBudgetMs = searchBudgetMs,
                 diagnostic = diagnostic,
+                displayedTtml = displayedTtml,
             )
 
         /** Daemon pool sized to the provider count so a stalled search cannot leak a live thread. */

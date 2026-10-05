@@ -1,6 +1,7 @@
 package dev.amenhancer.module.lyrics.source
 
 import dev.amenhancer.module.hook.AutoLyricsCandidate
+import dev.amenhancer.module.model.CustomLyricsSources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -122,6 +123,58 @@ class AutoLyricsSourceResolverTest {
         )
     }
 
+    @Test
+    fun `a trailing search source is never consulted while a fixed provider resolves`() {
+        val order = mutableListOf<String>()
+        val resolver = AutoLyricsSourceResolver.fixed(
+            amll = AmllTtmlClient(answeringTransport(order, WORD_TTML)),
+            amLyrics = AmLyricsClient(recordingTransport(order)),
+            lunabeat = LunabeatClient(
+                indexTransport = recordingTransport(order),
+                cache = { null },
+            ),
+            trailing = listOf(AutoLyricsSource("online-search", acceptsLineTiming = true) {
+                order += "online-search"
+                LINE_TTML
+            }),
+        )
+
+        val candidate = resolver.fetch(42L)
+
+        assertEquals(CustomLyricsSources.AMLL, candidate?.source)
+        assertEquals(listOf("${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml"), order)
+    }
+
+    @Test
+    fun `the trailing search source runs only after every fixed provider misses`() {
+        val order = mutableListOf<String>()
+        val resolver = AutoLyricsSourceResolver.fixed(
+            amll = AmllTtmlClient(recordingTransport(order)),
+            amLyrics = AmLyricsClient(recordingTransport(order)),
+            lunabeat = LunabeatClient(
+                indexTransport = recordingTransport(order),
+                cache = { null },
+            ),
+            trailing = listOf(AutoLyricsSource("online-search", acceptsLineTiming = true) {
+                order += "online-search"
+                LINE_TTML
+            }),
+        )
+
+        val candidate = resolver.fetch(42L)
+
+        assertEquals("online-search", candidate?.source)
+        assertEquals(
+            listOf(
+                "${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml",
+                LunabeatClient.MANIFEST_URL,
+                AmLyricsClient.AM_LYRICS_INDEX_URL,
+                "online-search",
+            ),
+            order,
+        )
+    }
+
     /** A transport that records every fixed-provider URL and answers nothing. */
     private fun recordingTransport(requests: MutableList<String>): LyricHttpTransport =
         object : LyricHttpTransport {
@@ -133,6 +186,20 @@ class AutoLyricsSourceResolverTest {
             override fun getBytes(url: String): ByteArray? {
                 requests += url
                 return null
+            }
+        }
+
+    /** A transport that records the URL and answers every request with [body]. */
+    private fun answeringTransport(requests: MutableList<String>, body: String): LyricHttpTransport =
+        object : LyricHttpTransport {
+            override fun get(url: String): String? {
+                requests += url
+                return body
+            }
+
+            override fun getBytes(url: String): ByteArray? {
+                requests += url
+                return body.toByteArray()
             }
         }
 

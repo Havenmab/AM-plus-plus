@@ -26,6 +26,105 @@ import org.junit.Test
 class CompositeOnlineSearchAutoLyricsSourceTest {
 
     @Test
+    fun `an absent Apple document leaves the online search path open`() {
+        val source = fake(Source.KUWO, songs = listOf(song("1", Source.KUWO)), lyrics = lyrics("searched"))
+
+        val ttml = chain(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(source),
+            displayedTtml = { null },
+        ).fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("searched"))
+        assertEquals(1, source.searchCount)
+        assertEquals(1, source.lyricFetchCount)
+    }
+
+    @Test
+    fun `an untimed Apple document leaves the online search path open`() {
+        val source = fake(Source.KUWO, songs = listOf(song("1", Source.KUWO)), lyrics = lyrics("searched"))
+
+        val ttml = chain(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(source),
+            displayedTtml = { UNTIMED_APPLE_DOCUMENT },
+        ).fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("searched"))
+        assertEquals(1, source.searchCount)
+        assertEquals(1, source.lyricFetchCount)
+    }
+
+    @Test
+    fun `a line timed Apple document skips the online search entirely`() {
+        val lines = mutableListOf<String>()
+        val source = fake(Source.KUWO, songs = listOf(song("1", Source.KUWO)), lyrics = lyrics("searched"))
+
+        assertNull(
+            chain(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(source),
+                diagnostic = lines::add,
+                displayedTtml = { LINE_TIMED_APPLE_DOCUMENT },
+            ).fetch(TRACK.appleMusicId),
+        )
+        assertEquals("no provider may be consulted", 0, source.searchCount)
+        assertEquals(0, source.lyricFetchCount)
+        assertTrue(
+            lines.any {
+                it.contains("online-translation block id=42") &&
+                    it.contains("reason=apple_has_timed_lyrics") &&
+                    it.contains("timing=LINE")
+            },
+        )
+    }
+
+    @Test
+    fun `a word timed Apple document skips the online search entirely`() {
+        val lines = mutableListOf<String>()
+        val source = fake(Source.KUWO, songs = listOf(song("1", Source.KUWO)), lyrics = lyrics("searched"))
+
+        assertNull(
+            chain(
+                LyricSelectionMode.GLOBAL_BEST,
+                listOf(source),
+                diagnostic = lines::add,
+                displayedTtml = { WORD_TIMED_APPLE_DOCUMENT },
+            ).fetch(TRACK.appleMusicId),
+        )
+        assertEquals(0, source.searchCount)
+        assertEquals(0, source.lyricFetchCount)
+        assertTrue(
+            lines.any {
+                it.contains("online-translation block id=42") &&
+                    it.contains("reason=apple_has_timed_lyrics") &&
+                    it.contains("timing=WORD")
+            },
+        )
+    }
+
+    @Test
+    fun `the timed document rule never gates the translation required chain`() {
+        // The translation lane augments Apple's own document, so it still has to
+        // reach the providers even when the replacement path is blocked.
+        val translated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(translated),
+            displayedTtml = { WORD_TIMED_APPLE_DOCUMENT },
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertEquals(1, translated.searchCount)
+        assertEquals(1, translated.lyricFetchCount)
+    }
+
+    @Test
     fun `the single entry carries the published name and accepts line timing`() {
         val chain = composite(
             LyricSelectionMode.FIRST_PASSING,
@@ -832,6 +931,8 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         sources: List<FakeSearchSource>,
         budgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
         track: CurrentSongDetails = TRACK,
+        diagnostic: (String) -> Unit = {},
+        displayedTtml: (Long) -> String? = { null },
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = sources.mapIndexed { index, source ->
@@ -839,6 +940,8 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         },
         currentTrack = { track },
         searchBudgetMs = budgetMs,
+        diagnostic = diagnostic,
+        displayedTtml = displayedTtml,
     )
 
     private fun composite(
@@ -847,12 +950,14 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         localAlbum: (Long) -> String? = { null },
         diagnostic: (String) -> Unit = {},
         track: CurrentSongDetails = TRACK,
+        displayedTtml: (Long) -> String? = { null },
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = providers,
         currentTrack = { track },
         localAlbum = localAlbum,
         diagnostic = diagnostic,
+        displayedTtml = displayedTtml,
     )
 
     private fun fake(
@@ -1009,5 +1114,19 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             artist = "アオワイファイ",
             durationMs = 0L,
         )
+
+        /** Apple document with no positive begin anywhere: plain/unsynchronised. */
+        const val UNTIMED_APPLE_DOCUMENT =
+            "<tt itunes:timing=\"Line\"><body><p end=\"5s\">plain</p></body></tt>"
+
+        /** Apple document synchronised per line. */
+        const val LINE_TIMED_APPLE_DOCUMENT =
+            "<tt itunes:timing=\"Line\"><body><p begin=\"1s\" end=\"5s\">line</p></body></tt>"
+
+        /** Apple document synchronised per word. */
+        const val WORD_TIMED_APPLE_DOCUMENT =
+            "<tt itunes:timing=\"Word\"><body>" +
+                "<p begin=\"1s\" end=\"5s\"><span begin=\"1s\" end=\"2s\">word</span></p>" +
+                "</body></tt>"
     }
 }

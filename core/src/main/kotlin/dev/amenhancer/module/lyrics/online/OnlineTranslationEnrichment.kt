@@ -68,8 +68,9 @@ object OnlineTranslationEnrichment {
         val lines = song.lyrics.orEmpty()
         val document = TtmlTimingPolicy.metadataOf(ttml)
         // A plain-text Apple document has no usable per-line timing; the matcher
-        // must then align on text alone instead of the Word-timing window.
-        val untimedNative = baseLines.none { it.begin > 0L }
+        // must then align on text alone instead of the Word-timing window. The
+        // shared predicate keeps this in step with the online-search block.
+        val untimedNative = !TtmlTimingPolicy.hasTiming(ttml)
         diagnostic(
             "online-translation track id=$appleMusicId timing=${document.timingMode} " +
                 "lang=${document.language ?: "-"} appleTranslation=${document.hasTranslation} " +

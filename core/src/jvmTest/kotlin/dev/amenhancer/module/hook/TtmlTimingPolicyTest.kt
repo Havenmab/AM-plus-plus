@@ -91,6 +91,51 @@ class TtmlTimingPolicyTest {
     }
 
     @Test
+    fun `hasTiming is false when there are no lines at all`() {
+        assertFalse(TtmlTimingPolicy.hasTiming(""))
+        assertFalse(TtmlTimingPolicy.hasTiming("<tt itunes:timing=\"Line\"><body/></tt>"))
+    }
+
+    @Test
+    fun `hasTiming is false for plain text lines with only end times`() {
+        val plain = """
+            <tt itunes:timing="Line"><body>
+              <p end="5s">first</p>
+              <p end="10s">second</p>
+            </body></tt>
+        """.trimIndent()
+
+        assertFalse(TtmlTimingPolicy.hasTiming(plain))
+    }
+
+    @Test
+    fun `hasTiming is true for a line with a positive begin`() {
+        val lineTimed = """
+            <tt itunes:timing="Line"><body>
+              <p begin="0s" end="5s">first</p>
+              <p begin="5s" end="10s">second</p>
+            </body></tt>
+        """.trimIndent()
+
+        assertTrue(TtmlTimingPolicy.hasTiming(lineTimed))
+        assertEquals("LINE", TtmlTimingPolicy.timingKindOf(lineTimed))
+    }
+
+    @Test
+    fun `hasTiming is true for word timing that starts at zero`() {
+        val wordTimed = """
+            <tt itunes:timing="Word"><body>
+              <p begin="0s" end="5s">
+                <span begin="0s" end="1s">a</span><span begin="1s" end="2s">b</span>
+              </p>
+            </body></tt>
+        """.trimIndent()
+
+        assertTrue(TtmlTimingPolicy.hasTiming(wordTimed))
+        assertEquals("WORD", TtmlTimingPolicy.timingKindOf(wordTimed))
+    }
+
+    @Test
     fun `identity registry does not confuse equal pointers`() {
         val first = String(charArrayOf('p'))
         val equal = String(charArrayOf('p'))

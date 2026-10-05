@@ -31,6 +31,7 @@
       "PLAYER_ACTIVITY": "com.apple.android.music.common.MainActivity",
       "LYRICS_CHROME": "com.apple.android.music.player.fragment.e",
       "LYRICS_CURRENT_ITEM_FIELD": "com.apple.android.music.player.fragment.l",
+      "CURRENT_ITEM_DURATION_OWNER": "com.apple.android.music.model.BasePlaybackItem",
       "PLAYER_METADATA_HUB": "com.apple.android.music.player.f",
       "EDITORIAL_VIDEO_OWNER": "com.apple.android.music.player.j1",
       "LYRICS_AVAILABILITY_OWNER": "com.apple.android.music.player.i1",
@@ -64,6 +65,13 @@
           "com.apple.android.music.player.fragment.e$c"
         ],
         "returns": "void",
+        "static": false
+      },
+      "current-item-duration-method": {
+        "owner": "com.apple.android.music.model.BasePlaybackItem",
+        "name": "getPlaybackDuration",
+        "parameters": [],
+        "returns": "long",
         "static": false
       },
       "metadata-to-playback-item-method": {
@@ -2213,7 +2221,9 @@
       "Lz0/t0;": [
         "toString()Ljava/lang/String;"
       ],
-      "Lcom/apple/android/music/model/BasePlaybackItem;": [],
+      "Lcom/apple/android/music/model/BasePlaybackItem;": [
+        "getPlaybackDuration()J"
+      ],
       "Lcom/apple/android/music/model/ArtistCollectionItem;": [],
       "Lcom/apple/android/music/model/MusicVideo;": [],
       "Lcom/apple/android/music/collection/mediaapi/controller/AlbumPageController;": [

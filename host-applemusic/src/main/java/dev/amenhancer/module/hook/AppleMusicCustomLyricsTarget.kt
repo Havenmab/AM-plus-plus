@@ -124,6 +124,7 @@ internal class AppleMusicCustomLyricsTarget(
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
                     val enrich = runtime.translationEnricher
+                    val observedMetadata = timingObservations.metadataOfAppleMusicId(appleMusicId)
                     val displayedTtml = enrich?.let {
                         runCatching {
                             timingObservations.rawTtmlOfAppleMusicId(appleMusicId)
@@ -133,7 +134,9 @@ internal class AppleMusicCustomLyricsTarget(
                         translationLog.log(
                             appleMusicId,
                             "online-translation capture id=$appleMusicId " +
-                                "rawTtml=${if (displayedTtml != null) "present" else "absent"}",
+                                "rawTtml=${if (displayedTtml != null) "present" else "absent"} " +
+                                "observed=${observedMetadata != null} " +
+                                "timing=${observedMetadata?.timingMode ?: "none"}",
                         )
                     }
                     val fetched = selectAutoLyricsFetch(
@@ -203,10 +206,32 @@ internal class AppleMusicCustomLyricsTarget(
                 override fun afterHookedMethod(param: MethodHookParam) {
                     runCatching {
                         val ttml = param.args.getOrNull(0) as? String ?: return@runCatching
+                        // The module builds every replacement pointer through
+                        // this same native entry point. Capturing one would
+                        // record our generated document as Apple's, and the
+                        // translation pass would then enrich its own output.
+                        if (NativeTtmlParseOrigin.isModuleInitiated()) return@runCatching
                         val pointer = param.result
                         val metadata = TtmlTimingPolicy.metadataOf(ttml)
-                        val appleMusicId = pointer?.let(parser::adamIdOf)
+                        val appleMusicId = pointer?.let(parser::adamIdOf)?.takeIf { it > 0L }
+                        // Record the displayed document even while the Adam ID
+                        // is still unbound: Apple parses first and identifies
+                        // the pointer later, so an id-gated capture drops every
+                        // ordinary document. The I2 seam binds it to the track.
                         timingObservations.record(pointer, metadata, appleMusicId, rawTtml = ttml)
+                        if (autoSession != null) {
+                            val observedId = appleMusicId
+                                ?: currentSong.current()?.details?.appleMusicId
+                                ?: 0L
+                            translationLog.log(
+                                observedId,
+                                "online-translation ttml-observed id=${appleMusicId ?: "unbound"} " +
+                                    "current=${observedId.takeIf { it > 0L } ?: "unknown"} " +
+                                    "captured=${pointer != null} bytes=${ttml.length} " +
+                                    "timing=${metadata.timingMode} " +
+                                    "appleTranslation=${metadata.hasTranslation}",
+                            )
+                        }
                         if (
                             appleMusicId != null &&
                             currentSong.current()?.details?.appleMusicId == appleMusicId &&
@@ -238,6 +263,29 @@ internal class AppleMusicCustomLyricsTarget(
                             publishedAdamId = publishedAdamId,
                         )
                         adamId ?: return@runCatching
+                        // The displayed Apple document was captured at parse
+                        // time before its Adam ID was bound. This is the first
+                        // seam that knows the track identity, so bind the
+                        // capture here and start the translation lane once,
+                        // when its body first becomes available. A request that
+                        // already ran without a document (availability probe or
+                        // an earlier null-pointer install) is retried instead
+                        // of waiting out its retry cooldown.
+                        if (original != null && autoSession != null) {
+                            val capturedBefore = !timingObservations
+                                .rawTtmlOfAppleMusicId(adamId).isNullOrEmpty()
+                            if (timingObservations.associate(original, adamId)) {
+                                val captured = timingObservations.rawTtmlOfAppleMusicId(adamId)
+                                if (!captured.isNullOrEmpty() && !capturedBefore) {
+                                    translationLog.log(
+                                        adamId,
+                                        "online-translation ttml-associated id=$adamId " +
+                                            "bytes=${captured.length}",
+                                    )
+                                    autoSession.onDisplayedDocumentCaptured(adamId)
+                                }
+                            }
+                        }
                         val manualReplacement = session.replacementFor(adamId)
                         val timingMetadata = timingObservations.metadataOf(original)
                         val autoEligible = autoSession != null &&

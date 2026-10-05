@@ -242,6 +242,31 @@ class AutoLyricsReplacementSession(
         }
     }
 
+    /**
+     * The displayed Apple document just became available for the current track.
+     *
+     * The translation lane can only merge into Apple's own document, so an
+     * attempt that already ran without one (the lyrics-availability probe, a
+     * null-pointer install, or a request made before the parse) must be retried
+     * now instead of waiting out the retry cooldown. Clearing the cooldown and
+     * invalidating an in-flight generation is scoped to the active track, and a
+     * request that already produced a replacement pointer is left untouched.
+     */
+    fun onDisplayedDocumentCaptured(appleMusicId: Long) {
+        if (appleMusicId <= 0L) return
+        val retry = synchronized(lock) {
+            if (!isCurrentSongLocked(appleMusicId) || !isAllowed(appleMusicId)) return
+            val attempted = pending.containsKey(appleMusicId) ||
+                failedUntil.containsKey(appleMusicId)
+            failedUntil.remove(appleMusicId)
+            attempted
+        }
+        if (retry) {
+            synchronized(lock) { generation += 1L }
+        }
+        ensureRequested(appleMusicId)
+    }
+
     fun isTracking(appleMusicId: Long): Boolean = synchronized(lock) {
         appleMusicId > 0L && isCurrentSongLocked(appleMusicId) && isAllowed(appleMusicId) &&
             (appleMusicId in pending || synchronized(pointers) { appleMusicId in pointers })

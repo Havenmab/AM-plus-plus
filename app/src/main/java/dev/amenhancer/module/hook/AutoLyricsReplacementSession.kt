@@ -87,6 +87,13 @@ internal fun buildOnlineLyricsChain(
  * pure policy decides whether the document needs one and merges the winner.
  * [logger] receives the bounded per-track decision lines through the module's
  * existing log channel.
+ *
+ * The `rawTtml` this receives is Apple's own parsed document, so the lane only
+ * runs once Apple has parsed the displayed document — in practice once the
+ * lyrics view for the track has been on screen. That is the product constraint
+ * the capture seam exists for: the trigger is the capture, so a song that never
+ * shows its lyrics leaves this lane idle instead of searching on every change
+ * and finding nothing to merge into.
  */
 internal fun translationEnricher(
     composite: CompositeOnlineSearchAutoLyricsSource,

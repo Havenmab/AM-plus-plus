@@ -149,6 +149,62 @@ class TtmlTimingPolicyTest {
     }
 
     @Test
+    fun `a capture without an adam id is kept and associated when the track is known`() {
+        val pointer = Any()
+        val metadata = TtmlDocumentMetadata(
+            timingMode = TtmlTimingMode.WORD,
+            language = "ja",
+            hasTranslation = false,
+        )
+        val registry = TtmlTimingObservationRegistry()
+
+        // Apple parses the displayed document before it binds the Adam ID.
+        registry.record(pointer, metadata, appleMusicId = null, rawTtml = "<tt>apple</tt>")
+
+        assertEquals("<tt>apple</tt>", registry.rawTtmlOf(pointer))
+        assertNull(registry.rawTtmlOfAppleMusicId(42L))
+        assertNull(registry.metadataOfAppleMusicId(42L))
+
+        assertTrue(registry.associate(pointer, 42L))
+
+        assertEquals("<tt>apple</tt>", registry.rawTtmlOfAppleMusicId(42L))
+        assertEquals(metadata, registry.metadataOfAppleMusicId(42L))
+    }
+
+    @Test
+    fun `association is by pointer identity and never leaks another document`() {
+        val first = Any()
+        val second = Any()
+        val registry = TtmlTimingObservationRegistry()
+        registry.record(first, TtmlTimingMode.WORD, rawTtml = "<tt>one</tt>")
+        registry.record(second, TtmlTimingMode.NON_WORD, rawTtml = "<tt>two</tt>")
+
+        assertFalse(registry.associate(Any(), 42L))
+        assertFalse(registry.associate(null, 42L))
+        assertFalse(registry.associate(first, 0L))
+
+        assertTrue(registry.associate(second, 42L))
+        assertTrue(registry.associate(first, 43L))
+
+        assertEquals("<tt>two</tt>", registry.rawTtmlOfAppleMusicId(42L))
+        assertEquals("<tt>one</tt>", registry.rawTtmlOfAppleMusicId(43L))
+        assertNull(registry.rawTtmlOfAppleMusicId(44L))
+        assertNull(registry.rawTtmlOf(null))
+        assertNull(registry.rawTtmlOf(Any()))
+    }
+
+    @Test
+    fun `association reports an observation even when no raw body was captured`() {
+        val pointer = Any()
+        val registry = TtmlTimingObservationRegistry()
+        registry.record(pointer, TtmlTimingMode.NON_WORD)
+
+        assertTrue(registry.associate(pointer, 42L))
+        assertNull(registry.rawTtmlOfAppleMusicId(42L))
+        assertEquals(TtmlTimingMode.NON_WORD, registry.metadataOfAppleMusicId(42L)?.timingMode)
+    }
+
+    @Test
     fun `registry evicts oldest observation`() {
         val registry = TtmlTimingObservationRegistry(maxEntries = 1)
         val first = Any()

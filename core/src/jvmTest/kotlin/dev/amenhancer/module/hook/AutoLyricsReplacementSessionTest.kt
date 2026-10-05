@@ -272,6 +272,59 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
+    fun `a newly captured displayed document retries an attempt that ran without one`() {
+        val queued = QueuedExecutor()
+        val pointer = Pointer()
+        var fetches = 0
+        var documentAvailable = false
+        val session = session(
+            queued = queued,
+            fetch = {
+                fetches += 1
+                if (documentAvailable) AutoLyricsCandidate("online-translation", WORD_TTML) else null
+            },
+            parse = { pointer },
+        )
+
+        session.onSongChanged(42L)
+        session.ensureRequested(42L)
+        queued.runAll()
+
+        assertEquals(1, fetches)
+        assertNull(session.readyReplacementFor(42L))
+
+        documentAvailable = true
+        session.onDisplayedDocumentCaptured(42L)
+        queued.runAll()
+
+        assertEquals(2, fetches)
+        assertSame(pointer, session.readyReplacementFor(42L))
+    }
+
+    @Test
+    fun `a captured document for a replaced track is ignored`() {
+        val queued = QueuedExecutor()
+        var allowed = true
+        var fetches = 0
+        val session = session(
+            queued = queued,
+            fetch = {
+                fetches += 1
+                AutoLyricsCandidate("online-translation", WORD_TTML)
+            },
+            parse = { Pointer() },
+            isAllowed = { allowed },
+        )
+
+        session.onSongChanged(42L)
+        allowed = false
+        session.onDisplayedDocumentCaptured(42L)
+        queued.runAll()
+
+        assertEquals(0, fetches)
+    }
+
+    @Test
     fun `file cache persists word and line TTML and reloads it by Adam ID`() {
         val directory = Files.createTempDirectory("ampp-auto-lyrics-test").toFile()
         try {

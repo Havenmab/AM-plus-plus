@@ -9,16 +9,20 @@ import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.NeSource
+import dev.amenhancer.module.lyrics.online.OnlineMatchDiagnostics
 import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
 import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
 import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.QmSource
+import dev.amenhancer.module.lyrics.online.ScoreBreakdown
 import dev.amenhancer.module.lyrics.online.ScoredSong
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.SongSearchResult
+import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.lyrics.source.AutoLyricsSource
 import dev.amenhancer.module.lyrics.source.LyricHttpTransport
 import dev.amenhancer.module.model.CustomLyricsSources
+import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.LinkedBlockingQueue
@@ -83,15 +87,25 @@ private const val MAX_PARALLEL_SEARCHES = 4
  * chain: a candidate whose fetched lyrics carry no usable translation lane does
  * not pass, so first-passing keeps walking providers and global-best keeps only
  * translation-bearing passers. It is fail-open too, returning an empty list.
+ *
+ * Every candidate is scored with the local album supplied by [localAlbum], so
+ * title plus artist plus album can carry the score on their own and the album
+ * component is no longer structurally zero. The scorer's own lines — the query
+ * and the per-component breakdown of each provider's top candidates — are
+ * bounded per track by [TrackScopedDiagnostics].
  */
 class CompositeOnlineSearchAutoLyricsSource private constructor(
     private val mode: LyricSelectionMode,
     private val providers: List<OnlineLyricProvider>,
     private val currentTrack: () -> CurrentSongDetails?,
+    private val localAlbum: (Long) -> String?,
     private val searchExecutor: ExecutorService,
     private val searchBudgetMs: Long,
     private val diagnostic: (String) -> Unit = {},
 ) {
+
+    /** The scorer's own lines are bounded per track, like the rest of the chain's. */
+    private val scopedDiagnostic = TrackScopedDiagnostics(diagnostic)
 
     /** The single chain entry; line timing is allowed because LRC may lack word markers. */
     fun autoLyricsSource(): AutoLyricsSource = AutoLyricsSource(
@@ -121,11 +135,14 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     private fun translationCandidatesOrNull(appleMusicId: Long): List<OnlineTranslationCandidate> {
         if (appleMusicId <= 0L || providers.isEmpty()) {
-            diagnostic("online-translation fetch id=$appleMusicId reason=no_provider")
+            scopedDiagnostic.log(appleMusicId, "online-translation fetch id=$appleMusicId reason=no_provider")
             return emptyList()
         }
         val request = searchRequest(appleMusicId) ?: run {
-            diagnostic("online-translation fetch id=$appleMusicId reason=no_track_identity")
+            scopedDiagnostic.log(
+                appleMusicId,
+                "online-translation fetch id=$appleMusicId reason=no_track_identity",
+            )
             return emptyList()
         }
         return when (mode) {
@@ -143,23 +160,45 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         }
     }
 
-    /** Resolves the verified current track into a search request, or null. */
+    /**
+     * Resolves the verified current track into a search request, or null. The
+     * local album is the region/original-metadata album the current track
+     * resolved to, so the album component can actually corroborate a candidate
+     * instead of always contributing zero.
+     */
     private fun searchRequest(appleMusicId: Long): SearchRequest? {
         val track = currentTrack()?.takeIf { it.appleMusicId == appleMusicId } ?: return null
         val title = track.title?.trim().orEmpty()
         if (title.isEmpty()) return null
         val artist = track.artist?.trim().orEmpty()
-        return SearchRequest(
+        val album = runCatching { localAlbum(appleMusicId) }.getOrNull()?.trim().orEmpty()
+        val request = SearchRequest(
             keyword = listOf(title, artist)
                 .filter(String::isNotEmpty)
                 .joinToString(" "),
             durationMs = track.durationMs,
+            localTitle = title,
+            localArtist = artist,
+            localAlbum = album,
             cleanTitle = LyricMatchPolicy.cleanString(title),
             localArtists = LyricMatchPolicy.splitArtists(artist)
                 .map { LyricMatchPolicy.cleanString(it) }
                 .filter(String::isNotEmpty),
             localFeatures = LyricMatchPolicy.featuresOf(title),
+            cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(album),
         )
+        scopedDiagnostic.log(
+            appleMusicId,
+            OnlineMatchDiagnostics.queryLine(
+                appleMusicId = appleMusicId,
+                keyword = request.keyword,
+                localTitle = request.localTitle,
+                localArtist = request.localArtist,
+                localAlbum = request.localAlbum,
+                localDurationMs = request.durationMs,
+            ),
+        )
+        return request
     }
 
     /** Ordered walk that skips any provider whose lyrics carry no translation. */
@@ -170,7 +209,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         providers.forEach { provider ->
             val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
                 .orEmpty()
-            val selected = LyricMatchPolicy.selectFirstPassing(candidates)
+            val selected = LyricMatchPolicy.selectFirstPassing(candidates.map(ScoredCandidate::scoredSong))
             diagnosticSearch(appleMusicId, provider, candidates, selected != null)
             if (selected == null) return@forEach
             val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
@@ -188,7 +227,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         byProvider.forEach { searched ->
             val selected = searched.candidates
                 .filter { it.score >= LyricMatchPolicy.PASS_SCORE }
-                .maxByOrNull(ScoredSong::score)
+                .maxByOrNull(ScoredCandidate::score)
             diagnosticSearch(appleMusicId, searched.provider, searched.candidates, selected != null)
         }
         val passing = byProvider.flatMap { searched ->
@@ -201,19 +240,41 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         }
     }
 
-    /** One line per source saying how many hits the search returned and how many passed. */
+    /**
+     * One summary line per source, then the per-component breakdown of its
+     * top-scoring candidates, so a below-floor verdict is no longer guesswork.
+     * Both go through [scopedDiagnostic], so the per-track budget still bounds
+     * however long the provider's result list is.
+     */
     private fun diagnosticSearch(
         appleMusicId: Long,
         provider: OnlineLyricProvider,
-        candidates: List<ScoredSong>,
+        candidates: List<ScoredCandidate>,
         passed: Boolean,
     ) {
-        diagnostic(
+        val best = candidates.maxOfOrNull(ScoredCandidate::score)
+        scopedDiagnostic.log(
+            appleMusicId,
             "online-translation source id=$appleMusicId source=${provider.sourceId} " +
                 "hits=${candidates.size} passing=" +
                 "${candidates.count { it.score >= LyricMatchPolicy.PASS_SCORE }} " +
+                "best=${best ?: "none"} " +
                 "reason=${if (passed) "passing" else "below_score_floor"}",
         )
+        candidates.sortedByDescending(ScoredCandidate::score)
+            .take(OnlineMatchDiagnostics.MAX_LOGGED_CANDIDATES)
+            .forEachIndexed { rank, candidate ->
+                scopedDiagnostic.log(
+                    appleMusicId,
+                    OnlineMatchDiagnostics.scoreLine(
+                        appleMusicId = appleMusicId,
+                        sourceId = provider.sourceId,
+                        rank = rank,
+                        song = candidate.song,
+                        breakdown = candidate.breakdown,
+                    ),
+                )
+            }
     }
 
     /** One provider's aligned lanes, or null when it contributes no translation. */
@@ -224,7 +285,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     ): OnlineTranslationCandidate? = runCatching {
         val result = provider.source.getLyrics(song)
         if (result == null) {
-            diagnostic(
+            scopedDiagnostic.log(
+                appleMusicId,
                 "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
                     "reason=no_lyrics",
             )
@@ -232,13 +294,15 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         }
         val lines = OnlineTranslationExtraction.extract(result)
         if (lines.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) {
-            diagnostic(
+            scopedDiagnostic.log(
+                appleMusicId,
                 "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
                     "reason=no_meaningful_translation lines=${lines.size}",
             )
             return null
         }
-        diagnostic(
+        scopedDiagnostic.log(
+            appleMusicId,
             "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
                 "reason=accepted lines=${lines.size}",
         )
@@ -250,7 +314,9 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         providers.forEach { provider ->
             val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
                 .orEmpty()
-            val selected = LyricMatchPolicy.selectFirstPassing(candidates) ?: return@forEach
+            val selected = LyricMatchPolicy.selectFirstPassing(
+                candidates.map(ScoredCandidate::scoredSong),
+            ) ?: return@forEach
             val ttml = render(provider, selected, request.durationMs)
             if (ttml != null) return ttml
         }
@@ -300,18 +366,21 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         )
         ProviderCandidates(
             provider = provider,
-            candidates = songs.map { song -> ScoredSong(song, score(song, request)) },
+            candidates = songs.map { song ->
+                val breakdown = scoreBreakdown(song, request)
+                ScoredCandidate(song = song, score = breakdown.total, breakdown = breakdown)
+            },
         )
     }.getOrElse { ProviderCandidates(provider, emptyList()) }
 
-    private fun score(song: SongSearchResult, request: SearchRequest): Int =
-        LyricMatchPolicy.calculateScore(
+    private fun scoreBreakdown(song: SongSearchResult, request: SearchRequest): ScoreBreakdown =
+        LyricMatchPolicy.scoreBreakdown(
             song = song,
             cleanLocalTitle = request.cleanTitle,
             localArtists = request.localArtists,
             localFeatures = request.localFeatures,
             localDurationMs = request.durationMs,
-            cleanLocalAlbum = "",
+            cleanLocalAlbum = request.cleanLocalAlbum,
         )
 
     private fun render(
@@ -330,19 +399,32 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     private data class SearchRequest(
         val keyword: String,
         val durationMs: Long,
+        val localTitle: String,
+        val localArtist: String,
+        val localAlbum: String,
         val cleanTitle: String,
         val localArtists: List<String>,
         val localFeatures: List<String>,
+        val cleanLocalAlbum: String,
     )
+
+    /** A scored candidate plus the component split the diagnostics report. */
+    private data class ScoredCandidate(
+        val song: SongSearchResult,
+        val score: Int,
+        val breakdown: ScoreBreakdown,
+    ) {
+        fun scoredSong(): ScoredSong = ScoredSong(song, score)
+    }
 
     private data class ProviderCandidates(
         val provider: OnlineLyricProvider,
-        val candidates: List<ScoredSong>,
+        val candidates: List<ScoredCandidate>,
     )
 
     private data class ProviderCandidate(
         val provider: OnlineLyricProvider,
-        val candidate: ScoredSong,
+        val candidate: ScoredCandidate,
     )
 
     companion object {
@@ -350,6 +432,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             mode: LyricSelectionMode,
             providers: List<OnlineLyricProvider>,
             currentTrack: () -> CurrentSongDetails?,
+            localAlbum: (Long) -> String? = ::originalAlbumOfCurrentTrack,
             searchExecutor: ExecutorService = defaultSearchExecutor(providers.size),
             searchBudgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
             diagnostic: (String) -> Unit = {},
@@ -358,6 +441,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 mode = mode,
                 providers = providers,
                 currentTrack = currentTrack,
+                localAlbum = localAlbum,
                 searchExecutor = searchExecutor,
                 searchBudgetMs = searchBudgetMs,
                 diagnostic = diagnostic,
@@ -379,6 +463,16 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         }
     }
 }
+
+/**
+ * The album the region/original-metadata path resolved for [appleMusicId],
+ * read through the same cache the metadata override path keeps its original
+ * metadata in. A missing entry is simply "no album"; the search never fails
+ * because the metadata has not resolved yet.
+ */
+private fun originalAlbumOfCurrentTrack(appleMusicId: Long): String? = runCatching {
+    MediaMetadataCache.getMetadataById(appleMusicId.toString())?.originalAlbum
+}.getOrNull()
 
 /**
  * Builds the provider for one source id, or null for an unknown id.

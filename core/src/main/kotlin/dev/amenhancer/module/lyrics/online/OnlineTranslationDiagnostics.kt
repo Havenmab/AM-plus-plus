@@ -75,10 +75,12 @@ class TrackScopedDiagnostics(
     companion object {
         /**
          * Enough for one full pass: the parse capture and its I2 association,
-         * the per-track capture verdict, the gate decision, one line per
-         * provider search, the per-candidate fetch verdict, the selector
-         * outcome and the publish verdict — still bounded per track.
+         * the per-track capture verdict, the search query and local identity,
+         * one line per provider search, the per-candidate score breakdowns (up
+         * to [OnlineMatchDiagnostics.MAX_LOGGED_CANDIDATES] per provider), the
+         * per-candidate fetch verdict, the gate decision, the selector outcome
+         * and the publish verdict — still bounded per track.
          */
-        const val DEFAULT_MAX_LINES_PER_TRACK = 16
+        const val DEFAULT_MAX_LINES_PER_TRACK = 24
     }
 }

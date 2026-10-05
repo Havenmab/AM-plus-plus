@@ -19,6 +19,21 @@ data class ScoredSong(
 )
 
 /**
+ * The per-component evidence behind one candidate's [LyricMatchPolicy.calculateScore].
+ * Every field is one of the weights the scorer has always used; [total] is their
+ * sum, so the diagnostics and the pass/fail decision can never disagree.
+ */
+data class ScoreBreakdown(
+    val title: Int,
+    val artist: Int,
+    val album: Int,
+    val duration: Int,
+    val features: Int,
+) {
+    val total: Int get() = title + artist + album + duration + features
+}
+
+/**
  * Ported match scoring and candidate selection from HyperLyricsEnhanced's
  * `OnlineLyricTargeter` / `OnlineLyricTargeterPolicy`, reduced to a pure
  * function over this module's own models.
@@ -38,7 +53,11 @@ object LyricMatchPolicy {
     /** Duration drift under which a candidate is treated as strong identity. */
     const val STRONG_DURATION_TOLERANCE_MS = 1_500L
 
-    /** Credit a candidate earns when the duration is a verified strong match. */
+    /**
+     * The duration channel's strong-identity credit. It is also the neutral
+     * value used when either side exposes no length, so an unavailable duration
+     * can never by itself deny a title/artist identity.
+     */
     const val STRONG_DURATION_SCORE = 15
 
     /** Selects a candidate for [mode]; the ordered mode is the one wired today. */
@@ -74,29 +93,50 @@ object LyricMatchPolicy {
         localDurationMs: Long,
         cleanLocalAlbum: String,
         toSimplified: (String) -> String = { it },
-    ): Int {
-        var score = 0
+    ): Int = scoreBreakdown(
+        song = song,
+        cleanLocalTitle = cleanLocalTitle,
+        localArtists = localArtists,
+        localFeatures = localFeatures,
+        localDurationMs = localDurationMs,
+        cleanLocalAlbum = cleanLocalAlbum,
+        toSimplified = toSimplified,
+    ).total
 
-        // An unavailable local duration must never decide the pass/fail outcome
-        // by itself. `isStrongDurationMatch` already treats a missing local
-        // duration as close, so the score credits the same strong-identity
-        // duration a verified match earns instead of withholding it — a missing
-        // accessor is our metadata gap, not evidence against the candidate.
-        // When the local duration is known, a candidate with no duration stays
-        // neutral (zero), because the provider is then the one with no evidence.
-        score += when {
+    /**
+     * The same score as [calculateScore], split into the component that earned
+     * each point. The duration channel is scored from the real lengths when both
+     * sides expose one; when either side is missing a length the channel stays
+     * neutral and credits the strong-identity score, because an unavailable
+     * length is a metadata gap on one side, not evidence against the candidate.
+     * A candidate that *does* report a length far from the local one is still
+     * penalised by [durationScore]. The component weights themselves are
+     * unchanged.
+     */
+    fun scoreBreakdown(
+        song: SongSearchResult,
+        cleanLocalTitle: String,
+        localArtists: List<String>,
+        localFeatures: List<String>,
+        localDurationMs: Long,
+        cleanLocalAlbum: String,
+        toSimplified: (String) -> String = { it },
+    ): ScoreBreakdown {
+        val duration = when {
             localDurationMs <= 0L -> STRONG_DURATION_SCORE
-            song.duration <= 0L -> 0
+            song.duration <= 0L -> STRONG_DURATION_SCORE
             else -> durationScore(localDurationMs, song.duration)
         }
 
         val cleanSongTitle = cleanString(song.title, toSimplified)
 
-        if (cleanLocalTitle == cleanSongTitle ||
+        val title = if (cleanLocalTitle == cleanSongTitle ||
             cleanSongTitle.contains(cleanLocalTitle) ||
             cleanLocalTitle.contains(cleanSongTitle)
         ) {
-            score += 50
+            50
+        } else {
+            0
         }
 
         val songArtists = splitArtists(song.artist).map { cleanString(it, toSimplified) }
@@ -108,23 +148,27 @@ object LyricMatchPolicy {
                     localArtist.contains(songArtist)
             }
         }
-        if (hasCommonArtist) {
-            score += 30
-        }
+        val artist = if (hasCommonArtist) 30 else 0
 
         val remoteAlbum = normalizeAlbumForComparison(song.album, toSimplified)
-        score += albumScore(cleanLocalAlbum, remoteAlbum)
 
         val songFeatures = featuresOf(song.title)
 
-        if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty()) {
-            val commonFeatures = localFeatures.intersect(songFeatures.toSet())
-            if (commonFeatures.isNotEmpty()) {
-                score += 20
-            }
+        val features = if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty() &&
+            localFeatures.intersect(songFeatures.toSet()).isNotEmpty()
+        ) {
+            20
+        } else {
+            0
         }
 
-        return score
+        return ScoreBreakdown(
+            title = title,
+            artist = artist,
+            album = albumScore(cleanLocalAlbum, remoteAlbum),
+            duration = duration,
+            features = features,
+        )
     }
 
     /** Recording/version markers that are compared on top of the title match. */

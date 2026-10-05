@@ -51,7 +51,7 @@ object ModernXposedRuntime {
 
     fun activeModule(): XposedModule? = module
 
-    fun hookMethod(executable: Executable, callback: ModernMethodHook, scope: HookRegistrationScope? = null): Boolean {
+    fun hookMethod(executable: Executable, callback: ModernMethodHook, scope: HookRegistrationScope? = null, recordBuiltin: Boolean = true): Boolean {
         val activeModule = module ?: error("Modern Xposed runtime is not attached")
         activeModule.hook(executable).intercept { chain ->
             if (scope != null && !scope.isActive) return@intercept chain.proceed()
@@ -71,6 +71,11 @@ object ModernXposedRuntime {
             callback.afterHookedMethod(param)
             param.throwable?.let { throw it }
             param.result
+        }
+        if (recordBuiltin) {
+            val record = HookRegistrations.register("AM++: ${callback.javaClass.name}", true, target = executable,
+                retained = { scope == null || !scope.isClosed })
+            scope?.onClose { record.close() }
         }
         return true
     }

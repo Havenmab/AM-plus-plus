@@ -43,6 +43,8 @@
 
 设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。
 
+新增 ZIP 插件导入与管理：作者使用独立 SDK 维护自己的功能与宿主适配。使用、打包和接入约定见 [插件开发手册](docs/plugin-development.md)，设备验收状态见 [插件验证记录](docs/plugin-validation.md)。
+
 ## 功能
 
 | 功能 | 默认 | 说明 |

@@ -5,7 +5,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {
-    'app': {'core','host-api','hook-runtime','host-applemusic','glass'},
+    'app': {'core','host-api','hook-runtime','host-applemusic','glass','plugin-api','plugin-runtime'},
+    'plugin-api': set(), 'plugin-runtime': {'plugin-api','hook-runtime'},
     'core': set(), 'host-api': {'core'}, 'hook-runtime': {'core'},
     'host-applemusic': {'core','host-api','hook-runtime'}, 'glass': {'core','backdrop'}, 'backdrop': set(),
 }
@@ -22,6 +23,14 @@ def check():
         for forbidden in (r'^import android[x]?\.',r'^import io\.github\.libxposed\.',r'^import java\.lang\.reflect\.',
                           r'^import dev\.amenhancer\.glass\.',r'^import org\.luckypray\.dexkit\.'):
             if re.search(forbidden,source,re.M): failures.append(f'{path.relative_to(ROOT)}: {forbidden}')
+    for module in ('plugin-api', 'plugin-runtime'):
+        for path in (ROOT/module/'src/main').rglob('*'):
+            if path.suffix not in ('.kt', '.java'): continue
+            source = path.read_text(encoding='utf-8')
+            if re.search(r'com\.apple\.android\.music|AppleMusicSymbols|AppleMusicHostProfiles|^import .*\.(host\.applemusic|glass|lyricon)\.',source,re.M):
+                failures.append(f'{path.relative_to(ROOT)} contains host-specific implementation')
+            if module == 'plugin-api' and re.search(r'^import (androidx|io\.github\.libxposed|org\.luckypray|dev\.amenhancer\.module)\.',source,re.M):
+                failures.append(f'{path.relative_to(ROOT)} exposes internal SDK dependencies')
     for path in (ROOT/'host-api/src/main').rglob('*.kt'):
         source=path.read_text(encoding='utf-8')
         if re.search(r'^import (androidx|java\.lang\.reflect|io\.github\.libxposed|org\.luckypray)',source,re.M):

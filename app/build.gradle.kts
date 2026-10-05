@@ -78,6 +78,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":plugin-api"))
+    implementation(project(":plugin-runtime"))
     implementation(project(":core"))
     implementation(project(":host-api"))
     implementation(project(":hook-runtime"))

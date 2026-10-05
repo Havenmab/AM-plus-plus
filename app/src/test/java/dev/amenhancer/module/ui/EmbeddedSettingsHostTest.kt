@@ -116,6 +116,19 @@ class EmbeddedSettingsHostTest {
 
 class EmbeddedSafResultRouterTest {
     @Test
+    fun `plugin import routes only its result and cancel clears pending`() {
+        val router = EmbeddedSafResultRouter()
+        val request = router.begin(EmbeddedSafOperation.PluginZip)
+        assertEquals(EmbeddedSafRoute.Ignored, router.route(4401, EmbeddedSafResult.RESULT_OK, "content://host/file"))
+        assertEquals(request, router.pending()?.requestCode)
+        assertEquals(EmbeddedSafRoute.Selected(EmbeddedSafOperation.PluginZip, "content://plugin/zip"),
+            router.route(request, EmbeddedSafResult.RESULT_OK, "content://plugin/zip"))
+        assertNull(router.pending())
+        val canceled = router.begin(EmbeddedSafOperation.PluginZip)
+        assertEquals(EmbeddedSafRoute.Canceled(EmbeddedSafOperation.PluginZip), router.route(canceled, 0, null))
+        assertNull(router.pending())
+    }
+    @Test
     fun `successful result is routed to the matching pending operation`() {
         val router = EmbeddedSafResultRouter()
         val requestCode = router.begin(EmbeddedSafOperation.Font)

@@ -11,7 +11,7 @@
     "apksSha256": "e527fb763525ac24414aed48f956f9b6ffaaff03ade27e6fe5e767f1e9adf4f8",
     "status": "descriptor-verified-user-testing",
     "runtimeVerified": false,
-    "metadataCallPaths": "docs/applemusic-700-adaptation.md; source descriptor evidence in local .scratch metadata export"
+    "metadataCallPaths": "Historical adaptation record: https://github.com/Zennmn/AM-plus-plus/blob/2613c8c9031be68185f6be0796dead15acbd91a1/docs/applemusic-700-adaptation.md; original decompiled source/descriptor evidence is retained only in the local, untracked .scratch metadata export"
   },
   "indexed": {
     "classes": {

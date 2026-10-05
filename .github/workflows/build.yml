@@ -44,11 +44,16 @@ jobs:
         run: |
           printf '%s' "$AMPP_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$AMPP_RELEASE_STORE_FILE"
 
+      - name: Build independent plugin example and SDK
+        run: |
+          chmod +x gradlew
+          python3 scripts/build-plugin-example.py
+
       - name: Build and test release
         if: github.event_name != 'pull_request'
         run: |
           chmod +x gradlew
-          ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleRelease --no-daemon
+          ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :plugin-api:lintDebug :plugin-runtime:lintDebug :app:assembleRelease -PpluginFixture="$PWD/build/plugin-example/basic-plugin.zip" --no-daemon
 
       - name: Verify release signature
         if: github.event_name != 'pull_request'
@@ -65,7 +70,14 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           chmod +x gradlew
-          ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleDebug --no-daemon
+          ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :plugin-api:lintDebug :plugin-runtime:lintDebug :app:assembleDebug -PpluginFixture="$PWD/build/plugin-example/basic-plugin.zip" --no-daemon
+
+      - name: Upload plugin SDK and example
+        uses: actions/upload-artifact@v4
+        with:
+          name: AM-plus-plus-plugin-sdk-v1
+          path: build/plugin-example/*
+          if-no-files-found: error
 
       - name: Upload release APK
         if: github.event_name != 'pull_request'

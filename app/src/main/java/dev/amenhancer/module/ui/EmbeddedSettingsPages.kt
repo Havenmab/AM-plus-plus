@@ -481,6 +481,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         ))
         parent.addView(embeddedSpacer(activity, 20))
         parent.addView(embeddedSectionLabel(activity, "应用"))
+        parent.addView(embeddedNavigationRow(activity, "插件", "导入 ZIP、管理启用状态与冲突", onClick = { showPluginManagement(activity) }))
         parent.addView(embeddedInfoCard(
             activity,
             "配置保存在 Apple Music 私有目录中",

@@ -194,8 +194,6 @@ docs/                     当前维护文档、功能矩阵与验证记录
 scripts/                  可选的真机回归、录屏分析与 host profile 校验脚本
 ```
 
-`scripts/` 中的设备脚本需要 ADB；部分液态玻璃检查还需要 root、Python 和 OpenCV，并按参考设备的分辨率写死了坐标，运行前用 `-Serial`、`-Device` 或 `ANDROID_SERIAL` 指定设备。`verify-host-profile.py` 不需要设备，只读校验 APK 里的 profile 符号。详见 [scripts/README.md](scripts/README.md)。
-
 ## 路线图
 
 - [x] 平板横屏双栏播放器

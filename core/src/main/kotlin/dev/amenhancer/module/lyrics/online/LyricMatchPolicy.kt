@@ -198,7 +198,7 @@ object LyricMatchPolicy {
 
     /** NFKC normalization stays shared; album word boundaries survive until scoring. */
     fun normalizeAlbumCharacters(input: String): String =
-        Normalizer.normalize(input, Normalizer.Form.NFKC)
+        stripInvisible(Normalizer.normalize(input, Normalizer.Form.NFKC))
 
     /** Same pipeline for local and remote albums; the only platform step is simplification. */
     fun normalizeAlbumForComparison(
@@ -250,11 +250,26 @@ object LyricMatchPolicy {
     fun Char.isCjkUnifiedIdeograph(): Boolean = code in 0x4E00..0x9FFF
 
     /**
-     * Normalizes a title/artist token: drops bracketed segments, lowercases,
-     * optionally simplifies, then removes all internal whitespace.
+     * The invisible code points Apple metadata carries in the wild but no
+     * provider indexes: the zero-width/joiner block plus the soft hyphen, word
+     * joiner and byte-order mark. They are dropped before a query is built and
+     * before any identity comparison, so a local title is never sent or scored
+     * under a different effective spelling (a ZWSP between two glyphs makes the
+     * provider see a different word). Ordinary U+0020 spaces are kept: only the
+     * zero-width/space-separator block is removed, never a real word boundary.
+     */
+    private val INVISIBLE_CHARACTERS = Regex("[\\u00AD\\u2000-\\u200F\\u2060\\uFEFF]")
+
+    /** Drops every [INVISIBLE_CHARACTERS] code point; ordinary spaces survive. */
+    fun stripInvisible(value: String): String = value.replace(INVISIBLE_CHARACTERS, "")
+
+    /**
+     * Normalizes a title/artist token: drops invisible characters and bracketed
+     * segments, lowercases, optionally simplifies, then removes all internal
+     * whitespace.
      */
     fun cleanString(input: String, toSimplified: (String) -> String = { it }): String {
-        val cleaned = input.replace(BRACKETED_SEGMENT, "").trim().lowercase()
+        val cleaned = stripInvisible(input).replace(BRACKETED_SEGMENT, "").trim().lowercase()
         return compactWhitespace(toSimplified(cleaned))
     }
 
@@ -293,6 +308,54 @@ object LyricMatchPolicy {
     fun primaryArtist(artist: String): String {
         val beforeFeature = FEATURED_CREDIT.split(artist).firstOrNull().orEmpty()
         return splitArtists(beforeFeature).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    }
+
+    /** The feature marker itself, word-bounded so "Defeat" is not a credit. */
+    private val FEATURE_CREDIT_MARKER = Regex(
+        "\\b(?:feat\\.?|ft\\.?|featuring)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** A parenthesized/bracketed segment at the very end of a title, ASCII or full width. */
+    private val TRAILING_PARENTHETICAL = Regex(
+        "\\s*[\\(（\\[【][^)\\uFF09\\]】]*[\\)）\\]】]\\s*$",
+    )
+
+    /** An unparenthesized credit that runs to the end of the title. */
+    private val TRAILING_FEATURE_CREDIT = Regex(
+        "\\s+(?:feat\\.?|ft\\.?|featuring)\\s+.*$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Openers whose group the bare-credit rule must not cut through. */
+    private val BRACKET_OPENERS = setOf('(', '（', '[', '【', '{', '｛')
+
+    /**
+     * A title with a trailing feature credit removed, or null when it carries
+     * none. `"Fake Bones (feat. 中村さんそ)"` becomes `"Fake Bones"`, while a
+     * trailing parenthetical that is not a credit (`"Song (Live)"`) is kept, so
+     * a version marker is not silently dropped from the query. Only a credit at
+     * the very end counts: a credit in the middle of the title
+     * (`"… (feat. X) アオワイファイ"`) stays, because the tail is part of the
+     * real title. The caller uses the result for the one bounded retry search.
+     */
+    fun stripTrailingFeatureCredit(title: String): String? {
+        val cleaned = stripInvisible(title).trim()
+        if (cleaned.isEmpty()) return null
+
+        TRAILING_PARENTHETICAL.find(cleaned)
+            ?.takeIf { FEATURE_CREDIT_MARKER.containsMatchIn(it.value) }
+            ?.let { match ->
+                val prefix = cleaned.substring(0, match.range.first).trim()
+                if (prefix.isNotEmpty()) return prefix
+            }
+
+        val bare = TRAILING_FEATURE_CREDIT.find(cleaned)
+        if (bare != null && cleaned.getOrNull(bare.range.first - 1) !in BRACKET_OPENERS) {
+            val prefix = cleaned.substring(0, bare.range.first).trim()
+            if (prefix.isNotEmpty()) return prefix
+        }
+        return null
     }
 
     fun isStrongTitleMatch(localTitle: String, remoteTitle: String): Boolean =

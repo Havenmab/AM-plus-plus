@@ -636,6 +636,192 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         assertEquals(2, source.searchCount)
     }
 
+    @Test
+    fun `zero width characters never reach the query keyword`() {
+        val cleanTitle = "センシティブなDANCE (feat. ばばなつみ) アオワイファイ"
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "$cleanTitle アオワイファイ" to listOf(
+                    song("1", Source.KUWO, title = cleanTitle, artist = "アオワイファイ"),
+                ),
+            ),
+            lyrics = lyrics("clean"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            track = ZWSP_TRACK,
+        ).fetch(ZWSP_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("clean"))
+        assertEquals(listOf("$cleanTitle アオワイファイ"), source.keywords)
+        assertTrue(source.keywords.single().none { it == '\u200B' })
+        assertEquals(1, source.searchCount)
+    }
+
+    @Test
+    fun `a single credit feature title retries with the credit stripped`() {
+        val lines = mutableListOf<String>()
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                // No title overlap, so the first attempt cannot pass.
+                "Fake Bones (feat. 中村さんそ) emon(Tes.)" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Fake Bones emon(Tes.)" to listOf(
+                    song("2", Source.KUWO, title = "Fake Bones", artist = "emon(Tes.)", duration = 194_000L),
+                ),
+            ),
+            lyrics = lyrics("stripped"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { FEATURE_ALBUM },
+            diagnostic = lines::add,
+            track = FEATURE_TRACK,
+        ).fetch(FEATURE_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("stripped"))
+        assertEquals(
+            listOf("Fake Bones (feat. 中村さんそ) emon(Tes.)", "Fake Bones emon(Tes.)"),
+            source.keywords,
+        )
+        assertEquals(2, source.searchCount)
+        assertTrue(
+            lines.any {
+                it.contains("online-translation retry id=96 source=kuwo") &&
+                    it.contains("keyword=\"Fake Bones emon(Tes.)\"")
+            },
+        )
+    }
+
+    @Test
+    fun `the feature credit retry fires even when the first attempt shared an artist`() {
+        // The device case: the credited title still buries the indexed name, so
+        // the artist overlap alone must not suppress the retry.
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Fake Bones (feat. 中村さんそ) emon(Tes.)" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "emon(Tes.)", duration = 194_000L),
+                ),
+                "Fake Bones emon(Tes.)" to listOf(
+                    song("2", Source.KUWO, title = "Fake Bones", artist = "emon(Tes.)", duration = 194_000L),
+                ),
+            ),
+            lyrics = lyrics("retry"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { FEATURE_ALBUM },
+            track = FEATURE_TRACK,
+        ).fetch(FEATURE_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("retry"))
+        assertEquals(
+            listOf("Fake Bones (feat. 中村さんそ) emon(Tes.)", "Fake Bones emon(Tes.)"),
+            source.keywords,
+        )
+        assertEquals(2, source.searchCount)
+    }
+
+    @Test
+    fun `a passing first attempt never issues the feature credit retry`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Fake Bones (feat. 中村さんそ) emon(Tes.)" to listOf(
+                    song(
+                        "1",
+                        Source.KUWO,
+                        title = "Fake Bones (feat. 中村さんそ)",
+                        artist = "emon(Tes.)",
+                        duration = 194_000L,
+                    ),
+                ),
+            ),
+            lyrics = lyrics("primary"),
+        )
+
+        assertTrue(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { FEATURE_ALBUM },
+                track = FEATURE_TRACK,
+            ).fetch(FEATURE_TRACK.appleMusicId)!!.contains("primary"),
+        )
+        assertEquals(1, source.searchCount)
+        assertEquals(listOf("Fake Bones (feat. 中村さんそ) emon(Tes.)"), source.keywords)
+    }
+
+    @Test
+    fun `the feature credit retry is bounded to one extra search`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Fake Bones (feat. 中村さんそ) emon(Tes.)" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Fake Bones emon(Tes.)" to listOf(
+                    song("2", Source.KUWO, title = "Else", artist = "Nobody", duration = 10_000L),
+                ),
+            ),
+            lyrics = lyrics("none"),
+        )
+
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { FEATURE_ALBUM },
+                track = FEATURE_TRACK,
+            ).fetch(FEATURE_TRACK.appleMusicId),
+        )
+        assertEquals(2, source.searchCount)
+        assertEquals(
+            listOf("Fake Bones (feat. 中村さんそ) emon(Tes.)", "Fake Bones emon(Tes.)"),
+            source.keywords,
+        )
+    }
+
+    @Test
+    fun `the feature credit retry also applies to the global best fan out`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Fake Bones (feat. 中村さんそ) emon(Tes.)" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Fake Bones emon(Tes.)" to listOf(
+                    song("2", Source.KUWO, title = "Fake Bones", artist = "emon(Tes.)", duration = 194_000L),
+                ),
+            ),
+            lyrics = lyrics("retry"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.GLOBAL_BEST,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { FEATURE_ALBUM },
+            track = FEATURE_TRACK,
+        ).fetch(FEATURE_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("retry"))
+        assertEquals(
+            listOf("Fake Bones (feat. 中村さんそ) emon(Tes.)", "Fake Bones emon(Tes.)"),
+            source.keywords,
+        )
+        assertEquals(2, source.searchCount)
+    }
+
     private fun chain(
         mode: LyricSelectionMode,
         vararg sources: FakeSearchSource,
@@ -801,6 +987,27 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             title = "Song",
             artist = "ナナツカゼ, PIKASONIC, なこたんまる",
             durationMs = 200_000L,
+        )
+
+        /**
+         * The device-evidenced single-credit feature credit: `emon(Tes.)` alone,
+         * so the old multi-credit gate never ran the retry for it.
+         */
+        const val FEATURE_ALBUM = "MDML5 -MOtOLOiD Dance Music Library5-"
+        val FEATURE_TRACK = CurrentSongDetails(
+            appleMusicId = 96L,
+            title = "Fake Bones (feat. 中村さんそ)",
+            artist = "emon(Tes.)",
+            durationMs = 194_000L,
+        )
+
+        /** The exact device title whose 14 U+200B made every provider return nothing. */
+        val ZWSP_TRACK = CurrentSongDetails(
+            appleMusicId = 1701248943L,
+            title = "セ\u200Bン\u200Bシ\u200Bテ\u200Bィ\u200Bブ\u200Bな\u200BD\u200BA\u200BN\u200BC\u200BE\u200B \u200B" +
+                "(feat. ばばなつみ) アオワイファイ",
+            artist = "アオワイファイ",
+            durationMs = 0L,
         )
     }
 }

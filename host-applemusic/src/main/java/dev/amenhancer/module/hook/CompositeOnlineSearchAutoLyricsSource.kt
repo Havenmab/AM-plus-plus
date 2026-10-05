@@ -168,25 +168,49 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      */
     private fun searchRequest(appleMusicId: Long): SearchRequest? {
         val track = currentTrack()?.takeIf { it.appleMusicId == appleMusicId } ?: return null
-        val title = track.title?.trim().orEmpty()
+        // Apple metadata carries invisible code points in the wild. Strip them
+        // once here so the keyword, the fallback keyword and the identity the
+        // scorer sees are the same clean strings.
+        val title = LyricMatchPolicy.stripInvisible(track.title?.trim().orEmpty())
         if (title.isEmpty()) return null
-        val artist = track.artist?.trim().orEmpty()
-        val album = runCatching { localAlbum(appleMusicId) }.getOrNull()?.trim().orEmpty()
+        val artist = LyricMatchPolicy.stripInvisible(track.artist?.trim().orEmpty())
+        val album = LyricMatchPolicy.stripInvisible(
+            runCatching { localAlbum(appleMusicId) }.getOrNull()?.trim().orEmpty(),
+        )
         val localArtists = LyricMatchPolicy.splitArtists(artist)
             .map { LyricMatchPolicy.cleanString(it) }
             .filter(String::isNotEmpty)
+        val primaryArtist = LyricMatchPolicy.primaryArtist(artist)
+        val creditlessTitle = LyricMatchPolicy.stripTrailingFeatureCredit(title)
+        val multiCredit = LyricMatchPolicy.isMultiCreditArtist(localArtists)
         val request = SearchRequest(
             // Query with the first credited artist: a long credit list buries
             // the performer the provider indexes, like HLE's narrow query.
-            keyword = listOf(title, LyricMatchPolicy.primaryArtist(artist))
+            keyword = listOf(title, primaryArtist)
                 .filter(String::isNotEmpty)
                 .joinToString(" "),
-            // HLE's multi-credit fallback: the title plus the original album,
-            // or the title alone when no album resolved.
-            retryKeyword = listOf(title, album)
-                .filter(String::isNotEmpty)
-                .joinToString(" "),
-            multiCredit = LyricMatchPolicy.isMultiCreditArtist(localArtists),
+            // One bounded fallback per provider. A title carrying a feature
+            // credit is retried without it plus the primary artist, because the
+            // credited title is itself what buries the provider's indexed
+            // title; otherwise HLE's multi-credit fallback sends the title plus
+            // the original album, or the title alone when no album resolved.
+            retry = when {
+                creditlessTitle != null -> Retry(
+                    keyword = listOf(creditlessTitle, primaryArtist)
+                        .filter(String::isNotEmpty)
+                        .joinToString(" "),
+                    // The credit, not a missing artist, is the suspect: retry
+                    // whenever the first attempt produced nothing passing.
+                    artistMissRequired = false,
+                )
+                multiCredit -> Retry(
+                    keyword = listOf(title, album)
+                        .filter(String::isNotEmpty)
+                        .joinToString(" "),
+                    artistMissRequired = true,
+                )
+                else -> null
+            },
             durationMs = track.durationMs,
             localTitle = title,
             localArtist = artist,
@@ -384,12 +408,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     /**
      * One provider's scored candidates, with at most one fallback search. The
-     * fallback mirrors HLE's `OnlineLyricTargeter.evaluateSource`: only a
-     * multi-credit track whose first attempt neither reached the pass floor nor
-     * matched an artist is retried, with [SearchRequest.retryKeyword] (title plus
-     * the original album, or the title alone). A track therefore costs at most
-     * two searches per provider, and the whole fan-out stays inside the same
-     * `invokeAll` deadline. Any search failure means "no candidates".
+     * fallback keeps HLE's bounded shape (`OnlineLyricTargeter.evaluateSource`:
+     * one alternate keyword, then [betterProviderCandidates]) and adds the
+     * feature-credit variant for a title whose credit buries the provider's
+     * indexed name. A track therefore costs at most two searches per provider,
+     * and the whole fan-out stays inside the same `invokeAll` deadline. Any
+     * search failure means "no candidates".
      */
     private fun searchProvider(
         provider: OnlineLyricProvider,
@@ -418,23 +442,28 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }.getOrElse { ProviderCandidates(provider, emptyList()) }
 
     /**
-     * HLE's retry gate: the whole credit list is the only case that gets a
-     * second query, and only while no candidate passed and none shared an
-     * artist. A non-multi-credit track is never retried, so the normal path is
-     * still a single request per provider.
+     * HLE's retry gate: no fallback while any candidate passed. The album
+     * variant additionally keeps HLE's artist gate — it only fires while the
+     * first attempt matched no artist either — while the feature-credit variant
+     * fires on the miss alone, because the credited title, not a missing
+     * artist, is what hid the provider's indexed name. A track with no
+     * applicable variant is never retried, so the normal path is still a single
+     * request per provider.
      */
     private fun retryKeywordFor(
         request: SearchRequest,
         primary: ProviderCandidates,
     ): String? {
-        if (!request.multiCredit) return null
+        val retry = request.retry ?: return null
         val best = primary.candidates.maxByOrNull(ScoredCandidate::score)
         val passing = best != null && best.score >= LyricMatchPolicy.PASS_SCORE
+        if (passing) return null
+        if (!retry.artistMissRequired) return retry.keyword
         val artistMatched = best != null && LyricMatchPolicy.hasCommonArtist(
             request.localArtists,
             LyricMatchPolicy.splitArtists(best.song.artist).map { LyricMatchPolicy.cleanString(it) },
         )
-        return if (!passing && !artistMatched) request.retryKeyword else null
+        return if (!artistMatched) retry.keyword else null
     }
 
     /**
@@ -490,10 +519,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     private data class SearchRequest(
         val keyword: String,
-        /** Title plus the original album (or title alone) for the one fallback search. */
-        val retryKeyword: String,
-        /** Whether the local artist string credits more than one name. */
-        val multiCredit: Boolean,
+        /** The one fallback query, or null when this track gets no retry. */
+        val retry: Retry?,
         val durationMs: Long,
         val localTitle: String,
         val localArtist: String,
@@ -502,6 +529,16 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         val localArtists: List<String>,
         val localFeatures: List<String>,
         val cleanLocalAlbum: String,
+    )
+
+    /**
+     * One alternate keyword plus the gate it needs. [artistMissRequired] keeps
+     * HLE's album-fallback gate (no passing candidate and no shared artist);
+     * the feature-credit variant sets it false so it fires on the score miss.
+     */
+    private data class Retry(
+        val keyword: String,
+        val artistMissRequired: Boolean,
     )
 
     /** A scored candidate plus the component split the diagnostics report. */

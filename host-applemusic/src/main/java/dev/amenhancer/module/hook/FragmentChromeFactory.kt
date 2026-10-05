@@ -194,11 +194,22 @@ object FragmentChromeFactory {
                 }
             })
             val phoneBehavior = contract.names.getJSONObject("phone").getJSONObject("behavior")
+            hook(contract.tabletMiniMargins, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val view = param.args[0] as View
+                    val bottom = Math.round(param.args[2] as Float)
+                    bindings.values.firstNotNullOfOrNull { it.tabletChrome?.miniBottomMargin(view, bottom) }
+                        ?.let { param.args[2] = it.toFloat() }
+                }
+            })
             hook(FragmentChromeContract.method(contract.playerBehavior.type, phoneBehavior.getString("peekMethod"),
                 java.lang.Integer.TYPE, java.lang.Boolean.TYPE), object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val owner = param.thisObject ?: return
-                    bindings.values.firstNotNullOfOrNull { it.phoneChrome?.peek(owner, param.args[0] as Int) }
+                    bindings.values.firstNotNullOfOrNull {
+                        it.phoneChrome?.peek(owner, param.args[0] as Int)
+                            ?: it.tabletChrome?.peek(owner, param.args[0] as Int)
+                    }
                         ?.let { param.args[0] = it }
                 }
             })

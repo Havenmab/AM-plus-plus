@@ -76,6 +76,7 @@ internal class FragmentTabletGlassSession(
     private var miniContent: View? = null
     private var configuration by mutableStateOf(Configuration(root.resources.configuration))
     private var blurDp = -1
+    private var bottomGapDp = dev.amenhancer.module.model.EnhancementDefaults.GLASS_BOTTOM_DP
     private var closed = false
     private var failed = false
     private var failurePending = false
@@ -117,7 +118,10 @@ internal class FragmentTabletGlassSession(
             val now = android.os.SystemClock.uptimeMillis()
             if (now >= nextMenuCheck) {
                 nextMenuCheck = now + 500
-                if (blurDp >= 0 && blurDp != config.settings().phoneLiquidGlassPanelBlurDp) refreshSettings()
+                val settings = config.settings()
+                bottomGapDp = dev.amenhancer.module.model.ModuleSettings.normalizePhoneLiquidGlassBottomGapDp(
+                    settings.phoneLiquidGlassBottomGapDp)
+                if (blurDp >= 0 && blurDp != settings.phoneLiquidGlassPanelBlurDp) refreshSettings()
             }
             if (configuration != root.resources.configuration) {
                 configuration = Configuration(root.resources.configuration)
@@ -144,6 +148,12 @@ internal class FragmentTabletGlassSession(
             }
             val nav = navigation ?: return@safely
             val min = mini ?: return@safely
+            if (native.setMiniBottomGap((bottomGapDp * root.resources.displayMetrics.density).roundToInt())) {
+                // Let the native sheet and the sibling material lay out together before sampling bounds.
+                root.postInvalidateOnAnimation()
+                draw = false
+                return@safely
+            }
             if (slide <= .001f) refreshNavigation()
             refreshCollapsedMini(min)
             val navOpacity = navigationOpacity(nav)
@@ -200,6 +210,8 @@ internal class FragmentTabletGlassSession(
         check(topBlur.parent === root && miniBlur.parent === root)
         check(!contains(source, nativeTabs) && !contains(source, content)) { "Glass sampling target contains native chrome" }
         blurDp = config.settings().phoneLiquidGlassPanelBlurDp
+        bottomGapDp = dev.amenhancer.module.model.ModuleSettings.normalizePhoneLiquidGlassBottomGapDp(
+            config.settings().phoneLiquidGlassBottomGapDp)
         miniContent = content
         // Native transform ownership is maintained by the host port.
         val sheet = find(TabletChromeRegion.SHEET) ?: error("Native sheet missing")

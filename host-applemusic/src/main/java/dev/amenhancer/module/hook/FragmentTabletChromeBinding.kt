@@ -4,6 +4,7 @@ import android.graphics.drawable.Drawable
 import android.view.View
 import android.view.ViewGroup
 import dev.amenhancer.module.host.OwnedHostProperty
+import dev.amenhancer.module.host.OwnedHostIntOffset
 import java.util.IdentityHashMap
 
 /** Native ownership from reference595581b, isolated from module Compose/session objects. */
@@ -12,6 +13,8 @@ internal class FragmentTabletChromeBinding(
     private val region: (TabletChromeRegion) -> View?,
     private val layer: (String) -> View?,
     private val coverReady: () -> Boolean,
+    private val contract: FragmentChromeContract,
+    private val behavior: () -> Any?,
 ) : FragmentTabletChromePort {
     private class Alpha(val view: View) {
         var native = view.alpha
@@ -31,6 +34,64 @@ internal class FragmentTabletChromeBinding(
     private var writing = false
     private var navigationReady = false
     private var miniReady = false
+    private val behaviorNames = contract.names.getJSONObject("phone").getJSONObject("behavior")
+    private val peekField = FragmentChromeContract.field(contract.playerBehavior.type,
+        behaviorNames.getString("peekField"), java.lang.Integer.TYPE)
+    private val autoPeekField = FragmentChromeContract.field(contract.playerBehavior.type,
+        behaviorNames.getString("autoPeekField"), java.lang.Boolean.TYPE)
+    private val writePeek = FragmentChromeContract.method(contract.playerBehavior.type,
+        behaviorNames.getString("peekMethod"), java.lang.Integer.TYPE, java.lang.Boolean.TYPE)
+    private val nativeGapId = root.resources.getIdentifier(
+        contract.names.getJSONObject("tablet").getString("miniBottomGapDimension"), "dimen", root.context.packageName,
+    ).also { check(it != 0) { "Native tablet mini bottom spacing missing" } }
+    private var gapBehavior: Any? = null
+    private var gapPeek: OwnedHostIntOffset? = null
+    private var gapMaterial: View? = null
+    private var gapMargin: OwnedHostIntOffset? = null
+
+    fun peek(owner: Any, value: Int): Int? =
+        if (owner === gapBehavior) gapPeek?.hostWrite(value) else null
+
+    fun miniBottomMargin(view: View, value: Int): Int? =
+        if (view === gapMaterial) gapMargin?.hostWrite(value) else null
+
+    override fun setMiniBottomGap(gapPx: Int): Boolean {
+        val material = region(TabletChromeRegion.MINI_MATERIAL)
+        val owner = behavior()
+        if (material == null || material.visibility != View.VISIBLE || owner == null) {
+            restoreMiniGap()
+            return false
+        }
+        if (owner !== gapBehavior) {
+            gapPeek?.close()
+            gapBehavior = owner
+            gapPeek = OwnedHostIntOffset(
+                { if (autoPeekField.getBoolean(owner)) -1 else peekField.getInt(owner) },
+                { writePeek.invoke(owner, it, false) },
+                // No current item and automatic peek must retain their native semantics.
+                { native, offset -> if (native > 0) (native + offset).coerceAtLeast(0) else native },
+            )
+        }
+        if (material !== gapMaterial) {
+            gapMargin?.close()
+            gapMaterial = material
+            gapMargin = OwnedHostIntOffset(
+                { (material.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin },
+                { value -> material.layoutParams = (material.layoutParams as ViewGroup.MarginLayoutParams).apply {
+                    bottomMargin = value
+                } },
+            )
+        }
+        // Native tablet binding/peek already include the 10dp spacing and system-bar inset.
+        // Replace just that spacing; moving the sheet keeps mini touch/artwork coordinates native.
+        val offset = gapPx - root.resources.getDimensionPixelSize(nativeGapId)
+        return gapMargin!!.setOffset(offset) or gapPeek!!.setOffset(offset)
+    }
+
+    private fun restoreMiniGap() {
+        gapPeek?.close(); gapPeek = null; gapBehavior = null
+        gapMargin?.close(); gapMargin = null; gapMaterial = null
+    }
 
     override fun view(region: TabletChromeRegion) = this.region(region)
     fun alphaWrite(view: View, value: Float): Float? =
@@ -121,6 +182,7 @@ internal class FragmentTabletChromeBinding(
         return product(sequenceOf(content).plus(generateSequence(parent) { it.parent as? View }.takeWhile { it !== root }))
     }
     override fun restore() {
+        restoreMiniGap()
         navigationReady = false; miniReady = false
         miniTransform?.close(); miniTransform = null; transformView = null
         writing = true

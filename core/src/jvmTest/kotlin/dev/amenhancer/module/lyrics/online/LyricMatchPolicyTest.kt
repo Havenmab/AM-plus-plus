@@ -86,6 +86,80 @@ class LyricMatchPolicyTest {
     }
 
     @Test
+    fun `invisible characters are stripped from the query and from comparisons`() {
+        // The exact device title: 14 U+200B between the glyphs were sent
+        // verbatim, so every provider returned nothing for this track.
+        val title = "セ\u200Bン\u200Bシ\u200Bテ\u200Bィ\u200Bブ\u200Bな\u200BD\u200BA\u200BN\u200BC\u200BE\u200B \u200B(\u200Bfeat. ばばなつみ) アオワイファイ"
+        val clean = "センシティブなDANCE (feat. ばばなつみ) アオワイファイ"
+
+        assertEquals(14, title.count { it == '\u200B' })
+        assertEquals(clean, LyricMatchPolicy.stripInvisible(title))
+        assertEquals(LyricMatchPolicy.cleanString(clean), LyricMatchPolicy.cleanString(title))
+
+        // A candidate never carries the ZWSP, so comparing the raw local title
+        // would score no title credit; the stripped comparison still matches.
+        val breakdown = LyricMatchPolicy.scoreBreakdown(
+            song = candidate(title = clean, artist = "アオワイファイ", album = "", duration = 0L),
+            cleanLocalTitle = LyricMatchPolicy.cleanString(title),
+            localArtists = listOf(LyricMatchPolicy.cleanString("アオワイファイ")),
+            localFeatures = LyricMatchPolicy.featuresOf(title),
+            localDurationMs = 0L,
+            cleanLocalAlbum = "",
+        )
+        assertEquals(50, breakdown.title)
+        assertEquals(30, breakdown.artist)
+    }
+
+    @Test
+    fun `the invisible set covers the zero width block and keeps ordinary spaces`() {
+        for (codePoint in 0x2000..0x200F) {
+            assertEquals(
+                "U+%04X".format(codePoint),
+                "ab",
+                LyricMatchPolicy.stripInvisible("a${codePoint.toChar()}b"),
+            )
+        }
+        for (invisible in listOf('\u00AD', '\u2060', '\uFEFF')) {
+            assertEquals("ab", LyricMatchPolicy.stripInvisible("a$invisible" + "b"))
+        }
+        // A real word boundary survives, so the provider still sees two words.
+        assertEquals("a b", LyricMatchPolicy.stripInvisible("a b"))
+        assertEquals("a b", LyricMatchPolicy.stripInvisible("a\u200B \u200Bb"))
+    }
+
+    @Test
+    fun `a trailing feature credit is stripped for the retry query`() {
+        assertEquals(
+            "Fake Bones",
+            LyricMatchPolicy.stripTrailingFeatureCredit("Fake Bones (feat. 中村さんそ)"),
+        )
+        assertEquals(
+            "Fake Bones",
+            LyricMatchPolicy.stripTrailingFeatureCredit("Fake Bones (ft. 中村さんそ)"),
+        )
+        assertEquals(
+            "Fake Bones",
+            LyricMatchPolicy.stripTrailingFeatureCredit("Fake Bones feat. 中村さんそ"),
+        )
+        assertEquals(
+            "Fake Bones",
+            LyricMatchPolicy.stripTrailingFeatureCredit("Fake Bones（feat. 中村さんそ）"),
+        )
+        // A version marker is part of the title, not a feature credit.
+        assertNull(LyricMatchPolicy.stripTrailingFeatureCredit("Song (Live)"))
+        assertNull(LyricMatchPolicy.stripTrailingFeatureCredit("Song (Remastered)"))
+        assertNull(LyricMatchPolicy.stripTrailingFeatureCredit("Song (Defeat)"))
+        // A credit in the middle does not make the tail a credit.
+        assertNull(
+            LyricMatchPolicy.stripTrailingFeatureCredit(
+                "センシティブなDANCE (feat. ばばなつみ) アオワイファイ",
+            ),
+        )
+        assertNull(LyricMatchPolicy.stripTrailingFeatureCredit("Song"))
+        assertNull(LyricMatchPolicy.stripTrailingFeatureCredit(""))
+    }
+
+    @Test
     fun `lyric fallback applies only when duration is unverified for multi credit songs`() {
         assertTrue(LyricMatchPolicy.isLyricFallbackEligible(true, true, false))
         assertFalse(LyricMatchPolicy.isLyricFallbackEligible(true, true, true))

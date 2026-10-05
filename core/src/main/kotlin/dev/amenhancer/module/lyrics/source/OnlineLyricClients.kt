@@ -61,16 +61,20 @@ class AutoLyricsSourceResolver(
         /**
          * Wires the fixed AMLL → Lunabeat → user's repository priority.
          *
-         * [leading] is prepended verbatim for opt-in search sources; callers
-         * pass an empty list when the owning setting is off, so the provider
-         * chain is exactly the fixed one and the search client is never even
-         * constructed.
+         * [leading] is prepended verbatim and [trailing] appended verbatim, both for opt-in search
+         * sources; callers pass empty lists when the owning setting is off, so the provider chain is
+         * exactly the fixed one and the search client is never even constructed.
+         *
+         * Search sources belong in [trailing], not [leading]: the fixed providers carry
+         * word-level, human-curated lyrics, and a search provider that merely returns line-level
+         * timing must not pre-empt them for a song they already have.
          */
         fun fixed(
             amll: AmllTtmlClient,
             amLyrics: AmLyricsClient,
             lunabeat: LunabeatClient,
             leading: List<AutoLyricsSource> = emptyList(),
+            trailing: List<AutoLyricsSource> = emptyList(),
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL) { raw ->
@@ -78,7 +82,7 @@ class AutoLyricsSourceResolver(
                 },
                 AutoLyricsSource(CustomLyricsSources.LUNABEAT, fetch = lunabeat::fetch),
                 AutoLyricsSource(CustomLyricsSources.AM_LYRICS, fetch = amLyrics::fetch),
-            ),
+            ) + trailing,
         )
     }
 }

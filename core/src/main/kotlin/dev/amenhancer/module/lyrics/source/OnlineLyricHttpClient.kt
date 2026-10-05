@@ -136,7 +136,11 @@ class HttpLyricTransport(
         val result = linkedMapOf<String, String>()
         headerFields.forEach { (name, values) ->
             if (name == null) return@forEach
-            val value = values.lastOrNull() ?: return@forEach
+            // Keep every value, newline-joined: Netease answers a login with ~35 separate
+            // Set-Cookie headers and the *last* one is an unrelated clientlog cookie, so keeping
+            // only the last value silently dropped MUSIC_A and __csrf from the session.
+            val value = values.filterNotNull().joinToString("\n")
+            if (value.isEmpty()) return@forEach
             result[name.lowercase()] = value
         }
         return result

@@ -155,12 +155,17 @@ internal fun createAutoLyricsRuntime(
             sessionStore = sessionStore,
         )
     }
-    val leading = chain.leading
+    // Fallback-only: the fixed providers (AMLL, LunaBeat, the user's own repository) carry
+    // word-level curated lyrics and must win whenever they have the song, so the online search
+    // chain is appended *after* them.  Prepending it -- the previous behaviour -- let a line-timed
+    // online result pre-empt a word-timed AMLL one and visibly downgraded songs the bundled sources
+    // already had.
+    val onlineSources = chain.leading
     val resolver = AutoLyricsSourceResolver.fixed(
         amll = AmllTtmlClient(lyricTransport),
         amLyrics = AmLyricsClient(lyricTransport),
         lunabeat = lunabeat,
-        leading = leading,
+        trailing = onlineSources,
     )
     val cache = FileAutoLyricsCache(root)
     val configuredContent = EmbeddedContentManager(

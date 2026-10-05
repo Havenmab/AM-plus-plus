@@ -90,7 +90,7 @@ class OnlineLyricsSupplementWiringTest {
         assertTrue(runtime.contains("buildOnlineLyricsChain("))
         assertTrue(runtime.contains("onlineLyricProviderFor("))
         assertTrue(runtime.contains("SharedPreferencesNeSessionStore(application)"))
-        assertTrue(runtime.contains("leading = chain.leading"))
+        assertTrue(runtime.contains("trailing = onlineSources"))
         assertTrue(runtime.contains("val enricher = chain.composite"))
         assertTrue(runtime.contains(".takeIf { onlineLyricsTranslationEnabled }"))
         assertTrue(runtime.contains("translationEnricher = enricher"))

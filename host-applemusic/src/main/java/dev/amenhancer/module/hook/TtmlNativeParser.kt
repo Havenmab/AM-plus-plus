@@ -46,7 +46,11 @@ internal class TtmlNativeParser private constructor(
 
     /** Parses Word-TTML into a SongInfoPtr, or `null` when parsing failed. */
     fun parse(ttml: String): Any? = runCatching {
-        parseMethod.invoke(parser, ttml)
+        // Mark the reflective parse as module-initiated: the parse hook reads
+        // this to keep our generated replacement out of the Apple-document
+        // capture (the translation pass must enrich Apple's own document, not
+        // the document we are about to install).
+        NativeTtmlParseOrigin.moduleInitiated { parseMethod.invoke(parser, ttml) }
     }.getOrNull()
 
     /** True when the pointer is alive and holds at least one section. */

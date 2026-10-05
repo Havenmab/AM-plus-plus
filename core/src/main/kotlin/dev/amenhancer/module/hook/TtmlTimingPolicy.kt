@@ -121,13 +121,22 @@ object TtmlTimingPolicy {
  * Bounded identity observations from the parser seam. Weak references avoid
  * retaining JavaCPP pointer wrappers (and their native addresses) after Apple
  * releases a lyric document.
+ *
+ * A capture is deliberately kept even while the returned pointer has no Adam ID
+ * yet: Apple parses the displayed document before its identity is bound, so
+ * dropping an unbound parse would drop every ordinary document. The observation
+ * stays keyed by pointer identity, which is the same contract the timing gate
+ * already relies on when it reads back `metadataOf(original)` for the pointer
+ * Apple later passes to I2, and [associate] copies it onto the track once that
+ * identity is known.
  */
 class TtmlTimingObservationRegistry(
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) {
-    private data class Observation(
+    private class Observation(
         val pointer: java.lang.ref.WeakReference<Any>,
         val metadata: TtmlDocumentMetadata,
+        val rawTtml: String?,
     )
 
     private val observations = ArrayDeque<Observation>()
@@ -170,21 +179,28 @@ class TtmlTimingObservationRegistry(
                 if (iterator.next().pointer.get() === pointer) iterator.remove()
             }
             while (observations.size >= maxEntries.coerceAtLeast(1)) observations.removeFirst()
-            observations.addLast(Observation(java.lang.ref.WeakReference(pointer), metadata))
             appleMusicId?.takeIf { it > 0L }?.let { id ->
                 idObservations[id] = metadata
                 rawTtml?.let { raw -> rawTtmlById[id] = raw }
             }
+            observations.addLast(
+                Observation(java.lang.ref.WeakReference(pointer), metadata, rawTtml),
+            )
         }
     }
 
-    fun record(pointer: Any?, mode: TtmlTimingMode) = record(
+    fun record(
+        pointer: Any?,
+        mode: TtmlTimingMode,
+        rawTtml: String? = null,
+    ) = record(
         pointer = pointer,
         metadata = TtmlDocumentMetadata(
             timingMode = mode,
             language = null,
             hasTranslation = false,
         ),
+        rawTtml = rawTtml,
     )
 
     fun metadataOf(pointer: Any?): TtmlDocumentMetadata? {
@@ -192,6 +208,39 @@ class TtmlTimingObservationRegistry(
         synchronized(observations) {
             sweepCleared()
             return observations.firstOrNull { it.pointer.get() === pointer }?.metadata
+        }
+    }
+
+    /** The raw Apple document captured for one pointer, or null. */
+    fun rawTtmlOf(pointer: Any?): String? {
+        if (pointer == null) return null
+        synchronized(observations) {
+            sweepCleared()
+            return observations.firstOrNull { it.pointer.get() === pointer }?.rawTtml
+        }
+    }
+
+    /**
+     * Binds a parse observation to the track whose identity became known at the
+     * I2 seam. The pointer identity is the key because Apple hands the exact
+     * wrapper it received from the parser back to I2 — the same contract the
+     * timing gate already relies on when it reads `metadataOf(original)`. Only
+     * the sampled observation for that exact pointer is ever copied, so a
+     * document can never leak onto another track.
+     *
+     * Returns true when a captured observation existed for that pointer; false
+     * when nothing was observed, which is the "still not captured" case the
+     * device log has to distinguish from a rejected candidate.
+     */
+    fun associate(pointer: Any?, appleMusicId: Long): Boolean {
+        if (pointer == null || appleMusicId <= 0L) return false
+        synchronized(observations) {
+            sweepCleared()
+            val observation = observations.firstOrNull { it.pointer.get() === pointer }
+                ?: return false
+            idObservations[appleMusicId] = observation.metadata
+            observation.rawTtml?.let { raw -> rawTtmlById[appleMusicId] = raw }
+            return true
         }
     }
 

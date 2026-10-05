@@ -207,7 +207,10 @@ class LyricMatchPolicyTest {
     }
 
     @Test
-    fun `title and artist without album or duration stay below the threshold`() {
+    fun `unknown local duration is neutral and cannot deny a title and artist match`() {
+        // The search chain always passes an empty local album, so before the
+        // duration accessor resolved, an unknown duration alone left every
+        // titled/credited candidate at 80, below the 85 floor.
         val score = score(
             song = candidate(title = "Song", artist = "Artist", album = "Other", duration = 0L),
             cleanLocalTitle = "song",
@@ -216,12 +219,47 @@ class LyricMatchPolicyTest {
             cleanLocalAlbum = "album",
         )
 
+        assertEquals(50 + 30 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+        assertTrue(score >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `an unknown local duration never becomes a drift penalty either`() {
+        val close = score(
+            song = candidate(title = "Song", artist = "Artist", album = "", duration = 200_000L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "",
+        )
+        val unknown = score(
+            song = candidate(title = "Song", artist = "Artist", album = "", duration = 900_000L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 0L,
+            cleanLocalAlbum = "",
+        )
+
+        assertEquals(50 + 30 + LyricMatchPolicy.STRONG_DURATION_SCORE, close)
+        assertEquals(close, unknown)
+    }
+
+    @Test
+    fun `a candidate without duration stays neutral when the local duration is known`() {
+        val score = score(
+            song = candidate(title = "Song", artist = "Artist", album = "", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("artist"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "",
+        )
+
         assertEquals(80, score)
         assertTrue(score < LyricMatchPolicy.PASS_SCORE)
     }
 
     @Test
-    fun `a partial album match carries title and artist exactly to the threshold`() {
+    fun `a partial album match with an unknown duration still passes`() {
         val score = score(
             song = candidate(
                 title = "Song",
@@ -235,8 +273,8 @@ class LyricMatchPolicyTest {
             cleanLocalAlbum = "album",
         )
 
-        assertEquals(85, score)
-        assertEquals(LyricMatchPolicy.PASS_SCORE, score)
+        assertEquals(50 + 30 + 5 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+        assertTrue(score >= LyricMatchPolicy.PASS_SCORE)
     }
 
     @Test
@@ -277,7 +315,7 @@ class LyricMatchPolicyTest {
             cleanLocalAlbum = "",
         )
 
-        assertEquals(50, score)
+        assertEquals(50 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
     }
 
     @Test

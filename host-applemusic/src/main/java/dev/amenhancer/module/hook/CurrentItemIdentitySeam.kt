@@ -6,18 +6,38 @@ import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * Reviewed no-argument millisecond accessors across the current-item hierarchy.
+ * `getPlaybackDuration` is the 7.0 name; the others are the pre-7.0 surface.
+ * Shared with the target-symbol fallback so the seam and the profile resolver
+ * can never disagree about which accessor is acceptable.
+ */
+internal val CURRENT_ITEM_DURATION_GETTER_NAMES = setOf(
+    "getDuration",
+    "getDurationMs",
+    "getDurationInMillis",
+    "getPlaybackDuration",
+)
+
+/**
  * The verified current lyrics item identity seam: the I2 fragment's current
  * item field (`com.apple.android.music.player.fragment.m#c` of type
  * `com.apple.android.music.model.BaseContentItem`) read through `getId()` and
  * parsed with [parseCurrentItemAdamId]. The same item optionally supplies
  * `getTitle()` and `getArtistName()` for embedded current-song editing, and a
- * numeric `getDuration()` for the online-lyric match score.
+ * numeric duration accessor for the online-lyric match score.
  *
  * Lyric replacement and current-song identity capability share this exact
  * contract; neither consumer may reinterpret the identity as a title or
  * metadata match. Both resolve the seam through the same
  * [AppleMusicSymbols.LyricsCurrentItemField] symbol so a version change is
  * reported once as missing or ambiguous instead of being guessed.
+ *
+ * The duration accessor is version-exact: 7.0's `BaseContentItem` declares none
+ * and the concrete `BasePlaybackItem` hierarchy uses `getPlaybackDuration()J`,
+ * pinned as [AppleMusicSymbols.CurrentItemDurationMethod]. The declared field
+ * type can never expose a subclass accessor through `Class#getMethod`, so the
+ * pinned symbol is consulted for the concrete runtime item first and the
+ * reviewed name scan stays as the fallback.
  */
 internal class CurrentItemIdentitySeam(
     private val symbols: TargetSymbolResolver,
@@ -27,6 +47,7 @@ internal class CurrentItemIdentitySeam(
     private var currentItemGetTitle: Method? = null
     private var currentItemGetArtistName: Method? = null
     private var currentItemGetDuration: Method? = null
+    private var pinnedDurationGetter: Method? = null
     private val durationGetters = ConcurrentHashMap<Class<*>, Method>()
 
     /** The verified current item field resolution summary, or null before resolve. */
@@ -35,6 +56,10 @@ internal class CurrentItemIdentitySeam(
 
     /** Optional metadata contracts used by embedded current-song editing. */
     var metadataSummary: String? = null
+        private set
+
+    /** The verified duration accessor identity, or null while none resolved. */
+    var durationSummary: String? = null
         private set
 
     /**
@@ -57,11 +82,19 @@ internal class CurrentItemIdentitySeam(
         currentItemGetTitle = resolveStringGetter(currentItemFieldValue.type, "getTitle")
         currentItemGetArtistName = resolveStringGetter(currentItemFieldValue.type, "getArtistName")
         currentItemGetDuration = resolveNumericGetter(currentItemFieldValue.type)
+        pinnedDurationGetter = symbols.resolve(AppleMusicSymbols.CurrentItemDurationMethod)
+            .valueOrNull()
+            ?.apply { isAccessible = true }
         fieldSummary = currentItemResolution.summary
+        durationSummary = (pinnedDurationGetter ?: currentItemGetDuration)?.let { method ->
+            "current-item-duration-method ${method.declaringClass.name}#${method.name}"
+        }
         metadataSummary = buildList {
             if (currentItemGetTitle == null) add("current-item-title-method unavailable")
             if (currentItemGetArtistName == null) add("current-item-artist-method unavailable")
-            if (currentItemGetDuration == null) add("current-item-duration-method unavailable")
+            if (currentItemGetDuration == null && pinnedDurationGetter == null) {
+                add("current-item-duration-method unavailable")
+            }
         }.takeIf { it.isNotEmpty() }?.joinToString("; ")
         return null
     }
@@ -115,20 +148,23 @@ internal class CurrentItemIdentitySeam(
      * Optional track length. The declared BaseContentItem type is checked first
      * at resolve time, but the concrete PlaybackItem may be the one that
      * declares it, so `detailsOfItem` re-resolves against the runtime class.
+     * The version-profile accessor is preferred whenever the concrete item is an
+     * instance of its declaring type.
      */
     private fun resolveNumericGetter(itemType: Class<*>): Method? = runCatching {
         itemType.methods.firstOrNull { method ->
             method.parameterCount == 0 &&
-                method.name in DURATION_GETTER_NAMES &&
+                method.name in CURRENT_ITEM_DURATION_GETTER_NAMES &&
                 (method.returnType == Long::class.javaPrimitiveType ||
                     method.returnType == Int::class.javaPrimitiveType)
         }?.apply { isAccessible = true }
     }.getOrNull()
 
     private fun durationGetterFor(itemType: Class<*>): Method? =
-        durationGetters[itemType] ?: resolveNumericGetter(itemType)?.also { method ->
-            durationGetters[itemType] = method
-        }
+        durationGetters[itemType] ?: (
+            pinnedDurationGetter?.takeIf { it.declaringClass.isAssignableFrom(itemType) }
+                ?: resolveNumericGetter(itemType)
+            )?.also { method -> durationGetters[itemType] = method }
 
     private fun invokeStringGetter(method: Method?, receiver: Any): String? = method
         ?.let { runCatching { it.invoke(receiver) as? String }.getOrNull() }
@@ -139,10 +175,6 @@ internal class CurrentItemIdentitySeam(
         ?.let { runCatching { (it.invoke(receiver) as? Number)?.toLong() }.getOrNull() }
         ?.coerceAtLeast(0L)
         ?: 0L
-
-    private companion object {
-        val DURATION_GETTER_NAMES = setOf("getDuration", "getDurationMs", "getDurationInMillis")
-    }
 }
 
 /** Parses Apple's current item identity; only a positive Adam ID is accepted. */

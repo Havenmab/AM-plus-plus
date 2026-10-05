@@ -38,6 +38,9 @@ object LyricMatchPolicy {
     /** Duration drift under which a candidate is treated as strong identity. */
     const val STRONG_DURATION_TOLERANCE_MS = 1_500L
 
+    /** Credit a candidate earns when the duration is a verified strong match. */
+    const val STRONG_DURATION_SCORE = 15
+
     /** Selects a candidate for [mode]; the ordered mode is the one wired today. */
     fun select(
         candidates: List<ScoredSong>,
@@ -74,8 +77,17 @@ object LyricMatchPolicy {
     ): Int {
         var score = 0
 
-        if (localDurationMs > 0 && song.duration > 0) {
-            score += durationScore(localDurationMs, song.duration)
+        // An unavailable local duration must never decide the pass/fail outcome
+        // by itself. `isStrongDurationMatch` already treats a missing local
+        // duration as close, so the score credits the same strong-identity
+        // duration a verified match earns instead of withholding it — a missing
+        // accessor is our metadata gap, not evidence against the candidate.
+        // When the local duration is known, a candidate with no duration stays
+        // neutral (zero), because the provider is then the one with no evidence.
+        score += when {
+            localDurationMs <= 0L -> STRONG_DURATION_SCORE
+            song.duration <= 0L -> 0
+            else -> durationScore(localDurationMs, song.duration)
         }
 
         val cleanSongTitle = cleanString(song.title, toSimplified)
@@ -206,7 +218,7 @@ object LyricMatchPolicy {
         val diffMs = abs(localDurationMs - remoteDurationMs)
         return when {
             diffMs > 5_000L -> -30
-            diffMs < STRONG_DURATION_TOLERANCE_MS -> 15
+            diffMs < STRONG_DURATION_TOLERANCE_MS -> STRONG_DURATION_SCORE
             else -> 10
         }
     }

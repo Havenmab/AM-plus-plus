@@ -155,8 +155,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         if (appleMusicId <= 0L || providers.isEmpty()) return null
         val request = searchRequest(appleMusicId) ?: return null
         return when (mode) {
-            LyricSelectionMode.FIRST_PASSING -> firstPassing(request)
-            LyricSelectionMode.GLOBAL_BEST -> globalBest(request)
+            LyricSelectionMode.FIRST_PASSING -> firstPassing(appleMusicId, request)
+            LyricSelectionMode.GLOBAL_BEST -> globalBest(appleMusicId, request)
         }
     }
 
@@ -172,18 +172,27 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         if (title.isEmpty()) return null
         val artist = track.artist?.trim().orEmpty()
         val album = runCatching { localAlbum(appleMusicId) }.getOrNull()?.trim().orEmpty()
+        val localArtists = LyricMatchPolicy.splitArtists(artist)
+            .map { LyricMatchPolicy.cleanString(it) }
+            .filter(String::isNotEmpty)
         val request = SearchRequest(
-            keyword = listOf(title, artist)
+            // Query with the first credited artist: a long credit list buries
+            // the performer the provider indexes, like HLE's narrow query.
+            keyword = listOf(title, LyricMatchPolicy.primaryArtist(artist))
                 .filter(String::isNotEmpty)
                 .joinToString(" "),
+            // HLE's multi-credit fallback: the title plus the original album,
+            // or the title alone when no album resolved.
+            retryKeyword = listOf(title, album)
+                .filter(String::isNotEmpty)
+                .joinToString(" "),
+            multiCredit = LyricMatchPolicy.isMultiCreditArtist(localArtists),
             durationMs = track.durationMs,
             localTitle = title,
             localArtist = artist,
             localAlbum = album,
             cleanTitle = LyricMatchPolicy.cleanString(title),
-            localArtists = LyricMatchPolicy.splitArtists(artist)
-                .map { LyricMatchPolicy.cleanString(it) }
-                .filter(String::isNotEmpty),
+            localArtists = localArtists,
             localFeatures = LyricMatchPolicy.featuresOf(title),
             cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(album),
         )
@@ -196,6 +205,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 localArtist = request.localArtist,
                 localAlbum = request.localAlbum,
                 localDurationMs = request.durationMs,
+                localDurationRaw = track.durationRaw,
+                localDurationUnit = track.durationUnit,
             ),
         )
         return request
@@ -207,10 +218,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         request: SearchRequest,
     ): List<OnlineTranslationCandidate> {
         providers.forEach { provider ->
-            val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
-                .orEmpty()
-            val selected = LyricMatchPolicy.selectFirstPassing(candidates.map(ScoredCandidate::scoredSong))
-            diagnosticSearch(appleMusicId, provider, candidates, selected != null)
+            val searched = searchBounded(listOf(provider), request).firstOrNull()
+                ?: ProviderCandidates(provider, emptyList())
+            val selected = LyricMatchPolicy.selectFirstPassing(
+                searched.candidates.map(ScoredCandidate::scoredSong),
+            )
+            diagnosticSearch(appleMusicId, searched, selected != null)
             if (selected == null) return@forEach
             val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
             return listOf(candidate)
@@ -228,7 +241,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             val selected = searched.candidates
                 .filter { it.score >= LyricMatchPolicy.PASS_SCORE }
                 .maxByOrNull(ScoredCandidate::score)
-            diagnosticSearch(appleMusicId, searched.provider, searched.candidates, selected != null)
+            diagnosticSearch(appleMusicId, searched, selected != null)
         }
         val passing = byProvider.flatMap { searched ->
             searched.candidates.map { ProviderCandidate(searched.provider, it) }
@@ -248,10 +261,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      */
     private fun diagnosticSearch(
         appleMusicId: Long,
-        provider: OnlineLyricProvider,
-        candidates: List<ScoredCandidate>,
+        searched: ProviderCandidates,
         passed: Boolean,
     ) {
+        val provider = searched.provider
+        val candidates = searched.candidates
+        logRetry(appleMusicId, searched)
         val best = candidates.maxOfOrNull(ScoredCandidate::score)
         scopedDiagnostic.log(
             appleMusicId,
@@ -310,12 +325,13 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }.getOrNull()
 
     /** Ordered walk, short-circuiting on the first provider with usable lyrics. */
-    private fun firstPassing(request: SearchRequest): String? {
+    private fun firstPassing(appleMusicId: Long, request: SearchRequest): String? {
         providers.forEach { provider ->
-            val candidates = searchBounded(listOf(provider), request).firstOrNull()?.candidates
-                .orEmpty()
+            val searched = searchBounded(listOf(provider), request).firstOrNull()
+                ?: ProviderCandidates(provider, emptyList())
+            logRetry(appleMusicId, searched)
             val selected = LyricMatchPolicy.selectFirstPassing(
-                candidates.map(ScoredCandidate::scoredSong),
+                searched.candidates.map(ScoredCandidate::scoredSong),
             ) ?: return@forEach
             val ttml = render(provider, selected, request.durationMs)
             if (ttml != null) return ttml
@@ -324,14 +340,25 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }
 
     /** One bounded fan-out, then the single best candidate across every provider. */
-    private fun globalBest(request: SearchRequest): String? {
+    private fun globalBest(appleMusicId: Long, request: SearchRequest): String? {
         val byProvider = searchBounded(providers, request)
+        byProvider.forEach { searched -> logRetry(appleMusicId, searched) }
         val all = byProvider.flatMap { searched ->
             searched.candidates.map { ProviderCandidate(searched.provider, it) }
         }
         val winner = LyricMatchPolicy.selectGlobalBestScored(all) { it.candidate.score }
             ?: return null
         return render(winner.provider, winner.candidate.song, request.durationMs)
+    }
+
+    /** Reports the one fallback query a provider issued, when it issued one. */
+    private fun logRetry(appleMusicId: Long, searched: ProviderCandidates) {
+        val fallback = searched.retriedKeyword ?: return
+        scopedDiagnostic.log(
+            appleMusicId,
+            "online-translation retry id=$appleMusicId source=${searched.provider.sourceId} " +
+                "keyword=\"$fallback\"",
+        )
     }
 
     /**
@@ -355,15 +382,32 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             .mapNotNull { future -> runCatching { future.get() }.getOrNull() }
     }
 
-    /** One provider's scored candidates; any search failure means "no candidates". */
+    /**
+     * One provider's scored candidates, with at most one fallback search. The
+     * fallback mirrors HLE's `OnlineLyricTargeter.evaluateSource`: only a
+     * multi-credit track whose first attempt neither reached the pass floor nor
+     * matched an artist is retried, with [SearchRequest.retryKeyword] (title plus
+     * the original album, or the title alone). A track therefore costs at most
+     * two searches per provider, and the whole fan-out stays inside the same
+     * `invokeAll` deadline. Any search failure means "no candidates".
+     */
     private fun searchProvider(
         provider: OnlineLyricProvider,
         request: SearchRequest,
     ): ProviderCandidates = runCatching {
-        val songs = provider.source.search(
-            keyword = request.keyword,
-            durationMs = request.durationMs,
-        )
+        val primary = searchProviderOnce(provider, request, request.keyword)
+        val fallback = retryKeywordFor(request, primary) ?: return@runCatching primary
+        val retry = searchProviderOnce(provider, request, fallback)
+        betterProviderCandidates(request, primary, retry).copy(retriedKeyword = fallback)
+    }.getOrElse { ProviderCandidates(provider, emptyList()) }
+
+    /** One search request, scored with the same local identity as its sibling. */
+    private fun searchProviderOnce(
+        provider: OnlineLyricProvider,
+        request: SearchRequest,
+        keyword: String,
+    ): ProviderCandidates = runCatching {
+        val songs = provider.source.search(keyword = keyword, durationMs = request.durationMs)
         ProviderCandidates(
             provider = provider,
             candidates = songs.map { song ->
@@ -372,6 +416,54 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             },
         )
     }.getOrElse { ProviderCandidates(provider, emptyList()) }
+
+    /**
+     * HLE's retry gate: the whole credit list is the only case that gets a
+     * second query, and only while no candidate passed and none shared an
+     * artist. A non-multi-credit track is never retried, so the normal path is
+     * still a single request per provider.
+     */
+    private fun retryKeywordFor(
+        request: SearchRequest,
+        primary: ProviderCandidates,
+    ): String? {
+        if (!request.multiCredit) return null
+        val best = primary.candidates.maxByOrNull(ScoredCandidate::score)
+        val passing = best != null && best.score >= LyricMatchPolicy.PASS_SCORE
+        val artistMatched = best != null && LyricMatchPolicy.hasCommonArtist(
+            request.localArtists,
+            LyricMatchPolicy.splitArtists(best.song.artist).map { LyricMatchPolicy.cleanString(it) },
+        )
+        return if (!passing && !artistMatched) request.retryKeyword else null
+    }
+
+    /**
+     * HLE's `betterSourceAttempt`, applied to a scored candidate list: a
+     * duration-close retry wins over a drifting first attempt, then the higher
+     * score wins, otherwise the first attempt is kept.
+     */
+    private fun betterProviderCandidates(
+        request: SearchRequest,
+        first: ProviderCandidates,
+        retry: ProviderCandidates,
+    ): ProviderCandidates {
+        val firstBest = first.candidates.maxByOrNull(ScoredCandidate::score) ?: return retry
+        val retryBest = retry.candidates.maxByOrNull(ScoredCandidate::score) ?: return first
+        val firstClose = LyricMatchPolicy.isStrongDurationMatch(
+            request.durationMs,
+            firstBest.song.duration,
+        )
+        val retryClose = LyricMatchPolicy.isStrongDurationMatch(
+            request.durationMs,
+            retryBest.song.duration,
+        )
+        return when {
+            retryClose && !firstClose -> retry
+            firstClose && !retryClose -> first
+            retryBest.score > firstBest.score -> retry
+            else -> first
+        }
+    }
 
     private fun scoreBreakdown(song: SongSearchResult, request: SearchRequest): ScoreBreakdown =
         LyricMatchPolicy.scoreBreakdown(
@@ -398,6 +490,10 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     private data class SearchRequest(
         val keyword: String,
+        /** Title plus the original album (or title alone) for the one fallback search. */
+        val retryKeyword: String,
+        /** Whether the local artist string credits more than one name. */
+        val multiCredit: Boolean,
         val durationMs: Long,
         val localTitle: String,
         val localArtist: String,
@@ -420,6 +516,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     private data class ProviderCandidates(
         val provider: OnlineLyricProvider,
         val candidates: List<ScoredCandidate>,
+        /** The fallback keyword that was searched, or null when the first attempt sufficed. */
+        val retriedKeyword: String? = null,
     )
 
     private data class ProviderCandidate(

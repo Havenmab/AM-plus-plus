@@ -47,6 +47,47 @@ class OnlineMatchDiagnosticsTest {
     }
 
     @Test
+    fun `the query line shows the raw accessor value beside the normalised milliseconds`() {
+        // The line the unit bug needed: 194 raw seconds became 194000 ms, which
+        // made the 194-vs-194000 mismatch visible in the device log.
+        val line = OnlineMatchDiagnostics.queryLine(
+            appleMusicId = 1701248995L,
+            keyword = "Fake Bones (feat. 中村さんそ) emon(Tes.)",
+            localTitle = "Fake Bones (feat. 中村さんそ)",
+            localArtist = "emon(Tes.)",
+            localAlbum = "MDML5 -MOtOLOiD Dance Music Library5-",
+            localDurationMs = 194_000L,
+            localDurationRaw = 194L,
+            localDurationUnit = "seconds",
+        )
+
+        assertEquals(
+            "online-translation query id=1701248995 " +
+                "keyword=\"Fake Bones (feat. 中村さんそ) emon(Tes.)\" " +
+                "localTitle=\"Fake Bones (feat. 中村さんそ)\" localArtist=\"emon(Tes.)\" " +
+                "localAlbum=\"MDML5 -MOtOLOiD Dance Music Library5-\" " +
+                "localDurationMs=194000 localDurationRaw=194 localDurationUnit=seconds",
+            line,
+        )
+    }
+
+    @Test
+    fun `a millisecond query line reports the same raw and normalised value`() {
+        val line = OnlineMatchDiagnostics.queryLine(
+            appleMusicId = 1L,
+            keyword = "Song Artist",
+            localTitle = "Song",
+            localArtist = "Artist",
+            localAlbum = "",
+            localDurationMs = 215_000L,
+            localDurationRaw = 215_000L,
+            localDurationUnit = "milliseconds",
+        )
+
+        assertTrue(line.contains("localDurationMs=215000 localDurationRaw=215000 localDurationUnit=milliseconds"))
+    }
+
+    @Test
     fun `the score line spells out the identity and every component`() {
         val breakdown = ScoreBreakdown(title = 50, artist = 30, album = 10, duration = 15, features = 0)
 

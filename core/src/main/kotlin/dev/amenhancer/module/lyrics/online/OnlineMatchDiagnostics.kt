@@ -19,6 +19,12 @@ object OnlineMatchDiagnostics {
      * The query plus the local identity actually handed to the scorer. Logged
      * once per search request so a device log shows which title, artist, album
      * and duration the match was judged against.
+     *
+     * [localDurationRaw] and [localDurationUnit] are the accessor's value and
+     * unit before the seam normalised it, so a unit mistake shows up as
+     * `localDurationMs=194 localDurationRaw=194 localDurationUnit=seconds`
+     * instead of looking like a short track. They are omitted when no unit was
+     * established.
      */
     fun queryLine(
         appleMusicId: Long,
@@ -27,10 +33,17 @@ object OnlineMatchDiagnostics {
         localArtist: String,
         localAlbum: String,
         localDurationMs: Long,
+        localDurationRaw: Long = localDurationMs,
+        localDurationUnit: String? = null,
     ): String = "online-translation query id=$appleMusicId " +
         "keyword=\"$keyword\" " +
         "localTitle=\"$localTitle\" localArtist=\"$localArtist\" " +
-        "localAlbum=\"$localAlbum\" localDurationMs=$localDurationMs"
+        "localAlbum=\"$localAlbum\" localDurationMs=$localDurationMs" +
+        if (localDurationUnit == null) {
+            ""
+        } else {
+            " localDurationRaw=$localDurationRaw localDurationUnit=$localDurationUnit"
+        }
 
     /**
      * One candidate's identity plus its per-component score breakdown. [rank]

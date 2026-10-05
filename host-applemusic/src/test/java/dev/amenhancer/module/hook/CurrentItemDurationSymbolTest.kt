@@ -57,12 +57,50 @@ class CurrentItemDurationSymbolTest {
         assertTrue(seam.durationSummary!!.contains("BasePlaybackItem"))
         assertTrue(seam.metadataSummary?.contains("duration") != true)
 
-        val item = BasePlaybackItem("67890", "Song", "Artist", 215_000L)
+        val item = BasePlaybackItem("67890", "Song", "Artist", 194L)
         assertEquals(
-            CurrentSongDetails(67890L, "Song", "Artist", 215_000L),
+            CurrentSongDetails(
+                appleMusicId = 67890L,
+                title = "Song",
+                artist = "Artist",
+                durationMs = 194_000L,
+                durationRaw = 194L,
+                durationUnit = DURATION_UNIT_SECONDS,
+            ),
             seam.detailsOfItem(item),
         )
         assertEquals(67890L, seam.currentItemAdamIdOf(PlayerLyricsViewFragment().also { it.c = item }))
+    }
+
+    @Test
+    fun `the pinned seconds accessor is normalised to milliseconds`() {
+        // Device evidence: localDurationMs=194 against candidateDurationMs=194000.
+        assertEquals(194_000L, durationMillisFrom("getPlaybackDuration", 194L))
+        // A plausible episode-length value, so the scale is not tuned to 3 minutes.
+        assertEquals(7_200_000L, durationMillisFrom("getPlaybackDuration", 7_200L))
+    }
+
+    @Test
+    fun `a millisecond valued accessor is left alone`() {
+        assertEquals(215_000L, durationMillisFrom("getDuration", 215_000L))
+        assertEquals(215_000L, durationMillisFrom("getDurationMs", 215_000L))
+        assertEquals(215_000L, durationMillisFrom("getDurationInMillis", 215_000L))
+    }
+
+    @Test
+    fun `a non positive or unresolved duration stays neutral`() {
+        assertEquals(0L, durationMillisFrom("getPlaybackDuration", 0L))
+        assertEquals(0L, durationMillisFrom("getPlaybackDuration", -5L))
+        assertEquals(0L, durationMillisFrom("", 0L))
+        assertNull(durationUnitOf(null))
+        assertNull(durationUnitOf(""))
+    }
+
+    @Test
+    fun `the accessor unit is reported for the query diagnostic`() {
+        assertEquals(DURATION_UNIT_SECONDS, durationUnitOf("getPlaybackDuration"))
+        assertEquals(DURATION_UNIT_MILLISECONDS, durationUnitOf("getDuration"))
+        assertEquals(DURATION_UNIT_MILLISECONDS, durationUnitOf("getDurationInMillis"))
     }
 
     @Test

@@ -272,6 +272,29 @@ object LyricMatchPolicy {
     fun splitArtists(value: String): List<String> =
         value.split("&", ",", "，", "、", "/", "／")
 
+    /**
+     * Introduces a featured performer who is not the primary artist. Ported from
+     * HyperLyricsEnhanced's query surface: the credit list itself is still split
+     * by [splitArtists] for identity comparison, but the search keyword must not
+     * carry a featured name ahead of the performer the provider indexes.
+     */
+    private val FEATURED_CREDIT = Regex(
+        "\\s+(?:feat\\.?|ft\\.?|featuring)\\s+",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * The primary credited artist: the first name before any multi-credit
+     * separator or featured-credit marker. `"ナナツカゼ, PIKASONIC, なこたんまる"`
+     * queries as `"ナナツカゼ"` so the whole credit list cannot bury the performer,
+     * while [splitArtists] still sees every name for the artist score. An empty
+     * or marker-only artist yields the empty string.
+     */
+    fun primaryArtist(artist: String): String {
+        val beforeFeature = FEATURED_CREDIT.split(artist).firstOrNull().orEmpty()
+        return splitArtists(beforeFeature).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    }
+
     fun isStrongTitleMatch(localTitle: String, remoteTitle: String): Boolean =
         localTitle.isNotEmpty() && (
             localTitle == remoteTitle ||

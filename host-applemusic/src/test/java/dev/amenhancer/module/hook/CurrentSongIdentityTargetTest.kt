@@ -41,7 +41,14 @@ class CurrentSongIdentityTargetTest {
         assertNull(seam.resolve(SongFragment.installMethod()))
 
         assertEquals(
-            CurrentSongDetails(67890L, "No lyrics", "Artist", 215_000L),
+            CurrentSongDetails(
+                appleMusicId = 67890L,
+                title = "No lyrics",
+                artist = "Artist",
+                durationMs = 215_000L,
+                durationRaw = 215_000L,
+                durationUnit = DURATION_UNIT_MILLISECONDS,
+            ),
             seam.detailsOfItem(SongItem("67890", "No lyrics", "Artist", 215_000L)),
         )
     }

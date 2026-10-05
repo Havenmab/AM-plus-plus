@@ -265,7 +265,12 @@ class NeSource(
             deviceId = deviceId,
             requestId = nextRequestId(),
             params = params,
-            eR = null,
+            // e_r is Netease eapi's *response* encryption switch, not just a login flag: without it
+            // the service answers with plaintext JSON, which aesDecrypt then rejects, so every
+            // search and lyric call silently returned nothing (0 hits in 45 device queries).
+            // Verified live: e_r absent -> plaintext body; e_r true -> AES body that decrypts.
+            // HLE always sends it; this call site is shared by search and getLyrics.
+            eR = true,
         )
         val response = runCatching {
             transport.postFormResponse(
@@ -397,11 +402,18 @@ class NeSource(
             return Base64.getEncoder().encodeToString("$deviceId $base64".toByteArray(Charsets.UTF_8))
         }
 
-        /** `Set-Cookie` may repeat; `Map` keeps only the last per cookie name. */
+        /**
+         * Parses the `Set-Cookie` header into a cookie map.
+         *
+         * The transport newline-joins repeated `Set-Cookie` headers (Netease sends ~35 of them per
+         * login), so a newline is the reliable separator; the comma split is kept for
+         * single-line/comma-joined inputs and is harmless when an attribute such as `Expires`
+         * contains a comma, because only the leading `name=value` of each segment is kept.
+         */
         fun parseSetCookies(header: String): Map<String, String> {
             if (header.isBlank()) return emptyMap()
             val result = linkedMapOf<String, String>()
-            header.split(',').forEach { cookieLine ->
+            header.split('\n', ',').forEach { cookieLine ->
                 val pair = cookieLine.split(';').first().split('=')
                 if (pair.size >= 2) result[pair[0].trim()] = pair[1]
             }
@@ -426,6 +438,10 @@ internal object NeApiProtocol {
         "Referer" to "https://music.163.com/",
         "Cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" },
         "Accept" to "*/*",
+        // Verified live: an eapi POST without a Content-Type gets a 200 with an *empty* body
+        // (the service rejects it), so the form type must be set explicitly rather than relying on
+        // whatever the platform's HTTP stack defaults to.  HLE sets the same value.
+        "Content-Type" to "application/x-www-form-urlencoded",
         "Host" to "interface.music.163.com",
     )
 

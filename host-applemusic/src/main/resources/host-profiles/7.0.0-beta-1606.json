@@ -2421,6 +2421,17 @@
       "q8.J9"
     ]
   },
+  "fragmentTabletVideoHandoff": {
+    "songClass": "com.apple.android.music.player.fragment.PlayerSongViewFragment",
+    "baseClass": "com.apple.android.music.player.fragment.l",
+    "listenerClass": "com.apple.android.music.player.fragment.PlayerSongViewFragment$PlayerListener",
+    "listenerOwner": "a",
+    "surfaceGetter": "u1",
+    "videoSizeMethod": "M1",
+    "videoModeField": "L",
+    "surfaceResource": "video_surface",
+    "imageResource": "artwork_image"
+  },
   "fragmentChrome": {
     "contentClass": "com.apple.android.music.common.fragment.MusicContentFragment",
     "playerClass": "com.apple.android.music.player.fragment.PlayerMainFragment",
@@ -2465,6 +2476,17 @@
     "drawerOf": "f1",
     "drawerOpen": "n",
     "libraryViewModel": "q1",
+    "tablet": {
+      "miniBottomGapDimension": "miniplayer_to_navtabs_spacing",
+      "miniMarginsOwner": "q8.H0",
+      "miniMarginsMethod": "A",
+      "startup": {
+        "accountClass": "A.c",
+        "accountReadyMethod": "d",
+        "currentItemMethod": "c",
+        "visibilityMethod": "s1"
+      }
+    },
     "phone": {
       "drawerQualifier": "useNavigationDrawer",
       "resources": {

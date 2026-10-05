@@ -110,4 +110,4 @@ python scripts/verify-glass-reference.py
 
 使用 -PpluginFixture=/absolute/basic-plugin.zip 将独立样例交给导入测试。包/存储、回调事务、生命周期、入口类身份、冲突和 SAF 路由有 JVM 测试；不等于设备 DEX 加载或真实 Hook 验收。
 
-设备验收分别覆盖 LSPosed 与嵌入版：导入与取消、启用重启、Activity 观察日志、素材/设置、替换、禁用/删除、独占冲突、错误插件不阻止其他功能，以及 Android 14+ 的只读代码行为。实际记录见 plugin-validation.md。
+设备验收分别覆盖 LSPosed 与嵌入版：导入与取消、启用重启、Activity 观察日志、素材/设置、替换、禁用/删除、独占冲突、错误插件不阻止其他功能，以及 Android 14+ 的只读代码行为。

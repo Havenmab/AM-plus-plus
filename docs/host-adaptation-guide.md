@@ -48,4 +48,4 @@ Chrome ID、字段、方法在绑定时缓存；布局变化显式失效视图�
 
 `./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleRelease`，CI 另运行架构/profile/玻璃参考源码校验。配置 schema 15、键、文件 ID、ZIP、目录、DB/cache namespace 不变，代码阶段回滚无需反向数据迁移。
 
-源码契约覆盖拆分后整个职责组件；实际行为测试仍执行原夹具。不可通过删断言、更新冻结快照或加入猜测候选消除失败。交付记录见 `docs/refactor-validation.md`，两处已有降级见 `docs/refactor-degradations.md`。
+源码契约覆盖拆分后整个职责组件；实际行为测试仍执行原夹具。不可通过删断言、更新冻结快照或加入猜测候选消除失败。

@@ -386,4 +386,4 @@ adb logcat -s AppleMusicEnhancer
 
 AM++ 的 SDK 和样例已完成自动构建与导入验证；LSPosed、嵌入版以及 Android 14+ 的实际加载/Hook/页面验收仍需设备完成。插件作者自己的功能也必须另行验证。
 
-API 与包格式参考见 [SDK 说明](plugin-development.md)，主项目验收记录见 [插件验证记录](plugin-validation.md)，完整可构建样例见 [basic-plugin](../examples/basic-plugin/README.md)。
+API 与包格式参考见 [SDK 说明](plugin-development.md)，完整可构建样例见 [basic-plugin](../examples/basic-plugin/README.md)。

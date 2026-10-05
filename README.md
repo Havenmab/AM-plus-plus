@@ -43,7 +43,7 @@
 
 设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。
 
-新增 ZIP 插件导入与管理：作者使用独立 SDK 维护自己的功能与宿主适配。使用、打包和接入约定见 [插件开发手册](docs/plugin-development.md)，设备验收状态见 [插件验证记录](docs/plugin-validation.md)。
+支持通过 ZIP 导入和管理插件；开发说明见 [插件开发手册](docs/plugin-development.md)。
 
 ## 功能
 
@@ -191,8 +191,7 @@ hook-runtime/             libxposed 包装、注册作用域与日志
 host-applemusic/           版本 profile、反射/DexKit 解析与原生宿主接入
 glass/                    AndroidLiquidGlass 渲染器（固定提交纳入）
 backdrop/                 上游 Backdrop 库
-docs/images/              演示图
-docs/                     当前维护文档、功能矩阵与验证记录
+docs/                     适配与功能文档
 scripts/                  可选的真机回归、录屏分析与 host profile 校验脚本
 ```
 

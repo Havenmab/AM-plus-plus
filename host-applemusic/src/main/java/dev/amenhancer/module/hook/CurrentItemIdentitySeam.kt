@@ -6,10 +6,11 @@ import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Reviewed no-argument millisecond accessors across the current-item hierarchy.
- * `getPlaybackDuration` is the 7.0 name; the others are the pre-7.0 surface.
- * Shared with the target-symbol fallback so the seam and the profile resolver
- * can never disagree about which accessor is acceptable.
+ * Reviewed no-argument duration accessors across the current-item hierarchy.
+ * `getPlaybackDuration` is the 7.0 name and reports **seconds**; the others are
+ * the pre-7.0 millisecond surface. Shared with the target-symbol fallback so the
+ * seam and the profile resolver can never disagree about which accessor is
+ * acceptable.
  */
 internal val CURRENT_ITEM_DURATION_GETTER_NAMES = setOf(
     "getDuration",
@@ -19,12 +20,53 @@ internal val CURRENT_ITEM_DURATION_GETTER_NAMES = setOf(
 )
 
 /**
+ * Duration accessors whose raw value is seconds, not milliseconds.
+ *
+ * Established from the supplied 7.0.0-beta (1606) package: the
+ * `BasePlaybackItem#getPlaybackDuration()J` body is exactly
+ * `iget-object BaseContentItem.offer; iget-wide Offer.duration; return-wide`, and
+ * `com.apple.android.music.typeadapter.OffersTypeAdapter.read` stores the
+ * store-platform `assets[].duration` long verbatim, while `ShowsViewModel`
+ * formats the same value with two `div-long 60` steps (seconds → minutes →
+ * hours/minutes). The concrete hierarchy exposes no millisecond-valued
+ * accessor, so this one is kept and normalised in [durationMillisFrom]. The
+ * device log pins the scale directly: a 3:14 track was scored with
+ * `localDurationMs=194` against a `candidateDurationMs=194000`, i.e. the same
+ * length in two different units.
+ */
+internal val SECOND_VALUED_DURATION_GETTER_NAMES = setOf("getPlaybackDuration")
+
+/** Unit labels for [durationUnitOf]; also the diagnostic's `localDurationUnit`. */
+internal const val DURATION_UNIT_SECONDS = "seconds"
+internal const val DURATION_UNIT_MILLISECONDS = "milliseconds"
+
+/**
+ * Converts the raw value of [accessorName] into the milliseconds the match
+ * scorer and the TTML writer expect. A non-positive value stays zero — the
+ * scorer's neutral "no length" value — so an unavailable or partially
+ * initialised accessor can never fabricate a duration.
+ */
+internal fun durationMillisFrom(accessorName: String, rawValue: Long): Long = when {
+    rawValue <= 0L -> 0L
+    accessorName in SECOND_VALUED_DURATION_GETTER_NAMES -> rawValue * 1_000L
+    else -> rawValue
+}
+
+/** The unit [durationMillisFrom] reads [accessorName] in, or null when unresolved. */
+internal fun durationUnitOf(accessorName: String?): String? = when {
+    accessorName.isNullOrEmpty() -> null
+    accessorName in SECOND_VALUED_DURATION_GETTER_NAMES -> DURATION_UNIT_SECONDS
+    else -> DURATION_UNIT_MILLISECONDS
+}
+
+/**
  * The verified current lyrics item identity seam: the I2 fragment's current
  * item field (`com.apple.android.music.player.fragment.m#c` of type
  * `com.apple.android.music.model.BaseContentItem`) read through `getId()` and
  * parsed with [parseCurrentItemAdamId]. The same item optionally supplies
  * `getTitle()` and `getArtistName()` for embedded current-song editing, and a
- * numeric duration accessor for the online-lyric match score.
+ * numeric duration accessor, normalised to milliseconds once here for the
+ * online-lyric match score.
  *
  * Lyric replacement and current-song identity capability share this exact
  * contract; neither consumer may reinterpret the identity as a title or
@@ -124,14 +166,17 @@ internal class CurrentItemIdentitySeam(
         return runCatching {
             val appleMusicId = parseCurrentItemAdamId(currentItemGetId.invoke(item))
                 ?: return@runCatching null
+            val durationGetter = durationGetterFor(item.javaClass) ?: currentItemGetDuration
+            val rawDuration = invokeLongGetter(durationGetter, item)
             CurrentSongDetails(
                 appleMusicId = appleMusicId,
                 title = invokeStringGetter(currentItemGetTitle, item),
                 artist = invokeStringGetter(currentItemGetArtistName, item),
-                durationMs = invokeLongGetter(
-                    durationGetterFor(item.javaClass) ?: currentItemGetDuration,
-                    item,
-                ),
+                // The single conversion point: the scorer and the TTML writer
+                // both work in milliseconds, while the 7.0 accessor is seconds.
+                durationMs = durationMillisFrom(durationGetter?.name.orEmpty(), rawDuration),
+                durationRaw = rawDuration,
+                durationUnit = durationUnitOf(durationGetter?.name).takeIf { rawDuration > 0L },
             )
         }.getOrNull()
     }

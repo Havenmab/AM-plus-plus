@@ -451,6 +451,191 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         )
     }
 
+    @Test
+    fun `the query uses only the primary artist of a multi credit track`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Song", artist = "ナナツカゼ"),
+                ),
+            ),
+            lyrics = lyrics("primary"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { "Album" },
+            track = MULTI_TRACK,
+        ).fetch(MULTI_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("primary"))
+        assertEquals(listOf("Song ナナツカゼ"), source.keywords)
+        assertEquals(1, source.searchCount)
+    }
+
+    @Test
+    fun `a multi credit miss retries once with the title and the original album`() {
+        val lines = mutableListOf<String>()
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                // No title or artist overlap, so the first attempt cannot pass.
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Song Album" to listOf(
+                    song("2", Source.KUWO, title = "Song", artist = "ナナツカゼ"),
+                ),
+            ),
+            lyrics = lyrics("fallback"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { "Album" },
+            diagnostic = lines::add,
+            track = MULTI_TRACK,
+        ).fetch(MULTI_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("fallback"))
+        assertEquals(listOf("Song ナナツカゼ", "Song Album"), source.keywords)
+        assertEquals(2, source.searchCount)
+        assertTrue(
+            lines.any {
+                it.contains("online-translation retry id=84 source=kuwo") &&
+                    it.contains("keyword=\"Song Album\"")
+            },
+        )
+    }
+
+    @Test
+    fun `the fallback keyword is the title alone when no album resolved`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Song" to listOf(song("2", Source.KUWO, title = "Song", artist = "ナナツカゼ")),
+            ),
+            lyrics = lyrics("title-only"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { null },
+            track = MULTI_TRACK,
+        ).fetch(MULTI_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("title-only"))
+        assertEquals(listOf("Song ナナツカゼ", "Song"), source.keywords)
+    }
+
+    @Test
+    fun `a passing primary attempt never issues the fallback search`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Song", artist = "ナナツカゼ"),
+                ),
+            ),
+            lyrics = lyrics("primary"),
+        )
+
+        assertTrue(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { "Album" },
+                track = MULTI_TRACK,
+            ).fetch(MULTI_TRACK.appleMusicId)!!.contains("primary"),
+        )
+        assertEquals(1, source.searchCount)
+        assertEquals(listOf("Song ナナツカゼ"), source.keywords)
+    }
+
+    @Test
+    fun `a single credit track is never retried`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+            ),
+            lyrics = lyrics("never"),
+        )
+
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { "Album" },
+            ).fetch(TRACK.appleMusicId),
+        )
+        assertEquals(1, source.searchCount)
+        assertEquals(listOf("Song Artist"), source.keywords)
+    }
+
+    @Test
+    fun `the multi credit fallback is bounded to one extra search per provider`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Song Album" to listOf(
+                    song("2", Source.KUWO, title = "Else", artist = "Nobody", duration = 10_000L),
+                ),
+            ),
+            lyrics = lyrics("none"),
+        )
+
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { "Album" },
+                track = MULTI_TRACK,
+            ).fetch(MULTI_TRACK.appleMusicId),
+        )
+        assertEquals(2, source.searchCount)
+        assertEquals(listOf("Song ナナツカゼ", "Song Album"), source.keywords)
+    }
+
+    @Test
+    fun `the multi credit fallback also applies to the global best fan out`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Song Album" to listOf(
+                    song("2", Source.KUWO, title = "Song", artist = "ナナツカゼ"),
+                ),
+            ),
+            lyrics = lyrics("fallback"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.GLOBAL_BEST,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            localAlbum = { "Album" },
+            track = MULTI_TRACK,
+        ).fetch(MULTI_TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("fallback"))
+        assertEquals(listOf("Song ナナツカゼ", "Song Album"), source.keywords)
+        assertEquals(2, source.searchCount)
+    }
+
     private fun chain(
         mode: LyricSelectionMode,
         vararg sources: FakeSearchSource,
@@ -460,12 +645,13 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         mode: LyricSelectionMode,
         sources: List<FakeSearchSource>,
         budgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
+        track: CurrentSongDetails = TRACK,
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = sources.mapIndexed { index, source ->
             OnlineLyricProvider("source-$index", source)
         },
-        currentTrack = { TRACK },
+        currentTrack = { track },
         searchBudgetMs = budgetMs,
     )
 
@@ -474,10 +660,11 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         providers: List<OnlineLyricProvider>,
         localAlbum: (Long) -> String? = { null },
         diagnostic: (String) -> Unit = {},
+        track: CurrentSongDetails = TRACK,
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = providers,
-        currentTrack = { TRACK },
+        currentTrack = { track },
         localAlbum = localAlbum,
         diagnostic = diagnostic,
     )
@@ -489,7 +676,30 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         searchFailure: Throwable? = null,
         searchDelayMs: Long = 0L,
         gate: CountDownLatch? = null,
-    ): FakeSearchSource = FakeSearchSource(source, songs, lyrics, searchFailure, searchDelayMs, gate)
+    ): FakeSearchSource = FakeSearchSource(
+        sourceType = source,
+        songs = songs,
+        songsByKeyword = emptyMap(),
+        lyrics = lyrics,
+        searchFailure = searchFailure,
+        searchDelayMs = searchDelayMs,
+        gate = gate,
+    )
+
+    /** A provider that answers each query with its own list, for the retry tests. */
+    private fun fakeByKeyword(
+        source: Source,
+        songsByKeyword: Map<String, List<SongSearchResult>>,
+        lyrics: LyricsResult? = null,
+    ): FakeSearchSource = FakeSearchSource(
+        sourceType = source,
+        songs = emptyList(),
+        songsByKeyword = songsByKeyword,
+        lyrics = lyrics,
+        searchFailure = null,
+        searchDelayMs = 0L,
+        gate = null,
+    )
 
     private fun song(
         id: String,
@@ -544,6 +754,7 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
     private class FakeSearchSource(
         override val sourceType: Source,
         private val songs: List<SongSearchResult>,
+        private val songsByKeyword: Map<String, List<SongSearchResult>>,
         private val lyrics: LyricsResult?,
         private val searchFailure: Throwable?,
         private val searchDelayMs: Long,
@@ -553,6 +764,7 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             private set
         var lyricFetchCount = 0
             private set
+        val keywords = mutableListOf<String>()
 
         override fun search(
             keyword: String,
@@ -562,10 +774,11 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             durationMs: Long,
         ): List<SongSearchResult> {
             searchCount += 1
+            keywords += keyword
             gate?.await(2, TimeUnit.SECONDS)
             if (searchDelayMs > 0L) Thread.sleep(searchDelayMs)
             searchFailure?.let { throw it }
-            return songs
+            return songsByKeyword[keyword] ?: songs
         }
 
         override fun getLyrics(song: SongSearchResult): LyricsResult? {
@@ -579,6 +792,14 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             appleMusicId = 42L,
             title = "Song",
             artist = "Artist",
+            durationMs = 200_000L,
+        )
+
+        /** The device-evidenced multi-credit artist that buried the real performer. */
+        val MULTI_TRACK = CurrentSongDetails(
+            appleMusicId = 84L,
+            title = "Song",
+            artist = "ナナツカゼ, PIKASONIC, なこたんまる",
             durationMs = 200_000L,
         )
     }

@@ -57,6 +57,35 @@ class LyricMatchPolicyTest {
     }
 
     @Test
+    fun `primary artist stops at each multi credit separator`() {
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A, B, C"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A，B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A、B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A/B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A／B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A & B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A feat. B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A feat B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A ft. B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A Featuring B"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("A, B feat. C"))
+        assertEquals(
+            "ナナツカゼ",
+            LyricMatchPolicy.primaryArtist("ナナツカゼ, PIKASONIC, なこたんまる"),
+        )
+    }
+
+    @Test
+    fun `primary artist keeps a single or empty credit intact`() {
+        assertEquals("emon(Tes.)", LyricMatchPolicy.primaryArtist("emon(Tes.)"))
+        assertEquals("A", LyricMatchPolicy.primaryArtist("  A  "))
+        assertEquals("", LyricMatchPolicy.primaryArtist(""))
+        assertEquals("", LyricMatchPolicy.primaryArtist("   "))
+        // A word that merely contains a marker is not a featured credit.
+        assertEquals("Defeat", LyricMatchPolicy.primaryArtist("Defeat"))
+    }
+
+    @Test
     fun `lyric fallback applies only when duration is unverified for multi credit songs`() {
         assertTrue(LyricMatchPolicy.isLyricFallbackEligible(true, true, false))
         assertFalse(LyricMatchPolicy.isLyricFallbackEligible(true, true, true))
@@ -112,6 +141,79 @@ class LyricMatchPolicyTest {
         assertEquals(10, LyricMatchPolicy.durationScore(315_000L, 310_000L))
         assertEquals(15, LyricMatchPolicy.durationScore(315_000L, 315_386L))
         assertEquals(-30, LyricMatchPolicy.durationScore(315_000L, 309_999L))
+    }
+
+    @Test
+    fun `device evidenced pairs pass once the local duration is milliseconds`() {
+        // QQ / "Fake Bones": 3:14 local (194 s once normalised) against 194000 ms.
+        val fakeBones = LyricMatchPolicy.scoreBreakdown(
+            song = candidate(
+                title = "Fake Bones (feat. 中村さんそ)",
+                artist = "日本群星/emon(Tes.)/中村さんそ",
+                album = "MDML5 -MOtOLOiD Dance Music Library5-",
+                duration = 194_000L,
+                source = Source.QM,
+            ),
+            cleanLocalTitle = LyricMatchPolicy.cleanString("Fake Bones (feat. 中村さんそ)"),
+            localArtists = listOf(LyricMatchPolicy.cleanString("emon(Tes.)")),
+            localFeatures = LyricMatchPolicy.featuresOf("Fake Bones (feat. 中村さんそ)"),
+            localDurationMs = 194_000L,
+            cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(
+                "MDML5 -MOtOLOiD Dance Music Library5-",
+            ),
+        )
+        assertEquals(50, fakeBones.title)
+        assertEquals(30, fakeBones.artist)
+        assertEquals(10, fakeBones.album)
+        assertEquals(15, fakeBones.duration)
+        assertEquals(105, fakeBones.total)
+        assertTrue(fakeBones.total >= LyricMatchPolicy.PASS_SCORE)
+
+        // Kugou / "恋愛脳": local 185 s normalised to 185000 ms, 1020 ms from the
+        // 183980 ms candidate, so the trait stays inside the strong tolerance.
+        val renai = LyricMatchPolicy.scoreBreakdown(
+            song = candidate(
+                title = "恋愛脳",
+                artist = "ナナヲアカリ",
+                album = "",
+                duration = 183_980L,
+                source = Source.KUGOU,
+            ),
+            cleanLocalTitle = LyricMatchPolicy.cleanString("恋愛脳"),
+            localArtists = listOf(LyricMatchPolicy.cleanString("ナナヲアカリ")),
+            localFeatures = emptyList(),
+            localDurationMs = 185_000L,
+            cleanLocalAlbum = "",
+        )
+        assertEquals(15, renai.duration)
+        assertEquals(95, renai.total)
+        assertTrue(renai.total >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `the unnormalised seconds value is what floored the device matches`() {
+        // The same Fake Bones pair scored with the raw accessor value: the 194 ms
+        // "duration" is >5 s from the 194000 ms candidate, so the otherwise
+        // perfect match scored 60 and was rejected by the 85 floor.
+        val breakdown = LyricMatchPolicy.scoreBreakdown(
+            song = candidate(
+                title = "Fake Bones (feat. 中村さんそ)",
+                artist = "日本群星/emon(Tes.)/中村さんそ",
+                album = "MDML5 -MOtOLOiD Dance Music Library5-",
+                duration = 194_000L,
+                source = Source.QM,
+            ),
+            cleanLocalTitle = LyricMatchPolicy.cleanString("Fake Bones (feat. 中村さんそ)"),
+            localArtists = listOf(LyricMatchPolicy.cleanString("emon(Tes.)")),
+            localFeatures = LyricMatchPolicy.featuresOf("Fake Bones (feat. 中村さんそ)"),
+            localDurationMs = 194L,
+            cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(
+                "MDML5 -MOtOLOiD Dance Music Library5-",
+            ),
+        )
+        assertEquals(-30, breakdown.duration)
+        assertEquals(60, breakdown.total)
+        assertTrue(breakdown.total < LyricMatchPolicy.PASS_SCORE)
     }
 
     @Test

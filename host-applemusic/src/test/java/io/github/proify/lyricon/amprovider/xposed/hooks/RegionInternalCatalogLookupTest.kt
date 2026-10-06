@@ -172,14 +172,11 @@ class RegionInternalCatalogLookupTest {
             assertEquals(listOf("ja-JP"), languages)
             val probeStorefront =
                 AppleInternalCatalogResolver.storefrontForOriginalLanguage(languages.first())
+            // The probe storefront is derived from the identity's language alone, so it is "jp" for
+            // every region selection.  A region whose own storefront is also "jp" (日本) is a
+            // legitimate coincidence and must not be asserted against: the property under test is
+            // that the *derivation* ignores the region, not that the two values differ.
             assertEquals("jp", probeStorefront)
-            region.catalogStorefront?.let { configured ->
-                assertNotEquals(
-                    "the probe must not follow the region storefront (${region.name})",
-                    configured,
-                    probeStorefront,
-                )
-            }
         }
     }
 }

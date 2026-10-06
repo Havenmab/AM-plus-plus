@@ -160,61 +160,81 @@ object AppleLyricTtmlWriter {
         val hasText get() = main != null || background != null
     }
 
-    private fun buildTracks(lines: List<AppleTtmlLine>): String {
-        val translations = lines.mapIndexed { index, line ->
+    private fun buildTracks(lines: List<AppleTtmlLine>): String =
+        (translationsTrack(lines) ?: "") + (transliterationsTrack(lines) ?: "")
+
+    /**
+     * The `translations` head track for [lines], keyed by [keys], or null when
+     * no line contributes text. `internal` so the lane injector emits a
+     * byte-identical track into an existing document.
+     */
+    internal fun translationsTrack(
+        lines: List<AppleTtmlLine>,
+        keys: List<String> = positionalKeys(lines),
+    ): String? {
+        val entries = lines.mapIndexed { index, line ->
             TrackEntry(
-                key = "L${index + 1}",
+                key = keys.getOrElse(index) { "L${index + 1}" },
                 main = OnlineTranslationContentPolicy.sanitize(line.translation),
                 background = OnlineTranslationContentPolicy.sanitize(
                     line.backgroundTranslation,
                 ),
             )
         }
-        val transliterations = lines.mapIndexed { index, line ->
+        return buildTrack(
+            entries,
+            container = "translations",
+            item = "translation",
+            language = TRANSLATION_LANGUAGE,
+            type = TRANSLATION_TYPE,
+        )
+    }
+
+    internal fun transliterationsTrack(
+        lines: List<AppleTtmlLine>,
+        keys: List<String> = positionalKeys(lines),
+    ): String? {
+        val entries = lines.mapIndexed { index, line ->
             TrackEntry(
-                key = "L${index + 1}",
+                key = keys.getOrElse(index) { "L${index + 1}" },
                 main = line.romanization?.trim()?.takeIf(String::isNotEmpty),
                 background = null,
             )
         }
-        return buildString {
-            appendTrack(
-                translations,
-                container = "translations",
-                item = "translation",
-                language = TRANSLATION_LANGUAGE,
-                type = TRANSLATION_TYPE,
-            )
-            appendTrack(
-                transliterations,
-                container = "transliterations",
-                item = "transliteration",
-                language = TRANSLITERATION_LANGUAGE,
-            )
-        }
+        return buildTrack(
+            entries,
+            container = "transliterations",
+            item = "transliteration",
+            language = TRANSLITERATION_LANGUAGE,
+        )
     }
 
-    private fun StringBuilder.appendTrack(
+    private fun positionalKeys(lines: List<AppleTtmlLine>): List<String> =
+        lines.indices.map { "L${it + 1}" }
+
+    private fun buildTrack(
         entries: List<TrackEntry>,
         container: String,
         item: String,
         language: String,
         type: String? = null,
-    ) {
+    ): String? {
         // Nothing to say for this kind at all, so the track is not opened —
         // rather than opened over a column of placeholders.
-        if (entries.none(TrackEntry::hasText)) return
-        append('<').append(container).append('>')
-        append('<').append(item)
-        if (type != null) append(" type=\"").append(type).append('"')
-        append(" xml:lang=\"").append(language).append("\">")
-        entries.forEach { entry ->
-            append("<text for=\"").append(entry.key).append("\">")
-            appendEntryText(entry)
-            append("</text>")
+        if (entries.none(TrackEntry::hasText)) return null
+        return buildString {
+            append('<').append(container).append('>')
+            append('<').append(item)
+            if (type != null) append(" type=\"").append(type).append('"')
+            append(" xml:lang=\"").append(language).append("\">")
+            entries.forEach { entry ->
+                append("<text for=\"").append(entry.key).append("\">")
+                appendEntryText(entry)
+                append("</text>")
+            }
+            append("</").append(item).append('>')
+            append("</").append(container).append('>')
         }
-        append("</").append(item).append('>')
-        append("</").append(container).append('>')
     }
 
     private fun StringBuilder.appendEntryText(entry: TrackEntry) {

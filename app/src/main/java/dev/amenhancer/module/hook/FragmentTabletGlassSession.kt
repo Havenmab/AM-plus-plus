@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -256,7 +258,7 @@ internal class FragmentTabletGlassSession(
                             GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab,
                                 panelHeight = panelHeight, panelBlur = blurDp.dp,
                                 style = GlassNavigationStyle.TabletLabels, drawerIcon = drawerIcon,
-                                drawerDescription = "打开侧边导航", onDrawer = { safely { this@FragmentTabletGlassSession.surface.navigation.openDrawer() } })
+                                drawerDescription = ModuleText.OPEN_SIDEBAR.text(), onDrawer = { safely { this@FragmentTabletGlassSession.surface.navigation.openDrawer() } })
                         }
                     } else {
                         NativeLiquidButton(bg, surface.input, glassExpansion, panelBlur = blurDp.dp, autoClip = true,

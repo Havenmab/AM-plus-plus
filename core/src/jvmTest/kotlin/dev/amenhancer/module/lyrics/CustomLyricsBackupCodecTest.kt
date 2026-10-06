@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestCodec
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -394,7 +396,7 @@ class CustomLyricsBackupCodecTest {
         val out = ByteArrayOutputStream()
         val encoded = CustomLyricsBackupCodec.encode(manifest, { files[it] }, out)
         assertEquals(
-            CustomLyricsBackupEncodeResult.Failed("歌词备份总量超过上限"),
+            CustomLyricsBackupEncodeResult.Failed(ModuleText.BACKUP_TOTAL_TOO_LARGE.text()),
             encoded,
         )
         assertEquals(0, out.size())

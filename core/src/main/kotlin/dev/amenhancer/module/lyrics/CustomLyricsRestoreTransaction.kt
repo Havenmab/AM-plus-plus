@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -57,11 +59,11 @@ class CustomLyricsRestoreTransaction(
                 val generated = runCatching(fileIdFactory).getOrNull()
                     ?.takeIf(CustomLyricsManifestPolicy::isValidFileId)
                 if (generated == null) {
-                    writeError = "无法生成歌词文件 ID"
+                    writeError = ModuleText.LYRICS_FILE_ID_CREATE_FAILED.text()
                     return@streamBackup
                 }
                 if (generated in allocatedFileIds) {
-                    writeError = "无法生成唯一歌词文件 ID"
+                    writeError = ModuleText.LYRICS_UNIQUE_ID_FAILED.text()
                     return@streamBackup
                 }
                 allocatedFileIds += generated
@@ -70,7 +72,7 @@ class CustomLyricsRestoreTransaction(
             val target = newFileIds.getValue(backupFileId)
             if (!runCatching { writeRemoteFile(target, bytes) }.getOrDefault(false)) {
                 runCatching { deleteRemoteFile(target) }
-                writeError = "无法写入共享歌词文件"
+                writeError = ModuleText.LYRICS_FILE_WRITE_FAILED.text()
                 return@streamBackup
             }
             written += target
@@ -97,12 +99,12 @@ class CustomLyricsRestoreTransaction(
                     val fileId = newFileIds[incoming.fileId]
                     if (fileId == null) {
                         written.forEach { runCatching { deleteRemoteFile(it) } }
-                        return CustomLyricsRestoreResult.Failed("备份内容缺失")
+                        return CustomLyricsRestoreResult.Failed(ModuleText.BACKUP_CONTENT_MISSING.text())
                     }
                     val entry = incoming.copy(fileId = fileId)
                     if (incomingById.putIfAbsent(entry.appleMusicId, entry) != null) {
                         written.forEach { runCatching { deleteRemoteFile(it) } }
-                        return CustomLyricsRestoreResult.Failed("备份条目重复")
+                        return CustomLyricsRestoreResult.Failed(ModuleText.BACKUP_ENTRIES_DUPLICATE.text())
                     }
                     rebuilt += entry
                 }
@@ -130,7 +132,7 @@ class CustomLyricsRestoreTransaction(
                 val merged = CustomLyricsManifestPolicy.sanitize(CustomLyricsManifest(mergedEntries))
                 if (!runCatching { publishManifest(merged) }.getOrDefault(false)) {
                     written.forEach { runCatching { deleteRemoteFile(it) } }
-                    return CustomLyricsRestoreResult.Failed("无法发布歌词映射")
+                    return CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_MAPPING_PUBLISH_FAILED.text())
                 }
                 (retiredFileIds + droppedFileIds).forEach { runCatching { deleteRemoteFile(it) } }
                 CustomLyricsRestoreResult.Restored(merged)

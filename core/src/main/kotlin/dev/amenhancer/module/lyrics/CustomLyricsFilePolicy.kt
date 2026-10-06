@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
@@ -19,7 +21,7 @@ object CustomLyricsFilePolicy {
     fun inspect(ttml: String): CustomLyricsInspection {
         val bytes = ttml.toByteArray(Charsets.UTF_8)
         if (!TtmlInputPolicy.isAcceptable(ttml)) {
-            return CustomLyricsInspection.Rejected("TTML 必须是有效且不超过 512 KiB 的歌词文档")
+            return CustomLyricsInspection.Rejected(ModuleText.TTML_INVALID.text())
         }
         return CustomLyricsInspection.Accepted(
             ttml = ttml,

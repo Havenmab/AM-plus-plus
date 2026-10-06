@@ -1,5 +1,7 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
 import android.app.Application
 import android.app.Dialog
@@ -132,7 +134,7 @@ internal class EmbeddedSettingsHost private constructor(
             is EmbeddedSafRoute.Canceled -> {
                 if (route.operation == EmbeddedSafOperation.Ttml) pendingTtmlImport = null
                 currentActivity()?.let { activity ->
-                    Toast.makeText(activity, "未选择文件", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, localizedText(ModuleText.NO_FILE_SELECTED), Toast.LENGTH_SHORT).show()
                 }
                 true
             }
@@ -385,7 +387,7 @@ internal class EmbeddedSettingsHost private constructor(
             textSize = 12f
             isAllCaps = false
             setTextColor(Color.WHITE)
-            contentDescription = "打开 AM++ 设置"
+            contentDescription = localizedText(ModuleText.OPEN_SETTINGS)
             minWidth = 0
             minHeight = 0
             setPadding(0, 0, 0, 0)
@@ -429,16 +431,16 @@ internal class EmbeddedSettingsHost private constructor(
             minimumHeight = dp(activity, 64)
             setPadding(dp(activity, 20), dp(activity, 12), dp(activity, 20), dp(activity, 12))
             setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "打开 AM++ 模块设置"
+            contentDescription = localizedText(ModuleText.OPEN_MODULE_SETTINGS)
             setOnClickListener { showSettingsDialog(activity) }
             addView(TextView(activity).apply {
-                text = "AM++ 模块设置"
+                text = localizedText(ModuleText.MODULE_SETTINGS)
                 textSize = 16f
                 setTextColor(EmbeddedSettingsPalette.onSurface)
                 setSingleLine(false)
             }, matchWidthWrapContent())
             addView(TextView(activity).apply {
-                text = "字体、歌词与模块功能"
+                text = localizedText(ModuleText.MODULE_SETTINGS_SUMMARY)
                 textSize = 13f
                 setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
                 setSingleLine(false)

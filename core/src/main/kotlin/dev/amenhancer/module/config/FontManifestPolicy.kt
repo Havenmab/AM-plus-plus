@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.LyricsFontManifest
 
 /** Pure validation for the small manifest shared through remote preferences. */
@@ -31,5 +33,5 @@ object FontManifestPolicy {
         .filterNot(Char::isISOControl)
         .trim()
         .take(120)
-        .ifBlank { "导入字体" }
+        .ifBlank { ModuleText.IMPORTED_FONT.text() }
 }

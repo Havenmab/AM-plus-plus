@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">AM++</string>
-    <string name="xposed_description">Apple Music 增强模块：平板双栏、双向歌词模糊、自定义歌词与歌词字体、歌曲名修正、手机液态玻璃底栏</string>
+    <string name="app_name" translatable="false">AM++</string>
+    <string name="xposed_description">Apple Music enhancements: tablet dual-pane player, bidirectional lyric blur, custom lyrics and fonts, song title correction, and Liquid Glass navigation</string>
 </resources>

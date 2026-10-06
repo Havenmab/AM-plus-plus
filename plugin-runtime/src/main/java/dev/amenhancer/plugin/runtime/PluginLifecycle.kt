@@ -1,5 +1,7 @@
 package dev.amenhancer.plugin.runtime
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.hook.HookRegistrationScope
 import dev.amenhancer.plugin.api.PluginUnsupportedException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -9,7 +11,7 @@ internal open class PluginLifecycle(private val dispatchStop: (() -> Unit) -> Un
     val scope = HookRegistrationScope()
     @Volatile var state = PluginRunState.LOADING
         private set
-    @Volatile var message = "正在加载"
+    @Volatile var message = ModuleText.PLUGIN_LOADING_MESSAGE.text()
         private set
     private val stopped = AtomicBoolean()
     var stopAction: () -> Unit = {}
@@ -17,7 +19,7 @@ internal open class PluginLifecycle(private val dispatchStop: (() -> Unit) -> Un
         if (scope.isClosed) return
         scope.activate()
         action()
-        if (!scope.isClosed) { state = PluginRunState.ACTIVE; message = "正在运行" }
+        if (!scope.isClosed) { state = PluginRunState.ACTIVE; message = ModuleText.PLUGIN_RUNNING_MESSAGE.text() }
     }
     fun fail(failure: Throwable) = close(
         if (failure is PluginUnsupportedException) PluginRunState.UNSUPPORTED else PluginRunState.FAILED,

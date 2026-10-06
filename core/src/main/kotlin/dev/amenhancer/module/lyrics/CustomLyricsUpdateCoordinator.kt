@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.source.AmLyricsClient
 import dev.amenhancer.module.lyrics.source.AmLyricsIndex
 import dev.amenhancer.module.lyrics.source.AmLyricsIndexEntry
@@ -49,7 +51,7 @@ class CustomLyricsUpdateCoordinator(
     ): CustomLyricsUpdateResult {
         val safeOld = dev.amenhancer.module.config.CustomLyricsManifestPolicy.sanitize(oldManifest)
         if (safeOld.entries.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("本地歌词索引无效，无法更新")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LOCAL_LYRICS_INDEX_INVALID.text())
         }
         if (oldManifest.entries.isEmpty()) {
             return CustomLyricsUpdateResult.Updated(
@@ -90,7 +92,7 @@ class CustomLyricsUpdateCoordinator(
                     CustomLyricsUpdateItem.Skipped(
                         appleMusicId = entry.appleMusicId,
                         source = entry.source,
-                        message = "没有可验证的远程来源",
+                        message = ModuleText.REMOTE_SOURCE_UNVERIFIABLE.text(),
                     ),
                 )
             }
@@ -119,13 +121,13 @@ class CustomLyricsUpdateCoordinator(
                     CustomLyricsUpdateItem.Skipped(
                         appleMusicId = entry.appleMusicId,
                         source = entry.source,
-                        message = "来源不支持自动更新",
+                        message = ModuleText.SOURCE_UPDATE_UNSUPPORTED.text(),
                     ),
                 )
             }
         }
         if (decisions.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("歌词更新未能检查全部条目")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_INCOMPLETE.text())
         }
 
         return CustomLyricsUpdateTransaction(
@@ -167,7 +169,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "AMLL 歌词不存在或读取失败",
+                        ModuleText.AMLL_LYRICS_UNAVAILABLE.text(),
                     ),
                 )
             } else {
@@ -195,7 +197,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "AM-Lyrics 索引读取失败",
+                        ModuleText.AM_LYRICS_INDEX_FAILED.text(),
                     ),
                 )
             }
@@ -212,7 +214,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "AM-Lyrics 未找到对应歌曲",
+                        ModuleText.AM_LYRICS_SONG_MISSING.text(),
                     ),
                 )
             } else if (!remote.enabled) {
@@ -222,7 +224,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "AM-Lyrics 条目已禁用",
+                        ModuleText.AM_LYRICS_ENTRY_DISABLED.text(),
                     ),
                 )
             } else if (
@@ -253,7 +255,7 @@ class CustomLyricsUpdateCoordinator(
                             entry.appleMusicId,
                             entry.source,
                             CustomLyricsUpdateFailureKind.NETWORK,
-                            "AM-Lyrics 歌词下载失败或校验失败",
+                            ModuleText.AM_LYRICS_DOWNLOAD_FAILED.text(),
                         ),
                     )
                 } else {
@@ -282,7 +284,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "Lunabeat catalog 读取失败",
+                        ModuleText.LUNABEAT_CATALOG_FAILED.text(),
                     ),
                 )
             }
@@ -299,7 +301,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "Lunabeat 未找到对应歌曲",
+                        ModuleText.LUNABEAT_SONG_MISSING.text(),
                     ),
                 )
             } else if (song.sha256.equals(entry.sha256, ignoreCase = true)) {
@@ -324,7 +326,7 @@ class CustomLyricsUpdateCoordinator(
                             entry.appleMusicId,
                             entry.source,
                             CustomLyricsUpdateFailureKind.NETWORK,
-                            "Lunabeat 歌词下载失败或校验失败",
+                            ModuleText.LUNABEAT_DOWNLOAD_FAILED.text(),
                         ),
                     )
                 } else {
@@ -343,7 +345,7 @@ class CustomLyricsUpdateCoordinator(
                 entry.appleMusicId,
                 entry.source,
                 CustomLyricsUpdateFailureKind.INVALID_TTML,
-                "远程歌词不是有效 TTML",
+                ModuleText.REMOTE_TTML_INVALID.text(),
             )
         }
         inspected as CustomLyricsInspection.Accepted

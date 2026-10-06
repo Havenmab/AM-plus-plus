@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.CustomLyricsSources
 
 sealed interface CustomLyricsOnlineImportResult {
@@ -20,13 +22,13 @@ class CustomLyricsOnlineImporter(
     private val fetchLunabeat: (Long) -> String?,
 ) {
     fun importAmll(appleMusicId: Long): CustomLyricsOnlineImportResult {
-        if (appleMusicId <= 0L) return CustomLyricsOnlineImportResult.Failed("Apple Music ID 必须是正整数")
+        if (appleMusicId <= 0L) return CustomLyricsOnlineImportResult.Failed(ModuleText.MUSIC_ID_POSITIVE_REQUIRED.text())
         val fetched = runCatching { fetchAmll(appleMusicId) }.getOrNull()
-            ?: return CustomLyricsOnlineImportResult.Failed("AMLL 未找到可用 TTML")
+            ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.AMLL_TTML_MISSING.text())
         // AMLL serves its own TTML format; reformat it before Apple's parser sees it.
         val conversion = AmllTtmlFormatConverter.toAppleFormat(fetched)
         val ttml = conversion.ttml.takeIf(TtmlInputPolicy::isAcceptable)
-            ?: return CustomLyricsOnlineImportResult.Failed("AMLL 未找到可用 TTML")
+            ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.AMLL_TTML_MISSING.text())
         return CustomLyricsOnlineImportResult.Imported(
             ttml = ttml,
             source = CustomLyricsSources.AMLL,
@@ -36,21 +38,21 @@ class CustomLyricsOnlineImporter(
 
     fun importAmLyrics(appleMusicId: Long): CustomLyricsOnlineImportResult {
         if (appleMusicId <= 0L) return CustomLyricsOnlineImportResult.Failed(
-            "Apple Music ID 必须是正整数",
+            ModuleText.MUSIC_ID_POSITIVE_REQUIRED.text(),
         )
         val ttml = runCatching { fetchAmLyrics(appleMusicId) }.getOrNull()
             ?.takeIf(TtmlInputPolicy::isAcceptable)
-            ?: return CustomLyricsOnlineImportResult.Failed("GitHub 未找到可用 TTML")
+            ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.GITHUB_TTML_MISSING.text())
         return CustomLyricsOnlineImportResult.Imported(ttml, CustomLyricsSources.AM_LYRICS)
     }
 
     fun importLunabeat(appleMusicId: Long): CustomLyricsOnlineImportResult {
         if (appleMusicId <= 0L) return CustomLyricsOnlineImportResult.Failed(
-            "Apple Music ID 必须是正整数",
+            ModuleText.MUSIC_ID_POSITIVE_REQUIRED.text(),
         )
         val ttml = runCatching { fetchLunabeat(appleMusicId) }.getOrNull()
             ?.takeIf(TtmlInputPolicy::isAcceptable)
-            ?: return CustomLyricsOnlineImportResult.Failed("Lunabeat 未找到可用 TTML")
+            ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.LUNABEAT_TTML_MISSING.text())
         return CustomLyricsOnlineImportResult.Imported(ttml, CustomLyricsSources.LUNABEAT)
     }
 }

@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -74,27 +76,27 @@ class CustomLyricsImportTransaction(
         replacingAppleMusicIds: List<Long> = emptyList(),
     ): CustomLyricsBatchSaveResult {
         if (draft.appleMusicIds.isEmpty() || draft.appleMusicIds.any { it <= 0L }) {
-            return CustomLyricsBatchSaveResult.Failed("Apple Music ID 必须是正整数")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.MUSIC_ID_POSITIVE_REQUIRED.text())
         }
         if (draft.appleMusicIds.distinct().size != draft.appleMusicIds.size) {
-            return CustomLyricsBatchSaveResult.Failed("Apple Music ID 不能重复")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.MUSIC_IDS_DUPLICATE.text())
         }
         if (replacingAppleMusicIds.any { it <= 0L } ||
             replacingAppleMusicIds.distinct().size != replacingAppleMusicIds.size
         ) {
-            return CustomLyricsBatchSaveResult.Failed("原歌词映射不存在")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.ORIGINAL_MAPPING_MISSING.text())
         }
 
         val replacingIds = replacingAppleMusicIds.toSet()
         val replacedEntries = oldManifest.entries.filter { it.appleMusicId in replacingIds }
         if (replacedEntries.size != replacingIds.size) {
-            return CustomLyricsBatchSaveResult.Failed("原歌词映射不存在")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.ORIGINAL_MAPPING_MISSING.text())
         }
         if (oldManifest.entries.any {
                 it.appleMusicId in draft.appleMusicIds && it.appleMusicId !in replacingIds
             }
         ) {
-            return CustomLyricsBatchSaveResult.Failed("目标 Apple Music ID 已存在")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.TARGET_MUSIC_ID_EXISTS.text())
         }
 
         val inspection = CustomLyricsFilePolicy.inspect(draft.ttml)
@@ -112,15 +114,15 @@ class CustomLyricsImportTransaction(
         }
         draft.appleMusicIds.forEach { appleMusicId ->
             val fileId = runCatching(fileIdFactory).getOrNull()
-                ?: return rollbackAndFail(::rollbackNewFiles, "无法生成歌词文件 ID")
+                ?: return rollbackAndFail(::rollbackNewFiles, ModuleText.LYRICS_FILE_ID_CREATE_FAILED.text())
             if (!CustomLyricsManifestPolicy.isValidFileId(fileId)) {
-                return rollbackAndFail(::rollbackNewFiles, "生成的歌词文件 ID 无效")
+                return rollbackAndFail(::rollbackNewFiles, ModuleText.LYRICS_FILE_ID_INVALID.text())
             }
             if (fileId in existingFileIds) {
-                return rollbackAndFail(::rollbackNewFiles, "生成的歌词文件 ID 已存在")
+                return rollbackAndFail(::rollbackNewFiles, ModuleText.LYRICS_FILE_ID_EXISTS.text())
             }
             if (!generatedFileIds.add(fileId)) {
-                return rollbackAndFail(::rollbackNewFiles, "生成的歌词文件 ID 重复")
+                return rollbackAndFail(::rollbackNewFiles, ModuleText.LYRICS_FILE_ID_DUPLICATE.text())
             }
             entries += CustomLyricsEntry(
                 appleMusicId = appleMusicId,
@@ -144,18 +146,18 @@ class CustomLyricsImportTransaction(
                 }
             }
         ) {
-            return CustomLyricsBatchSaveResult.Failed("歌词映射无效")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.LYRICS_MAPPING_INVALID.text())
         }
 
         entries.forEach { entry ->
             if (!runCatching { writeRemoteFile(entry.fileId, accepted.bytes) }.getOrDefault(false)) {
                 rollbackNewFiles()
-                return CustomLyricsBatchSaveResult.Failed("无法写入共享歌词文件")
+                return CustomLyricsBatchSaveResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text())
             }
         }
         if (!runCatching { publishManifest(manifest) }.getOrDefault(false)) {
             rollbackNewFiles()
-            return CustomLyricsBatchSaveResult.Failed("无法发布歌词映射")
+            return CustomLyricsBatchSaveResult.Failed(ModuleText.LYRICS_MAPPING_PUBLISH_FAILED.text())
         }
 
         val nextFileIds = manifest.entries.mapTo(mutableSetOf(), CustomLyricsEntry::fileId)

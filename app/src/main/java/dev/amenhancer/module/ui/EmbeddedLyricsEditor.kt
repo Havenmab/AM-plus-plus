@@ -1,5 +1,7 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Color
@@ -39,12 +41,12 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         )
         val nameInput = embeddedLyricsEditorInput(
             activity = activity,
-            hint = "显示名称",
+            hint = localizedText(ModuleText.DISPLAY_NAME),
             initial = entry?.displayName ?: song?.title.orEmpty(),
         )
         val ttmlInput = embeddedLyricsEditorInput(
             activity = activity,
-            hint = "TTML 内容",
+            hint = localizedText(ModuleText.TTML_CONTENT),
             initial = entry?.let { controller.readLyrics(it.appleMusicId) }.orEmpty(),
             multiline = true,
         )
@@ -55,7 +57,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             setPadding(0, dp(activity, 8), 0, dp(activity, 8))
         }
         fun updateSourceLabel() {
-            sourceLabel.text = "当前来源：${embeddedLyricsSourceName(source)}"
+            sourceLabel.text = localizedText(ModuleText.CURRENT_SOURCE, embeddedLyricsSourceName(source))
         }
         fun importOnline(sourceToImport: EmbeddedOnlineSource) {
             importEmbeddedOnlineLyrics(
@@ -85,7 +87,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             embeddedLyricsEditorActionRows(
                 activity,
                 listOf(
-                    EmbeddedLyricsEditorAction("导入 TTML") {
+                    EmbeddedLyricsEditorAction(localizedText(ModuleText.IMPORT_TTML)) {
                         pendingTtmlImport = { imported ->
                             ttmlInput.setText(imported)
                             source = CustomLyricsSources.MANUAL
@@ -98,24 +100,24 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                             arrayOf("application/ttml+xml", "application/xml", "text/xml", "text/plain"),
                         )
                     },
-                    EmbeddedLyricsEditorAction("获取 ID") {
+                    EmbeddedLyricsEditorAction(localizedText(ModuleText.GET_ID)) {
                         requestCurrentSongId(activity, idInput, nameInput)
                     },
                     EmbeddedLyricsEditorAction(
-                        label = "从 AMLL 导入",
-                        compactLabel = "AMLL 导入",
+                        label = localizedText(ModuleText.IMPORT_FROM_AMLL),
+                        compactLabel = localizedText(ModuleText.AMLL_IMPORT),
                     ) {
                         importOnline(EmbeddedOnlineSource.AMLL)
                     },
                     EmbeddedLyricsEditorAction(
-                        label = "从 Lunabeat 导入",
-                        compactLabel = "Lunabeat 导入",
+                        label = localizedText(ModuleText.IMPORT_FROM_LUNABEAT),
+                        compactLabel = localizedText(ModuleText.LUNABEAT_IMPORT),
                     ) {
                         importOnline(EmbeddedOnlineSource.LUNABEAT)
                     },
                     EmbeddedLyricsEditorAction(
-                        label = "从 GitHub 导入",
-                        compactLabel = "GitHub 导入",
+                        label = localizedText(ModuleText.IMPORT_FROM_GITHUB),
+                        compactLabel = localizedText(ModuleText.GITHUB_IMPORT),
                     ) {
                         importOnline(EmbeddedOnlineSource.AM_LYRICS)
                     },
@@ -136,9 +138,9 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         fun saveLyrics() {
                 val ids = CustomLyricsIdParser.parse(idInput.text.toString())
                 if (ids == null) {
-                    idInput.error = "请输入一个或多个正整数 Apple Music ID（用逗号分隔）"
+                    idInput.error = localizedText(ModuleText.MUSIC_IDS_INVALID)
                 } else if (ttmlInput.text.toString().isBlank()) {
-                    ttmlInput.error = "请输入或导入 TTML"
+                    ttmlInput.error = localizedText(ModuleText.TTML_REQUIRED)
                 } else {
                     runAsync(activity) {
                         saveMany(
@@ -161,7 +163,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 16 else 20)
             setPadding(horizontalPadding, 0, horizontalPadding, 0)
             addView(TextView(activity).apply {
-                text = if (group == null) "新增歌词" else "编辑歌词"
+                text = if (group == null) localizedText(ModuleText.NEW_LYRICS) else localizedText(ModuleText.EDIT_LYRICS)
                 textSize = embeddedTextSize(activity, 19f, 18f)
                 setTextColor(EmbeddedSettingsPalette.onSurface)
                 setTypeface(typeface, if (isEmbeddedPhone(activity)) Typeface.BOLD else Typeface.NORMAL)
@@ -184,14 +186,14 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             setOnClickListener { onClick() }
         }
         editorActions.addView(
-            editorAction("取消") { dialog.dismiss() },
+            editorAction(localizedText(ModuleText.CANCEL)) { dialog.dismiss() },
             LinearLayout.LayoutParams(
                 dp(activity, if (isEmbeddedPhone(activity)) 64 else 56),
                 dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
             ),
         )
         editorActions.addView(
-            editorAction("保存", ::saveLyrics),
+            editorAction(localizedText(ModuleText.SAVE), ::saveLyrics),
             LinearLayout.LayoutParams(
                 dp(activity, if (isEmbeddedPhone(activity)) 64 else 56),
                 dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
@@ -257,7 +259,7 @@ internal fun EmbeddedSettingsHost.requestCurrentSongId(
         if (currentSong == null) {
             Toast.makeText(
                 activity,
-                "未获取到当前歌曲信息，请先在 Apple Music 播放一首歌",
+                localizedText(ModuleText.PLAY_SONG_FIRST),
                 Toast.LENGTH_SHORT,
             ).show()
             return
@@ -271,7 +273,7 @@ internal fun EmbeddedSettingsHost.requestCurrentSongId(
             displayName.setText(value)
             displayName.setSelection(displayName.length())
         }
-        Toast.makeText(activity, "已获取当前歌曲信息", Toast.LENGTH_SHORT).show()
+        Toast.makeText(activity, localizedText(ModuleText.SONG_DETAILS_CAPTURED), Toast.LENGTH_SHORT).show()
     }
 
     /** Keeps the editor's multi-ID operation explicit at the host boundary. */
@@ -295,12 +297,12 @@ internal fun EmbeddedSettingsHost.importEmbeddedOnlineLyrics(
             EmbeddedOnlineSource.AM_LYRICS,
             EmbeddedOnlineSource.LUNABEAT,
             -> if (appleMusicId == null || appleMusicId <= 0L) {
-                appleMusicIdInput.error = "请输入正整数 Apple Music ID"
+                appleMusicIdInput.error = localizedText(ModuleText.MUSIC_ID_INVALID)
                 return
             }
         }
 
-        Toast.makeText(activity, "正在获取歌词…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(activity, localizedText(ModuleText.FETCHING_LYRICS), Toast.LENGTH_SHORT).show()
         worker.execute {
             val result = runCatching {
                 val importer = embeddedOnlineLyricsImporter()
@@ -311,7 +313,7 @@ internal fun EmbeddedSettingsHost.importEmbeddedOnlineLyrics(
                 }
             }.getOrElse {
                 CustomLyricsOnlineImportResult.Failed(
-                    it.message.orEmpty().ifBlank { "在线导入失败" },
+                    it.message.orEmpty().ifBlank { localizedText(ModuleText.ONLINE_IMPORT_FAILED) },
                 )
             }
             mainHandler.post {
@@ -320,10 +322,10 @@ internal fun EmbeddedSettingsHost.importEmbeddedOnlineLyrics(
                     is CustomLyricsOnlineImportResult.Imported -> {
                         ttmlInput.setText(result.ttml)
                         onImported(result.source)
-                        val reformatNote = if (result.reformatted) "，已自动转为 Apple Music 格式" else ""
+                        val reformatNote = if (result.reformatted) localizedText(ModuleText.CONVERTED_TO_AM_FORMAT) else ""
                         Toast.makeText(
                             activity,
-                            "已导入 ${embeddedLyricsSourceName(result.source)} 歌词$reformatNote，请确认后保存",
+                            localizedText(ModuleText.ONLINE_LYRICS_IMPORTED, embeddedLyricsSourceName(result.source), reformatNote),
                             Toast.LENGTH_LONG,
                         ).show()
                     }
@@ -341,10 +343,10 @@ internal fun EmbeddedSettingsHost.embeddedOnlineLyricsImporter(): CustomLyricsOn
 
 
 internal fun EmbeddedSettingsHost.embeddedLyricsSourceName(source: String): String = when (source) {
-        CustomLyricsSources.AUTO_CACHE -> "自动缓存"
+        CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)
         CustomLyricsSources.AMLL -> "AMLL"
-        CustomLyricsSources.AM_LYRICS -> "AM-Lyrics 仓库"
+        CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.AM_LYRICS_REPOSITORY)
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
-        else -> "手动 TTML"
+        else -> localizedText(ModuleText.MANUAL_TTML)
     }
 

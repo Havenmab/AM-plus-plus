@@ -1,4 +1,6 @@
 package dev.amenhancer.module.hook
+
+import dev.amenhancer.module.i18n.ModuleText
 import android.app.Activity
 import android.content.Context
 import android.os.Handler
@@ -8,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import java.util.ArrayDeque
+import java.util.Locale
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.lang.reflect.InvocationHandler
@@ -109,10 +112,10 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
         // setSummary (J rejects a SummaryProvider, which distinguishes them).
         preferenceClass.getDeclaredMethod(names.getString("titleMethod"), CharSequence::class.java)
             .apply { isAccessible = true }
-            .invoke(preference, "AM++ 模块设置")
+            .invoke(preference, ModuleText.MODULE_SETTINGS.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
         preferenceClass.getDeclaredMethod(names.getString("summaryMethod"), CharSequence::class.java)
             .apply { isAccessible = true }
-            .invoke(preference, "字体、歌词与模块功能")
+            .invoke(preference, ModuleText.MODULE_SETTINGS_SUMMARY.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
         if (!installNativePreferenceClick(preferenceClass, preference, activity)) return false
 
         val targetScreen = screen ?: return false

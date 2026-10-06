@@ -319,8 +319,8 @@ class HleMetadataIntegrationStructuralTest {
     @Test
     fun `embedded settings expose profile selector without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
-        assertTrue(embedded.contains("歌曲名显示修正"))
-        assertTrue(embedded.contains("歌曲名修正模式"))
+        assertTrue(embedded.contains("ModuleText.TITLE_CORRECTION"))
+        assertTrue(embedded.contains("ModuleText.TITLE_CORRECTION_MODE"))
         assertTrue(embedded.contains("titleCorrectionMode"))
         assertFalse(embedded.contains("刷新资料库"))
     }

@@ -287,7 +287,6 @@ internal class AppleInternalCatalogResolver(
         onResolved: (OriginalResolution) -> Unit,
     ) = resolveOriginalMetadata(
         metadata = metadata,
-        lookupIds = emptyList(),
         onCandidate = null,
         priority = priority,
         onResolved = onResolved,
@@ -295,7 +294,6 @@ internal class AppleInternalCatalogResolver(
 
     fun resolveOriginalMetadata(
         metadata: MediaMetadataCache.Metadata,
-        lookupIds: Collection<String> = emptyList(),
         onCandidate: ((Alias) -> Unit)?,
         priority: RequestPriority = RequestPriority.ACTIVE_PAGE,
         onResolved: (OriginalResolution) -> Unit,
@@ -366,7 +364,6 @@ internal class AppleInternalCatalogResolver(
                 persistentOriginalCache.remove(legacyAmbiguousSongCacheKey(metadata.id))
                 resolveOriginalMetadataFromCatalog(
                     metadata = metadata,
-                    lookupIds = lookupIds,
                     priority = priority,
                 )
             }
@@ -460,11 +457,16 @@ internal class AppleInternalCatalogResolver(
                 mediaId = normalizedId,
                 lookupIds = lookupIds,
             ),
+            accept = { alias -> isAcceptableOriginalAlias(alias, alias.language) },
             onResult = { hit ->
-                val validAlias = hit?.alias?.takeIf {
-                    isAcceptableOriginalAlias(it, canonicalOriginalLanguage(it.language))
+                val validAlias = hit?.alias
+                if (BuildConfig.DEBUG) {
+                    ProviderLogger.info(
+                        "Apple 原名实体缓存读取: id=$normalizedId, entityType=$entityType, " +
+                            "key=${hit?.key}, language=${validAlias?.language}, hit=${hit != null}"
+                    )
                 }
-                if (validAlias != null && hit.key != directKey) {
+                if (validAlias != null && hit?.key != directKey) {
                     // Promote compatibility/alternate-ID hits so subsequent home builders use the
                     // same fast direct path as the library page.
                     persistentOriginalCache.put(directKey, validAlias)
@@ -749,15 +751,6 @@ internal class AppleInternalCatalogResolver(
         val artistIds: List<String>,
     )
 
-    internal data class PreparedOriginalResolution(
-        val canonicalLanguages: List<String>,
-        val sourceLanguage: String?,
-        val originalAlias: Alias?,
-        val resolvedAlbum: String?,
-        val originKnown: Boolean,
-        val artistIds: List<String>,
-    )
-
     internal data class CatalogSong(
         val id: String?,
         val alias: Alias,
@@ -817,18 +810,6 @@ internal class AppleInternalCatalogResolver(
         val language: String,
         val album: String = "",
     )
-
-    /** The alias source chosen for one derived original language. */
-    internal sealed interface OriginalLanguageResolution {
-        /** The origin-region lookup returned a usable alias; it is that region's own form. */
-        data class Regional(val alias: Alias) : OriginalLanguageResolution
-
-        /** The lookup yielded nothing usable; the identity's own alias for the language stands in. */
-        data class IdentityFallback(val alias: Alias) : OriginalLanguageResolution
-
-        /** Neither source produced an alias for this language. */
-        data object None : OriginalLanguageResolution
-    }
 
     data class OriginalResolution(
         val alias: Alias?,
@@ -891,15 +872,15 @@ internal class AppleInternalCatalogResolver(
             "$ORIGINAL_METADATA_CACHE_SCHEMA:$entityType:${language.trim()}:${mediaId.trim()}"
 
         /**
-         * Direct keys are always tried first. The remaining keys cover aliases written before
-         * direct entity keys were introduced and equivalent catalog IDs collected from the same
-         * Media API object.
+         * Direct originals and equivalent catalog IDs are always tried first. A language-specific
+         * compatibility entry is eligible only when the caller already knows the original language;
+         * the existence of a translation in a storefront is not evidence of an artist's origin.
          */
         internal fun originalEntityCacheLookupKeys(
             entityType: LocalizedEntityType,
             mediaId: String,
             lookupIds: Collection<String> = emptyList(),
-            languages: Collection<String> = ORIGINAL_LANGUAGE_PROBE_ORDER,
+            languages: Collection<String> = emptyList(),
         ): List<String> {
             val ids = sequenceOf(mediaId)
                 .plus(lookupIds.asSequence())
@@ -963,19 +944,6 @@ internal class AppleInternalCatalogResolver(
          */
         internal const val AMP_HTTP_MODULE_MARKER_PARAM = "hle_catalog_module"
         internal const val AMP_HTTP_MODULE_MARKER_VALUE = "1"
-        internal val ORIGINAL_LANGUAGE_PROBE_ORDER = listOf(
-            "ja-JP",
-            "ko-KR",
-            "zh-Hans-CN",
-            "th-TH",
-            "ru-RU",
-            "uk-UA",
-            "ar-SA",
-            "he-IL",
-            "hi-IN",
-            "el-GR",
-            "bg-BG",
-        )
 
         internal fun originalLanguageCacheKeyVariants(language: String): List<String> = when (
             canonicalOriginalLanguage(language)
@@ -1089,7 +1057,6 @@ internal class AppleInternalCatalogResolver(
             genre: String?,
             catalogGenres: Collection<String>,
             isrc: String?,
-            artistLanguages: Collection<String> = emptyList(),
         ): List<String> {
             val genreLanguages = sequenceOf(genre)
                 .plus(catalogGenres.asSequence())
@@ -1097,10 +1064,7 @@ internal class AppleInternalCatalogResolver(
                 .map(::knownLanguageTagsForGenre)
                 .firstOrNull(List<String>::isNotEmpty)
                 .orEmpty()
-            if (genreLanguages.isNotEmpty()) return genreLanguages
-            val isrcLanguages = languageTagsForIsrc(isrc)
-            if (isrcLanguages.isNotEmpty()) return isrcLanguages
-            return artistLanguages.mapNotNull(::supportedOriginalLanguageOrNull).distinct()
+            return genreLanguages.ifEmpty { languageTagsForIsrc(isrc) }
         }
 
         internal fun canonicalOriginalLanguage(language: String): String {
@@ -1166,8 +1130,14 @@ internal class AppleInternalCatalogResolver(
 
         internal fun isAcceptableOriginalAlias(alias: Alias, sourceLanguage: String): Boolean {
             if (alias.title.isBlank() && alias.artist.isBlank()) return false
+            if (!matchesOriginalLanguage(alias, sourceLanguage)) return false
             if (canonicalOriginalLanguage(sourceLanguage) != "zh-Hans-CN") return true
             return containsHanCharacters(alias.title) || containsHanCharacters(alias.artist)
+        }
+
+        internal fun matchesOriginalLanguage(alias: Alias, sourceLanguage: String): Boolean {
+            val expected = supportedOriginalLanguageOrNull(sourceLanguage) ?: return false
+            return supportedOriginalLanguageOrNull(alias.language) == expected
         }
 
         internal fun selectExactOriginalEntityAlias(
@@ -1177,7 +1147,8 @@ internal class AppleInternalCatalogResolver(
             sourceLanguage: String,
         ): Alias? {
             resolved[mediaId.trim()]?.takeIf { alias ->
-                alias.title.isNotBlank() || alias.artist.isNotBlank()
+                matchesOriginalLanguage(alias, sourceLanguage) &&
+                    (alias.title.isNotBlank() || alias.artist.isNotBlank())
             }?.let { return it }
             return lookupIds.asSequence()
                 .map(String::trim)
@@ -1200,37 +1171,6 @@ internal class AppleInternalCatalogResolver(
             }
         }
 
-        /**
-         * Preference order for one derived original language.
-         *
-         * The origin-region lookup is authoritative: a [storefrontAlias] that passes the existing
-         * confidence check wins, because a lookup that reached the storefront derived from the
-         * song's own origin is that region's form by construction.  The identity's account-catalog
-         * alias ([identityAlias]) is consulted only when the lookup yields nothing usable, so the
-         * artist-only corrections it already provides do not regress.  A [storefrontAlias] that is
-         * present but not confident is a miss -- the caller invalidates it -- exactly as before.
-         */
-        internal fun decideOriginalLanguageResolution(
-            storefrontAlias: Alias?,
-            identityAlias: Alias?,
-            localizedTitle: String,
-            localizedArtist: String,
-        ): OriginalLanguageResolution {
-            val regionalAlias = storefrontAlias?.takeIf { alias ->
-                (alias.title.isNotBlank() || alias.artist.isNotBlank()) &&
-                    isConfidentOriginalSongAlias(
-                        alias = alias,
-                        localizedTitle = localizedTitle,
-                        localizedArtist = localizedArtist,
-                    )
-            }
-            return when {
-                regionalAlias != null -> OriginalLanguageResolution.Regional(regionalAlias)
-                identityAlias != null -> OriginalLanguageResolution.IdentityFallback(identityAlias)
-                else -> OriginalLanguageResolution.None
-            }
-        }
-
         internal fun containsHanCharacters(value: String): Boolean {
             var index = 0
             while (index < value.length) {
@@ -1241,28 +1181,6 @@ internal class AppleInternalCatalogResolver(
                 index += Character.charCount(codePoint)
             }
             return false
-        }
-
-        /** Script evidence used only for the artist-region probe. */
-        internal fun hasCjkArtistScript(value: String, language: String): Boolean {
-            val canonical = canonicalOriginalLanguage(language)
-            return when (canonical) {
-                "ja-JP" -> containsJapaneseKana(value)
-                "ko-KR" -> containsHangul(value)
-                "zh-Hans-CN" ->
-                    containsHanCharacters(value) &&
-                        !containsJapaneseKana(value) &&
-                        !containsHangul(value)
-                else -> false
-            }
-        }
-
-        internal fun containsJapaneseKana(value: String): Boolean = value.any { character ->
-            character.code in 0x3040..0x30ff
-        }
-
-        internal fun containsHangul(value: String): Boolean = value.any { character ->
-            character.code in 0xac00..0xd7af
         }
 
         internal fun storefrontForContentUiLanguage(selection: Int): String? = when (selection) {
@@ -1495,41 +1413,7 @@ internal class AppleInternalCatalogResolver(
             localizedTitle: String,
             localizedArtist: String,
         ): Boolean = isOriginalTitle(alias, localizedTitle) ||
-            nonLatinLetterCount(localizedTitle) > 0 ||
-            isConfidentSameTitleOriginalArtist(
-                alias = alias,
-                localizedTitle = localizedTitle,
-                localizedArtist = localizedArtist,
-            )
-
-        /**
-         * True when a catalog alias keeps the account's Latin title and only carries the
-         * original-region artist credit, e.g. "Catchphrase"/"Yabasu & Hatsune Miku" ->
-         * "Catchphrase"/"ヤバス, Hatsune Miku".  The device evidence requires the artist to be
-         * corrected even when the title is unchanged, which [isOriginalTitle] cannot see.
-         *
-         * The candidate only has to keep the normalized title and carry non-Latin script
-         * (artist or title).  That is sufficient because the probe's target region is derived
-         * from the song's own origin -- genre and ISRC country via
-         * [languageTagsForOriginalMetadata], then [storefrontForOriginalLanguage] -- so a
-         * lookup that reached this storefront is a release of that origin by construction and
-         * what it reports is the original-region form.  A storefront localization of a
-         * Western artist cannot appear here: that song is never probed against this storefront.
-         *
-         * An earlier revision additionally required a kana-only artist whose romanized reading
-         * shared a run with the localized Latin artist.  That heuristic added no evidence (the
-         * region already establishes the candidate's provenance) and rejected legitimate
-         * originals whose artist name contains kanji, e.g. "Kenshi Yonezu" -> "米津玄師".
-         */
-        internal fun isConfidentSameTitleOriginalArtist(
-            alias: Alias,
-            localizedTitle: String,
-            localizedArtist: String,
-        ): Boolean {
-            if (localizedTitle.isBlank() || localizedArtist.isBlank()) return false
-            if (normalize(alias.title) != normalize(localizedTitle)) return false
-            return nonLatinLetterCount(alias.artist) > 0 || nonLatinLetterCount(alias.title) > 0
-        }
+            nonLatinLetterCount(localizedTitle) > 0
 
         internal fun isReusableOriginalSongAlias(
             alias: Alias,

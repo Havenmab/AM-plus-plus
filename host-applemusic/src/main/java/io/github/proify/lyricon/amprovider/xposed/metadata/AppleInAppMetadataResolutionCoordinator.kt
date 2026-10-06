@@ -31,6 +31,8 @@ internal interface AppleInAppMetadataResolutionHost {
         notifyModelChange: Boolean,
     )
 
+    fun publishCurrentPlaybackAlias(mediaId: String, alias: AppleInternalCatalogResolver.Alias)
+
     fun applyPlaybackMetadataOverride(
         mediaId: String,
         alias: AppleInternalCatalogResolver.Alias,
@@ -185,6 +187,13 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     forceRebind = true,
                     notifyModelChange = true,
                 )
+                if (shouldPublishAssociatedArtistAliasToCurrentPlayback(
+                        mediaId = mediaId,
+                        currentPlaybackMediaId = host.currentPlaybackMetadataId(),
+                    )
+                ) {
+                    host.publishCurrentPlaybackAlias(mediaId, updatedAlias)
+                }
             }
         }
     }
@@ -764,27 +773,13 @@ internal class AppleInAppMetadataResolutionCoordinator(
             } else {
                 val language = originalLanguageFor(mediaId)
                 if (language == null) {
-                    val probeLanguages = inferredOriginalEntityLanguages(
+                    if (!metadataStore.markOriginalPending(mediaId)) return@forEach
+                    resolveCachedOriginalEntity(
+                        mediaId = mediaId,
                         entityType = entityType,
-                        account = account,
+                        preBind = preBind,
+                        priority = priority,
                     )
-                    if (probeLanguages.isEmpty()) {
-                        if (!metadataStore.markOriginalPending(mediaId)) return@forEach
-                        resolveCachedOriginalEntity(
-                            mediaId = mediaId,
-                            entityType = entityType,
-                            preBind = preBind,
-                            priority = priority,
-                        )
-                    } else {
-                        resolveOriginalEntityForInAppCandidates(
-                            mediaId = mediaId,
-                            entityType = entityType,
-                            languages = probeLanguages,
-                            preBind = preBind,
-                            priority = priority,
-                        )
-                    }
                 } else {
                     resolveOriginalEntityForInApp(
                         mediaId = mediaId,
@@ -795,28 +790,6 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     )
                 }
             }
-        }
-    }
-
-    private fun inferredOriginalEntityLanguages(
-        entityType: AppleInternalCatalogResolver.LocalizedEntityType,
-        account: AccountMetadata,
-    ): List<String> {
-        val values = listOfNotNull(account.title, account.artist)
-        val inferred = when {
-            values.any { value -> AppleInternalCatalogResolver.containsJapaneseKana(value) } ->
-                listOf("ja-JP")
-            values.any { value -> AppleInternalCatalogResolver.containsHangul(value) } ->
-                listOf("ko-KR")
-            values.any { value -> AppleInternalCatalogResolver.containsHanCharacters(value) } ->
-                listOf("ja-JP", "zh-Hans-CN")
-            else -> emptyList()
-        }
-        if (inferred.isNotEmpty()) return inferred
-        return if (entityType == AppleInternalCatalogResolver.LocalizedEntityType.ALBUM) {
-            listOf("ja-JP", "ko-KR", "zh-Hans-CN")
-        } else {
-            emptyList()
         }
     }
 
@@ -912,7 +885,6 @@ internal class AppleInAppMetadataResolutionCoordinator(
         var bindingPhase = true
         catalogResolver.resolveOriginalMetadata(
             metadata = metadata,
-            lookupIds = metadataStore.lookupIds(mediaId),
             priority = priority,
             onCandidate = candidate@{ candidate ->
                 if (!host.isRestoreOriginalEnabled()) return@candidate
@@ -934,6 +906,12 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     return@resolveOriginalMetadata
                 }
                 mergePlaybackAssociatedArtistIds(mediaId, resolution.artistIds)
+                originalArtistLanguageFromSongResolution(
+                    resolution = resolution,
+                    localizedArtist = account.artist,
+                )?.let { language ->
+                    rememberOriginalLanguageForArtist(mediaId, language)
+                }
                 fun finishResolution(
                     alias: AppleInternalCatalogResolver.Alias?,
                 ) {
@@ -1027,37 +1005,19 @@ internal class AppleInAppMetadataResolutionCoordinator(
         language: String,
         preBind: Boolean,
         priority: AppleInternalCatalogResolver.RequestPriority,
-    ) = resolveOriginalEntityForInAppCandidates(
-        mediaId = mediaId,
-        entityType = entityType,
-        languages = listOf(language),
-        preBind = preBind,
-        priority = priority,
-    )
-
-    private fun resolveOriginalEntityForInAppCandidates(
-        mediaId: String,
-        entityType: AppleInternalCatalogResolver.LocalizedEntityType,
-        languages: Collection<String>,
-        preBind: Boolean,
-        priority: AppleInternalCatalogResolver.RequestPriority,
     ) {
-        val normalizedLanguages = languages
-            .mapNotNull { language ->
-                AppleInternalCatalogResolver.supportedOriginalLanguageOrNull(language)
-            }
-            .distinct()
-        if (normalizedLanguages.isEmpty()) {
-            metadataStore.markOriginalResolved(mediaId)
-            metadataStore.clearOriginalPending(mediaId)
-            return
-        }
-        val requestKey = "original:$entityType:${normalizedLanguages.joinToString(",")}:$mediaId"
+        val requestKey = "original:$entityType:$language:$mediaId"
         if (!metadataStore.beginOriginalRequest(requestKey)) return
         var bindingPhase = true
-        fun finish(alias: AppleInternalCatalogResolver.Alias?) {
+        catalogResolver.resolveOriginalEntityForLanguage(
+            mediaId = mediaId,
+            lookupIds = metadataStore.lookupIds(mediaId).orEmpty(),
+            entityType = entityType,
+            language = language,
+            priority = priority,
+        ) { alias ->
             metadataStore.finishOriginalRequest(requestKey)
-            if (!host.isRestoreOriginalEnabled()) return
+            if (!host.isRestoreOriginalEnabled()) return@resolveOriginalEntityForLanguage
             metadataStore.markOriginalResolved(mediaId)
             metadataStore.clearOriginalPending(mediaId)
             if (alias != null) {
@@ -1077,26 +1037,6 @@ internal class AppleInAppMetadataResolutionCoordinator(
                 )
             }
         }
-        fun queryNext(index: Int) {
-            if (index >= normalizedLanguages.size) {
-                finish(null)
-                return
-            }
-            catalogResolver.resolveOriginalEntityForLanguage(
-                mediaId = mediaId,
-                lookupIds = metadataStore.lookupIds(mediaId).orEmpty(),
-                entityType = entityType,
-                language = normalizedLanguages[index],
-                priority = priority,
-            ) { alias ->
-                if (alias != null) {
-                    finish(alias)
-                } else {
-                    queryNext(index + 1)
-                }
-            }
-        }
-        queryNext(0)
         bindingPhase = false
     }
 
@@ -1117,6 +1057,12 @@ internal class AppleInAppMetadataResolutionCoordinator(
             metadataStore.originalLanguage(key) != canonicalLanguage
         }
         if (!changed) return
+        if (BuildConfig.DEBUG) {
+            host.logMetadataIdentity(
+                event = "original_artist_language_remembered",
+                details = "contentId=$mediaId, artistKeys=$regionKeys, language=$canonicalLanguage",
+            )
+        }
         regionKeys.forEach { key ->
             metadataStore.rememberOriginalLanguage(key, canonicalLanguage)
         }

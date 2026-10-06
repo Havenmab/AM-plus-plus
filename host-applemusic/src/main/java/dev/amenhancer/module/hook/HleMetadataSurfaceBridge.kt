@@ -342,6 +342,15 @@ internal class HleMetadataSurfaceBridge(
         }
     }
 
+    internal fun publishCurrentPlaybackAliasFromHost(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+    ) {
+        if (::metadataOverrideApplicationCoordinator.isInitialized) {
+            metadataOverrideApplicationCoordinator.publishCurrentPlaybackAlias(mediaId, alias)
+        }
+    }
+
     fun applyAliasToContainerItem(
         containerItem: Any,
         kind: InAppContainerKind,

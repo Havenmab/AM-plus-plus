@@ -356,7 +356,6 @@ internal class ApplePlaybackMetadataCoordinator(
         )
         catalogResolver.resolveOriginalMetadata(
             metadata = metadata,
-            lookupIds = metadataStore.lookupIds(metadata.id),
             onCandidate = candidate@{ candidate ->
                 if (!applyToPlayback ||
                     !host.isRestoreOriginalMetadataEnabled() ||

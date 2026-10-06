@@ -735,6 +735,13 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     )
                 }
 
+                override fun publishCurrentPlaybackAlias(
+                    mediaId: String,
+                    alias: AppleInternalCatalogResolver.Alias,
+                ) = bridge.hostCall("resolution.publishCurrentPlaybackAlias", Unit) {
+                    bridge.publishCurrentPlaybackAliasFromHost(mediaId, alias)
+                }
+
                 override fun applyPlaybackMetadataOverride(
                     mediaId: String,
                     alias: AppleInternalCatalogResolver.Alias,
@@ -744,8 +751,7 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     originalMetadataConfirmed: Boolean,
                     artistOnly: Boolean,
                     propagateArtistEntity: Boolean,
-                ) = bridge.hostCall("resolution.applyPlaybackMetadataOverride", Unit) {
-                    bridge.applyPlaybackMetadataOverrideFromHost(
+                ) = bridge.hostCall("resolution.applyPlaybackMetadataOverride", Unit) {                    bridge.applyPlaybackMetadataOverrideFromHost(
                         mediaId = mediaId,
                         alias = alias,
                         forceInAppRebind = forceInAppRebind,

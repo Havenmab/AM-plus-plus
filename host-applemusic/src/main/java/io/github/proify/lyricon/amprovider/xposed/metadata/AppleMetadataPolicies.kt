@@ -151,6 +151,11 @@ internal fun changedAssociatedArtistAlias(
     updatedAlias: AppleInternalCatalogResolver.Alias?,
 ): AppleInternalCatalogResolver.Alias? = updatedAlias?.takeIf { it != previousAlias }
 
+internal fun shouldPublishAssociatedArtistAliasToCurrentPlayback(
+    mediaId: String,
+    currentPlaybackMediaId: String?,
+): Boolean = mediaId.isNotBlank() && mediaId == currentPlaybackMediaId
+
 internal fun inAppLibraryControllerRefreshDelayMillis(
     strategy: InAppLibraryControllerBuildStrategy,
     lastBuildUptimeMillis: Long?,
@@ -336,6 +341,23 @@ internal fun originalSongRetryLanguage(
     resolution: AppleInternalCatalogResolver.OriginalResolution,
 ): String? = resolution.language?.takeIf {
     resolution.alias == null && resolution.originKnown
+}
+
+internal fun originalArtistLanguageFromSongResolution(
+    resolution: AppleInternalCatalogResolver.OriginalResolution,
+    localizedArtist: String?,
+): String? {
+    if (!resolution.originKnown ||
+        !shouldUseAssociatedArtistEntities(
+            artistIds = resolution.artistIds,
+            artistCredit = localizedArtist,
+        )
+    ) {
+        return null
+    }
+    return resolution.language?.let(
+        AppleInternalCatalogResolver::supportedOriginalLanguageOrNull
+    )
 }
 
 internal fun stableArtistCacheKeys(keys: Collection<String>): Set<String> =

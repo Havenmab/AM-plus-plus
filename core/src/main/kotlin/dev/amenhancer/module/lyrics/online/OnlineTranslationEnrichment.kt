@@ -1,7 +1,6 @@
 package dev.amenhancer.module.lyrics.online
 
 import dev.amenhancer.module.hook.TtmlTimingPolicy
-import kotlin.math.max
 
 /**
  * Fills a missing translation lane into the document Apple Music is already
@@ -11,9 +10,11 @@ import kotlin.math.max
  * already carries a translation lane, or a fully-Chinese song, is left alone.
  * Each candidate is then aligned to the displayed lines with
  * [OnlineTranslationMatcher], the sources are ranked with
- * [OnlineTranslationSelector], and the winner is written back through
- * [AppleLyricTtmlWriter] so word timing and layout survive while only the
- * translation lane changes.
+ * [OnlineTranslationSelector], and the winner is written back by
+ * [AppleLyricTtmlLaneInjector], which edits only the head lanes of Apple's own
+ * document. The body is never regenerated, so word spans, the whitespace
+ * between them and `x-bg` background markup survive byte for byte — the
+ * previous round trip through [AppleLyricTtmlWriter] lost them.
  *
  * Every step fails open: a malformed document, a candidate that matches
  * nothing, or no candidate at all returns null and the caller leaves the
@@ -55,6 +56,8 @@ object OnlineTranslationEnrichment {
         null
     }
 
+    /** [durationMs] is kept for the public API; the injected lane needs no body timing. */
+    @Suppress("UNUSED_PARAMETER")
     private fun enrichOrNull(
         ttml: String,
         candidates: List<OnlineTranslationCandidate>,
@@ -113,11 +116,22 @@ object OnlineTranslationEnrichment {
                 "matched=${winner.matchedContentCount}/$totalLineCount",
         )
 
-        val merged = mergeTranslation(baseLines, winner.result.song.lyrics.orEmpty())
+        val merged = mergeLanes(baseLines, winner.result.song.lyrics.orEmpty())
         if (merged.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) {
             diagnostic(
                 "online-translation blocked id=$appleMusicId " +
                     "reason=${OnlineTranslationReason.NO_MEANINGFUL_MERGED_LINE.token}",
+            )
+            return null
+        }
+        // Apple's document is only edited in its head: the body -- word spans,
+        // the whitespace between them, x-bg groups, agents and namespaces --
+        // must survive byte for byte, so the TTML writer is not used here.
+        val published = AppleLyricTtmlLaneInjector.inject(ttml, merged)
+        if (published == null) {
+            diagnostic(
+                "online-translation blocked id=$appleMusicId " +
+                    "reason=${OnlineTranslationReason.FAILED.token}",
             )
             return null
         }
@@ -126,10 +140,7 @@ object OnlineTranslationEnrichment {
                 "matched=${winner.matchedContentCount}/$totalLineCount lines=${merged.size}",
         )
         return Outcome(
-            ttml = AppleLyricTtmlWriter.build(
-                lines = merged,
-                durationMs = max(durationMs, merged.lastOrNull()?.end ?: 0L),
-            ),
+            ttml = published,
             source = winner.source,
             matchedLines = winner.matchedContentCount,
             totalLines = totalLineCount,
@@ -168,19 +179,26 @@ object OnlineTranslationEnrichment {
     /**
      * Copies only a translation the line did not already have, keyed by index:
      * the matcher returns the base song with lanes filled, so word spans, timing
-     * and layout of [base] stay exactly as Apple produced them.
+     * and layout of [base] stay exactly as Apple produced them. A romanization
+     * Apple's own transliterations lane did not supply is carried too, for the
+     * injected lane on a document that has none.
      */
-    private fun mergeTranslation(
+    private fun mergeLanes(
         base: List<AppleTtmlLine>,
         merged: List<NativeLyricLine>,
     ): List<AppleTtmlLine> = base.mapIndexed { index, line ->
-        val translated = merged.getOrNull(index)?.translation
-        if (OnlineTranslationContentPolicy.isMeaningful(line.translation) ||
-            !OnlineTranslationContentPolicy.isMeaningful(translated)
-        ) {
-            line
-        } else {
-            line.copy(translation = translated)
-        }
+        val mergedLine = merged.getOrNull(index)
+        val translated = mergedLine?.translation
+        val romanization = mergedLine?.roma?.trim()?.takeIf(String::isNotEmpty)
+        line.copy(
+            translation = if (OnlineTranslationContentPolicy.isMeaningful(line.translation) ||
+                !OnlineTranslationContentPolicy.isMeaningful(translated)
+            ) {
+                line.translation
+            } else {
+                translated
+            },
+            romanization = line.romanization ?: romanization,
+        )
     }
 }

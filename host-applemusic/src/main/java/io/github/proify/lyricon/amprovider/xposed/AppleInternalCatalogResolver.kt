@@ -862,7 +862,7 @@ internal class AppleInternalCatalogResolver(
         internal const val LOCALIZED_CACHE_SIZE = 4_096
         internal const val LOCALIZED_ARTIST_ALIAS_CACHE_SIZE = 2_048
         internal const val REQUEST_PRIORITY_CACHE_SIZE = 2_048
-        internal const val ORIGINAL_METADATA_CACHE_SCHEMA = "V2"
+        internal const val ORIGINAL_METADATA_CACHE_SCHEMA = "V3"
 
         internal fun isCoroutineSuspended(value: Any?): Boolean =
             value is Enum<*> && value.name == "COROUTINE_SUSPENDED"

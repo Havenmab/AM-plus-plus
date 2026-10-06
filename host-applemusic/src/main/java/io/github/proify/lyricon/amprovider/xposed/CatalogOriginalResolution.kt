@@ -220,13 +220,15 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
                             if (resolvedAlias != null) {
                                 invalidateOriginalEntity(metadata.id, LocalizedEntityType.SONG)
                             }
-                            // Same finish as the removed shortcut, so every artist-only
-                            // correction that worked through the identity alias still applies.
+                            // Do not persist an account-region fallback as confirmed original
+                            // metadata. Associated-artist resolution handles artist-only aliases;
+                            // this path must leave the song title eligible for a fresh regional
+                            // lookup instead of caching the account's romanized title.
                             finishResolve(
                                 metadata = metadata,
                                 languages = listOf(language),
-                                results = listOf(resolution.alias),
-                                originKnown = true,
+                                results = emptyList(),
+                                originKnown = false,
                                 artistIds = identity.artistIds,
                             )
                         }
@@ -449,7 +451,7 @@ internal fun AppleInternalCatalogResolver.prepareOriginalResolution(
         val selected = selectOriginalAlias(
             variants = acceptableResults,
             localizedTitle = metadata.title.orEmpty(),
-            localizedArtist = metadata.artist.orEmpty()
+            localizedArtist = metadata.artist.orEmpty(),
         )
         val confirmedRegionalAlias = if (originKnown) {
             acceptableResults.lastOrNull { alias ->

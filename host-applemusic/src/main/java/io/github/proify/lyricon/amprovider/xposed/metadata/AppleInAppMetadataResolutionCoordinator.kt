@@ -764,13 +764,27 @@ internal class AppleInAppMetadataResolutionCoordinator(
             } else {
                 val language = originalLanguageFor(mediaId)
                 if (language == null) {
-                    if (!metadataStore.markOriginalPending(mediaId)) return@forEach
-                    resolveCachedOriginalEntity(
-                        mediaId = mediaId,
+                    val probeLanguages = inferredOriginalEntityLanguages(
                         entityType = entityType,
-                        preBind = preBind,
-                        priority = priority,
+                        account = account,
                     )
+                    if (probeLanguages.isEmpty()) {
+                        if (!metadataStore.markOriginalPending(mediaId)) return@forEach
+                        resolveCachedOriginalEntity(
+                            mediaId = mediaId,
+                            entityType = entityType,
+                            preBind = preBind,
+                            priority = priority,
+                        )
+                    } else {
+                        resolveOriginalEntityForInAppCandidates(
+                            mediaId = mediaId,
+                            entityType = entityType,
+                            languages = probeLanguages,
+                            preBind = preBind,
+                            priority = priority,
+                        )
+                    }
                 } else {
                     resolveOriginalEntityForInApp(
                         mediaId = mediaId,
@@ -781,6 +795,28 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     )
                 }
             }
+        }
+    }
+
+    private fun inferredOriginalEntityLanguages(
+        entityType: AppleInternalCatalogResolver.LocalizedEntityType,
+        account: AccountMetadata,
+    ): List<String> {
+        val values = listOfNotNull(account.title, account.artist)
+        val inferred = when {
+            values.any { value -> AppleInternalCatalogResolver.containsJapaneseKana(value) } ->
+                listOf("ja-JP")
+            values.any { value -> AppleInternalCatalogResolver.containsHangul(value) } ->
+                listOf("ko-KR")
+            values.any { value -> AppleInternalCatalogResolver.containsHanCharacters(value) } ->
+                listOf("ja-JP", "zh-Hans-CN")
+            else -> emptyList()
+        }
+        if (inferred.isNotEmpty()) return inferred
+        return if (entityType == AppleInternalCatalogResolver.LocalizedEntityType.ALBUM) {
+            listOf("ja-JP", "ko-KR", "zh-Hans-CN")
+        } else {
+            emptyList()
         }
     }
 
@@ -991,19 +1027,37 @@ internal class AppleInAppMetadataResolutionCoordinator(
         language: String,
         preBind: Boolean,
         priority: AppleInternalCatalogResolver.RequestPriority,
+    ) = resolveOriginalEntityForInAppCandidates(
+        mediaId = mediaId,
+        entityType = entityType,
+        languages = listOf(language),
+        preBind = preBind,
+        priority = priority,
+    )
+
+    private fun resolveOriginalEntityForInAppCandidates(
+        mediaId: String,
+        entityType: AppleInternalCatalogResolver.LocalizedEntityType,
+        languages: Collection<String>,
+        preBind: Boolean,
+        priority: AppleInternalCatalogResolver.RequestPriority,
     ) {
-        val requestKey = "original:$entityType:$language:$mediaId"
+        val normalizedLanguages = languages
+            .mapNotNull { language ->
+                AppleInternalCatalogResolver.supportedOriginalLanguageOrNull(language)
+            }
+            .distinct()
+        if (normalizedLanguages.isEmpty()) {
+            metadataStore.markOriginalResolved(mediaId)
+            metadataStore.clearOriginalPending(mediaId)
+            return
+        }
+        val requestKey = "original:$entityType:${normalizedLanguages.joinToString(",")}:$mediaId"
         if (!metadataStore.beginOriginalRequest(requestKey)) return
         var bindingPhase = true
-        catalogResolver.resolveOriginalEntityForLanguage(
-            mediaId = mediaId,
-            lookupIds = metadataStore.lookupIds(mediaId).orEmpty(),
-            entityType = entityType,
-            language = language,
-            priority = priority,
-        ) { alias ->
+        fun finish(alias: AppleInternalCatalogResolver.Alias?) {
             metadataStore.finishOriginalRequest(requestKey)
-            if (!host.isRestoreOriginalEnabled()) return@resolveOriginalEntityForLanguage
+            if (!host.isRestoreOriginalEnabled()) return
             metadataStore.markOriginalResolved(mediaId)
             metadataStore.clearOriginalPending(mediaId)
             if (alias != null) {
@@ -1023,6 +1077,26 @@ internal class AppleInAppMetadataResolutionCoordinator(
                 )
             }
         }
+        fun queryNext(index: Int) {
+            if (index >= normalizedLanguages.size) {
+                finish(null)
+                return
+            }
+            catalogResolver.resolveOriginalEntityForLanguage(
+                mediaId = mediaId,
+                lookupIds = metadataStore.lookupIds(mediaId).orEmpty(),
+                entityType = entityType,
+                language = normalizedLanguages[index],
+                priority = priority,
+            ) { alias ->
+                if (alias != null) {
+                    finish(alias)
+                } else {
+                    queryNext(index + 1)
+                }
+            }
+        }
+        queryNext(0)
         bindingPhase = false
     }
 

@@ -34,7 +34,7 @@ class EmbeddedSettingsDraftTest {
             if (writable) stored = next
             writable
         }
-        val pending = stored.copy(futureBlurEnabled = false, titleCorrectionEnabled = true)
+        val pending = stored.copy(futureBlurEnabled = false, overrideAccountLanguage = true)
 
         assertFalse(draft.update(pending))
         assertFalse(draft.updateCellularDataEntry(true))

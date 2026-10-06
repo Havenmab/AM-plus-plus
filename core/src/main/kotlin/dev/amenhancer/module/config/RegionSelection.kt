@@ -5,13 +5,15 @@ import com.juren233.hyperlyricsenhanced.common.RootConstants
 /**
  * Region replacement selection for Apple Music's online content.
  *
- * This control owns exactly one concern: which region's storefront, language and
- * content-UI language ordinary Apple Music traffic is resolved against.  [NONE]
- * leaves the account's own region and language in force; every other value
+ * This is HLE's 「将Apple Music改成其他地区」 picker: [displayName] is HLE's exact
+ * option label and [contentUiLanguageSelection] is HLE's
+ * `APPLE_MUSIC_CONTENT_UI_LANGUAGE_*` value, so the two pages stay in sync.
+ * [NONE] leaves the account's own region and language in force; every other value
  * rewrites the catalog request storefront/language and the content-HTTP seams.
  *
- * It is deliberately independent of the per-song title-correction switch
- * (`ModuleSettings.restoreCjkOriginalMetadata`): the two settings compose in any
+ * It is deliberately independent of the metadata switches
+ * (`ModuleSettings.overrideAccountLanguage` and
+ * `ModuleSettings.restoreCjkOriginalMetadata`): the controls compose in any
  * combination and neither projection reads the other.
  *
  * The numeric `X-Apple-Store-Front` mapping for each storefront lives with the
@@ -28,7 +30,8 @@ enum class RegionSelection(
 ) {
     NONE(
         storageValue = "none",
-        displayName = "不开启地区替换",
+        // HLE option_apple_music_content_ui_language_none
+        displayName = "不开启",
         contentUiLanguageSelection = RootConstants.APPLE_MUSIC_CONTENT_UI_LANGUAGE_NONE,
         catalogStorefront = null,
         catalogLanguage = null,

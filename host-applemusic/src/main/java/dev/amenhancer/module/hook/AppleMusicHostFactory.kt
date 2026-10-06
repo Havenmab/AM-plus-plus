@@ -113,6 +113,7 @@ object AppleMusicHostFactory {
                         application = application,
                         classLoader = classLoader,
                         region = settings.regionSelection,
+                        overrideAccountLanguage = settings.overrideAccountLanguage,
                         restoreCjkOriginalMetadata = settings.restoreCjkOriginalMetadata,
                         localizedMetadataCache = settings.localizedMetadataCache,
                     ).install()

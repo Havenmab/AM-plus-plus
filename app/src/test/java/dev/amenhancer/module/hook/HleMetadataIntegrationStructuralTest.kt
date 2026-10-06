@@ -83,7 +83,12 @@ class HleMetadataIntegrationStructuralTest {
         // The runtime applies the region plan and installs all four localization seams.
         assertTrue(runtime.contains("applyRegionConfiguration("))
         assertTrue(runtime.contains("regionReplacementRequested = requestPlan.rewritesCatalogRequests"))
-        assertTrue(runtime.contains("RegionTitleRequestPolicy.plan(region, restoreCjkOriginalMetadata)"))
+        // The plan now carries HLE's three controls, including the override switch.
+        assertTrue(runtime.contains("RegionTitleRequestPolicy.plan("))
+        assertTrue(runtime.contains("overrideAccountLanguage = overrideAccountLanguage"))
+        assertTrue(runtime.contains("restoreCjkOriginalMetadata = restoreCjkOriginalMetadata"))
+        // And the account-language override follows HLE's region+override pair, not the region alone.
+        assertTrue(runtime.contains("requestPlan.overrideAccountLanguage"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installCatalogRequestLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installContentHttpLocalization()"))
@@ -376,16 +381,24 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    fun `embedded settings expose the region controls without restoring refresh action`() {
+    fun `embedded settings expose HLE's four region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
-        assertTrue(embedded.contains("歌曲名显示修正"))
-        assertTrue(embedded.contains("地区替换"))
+        // HLE's four controls, with HLE's own labels, in HLE's order.
+        assertTrue(embedded.contains("将Apple Music改成其他地区"))
         assertTrue(embedded.contains("regionSelection"))
-        // The title correction is its own switch now, no longer implied by the picker.
-        assertTrue(embedded.contains("歌曲名称修正"))
+        assertTrue(embedded.contains("歌曲信息替换至设定地区语言"))
+        assertTrue(embedded.contains("overrideAccountLanguage"))
+        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
         assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
         assertTrue(embedded.contains("创建检索库以提升替换体验"))
         assertTrue(embedded.contains("localizedMetadataCache"))
+        // The retired fork-only master switch is gone.
+        assertFalse(embedded.contains("titleCorrectionEnabled"))
+        // HLE's visibility rules: the override only with a region, the cache only while
+        // the metadata lookup is enabled, and the restore switch always.
+        assertTrue(embedded.contains("settings.regionSelection.replacesRegion"))
+        assertTrue(embedded.contains("regionReplacementEnabled"))
+        assertTrue(embedded.contains("metadataLookupEnabled"))
         // The picker enumerates the model, so new regions appear without a UI change.
         assertTrue(embedded.contains("RegionSelection.values()"))
         assertFalse(embedded.contains("刷新资料库"))

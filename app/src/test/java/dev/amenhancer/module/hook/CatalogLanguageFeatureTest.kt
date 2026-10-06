@@ -12,9 +12,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The region control is the only input to the catalog-rewrite decision: the
- * 歌曲名称修正 switch never changes it.  Uses the same in-memory
- * [ConfigurationReader] fake as the other feature tests.
+ * The region picker is the only input to the catalog-rewrite decision: neither the
+ * account-language override nor the original-name restore switch changes it, and the
+ * retired fork-only master switch no longer gates the report.  Uses the same
+ * in-memory [ConfigurationReader] fake as the other feature tests.
  */
 class CatalogLanguageFeatureTest {
     @Test
@@ -34,13 +35,17 @@ class CatalogLanguageFeatureTest {
             ),
         )
 
-        fun installWith(region: RegionSelection, restore: Boolean): FeatureInstallResult {
+        fun installWith(
+            region: RegionSelection,
+            override: Boolean = false,
+            restore: Boolean = false,
+        ): FeatureInstallResult {
             values.clear()
             values.putAll(
                 ModuleSettingsSchema.encodeOrdinarySettings(
                     ModuleSettings(
-                        titleCorrectionEnabled = true,
                         regionSelection = region,
+                        overrideAccountLanguage = override,
                         restoreCjkOriginalMetadata = restore,
                     ),
                 ),
@@ -48,30 +53,30 @@ class CatalogLanguageFeatureTest {
             return CatalogLanguageFeature().install(context())
         }
 
-        // 不开启地区替换: content follows the account regardless of the title switch.
+        // 不开启: content follows the account regardless of the two switches.
         val noneWithCorrection = installWith(RegionSelection.NONE, restore = true)
         assertEquals(FeatureState.ACTIVE, noneWithCorrection.state)
         assertTrue(noneWithCorrection.message.contains("No region selected"))
-        assertEquals(noneWithCorrection.message, installWith(RegionSelection.NONE, false).message)
+        assertEquals(noneWithCorrection.message, installWith(RegionSelection.NONE).message)
+        assertEquals(
+            noneWithCorrection.message,
+            installWith(RegionSelection.NONE, override = true, restore = true).message,
+        )
 
-        // 日本: content is rewritten regardless of the title switch.
+        // 日本: content is rewritten regardless of the two switches.
         val japanWithCorrection = installWith(RegionSelection.JAPAN, restore = true)
-        val japanWithoutCorrection = installWith(RegionSelection.JAPAN, restore = false)
+        val japanWithoutCorrection = installWith(RegionSelection.JAPAN)
+        val japanWithOverrideOnly = installWith(RegionSelection.JAPAN, override = true)
         assertEquals(FeatureState.ACTIVE, japanWithCorrection.state)
         assertTrue(japanWithCorrection.message.contains("日语（日本）"))
         assertTrue(japanWithCorrection.message.contains("(jp)"))
         assertEquals(japanWithCorrection.message, japanWithoutCorrection.message)
+        assertEquals(japanWithCorrection.message, japanWithOverrideOnly.message)
 
-        // The master switch still gates the whole feature.
-        values.clear()
-        values.putAll(
-            ModuleSettingsSchema.encodeOrdinarySettings(
-                ModuleSettings(
-                    titleCorrectionEnabled = false,
-                    regionSelection = RegionSelection.JAPAN,
-                ),
-            ),
+        // No master switch remains: even with every switch off the report is active.
+        assertEquals(
+            FeatureState.ACTIVE,
+            installWith(RegionSelection.JAPAN).state,
         )
-        assertEquals(FeatureState.DISABLED, CatalogLanguageFeature().install(context()).state)
     }
 }

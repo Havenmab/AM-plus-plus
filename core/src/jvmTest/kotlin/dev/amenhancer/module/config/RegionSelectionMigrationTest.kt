@@ -34,12 +34,14 @@ class RegionSelectionMigrationTest {
 
                 assertEquals("none", upgraded["region_selection"])
                 assertEquals(restore, upgraded["restore_cjk_original_metadata"])
+                assertEquals(false, upgraded["override_account_language"])
                 assertFalse(upgraded.containsKey("title_correction_mode"))
                 assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
 
                 val decoded = ModuleSettingsSchema.decode(upgraded)
                 assertEquals(RegionSelection.NONE, decoded.regionSelection)
                 assertEquals(restore, decoded.restoreCjkOriginalMetadata)
+                assertEquals(false, decoded.overrideAccountLanguage)
             }
         }
     }
@@ -52,12 +54,14 @@ class RegionSelectionMigrationTest {
 
                 assertEquals("japan", upgraded["region_selection"])
                 assertEquals(restore, upgraded["restore_cjk_original_metadata"])
+                assertEquals(true, upgraded["override_account_language"])
                 assertFalse(upgraded.containsKey("title_correction_mode"))
                 assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
 
                 val decoded = ModuleSettingsSchema.decode(upgraded)
                 assertEquals(RegionSelection.JAPAN, decoded.regionSelection)
                 assertEquals(restore, decoded.restoreCjkOriginalMetadata)
+                assertEquals(true, decoded.overrideAccountLanguage)
             }
         }
     }
@@ -75,9 +79,11 @@ class RegionSelectionMigrationTest {
 
                 assertEquals(region.storageValue, upgraded["region_selection"])
                 assertEquals(restore, upgraded["restore_cjk_original_metadata"])
+                assertEquals(region.replacesRegion, upgraded["override_account_language"])
                 val decoded = ModuleSettingsSchema.decode(upgraded)
                 assertEquals(region, decoded.regionSelection)
                 assertEquals(restore, decoded.restoreCjkOriginalMetadata)
+                assertEquals(region.replacesRegion, decoded.overrideAccountLanguage)
             }
         }
     }
@@ -96,6 +102,7 @@ class RegionSelectionMigrationTest {
         )!!
         assertEquals("none", noRegion["region_selection"])
         assertEquals(true, noRegion["restore_cjk_original_metadata"])
+        assertEquals(false, noRegion["override_account_language"])
 
         val region = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
@@ -107,6 +114,7 @@ class RegionSelectionMigrationTest {
         )!!
         assertEquals("japan", region["region_selection"])
         assertEquals(false, region["restore_cjk_original_metadata"])
+        assertEquals(true, region["override_account_language"])
     }
 
     @Test
@@ -121,6 +129,7 @@ class RegionSelectionMigrationTest {
         )!!
         assertEquals("japan", japan["region_selection"])
         assertEquals(false, japan["restore_cjk_original_metadata"])
+        assertEquals(true, japan["override_account_language"])
         assertFalse(japan.containsKey("title_correction_target_language"))
 
         val unsupported = ModuleSettingsSchema.upgrade(

@@ -417,36 +417,22 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 ),
             ) { onSettingsChanged(settings.copy(cjkKaraokeAnimationEnabled = it)) })
             addView(embeddedDivider(activity))
-            addView(embeddedSettingRow(
-                activity,
-                "歌曲名显示修正",
-                if (settings.titleCorrectionEnabled) {
-                    if (settings.regionSelection.replacesRegion) {
-                        "${settings.regionSelection.displayName} · " +
-                            "普通浏览请求会改到该地区 · 重开 Apple Music 后生效"
-                    } else {
-                        "${settings.regionSelection.displayName} · 重开 Apple Music 后生效"
-                    }
-                } else {
-                    "关闭时跟随 Apple Music 账号 · 开启后可选地区替换与歌曲名称修正"
-                },
-                settings.titleCorrectionEnabled,
-                iconTint = EmbeddedSettingsPalette.accent,
-                iconDrawable = EmbeddedGlyphDrawable(
-                    EmbeddedGlyphKind.Document,
-                    EmbeddedSettingsPalette.accent,
-                ),
-            ) { onSettingsChanged(settings.copy(titleCorrectionEnabled = it)) })
-            addView(embeddedDivider(activity))
+            // HLE's page computes these two gates from its four controls; reproduce them
+            // verbatim so the region picker and the two switches keep HLE's visibility.
+            val regionReplacementEnabled =
+                settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
+            val metadataLookupEnabled =
+                regionReplacementEnabled || settings.restoreCjkOriginalMetadata
+            // 1. HLE 将Apple Music改成其他地区 (title/summary/options verbatim).
             addView(embeddedNavigationRow(
                 activity,
-                "地区替换",
-                settings.regionSelection.displayName,
+                "将Apple Music改成其他地区",
+                "可能影响加载速度，仅用于内容UI语言切换，无法播放/使用账号所在地区没有的歌曲/服务，此类歌曲/服务只能浏览",
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
                     EmbeddedSettingsPalette.accent,
                 ),
-                inlineSummary = true,
+                trailingValue = settings.regionSelection.displayName,
             ) {
                 showEmbeddedRegionSelectionPicker(
                     activity = activity,
@@ -455,34 +441,55 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     pageRefresh?.invoke()
                 }
             })
+            // 2. HLE 歌曲信息替换至设定地区语言 — only shown once a region is selected.
+            if (settings.regionSelection.replacesRegion) {
+                addView(embeddedDivider(activity))
+                addView(embeddedSettingRow(
+                    activity,
+                    "歌曲信息替换至设定地区语言",
+                    "",
+                    settings.overrideAccountLanguage,
+                    iconTint = EmbeddedSettingsPalette.accent,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.Translate,
+                        EmbeddedSettingsPalette.accent,
+                    ),
+                ) {
+                    onSettingsChanged(settings.copy(overrideAccountLanguage = it))
+                    pageRefresh?.invoke()
+                })
+            }
+            // 3. HLE 替换中日韩歌曲信息为原地区原名 — always shown.
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "歌曲名称修正",
-                if (settings.restoreCjkOriginalMetadata) {
-                    "按歌曲原地区显示原名"
-                } else {
-                    "保持 Apple Music 当前显示的名称"
-                },
+                "替换中日韩歌曲信息为原地区原名",
+                "",
                 settings.restoreCjkOriginalMetadata,
                 iconTint = EmbeddedSettingsPalette.accent,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
                     EmbeddedSettingsPalette.accent,
                 ),
-            ) { onSettingsChanged(settings.copy(restoreCjkOriginalMetadata = it)) })
-            addView(embeddedDivider(activity))
-            addView(embeddedSettingRow(
-                activity,
-                "创建检索库以提升替换体验",
-                "缓存已解析的地区歌曲信息，冷启动后无需重新抓取",
-                settings.localizedMetadataCache,
-                iconTint = EmbeddedSettingsPalette.accent,
-                iconDrawable = EmbeddedGlyphDrawable(
-                    EmbeddedGlyphKind.Document,
-                    EmbeddedSettingsPalette.accent,
-                ),
-            ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
+            ) {
+                onSettingsChanged(settings.copy(restoreCjkOriginalMetadata = it))
+                pageRefresh?.invoke()
+            })
+            // 4. HLE 创建检索库以提升替换体验 — only shown while the metadata lookup runs.
+            if (metadataLookupEnabled) {
+                addView(embeddedDivider(activity))
+                addView(embeddedSettingRow(
+                    activity,
+                    "创建检索库以提升替换体验",
+                    "极少量空间占用换取高效率性能，当关闭时冷启动后需重新抓取歌曲信息，推荐开启",
+                    settings.localizedMetadataCache,
+                    iconTint = EmbeddedSettingsPalette.accent,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.Document,
+                        EmbeddedSettingsPalette.accent,
+                    ),
+                ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
+            }
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,

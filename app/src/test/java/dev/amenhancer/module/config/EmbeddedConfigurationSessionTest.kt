@@ -34,11 +34,14 @@ class EmbeddedConfigurationSessionTest {
             val session = EmbeddedConfigurationSession(storage)
 
             assertEquals(expectedRegion, session.settings().regionSelection)
+            assertEquals(true, session.settings().overrideAccountLanguage)
             assertEquals(expectedRegion.storageValue, storage.values()["region_selection"])
+            assertEquals(true, storage.values()["override_account_language"])
             assertEquals(
                 ModuleConstants.CONFIG_SCHEMA_VERSION,
                 storage.values()["schema_version"],
             )
+            assertFalse(storage.values().containsKey("title_correction_enabled"))
             assertFalse(storage.values().containsKey("title_correction_target_language"))
             assertFalse(storage.values().containsKey("title_correction_mode"))
         }
@@ -75,11 +78,15 @@ class EmbeddedConfigurationSessionTest {
         val session = EmbeddedConfigurationSession(storage)
 
         assertEquals(RegionSelection.JAPAN, session.settings().regionSelection)
-        // The retired picker implied "do not restore names" for a region value.
+        // The retired picker implied "do not restore names" for a region value, while
+        // the retired master carries over onto HLE's account-language override.
         assertEquals(false, session.settings().restoreCjkOriginalMetadata)
+        assertEquals(true, session.settings().overrideAccountLanguage)
         assertEquals("japan", storage.values()["region_selection"])
         assertEquals(false, storage.values()["restore_cjk_original_metadata"])
+        assertEquals(true, storage.values()["override_account_language"])
         assertFalse(storage.values().containsKey("title_correction_mode"))
+        assertFalse(storage.values().containsKey("title_correction_enabled"))
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, storage.values()["schema_version"])
     }
 

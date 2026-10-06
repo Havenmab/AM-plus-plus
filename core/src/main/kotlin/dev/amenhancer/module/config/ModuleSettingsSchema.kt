@@ -14,6 +14,11 @@ object ModuleSettingsSchema {
         // v20: the retired single picker; its region half moves to KEY_REGION_SELECTION
         // and its name half to KEY_RESTORE_CJK_ORIGINAL_METADATA.
         KEY_TITLE_CORRECTION_MODE,
+        // v21: the fork-only master switch.  HLE's page has no master; the region
+        // picker plus KEY_OVERRIDE_ACCOUNT_LANGUAGE and
+        // KEY_RESTORE_CJK_ORIGINAL_METADATA fully express when the runtime acts.
+        // The retired value is carried over onto the new override switch below.
+        KEY_TITLE_CORRECTION_ENABLED,
     )
 
     fun decode(values: Map<String, *>): ModuleSettings {
@@ -56,14 +61,18 @@ object ModuleSettingsSchema {
             appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
                 values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
             ),
-            titleCorrectionEnabled = values.boolean(
-                KEY_TITLE_CORRECTION_ENABLED,
-                default = false,
-            ),
             regionSelection = regionSelection,
+            // HLE's 「歌曲信息替换至设定地区语言」.  A store written by the retired
+            // master-switch model replaced account language whenever a region was
+            // selected and the master was on; carry that over so the upgrade keeps
+            // behaving the same.  A fresh store lands on HLE's default, false.
+            overrideAccountLanguage = values.boolean(
+                KEY_OVERRIDE_ACCOUNT_LANGUAGE,
+                default = values.legacyOverrideAccountLanguageDefault(),
+            ),
             // Stores that predate the separate switch keep the behaviour of the retired
             // picker: its no-region value restored names, every region value did not.
-            // Once the key exists it always wins, so the two controls are independent.
+            // Once the key exists it always wins, so the controls are independent.
             restoreCjkOriginalMetadata = values.boolean(
                 KEY_RESTORE_CJK_ORIGINAL_METADATA,
                 default = values.legacyRestoreCjkOriginalMetadataDefault(),
@@ -154,8 +163,8 @@ object ModuleSettingsSchema {
             KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI to ModuleSettings.normalizeAppleMusicDpi(
                 settings.appleMusicDpiOverrideDpi,
             ),
-            KEY_TITLE_CORRECTION_ENABLED to settings.titleCorrectionEnabled,
             KEY_REGION_SELECTION to settings.regionSelection.storageValue,
+            KEY_OVERRIDE_ACCOUNT_LANGUAGE to settings.overrideAccountLanguage,
             KEY_RESTORE_CJK_ORIGINAL_METADATA to settings.restoreCjkOriginalMetadata,
             KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
@@ -273,9 +282,12 @@ object ModuleSettingsSchema {
     }
 
     /**
-     * The title-correction default for a store that predates the separate switch.
+     * The original-name restore default for a store that predates the separate switch.
      * It deliberately reads only the retired picker and its v11 predecessor, never
      * [KEY_REGION_SELECTION], so the region control can never imply the switch.
+     *
+     * A store with no retired region profile at all is a fresh (or lyrics-only)
+     * installation: HLE's 「替换中日韩歌曲信息为原地区原名」 defaults off there.
      */
     private fun Map<String, *>.legacyRestoreCjkOriginalMetadataDefault(): Boolean {
         val storedLegacyMode = string(KEY_TITLE_CORRECTION_MODE)
@@ -283,11 +295,24 @@ object ModuleSettingsSchema {
             return RegionSelection.fromLegacyTitleCorrectionMode(storedLegacyMode) ==
                 RegionSelection.NONE
         }
-        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) return true
+        if (!containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)) return false
+        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) return false
         return RegionSelection.fromLegacyTargetLanguage(
             string(KEY_TITLE_CORRECTION_TARGET_LANGUAGE),
         ) == RegionSelection.NONE
     }
+
+    /**
+     * HLE's 「歌曲信息替换至设定地区语言」 default for a store written by the retired
+     * master-switch model: the old runtime replaced account language whenever a region
+     * was selected and the master was on, so the upgrade keeps that behaviour.
+     *
+     * It reads the retired master rather than [KEY_REGION_SELECTION] alone, and a
+     * store with no retired master (a fresh store) keeps HLE's default, false.
+     */
+    private fun Map<String, *>.legacyOverrideAccountLanguageDefault(): Boolean =
+        boolean(KEY_TITLE_CORRECTION_ENABLED, default = false) &&
+            regionSelection().replacesRegion
 
     /**
      * Returns the host-local values required before removing the retired keys.  This
@@ -296,21 +321,32 @@ object ModuleSettingsSchema {
      * own legacy values in place.
      *
      * It publishes the region selection and, when the store predates the separate
-     * switch, that switch's derived value, because both legacy keys are deleted
-     * right after this call.
+     * switches, their derived values, because the legacy keys are deleted right after
+     * this call.  A v20 store already has [KEY_REGION_SELECTION], so only the
+     * `override_account_language` carry-over runs for it.
      */
     fun legacyTitleCorrectionMigrationValues(values: Map<String, *>): Map<String, Any> {
-        if (values.string(KEY_REGION_SELECTION).isNotBlank()) return emptyMap()
-        val hasLegacyMode = values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
-        val hasLegacyTarget = values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
-        if (!hasLegacyMode && !hasLegacyTarget) return emptyMap()
-        val migration = linkedMapOf<String, Any>(
-            KEY_REGION_SELECTION to values.regionSelection().storageValue,
-        )
-        if (!values.containsKey(KEY_RESTORE_CJK_ORIGINAL_METADATA)) {
-            migration[KEY_RESTORE_CJK_ORIGINAL_METADATA] =
-                values.legacyRestoreCjkOriginalMetadataDefault()
+        val migration = linkedMapOf<String, Any>()
+        if (values.string(KEY_REGION_SELECTION).isBlank()) {
+            val hasLegacyMode = values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
+            val hasLegacyTarget = values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
+            if (hasLegacyMode || hasLegacyTarget) {
+                migration[KEY_REGION_SELECTION] = values.regionSelection().storageValue
+                if (!values.containsKey(KEY_RESTORE_CJK_ORIGINAL_METADATA)) {
+                    migration[KEY_RESTORE_CJK_ORIGINAL_METADATA] =
+                        values.legacyRestoreCjkOriginalMetadataDefault()
+                }
+            }
         }
+        // The retired master switch is deleted right after this call; record the
+        // account-language override it implied while it is still readable.
+        if (!values.containsKey(KEY_OVERRIDE_ACCOUNT_LANGUAGE) &&
+            values.containsKey(KEY_TITLE_CORRECTION_ENABLED)
+        ) {
+            migration[KEY_OVERRIDE_ACCOUNT_LANGUAGE] =
+                values.legacyOverrideAccountLanguageDefault()
+        }
+        if (migration.isEmpty()) return emptyMap()
         migration[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return migration
     }
@@ -356,12 +392,13 @@ object ModuleSettingsSchema {
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
-        KEY_TITLE_CORRECTION_ENABLED,
         KEY_REGION_SELECTION,
+        KEY_OVERRIDE_ACCOUNT_LANGUAGE,
         KEY_RESTORE_CJK_ORIGINAL_METADATA,
         KEY_LOCALIZED_METADATA_CACHE,
         // Retired keys still count as settings so an old store migrates its own
         // values instead of falling back to the legacy source.
+        KEY_TITLE_CORRECTION_ENABLED,
         KEY_TITLE_CORRECTION_MODE,
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
@@ -403,8 +440,11 @@ object ModuleSettingsSchema {
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
+    /** Retired v21: the fork-only master switch for the whole HLE runtime. */
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"
     private const val KEY_REGION_SELECTION = "region_selection"
+    /** HLE's 「歌曲信息替换至设定地区语言」 switch. */
+    private const val KEY_OVERRIDE_ACCOUNT_LANGUAGE = "override_account_language"
     /** Retired v20: the single picker that carried both region and title correction. */
     private const val KEY_TITLE_CORRECTION_MODE = "title_correction_mode"
     private const val KEY_RESTORE_CJK_ORIGINAL_METADATA = "restore_cjk_original_metadata"

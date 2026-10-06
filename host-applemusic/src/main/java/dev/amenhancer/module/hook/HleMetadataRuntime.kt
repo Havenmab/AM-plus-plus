@@ -41,18 +41,28 @@ internal class HleMetadataRuntime(
     private val module: XposedModule,
     private val application: Application,
     private val classLoader: ClassLoader,
-    /** The 地区替换 control only; it never gates or implies [restoreCjkOriginalMetadata]. */
+    /** The 将Apple Music改成其他地区 picker only; it never gates or implies the switches. */
     private val region: RegionSelection = RegionSelection.NONE,
     /**
-     * The 歌曲名称修正 switch only: restores CJK songs to their original-region
-     * names.  Independent of [region]: the user may combine it with any region.
+     * HLE's 歌曲信息替换至设定地区语言 switch.  It only takes effect together with
+     * [region]; on its own it does nothing.
      */
-    private val restoreCjkOriginalMetadata: Boolean = true,
+    private val overrideAccountLanguage: Boolean = false,
+    /**
+     * HLE's 替换中日韩歌曲信息为原地区原名 switch: restores CJK songs to their
+     * original-region names.  Independent of [region]: the user may combine it with
+     * any region.
+     */
+    private val restoreCjkOriginalMetadata: Boolean = false,
     /** Persist region/original metadata lookups in SQLite across cold starts. */
     private val localizedMetadataCache: Boolean = true,
 ) {
-    /** The two controls projected onto the request seams; see [RegionTitleRequestPolicy]. */
-    private val requestPlan = RegionTitleRequestPolicy.plan(region, restoreCjkOriginalMetadata)
+    /** The three controls projected onto the request seams; see [RegionTitleRequestPolicy]. */
+    private val requestPlan = RegionTitleRequestPolicy.plan(
+        region = region,
+        overrideAccountLanguage = overrideAccountLanguage,
+        restoreCjkOriginalMetadata = restoreCjkOriginalMetadata,
+    )
 
     private val version = runCatching {
         val info = application.packageManager.getPackageInfo(
@@ -150,7 +160,7 @@ internal class HleMetadataRuntime(
         catalogResolver.applyRegionConfiguration(
             selection = requestPlan.contentUiLanguageSelection,
             // Only a region that names a storefront redirects ordinary Apple Music traffic;
-            // 不开启地区替换 keeps the account storefront and only restores names.
+            // 不开启 keeps the account storefront and only restores names.
             regionReplacementRequested = requestPlan.rewritesCatalogRequests,
             localizedMetadataCacheEnabled = localizedMetadataCache,
         )
@@ -462,7 +472,8 @@ internal class HleMetadataRuntime(
         override fun configuredContentUiLanguage(): Int =
             requestPlan.contentUiLanguageSelection
         override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
-            requestPlan.catalogLanguage != null
+            // HLE: region != NONE && overrideAccountLanguage, not merely a region selection.
+            requestPlan.overrideAccountLanguage
         override fun shouldRestoreCjkOriginalMetadata(metadata: MediaMetadataCache.Metadata): Boolean =
             requestPlan.probesOriginalMetadata &&
                 AppleOriginalMetadataPolicy.shouldProbeCjkOriginalMetadata(

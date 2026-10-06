@@ -16,7 +16,7 @@
 | 自定义歌词 | 获取ID、多ID、增删改查/禁用、TTML/指针校验、异步重应用 | CustomLyrics、Ttml 用例 | 待播放对照 |
 | 在线/自动 | 三手动来源；自动 AMLL→Lunabeat→AM-Lyrics；manual/disabled优先；generation/退避/哈希/ETag | Online、AutoLyrics、Lunabeat 用例 | 待网络/离线/切歌 |
 | 更新/ZIP | 批量、取消、进度、覆盖/保留冲突、事务恢复 | Update、Backup、Restore | 待恢复对照 |
-| 元数据/地区替换 | 地区替换（不开启 + cn/us/hk/tw/kr/jp）、歌曲名称修正与检索库独立开关、所有展示表面、广播/歌词/播放回退账号、ISRC/原名证据、离线/持久缓存/优先级；执行器参数与 amp-api 层仅 1599/1606 声明 | Metadata、Catalog、Cache、RegionSelection 用例 | 待真机对比/页面 |
+| 元数据/地区替换 | 地区选择（不开启 + cn/us/hk/tw/kr/jp）、歌曲信息替换与原名还原、检索库独立开关（对齐 HLE 四项，无总开关）、所有展示表面、广播/歌词/播放回退账号、ISRC/原名证据、离线/持久缓存/优先级；执行器参数与 amp-api 层仅 1599/1606 声明 | Metadata、Catalog、Cache、RegionSelection 用例 | 待真机对比/页面 |
 | 玻璃 | API33，1586/1599；手机/旧平板横屏、导航/mini/手势/过渡/采样/恢复 | Glass、TabletGlass、LayerAlpha | 待帧/视觉/手势 |
 | 玻璃参数/补偿 | gap16/0..48，blur4/0..24；独立恢复与显隐；玻璃接管补偿 | ModuleSettingsSchema、SettingsDraft | 待显隐/占位 |
 | 蜂窝 | 默认false，1586/1599；构建作用域仅一次；availability独立 | CellularDataEntry | 待原生入口 |

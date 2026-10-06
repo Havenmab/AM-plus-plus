@@ -20,8 +20,15 @@ object ModuleConstants {
      * `region_selection` control plus the existing `restore_cjk_original_metadata`
      * title-correction switch.  The migration rewrites the old value so an
      * existing installation keeps the exact behaviour it had.
+     *
+     * 21 retires the fork-only `title_correction_enabled` master switch and adds
+     * HLE's `override_account_language` switch, so the region/metadata page holds
+     * exactly HLE's four controls with HLE's own visibility and combination rules.
+     * The migration carries the retired master over onto the new switch for a
+     * store that already selected a region, and leaves the original-name switch
+     * off by default as HLE does.
      */
-    const val CONFIG_SCHEMA_VERSION = 20
+    const val CONFIG_SCHEMA_VERSION = 21
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

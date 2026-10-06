@@ -157,7 +157,11 @@ class RegionInternalCatalogLookupTest {
     @Test
     fun `the original probe language follows the catalog identity, not the region`() {
         regions.forEach { region ->
-            val plan = RegionTitleRequestPolicy.plan(region, restoreCjkOriginalMetadata = true)
+            val plan = RegionTitleRequestPolicy.plan(
+                region = region,
+                overrideAccountLanguage = false,
+                restoreCjkOriginalMetadata = true,
+            )
             assertTrue("correction must stay on for ${region.name}", plan.probesOriginalMetadata)
 
             // An identity that yields a Japanese ISRC probes the song's own original region.

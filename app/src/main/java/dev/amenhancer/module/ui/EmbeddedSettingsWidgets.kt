@@ -557,7 +557,8 @@ internal fun EmbeddedSettingsHost.showEmbeddedRegionSelectionPicker(
         val current = controller.currentSettings().regionSelection
         val labels = regions.map(RegionSelection::displayName).toTypedArray()
         AlertDialog.Builder(activity)
-            .setTitle("地区替换")
+            // HLE title_apple_music_content_ui_language
+            .setTitle("将Apple Music改成其他地区")
             .setSingleChoiceItems(labels, regions.indexOf(current)) { dialog, which ->
                 regions.getOrNull(which)?.let(onSelected)
                 dialog.dismiss()
@@ -576,6 +577,10 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
         iconDrawable: Drawable? = null,
         clickable: Boolean = true,
         inlineSummary: Boolean = false,
+        // Selected value rendered on the right while [summary] still shows below the
+        // title; used by the HLE region picker, whose title/summary come from HLE and
+        // whose current option must stay visible.
+        trailingValue: String? = null,
         compactWidePadding: Boolean = false,
         onClick: () -> Unit,
     ): View = LinearLayout(activity).apply {
@@ -627,9 +632,10 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
                 }, matchWidthWrapContent())
             }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (inlineSummary) {
+        val valueText = if (inlineSummary) summary else trailingValue
+        if (valueText != null) {
             addView(TextView(activity).apply {
-                text = summary
+                text = valueText
                 textSize = embeddedTextSize(activity, 13f, 12f)
                 setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END

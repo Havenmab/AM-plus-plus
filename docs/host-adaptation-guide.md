@@ -28,7 +28,7 @@
 
 ## 地区替换
 
-地区替换在 HLE 本地化钩子里，共五层，均只在“歌曲名显示修正”总开关开启且选中了带 storefront 的地区档位时才改写普通目录流量：
+地区替换在 HLE 本地化钩子里，共五层，均在“将Apple Music改成其他地区”选中了带 storefront 的地区档位时才改写普通目录流量（与 HLE 一致，没有额外总开关）：
 
 1. MediaApi storefront 字段（`applyRegionConfiguration`）；
 2. MediaApi 请求参数表（`MEDIA_API_LOCALIZATION`）；

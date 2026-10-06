@@ -21,24 +21,35 @@ data class ModuleSettings(
     val lyricBlurRadiusOffsetPx: Int = 0,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
-    /** Master opt-in gate for the whole HLE metadata runtime. */
-    val titleCorrectionEnabled: Boolean = false,
     /**
      * Which region's storefront/language content requests are resolved against;
-     * [RegionSelection.NONE] keeps the account's own region.  Independent of
-     * [restoreCjkOriginalMetadata] and ignored while [titleCorrectionEnabled] is false.
+     * [RegionSelection.NONE] keeps the account's own region.  This is HLE's
+     * 「将Apple Music改成其他地区」 picker: choosing a region applies that content-UI
+     * language to ordinary browsing, independently of the two metadata switches.
      */
     val regionSelection: RegionSelection = RegionSelection.NONE,
     /**
-     * The 歌曲名称修正 switch: restores CJK songs to their original-region names.
-     * Independent of [regionSelection]: it can be combined with any region.
+     * HLE's 「歌曲信息替换至设定地区语言」 switch.  Only meaningful together with a
+     * chosen region: it replaces song/album/artist info with the selected region's
+     * language.  Off by default, exactly like HLE's
+     * `DEFAULT_HOOK_APPLE_MUSIC_OVERRIDE_ACCOUNT_LANGUAGE`.
      *
-     * Defaults to true because that is the behaviour a fresh installation had
-     * before the region extras existed (the old default profile restored names).
-     * [dev.amenhancer.module.config.ModuleSettingsSchema] derives it from the retired
-     * picker value when the key is absent, so migrating users keep their old behaviour.
+     * Together with [regionSelection] it forms HLE's `regionReplacementEnabled`:
+     * `regionSelection != NONE && overrideAccountLanguage`.
      */
-    val restoreCjkOriginalMetadata: Boolean = true,
+    val overrideAccountLanguage: Boolean = false,
+    /**
+     * HLE's 「替换中日韩歌曲信息为原地区原名」 switch: restores CJK songs to their
+     * original-region names.  Independent of [regionSelection] and
+     * [overrideAccountLanguage]: it composes with either.
+     *
+     * Off by default, like HLE's
+     * `DEFAULT_HOOK_APPLE_MUSIC_RESTORE_CJK_ORIGINAL_METADATA`.  A store that
+     * predates the split derives it from the retired picker instead
+     * ([dev.amenhancer.module.config.ModuleSettingsSchema]), so migrating users
+     * keep the behaviour they had.
+     */
+    val restoreCjkOriginalMetadata: Boolean = false,
     /**
      * Keeps the region/original metadata lookup results in SQLite so a cold start
      * does not have to re-query Apple Music's catalog.

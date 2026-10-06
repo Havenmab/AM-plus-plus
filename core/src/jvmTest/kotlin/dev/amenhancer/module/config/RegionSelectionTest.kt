@@ -31,9 +31,21 @@ class RegionSelectionTest {
             assertEquals(pair.second, region.catalogLanguage)
             assertTrue(region.replacesRegion)
         }
-        // 不开启地区替换 must not claim to rewrite traffic.
+        // 不开启 must not claim to rewrite traffic.
         assertFalse(RegionSelection.NONE.replacesRegion)
         assertNull(RegionSelection.NONE.catalogStorefront)
+    }
+
+    @Test
+    fun `every option uses HLE's exact picker label`() {
+        // Mirrors HLE's option_apple_music_content_ui_language_* strings verbatim.
+        assertEquals("不开启", RegionSelection.NONE.displayName)
+        assertEquals("简体中文（中国）", RegionSelection.MAINLAND_CHINA.displayName)
+        assertEquals("简体中文（美国）", RegionSelection.ZH_HANS_US.displayName)
+        assertEquals("繁体中文（香港）", RegionSelection.HONG_KONG.displayName)
+        assertEquals("繁体中文（台湾）", RegionSelection.TAIWAN.displayName)
+        assertEquals("韩语（韩国）", RegionSelection.KOREA.displayName)
+        assertEquals("日语（日本）", RegionSelection.JAPAN.displayName)
     }
 
     @Test
@@ -69,7 +81,7 @@ class RegionSelectionTest {
 
     @Test
     fun `the retired picker value maps onto the region control`() {
-        // 不开启地区替换 used to be stored as "original_hyper" on the single picker.
+        // 不开启 used to be stored as "original_hyper" on the single picker.
         assertEquals(
             RegionSelection.NONE,
             RegionSelection.fromLegacyTitleCorrectionMode("original_hyper"),

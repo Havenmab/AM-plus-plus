@@ -10,14 +10,15 @@ import dev.amenhancer.module.ModuleConstants
  * [HleMetadataRuntime].  This feature owns no hooks of its own — it only surfaces whether the
  * selected region actually redirects ordinary Apple Music traffic, so the health report cannot
  * claim an active region while the account region is still in force.
+ *
+ * It no longer reads a master switch: HLE's page gates region replacement with the picker
+ * itself (its no-region option turns the rewrite off), so the region selection alone decides.
  */
 internal class CatalogLanguageFeature : FeatureHook {
     override val key: String = ModuleConstants.FEATURE_CATALOG_LANGUAGE
 
     override fun install(context: HookContext): FeatureInstallResult {
         val settings = context.config.settings()
-        if (!settings.titleCorrectionEnabled) return FeatureInstallResult.disabled()
-
         val region = settings.regionSelection
         if (!region.replacesRegion) {
             return FeatureInstallResult.active(

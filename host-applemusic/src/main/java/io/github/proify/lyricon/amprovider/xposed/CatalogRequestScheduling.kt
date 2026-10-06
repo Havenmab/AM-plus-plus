@@ -23,7 +23,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogEntitySnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogArtistSnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogIdentity
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.PreparedOriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogSong
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedRequest
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LockedIsrcFallbackTask
@@ -53,7 +52,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.QUERY_TIMEOUT_MS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ARTIST_ALIAS_CACHE_SCHEMA
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.CATALOG_REQUEST_TOKEN_PARAM
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ORIGINAL_LANGUAGE_PROBE_ORDER
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.COLLABORATION_ARTIST_PATTERNS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.collaborationArtistCache
 
@@ -86,9 +84,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactOriginalEntityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactIdentityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHanCharacters
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.hasCjkArtistScript
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsJapaneseKana
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHangul
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.storefrontForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagsForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagForContentUiLanguage
@@ -184,37 +179,23 @@ internal fun AppleInternalCatalogResolver.processOriginalEntityBatch() {
             storefront = first.storefront,
             language = first.language,
         ) { resolved ->
-            // Matching IDs and validating language/alias candidates are pure CPU work.  Keep the
-            // mutable caches and resolver callbacks on the main executor after this pre-processing.
-            catalogBackgroundExecutor.execute {
-                val matches = runCatching {
-                    val resolvedAliases = resolved.mapValues { it.value.alias }
-                    batch.map { request ->
-                        request to selectExactOriginalEntityAlias(
-                            mediaId = request.mediaId,
-                            lookupIds = request.lookupIds,
-                            resolved = resolvedAliases,
-                            sourceLanguage = request.language,
-                        )
+            resolveOriginalEntityBatchResults(
+                requests = batch,
+                exact = resolved.mapValues { it.value.alias },
+                queryEquivalentAlbum = ::queryEquivalentOriginalAlbum,
+                onResolved = { request, alias ->
+                    if (alias != null) {
+                        persistentOriginalCache.put(request.directCacheKey, alias)
                     }
-                }.onFailure { error ->
-                    ProviderLogger.error("Apple 原地区实体后台候选匹配失败", error)
-                }.getOrElse {
-                    batch.map { request -> request to null }
-                }
-                mainHandler.post {
-                    matches.forEach { (request, alias) ->
-                        if (alias != null) {
-                            persistentOriginalCache.put(request.directCacheKey, alias)
-                        }
-                        ProviderLogger.info(
-                            "Apple 原地区实体查询完成: id=${request.mediaId}, " +
-                                "entityType=${request.entityType}, language=${request.language}, " +
-                                "batch=${batch.size}, priority=${request.priority}, hit=${alias != null}, " +
-                                "value=${alias?.title}/${alias?.artist}/${alias?.album}"
-                        )
-                        request.callbacks.forEach { callback -> callback(alias) }
-                    }
+                    ProviderLogger.info(
+                        "Apple 原地区实体查询完成: id=${request.mediaId}, " +
+                            "entityType=${request.entityType}, language=${request.language}, " +
+                            "batch=${batch.size}, priority=${request.priority}, hit=${alias != null}, " +
+                            "value=${alias?.title}/${alias?.artist}/${alias?.album}"
+                    )
+                    request.callbacks.forEach { callback -> callback(alias) }
+                },
+                onComplete = {
                     synchronized(originalEntityPending) {
                         originalEntityBatchesRunning -= 1
                         if (first.priority == RequestPriority.BACKGROUND) {
@@ -222,8 +203,8 @@ internal fun AppleInternalCatalogResolver.processOriginalEntityBatch() {
                         }
                     }
                     scheduleOriginalEntityBatchIfCapacity()
-                }
-            }
+                },
+            )
         }
         scheduleOriginalEntityBatchIfCapacity()
     }

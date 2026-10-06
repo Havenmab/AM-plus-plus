@@ -6,21 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Acceptance rule for a per-song original-name correction when the catalog keeps the account's
- * Latin title and only translates the artist credit.
+ * HLE's confidence rule for a per-song original-name candidate, ported verbatim:
  *
- * Device evidence (region = 简体中文（美国）, correction on): the account rows kept the US
- * title/artist because a candidate whose title equals the localized title was always rejected,
- * even when the artist was the original-region credit ("Wotoha" -> "をとは",
- * "PinocchioP" -> "ピノキオピー").
+ * ```
+ * isOriginalTitle(alias, localizedTitle) || nonLatinLetterCount(localizedTitle) > 0
+ * ```
  *
- * The probe's target region is derived from the song's own origin
- * ([AppleInternalCatalogResolver.languageTagsForOriginalMetadata] maps genre and the ISRC
- * country prefix to a language, then
- * [AppleInternalCatalogResolver.storefrontForOriginalLanguage] maps it to a storefront).  A
- * lookup that reached the Japanese storefront is therefore a Japanese-origin release by
- * construction, and what that storefront reports *is* the original-region form -- no extra
- * artist-name correspondence is needed, and requiring one rejected kanji-bearing originals.
+ * A candidate is confident only when its title differs from the localized title and carries
+ * non-Latin script, or when the localized title itself already carries non-Latin script.  A
+ * catalog row that keeps the account's Latin title and only swaps the artist credit is therefore
+ * rejected here; the origin-region probe's own provenance is the evidence for those, and HLE keeps
+ * that evidence out of this title-confidence predicate.
  */
 class OriginalSongAliasAcceptanceTest {
 
@@ -35,78 +31,7 @@ class OriginalSongAliasAcceptanceTest {
         )
 
     @Test
-    fun `same Latin title with the original-region artist is accepted`() {
-        // Catchphrase / Yabasu & Hatsune Miku (the rejected device candidate).
-        assertTrue(
-            confident(
-                alias("Catchphrase", "ヤバス, Hatsune Miku"),
-                "Catchphrase",
-                "Yabasu & Hatsune Miku",
-            ),
-        )
-        // Planet Train (feat. botan) / Hige Driver.
-        assertTrue(
-            confident(
-                alias("Planet Train (feat. botan)", "ヒゲドライバー"),
-                "Planet Train (feat. botan)",
-                "Hige Driver",
-            ),
-        )
-        // J'sRPG / Wotoha.
-        assertTrue(
-            confident(alias("J'sRPG", "をとは"), "J'sRPG", "Wotoha"),
-        )
-        // PinocchioP keeps a Latin title on some tracks.
-        assertTrue(
-            confident(alias("GETCHA!", "ピノキオピー"), "GETCHA!", "PinocchioP"),
-        )
-        assertTrue(
-            confident(alias("Sensitive Dance", "ばばなつみ"), "Sensitive Dance", "Natsumi Baba"),
-        )
-    }
-
-    @Test
-    fun `a kanji original artist is accepted`() {
-        // Kenshi Yonezu -> 米津玄師.  The removed kana-only rule rejected this because the
-        // original credit is Han, which is a common Japanese artist-name shape.  The Japanese
-        // storefront only reports this candidate for a Japanese-origin release, so the kanji
-        // credit is the original-region form, not a translation of a Western artist.
-        assertTrue(
-            confident(alias("Lemon", "米津玄師"), "Lemon", "Kenshi Yonezu"),
-        )
-        // MIREI -> 當山 みれい (kanji + kana), the other kanji shape the old Han rule blocked.
-        assertTrue(
-            confident(alias("Let Me Know", "當山 みれい"), "Let Me Know", "MIREI"),
-        )
-    }
-
-    @Test
-    fun `candidates the removed correspondence heuristic pinned are now accepted`() {
-        // These three shared too few characters with the localized Latin artist under the old
-        // heuristic (3, Han-blocked, and 2 respectively) and were rejected.  They are accepted
-        // now because the guard was removed: each is a same-title candidate carrying non-Latin
-        // script, and it can only have come back from the storefront matching the song's own
-        // origin, so it is the original-region credit by construction.
-        //
-        // OneRepublic -> ワンリパブリック (3 shared chars).  "I Ain't Worried" is only probed
-        // against the Japanese storefront if its genre/ISRC says Japanese origin, so a Western
-        // artist's storefront localization is not reachable here.
-        assertTrue(
-            confident(
-                alias("I Ain't Worried", "ワンリパブリック"),
-                "I Ain't Worried",
-                "OneRepublic",
-            ),
-        )
-        // Some Artist -> アーティスト (2 shared chars).
-        assertTrue(
-            confident(alias("Some Song", "アーティスト"), "Some Song", "Some Artist"),
-        )
-    }
-
-    @Test
-    fun `a translated title is still accepted through the original-title rule`() {
-        // These never needed the same-title clause; they pin the fail-open behaviour around it.
+    fun `a translated title with non-Latin script is accepted through the original-title rule`() {
         assertTrue(
             confident(alias("春めく", "はるまき"), "Harumeku", "Harumaki"),
         )
@@ -119,6 +44,60 @@ class OriginalSongAliasAcceptanceTest {
                 "Music Like Magic! (feat. Hatsune Miku)",
                 "PinocchioP",
             ),
+        )
+    }
+
+    @Test
+    fun `a non-Latin localized title trusts the candidate regardless of its title`() {
+        // nonLatinLetterCount(localizedTitle) > 0 is the second condition.
+        assertTrue(
+            confident(
+                alias("ハルメク", "はるまき"),
+                "春めく",
+                "はるまき",
+            ),
+        )
+    }
+
+    @Test
+    fun `a same Latin title with the original-region artist is not confident by title alone`() {
+        // Catchphrase / Yabasu & Hatsune Miku: the title is unchanged, so the title rule rejects
+        // it.  HLE's origin-region lookup carries the provenance for this correction instead.
+        assertFalse(
+            confident(
+                alias("Catchphrase", "ヤバス, Hatsune Miku"),
+                "Catchphrase",
+                "Yabasu & Hatsune Miku",
+            ),
+        )
+        assertFalse(
+            confident(
+                alias("Planet Train (feat. botan)", "ヒゲドライバー"),
+                "Planet Train (feat. botan)",
+                "Hige Driver",
+            ),
+        )
+        assertFalse(
+            confident(alias("J'sRPG", "をとは"), "J'sRPG", "Wotoha"),
+        )
+        assertFalse(
+            confident(alias("GETCHA!", "ピノキオピー"), "GETCHA!", "PinocchioP"),
+        )
+        assertFalse(
+            confident(alias("Sensitive Dance", "ばばなつみ"), "Sensitive Dance", "Natsumi Baba"),
+        )
+    }
+
+    @Test
+    fun `a same-title artist-only alias is rejected for kana and kanji originals alike`() {
+        assertFalse(
+            confident(alias("Lemon", "米津玄師"), "Lemon", "Kenshi Yonezu"),
+        )
+        assertFalse(
+            confident(alias("Let Me Know", "當山 みれい"), "Let Me Know", "MIREI"),
+        )
+        assertFalse(
+            confident(alias("I Ain't Worried", "ワンリパブリック"), "I Ain't Worried", "OneRepublic"),
         )
     }
 
@@ -148,7 +127,6 @@ class OriginalSongAliasAcceptanceTest {
 
     @Test
     fun `a same-title candidate with no non-Latin script stays rejected`() {
-        // A Latin-only artist is never evidence of an original region.
         assertFalse(
             confident(alias("Let Me Know", "Mirei"), "Let Me Know", "MIREI"),
         )

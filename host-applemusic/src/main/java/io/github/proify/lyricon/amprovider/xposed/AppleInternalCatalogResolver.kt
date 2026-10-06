@@ -791,7 +791,12 @@ internal class AppleInternalCatalogResolver(
 
     data class CatalogRequestLocalization(
         val storefront: String,
-        val language: String,
+        /**
+         * Catalog `l` language this module request targets, or null when the request
+         * deliberately keeps the host's own request language (the untargeted
+         * identity/ISRC/genre probe).
+         */
+        val language: String?,
     )
 
     data class Alias(
@@ -1291,6 +1296,47 @@ internal class AppleInternalCatalogResolver(
                     segment.equals("station", ignoreCase = true) ||
                     segment.equals("stations", ignoreCase = true)
             }
+
+        /**
+         * True when [localization] describes a module-owned request that deliberately keeps
+         * the account's own catalog storefront and request language.
+         *
+         * Such a request (the untargeted identity/ISRC/genre probe) still carries the
+         * module's token, so every seam knows the module owns it, but it has no region target
+         * of its own: its catalog IDs are only meaningful in the storefront they were read
+         * from.  The region rewrite must therefore leave its storefront argument, `l`
+         * parameter and `Accept-Language`/storefront headers untouched.  A null localization
+         * is ordinary Apple Music traffic and is not covered.
+         */
+        internal fun keepsAccountCatalogTarget(
+            localization: CatalogRequestLocalization?,
+        ): Boolean = localization != null && localization.language == null
+
+        /**
+         * The localization a module-owned direct query must carry.
+         *
+         * A query with both a storefront and a language keeps them (the original-region probe
+         * and the fixed-region batch lookups).  An untargeted query -- the identity/ISRC/genre
+         * probe, which deliberately asks the account's own storefront -- is pinned to
+         * [accountStorefront] with no language of its own while a region rewrite is active, so
+         * every region seam can recognise it as module-owned and leave it alone.  With no
+         * region configured the probe keeps its historical token-less shape, and when the
+         * account storefront is unknown the probe fails open to that same shape.
+         */
+        internal fun moduleCatalogRequestLocalization(
+            storefront: String?,
+            language: String?,
+            regionRewriteEnabled: Boolean,
+            accountStorefront: String?,
+        ): CatalogRequestLocalization? = when {
+            storefront != null && language != null ->
+                CatalogRequestLocalization(storefront, language)
+            storefront == null && language == null && regionRewriteEnabled ->
+                accountStorefront?.let { account ->
+                    CatalogRequestLocalization(storefront = account, language = null)
+                }
+            else -> null
+        }
 
         internal fun selectLocalizedArtistName(
             attributeArtist: String,

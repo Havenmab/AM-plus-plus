@@ -62,6 +62,12 @@ internal class AppleContentLocalizationHooks(
                 // A resolver-owned token always wins.  Ordinary MediaApi requests are only
                 // touched when the user turned on a region replacement, so the historical
                 // "account region stays untouched" behaviour survives a disabled feature.
+                // A module request that keeps the account's own catalog target owns its
+                // language too: applying the region language here would localize its response
+                // and can hide the ISRC/genres the original-name probe needs.
+                if (AppleInternalCatalogResolver.keepsAccountCatalogTarget(requestLocalization)) {
+                    return@installHook
+                }
                 val configuredLanguage = resolver.configuredLanguageOrNull()
                 val language = requestLocalization?.language
                     ?: configuredLanguage
@@ -319,6 +325,21 @@ internal class AppleContentLocalizationHooks(
         // argument.  Rewriting again here could undo a deliberate original-region target, so
         // only strip the module's own parameters so they never reach Apple.
         if (carriesModuleMarker) {
+            stripModuleParameters(request, requestUri)?.let { stripped ->
+                AppleReflection.setField(
+                    httpChain,
+                    member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+                    stripped,
+                )
+            }
+            return
+        }
+
+        // A module request that keeps the account's own catalog target is already correct:
+        // strip only the module's own parameters and leave its storefront, `l` parameter and
+        // headers alone, so the region cannot redirect a lookup whose catalog IDs only exist
+        // in the storefront they were read from.
+        if (AppleInternalCatalogResolver.keepsAccountCatalogTarget(requestLocalization)) {
             stripModuleParameters(request, requestUri)?.let { stripped ->
                 AppleReflection.setField(
                     httpChain,

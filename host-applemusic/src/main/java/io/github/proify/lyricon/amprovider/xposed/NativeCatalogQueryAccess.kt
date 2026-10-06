@@ -28,7 +28,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedRequest
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LockedIsrcFallbackTask
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.OriginalEntityRequest
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogRequestLocalization
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Alias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.OriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedLookup
@@ -400,11 +399,23 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
 
             runCatching {
                 val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
-                val localization = if (storefront != null && language != null) {
-                    CatalogRequestLocalization(storefront, language)
-                } else {
-                    null
-                }
+                // An untargeted module query is the identity/ISRC/genre probe.  It must address
+                // the account's own storefront, because its catalog IDs only exist there, but it
+                // has no language of its own.  Giving it the same token as every other module
+                // request keeps the user's region rewrite from redirecting it to a storefront
+                // the IDs are absent from -- a redirect that silently emptied the identity and
+                // stopped the per-song original-name correction.
+                val regionRewriteEnabled = isGlobalRegionRewriteEnabled()
+                val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
+                    storefront = storefront,
+                    language = language,
+                    regionRewriteEnabled = regionRewriteEnabled,
+                    accountStorefront = if (regionRewriteEnabled) {
+                        accountStorefrontForPlaybackRequest()
+                    } else {
+                        null
+                    },
+                )
                 if (localization != null) {
                     // Capture before the field is temporarily switched below, otherwise the
                     // module's own target storefront would be remembered as the account's.

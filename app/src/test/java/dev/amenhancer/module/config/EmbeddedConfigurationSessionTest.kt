@@ -20,9 +20,9 @@ class EmbeddedConfigurationSessionTest {
     @Test
     fun `legacy title correction mode is published before obsolete key cleanup`() {
         listOf(
-            "zh-CN" to TitleCorrectionMode.MAINLAND_CHINA,
-            "ja-JP" to TitleCorrectionMode.JAPAN,
-        ).forEach { (legacyLanguage, expectedMode) ->
+            "zh-CN" to RegionSelection.MAINLAND_CHINA,
+            "ja-JP" to RegionSelection.JAPAN,
+        ).forEach { (legacyLanguage, expectedRegion) ->
             val storage = InMemoryEmbeddedStorage(
                 initialValues = mapOf(
                     "schema_version" to 11,
@@ -33,18 +33,19 @@ class EmbeddedConfigurationSessionTest {
 
             val session = EmbeddedConfigurationSession(storage)
 
-            assertEquals(expectedMode, session.settings().titleCorrectionMode)
-            assertEquals(expectedMode.storageValue, storage.values()["title_correction_mode"])
+            assertEquals(expectedRegion, session.settings().regionSelection)
+            assertEquals(expectedRegion.storageValue, storage.values()["region_selection"])
             assertEquals(
                 ModuleConstants.CONFIG_SCHEMA_VERSION,
                 storage.values()["schema_version"],
             )
             assertFalse(storage.values().containsKey("title_correction_target_language"))
+            assertFalse(storage.values().containsKey("title_correction_mode"))
         }
     }
 
     @Test
-    fun `legacy title correction key remains when new mode cannot be published`() {
+    fun `legacy title correction key remains when the new region cannot be published`() {
         val storage = InMemoryEmbeddedStorage(
             initialValues = mapOf(
                 "schema_version" to 11,
@@ -56,9 +57,30 @@ class EmbeddedConfigurationSessionTest {
 
         val session = EmbeddedConfigurationSession(storage)
 
-        assertEquals(TitleCorrectionMode.JAPAN, session.settings().titleCorrectionMode)
+        assertEquals(RegionSelection.JAPAN, session.settings().regionSelection)
         assertTrue(storage.values().containsKey("title_correction_target_language"))
+        assertFalse(storage.values().containsKey("region_selection"))
+    }
+
+    @Test
+    fun `an initialized v19 store splits its retired picker in place`() {
+        val storage = InMemoryEmbeddedStorage(
+            initialValues = mapOf(
+                "schema_version" to 19,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+            ),
+        )
+
+        val session = EmbeddedConfigurationSession(storage)
+
+        assertEquals(RegionSelection.JAPAN, session.settings().regionSelection)
+        // The retired picker implied "do not restore names" for a region value.
+        assertEquals(false, session.settings().restoreCjkOriginalMetadata)
+        assertEquals("japan", storage.values()["region_selection"])
+        assertEquals(false, storage.values()["restore_cjk_original_metadata"])
         assertFalse(storage.values().containsKey("title_correction_mode"))
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, storage.values()["schema_version"])
     }
 
     @Test

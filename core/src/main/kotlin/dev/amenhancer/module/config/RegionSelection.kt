@@ -3,24 +3,22 @@ package dev.amenhancer.module.config
 import com.juren233.hyperlyricsenhanced.common.RootConstants
 
 /**
- * Region profile used by the title-correction feature.
+ * Region replacement selection for Apple Music's online content.
  *
- * The master switch (`ModuleSettings.titleCorrectionEnabled`) remains the opt-in
- * gate.  When it is off no profile is installed and Apple Music follows the
- * account.  When it is on, one of the explicit profiles below owns the Apple Music
- * content storefront, the catalog request language and its cache namespace for the
- * lifetime of the Apple Music process.
+ * This control owns exactly one concern: which region's storefront, language and
+ * content-UI language ordinary Apple Music traffic is resolved against.  [NONE]
+ * leaves the account's own region and language in force; every other value
+ * rewrites the catalog request storefront/language and the content-HTTP seams.
  *
- * [ORIGINAL_HYPER] deliberately selects no region: it keeps the account storefront
- * and relies on `ModuleSettings.restoreCjkOriginalMetadata` to restore
- * original-region names.  Every other profile rewrites ordinary Apple Music catalog
- * traffic to that region.
+ * It is deliberately independent of the per-song title-correction switch
+ * (`ModuleSettings.restoreCjkOriginalMetadata`): the two settings compose in any
+ * combination and neither projection reads the other.
  *
  * The numeric `X-Apple-Store-Front` mapping for each storefront lives with the
  * resolver (`AppleInternalCatalogResolver.localizedStorefrontHeaderValue`) so the
  * HTTP rewrite keeps a single source of truth.
  */
-enum class TitleCorrectionMode(
+enum class RegionSelection(
     val storageValue: String,
     val displayName: String,
     val contentUiLanguageSelection: Int,
@@ -28,12 +26,14 @@ enum class TitleCorrectionMode(
     val catalogLanguage: String?,
     val cacheNamespace: String,
 ) {
-    ORIGINAL_HYPER(
-        storageValue = "original_hyper",
+    NONE(
+        storageValue = "none",
         displayName = "不开启地区替换",
         contentUiLanguageSelection = RootConstants.APPLE_MUSIC_CONTENT_UI_LANGUAGE_NONE,
         catalogStorefront = null,
         catalogLanguage = null,
+        // Kept from the retired no-region profile so a migrated installation keeps
+        // reading the persistent original-metadata cache database it already has.
         cacheNamespace = "original_hyper_v1",
     ),
     MAINLAND_CHINA(
@@ -85,24 +85,39 @@ enum class TitleCorrectionMode(
         cacheNamespace = "jp_v1",
     );
 
-    /**
-     * Whether this profile rewrites ordinary Apple Music catalog traffic to
-     * [catalogStorefront].  False for [ORIGINAL_HYPER], which only restores names.
-     */
+    /** Whether this selection rewrites ordinary Apple Music traffic to [catalogStorefront]. */
     val replacesRegion: Boolean get() = catalogStorefront != null
 
     companion object {
-        fun decode(raw: String?): TitleCorrectionMode = values().firstOrNull {
-            it.storageValue.equals(raw?.trim(), ignoreCase = true)
-        } ?: ORIGINAL_HYPER
+        /** The retired single picker's storage value that also meant "no region". */
+        const val LEGACY_NO_REGION_STORAGE_VALUE = "original_hyper"
 
-        /** Maps the v11 target-language setting into the new profile model. */
-        fun fromLegacyTargetLanguage(raw: String?): TitleCorrectionMode = when (
+        fun decode(raw: String?): RegionSelection = values().firstOrNull {
+            it.storageValue.equals(raw?.trim(), ignoreCase = true)
+        } ?: NONE
+
+        /**
+         * Maps the retired `title_correction_mode` picker value onto the region
+         * control.  It carried both concepts, so only the region half is read here;
+         * the title-correction half migrates from `restore_cjk_original_metadata`.
+         */
+        fun fromLegacyTitleCorrectionMode(raw: String?): RegionSelection {
+            val normalized = raw?.trim().orEmpty()
+            if (normalized.isEmpty() ||
+                normalized.equals(LEGACY_NO_REGION_STORAGE_VALUE, ignoreCase = true)
+            ) {
+                return NONE
+            }
+            return decode(normalized)
+        }
+
+        /** Maps the v11 target-language setting into the region model. */
+        fun fromLegacyTargetLanguage(raw: String?): RegionSelection = when (
             CatalogLanguagePolicy.normalize(raw)
         ) {
             "zh-CN" -> MAINLAND_CHINA
             "ja-JP" -> JAPAN
-            else -> ORIGINAL_HYPER
+            else -> NONE
         }
     }
 }

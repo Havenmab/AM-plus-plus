@@ -143,7 +143,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 19`() {
+    fun `keeps the glass configuration keys under schema 20`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -159,9 +159,10 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 19 merges the region-replacement extras (16), the online lyric
-        // supplement (17), the lyric source chain (18) and the translation
-        // enrichment toggle (19); glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 19"))
+        // Schema 20 splits the retired single title-correction picker into the
+        // region_selection control plus the title-correction switch, on top of the
+        // region extras (16), online lyric supplement (17), source chain (18) and
+        // translation enrichment toggle (19); glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 20"))
     }
 }

@@ -80,9 +80,10 @@ class HleMetadataIntegrationStructuralTest {
         val resolver = source(
             "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
         )
-        // The runtime applies the region profile and installs all four localization seams.
+        // The runtime applies the region plan and installs all four localization seams.
         assertTrue(runtime.contains("applyRegionConfiguration("))
-        assertTrue(runtime.contains("regionReplacementRequested = mode.replacesRegion"))
+        assertTrue(runtime.contains("regionReplacementRequested = requestPlan.rewritesCatalogRequests"))
+        assertTrue(runtime.contains("RegionTitleRequestPolicy.plan(region, restoreCjkOriginalMetadata)"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installCatalogRequestLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installContentHttpLocalization()"))
@@ -378,15 +379,15 @@ class HleMetadataIntegrationStructuralTest {
     fun `embedded settings expose the region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
         assertTrue(embedded.contains("歌曲名显示修正"))
-        assertTrue(embedded.contains("歌曲名修正模式"))
-        assertTrue(embedded.contains("titleCorrectionMode"))
-        // The two HLE region extras must be reachable from the host settings page.
-        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
+        assertTrue(embedded.contains("地区替换"))
+        assertTrue(embedded.contains("regionSelection"))
+        // The title correction is its own switch now, no longer implied by the picker.
+        assertTrue(embedded.contains("歌曲名称修正"))
         assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
         assertTrue(embedded.contains("创建检索库以提升替换体验"))
         assertTrue(embedded.contains("localizedMetadataCache"))
-        // The picker enumerates the model, so new profiles appear without a UI change.
-        assertTrue(embedded.contains("TitleCorrectionMode.values()"))
+        // The picker enumerates the model, so new regions appear without a UI change.
+        assertTrue(embedded.contains("RegionSelection.values()"))
         assertFalse(embedded.contains("刷新资料库"))
     }
 
@@ -397,6 +398,8 @@ class HleMetadataIntegrationStructuralTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCatalogLanguageTarget.kt",
         )
         val bridge = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataSurfaceBridge.kt")
+        assertTrue(schema.contains("KEY_REGION_SELECTION"))
+        // The retired picker key survives only as a migration input.
         assertTrue(schema.contains("KEY_TITLE_CORRECTION_MODE"))
         assertTrue(schema.contains("KEY_TITLE_CORRECTION_TARGET_LANGUAGE"))
         assertTrue(target.contains("isHleResolverRequest"))

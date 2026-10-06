@@ -421,14 +421,14 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 activity,
                 "歌曲名显示修正",
                 if (settings.titleCorrectionEnabled) {
-                    if (settings.titleCorrectionMode.replacesRegion) {
-                        "${settings.titleCorrectionMode.displayName} · " +
+                    if (settings.regionSelection.replacesRegion) {
+                        "${settings.regionSelection.displayName} · " +
                             "普通浏览请求会改到该地区 · 重开 Apple Music 后生效"
                     } else {
-                        "${settings.titleCorrectionMode.displayName} · 重开 Apple Music 后生效"
+                        "${settings.regionSelection.displayName} · 重开 Apple Music 后生效"
                     }
                 } else {
-                    "关闭时跟随 Apple Music 账号 · 开启后选择修正地区"
+                    "关闭时跟随 Apple Music 账号 · 开启后可选地区替换与歌曲名称修正"
                 },
                 settings.titleCorrectionEnabled,
                 iconTint = EmbeddedSettingsPalette.accent,
@@ -440,27 +440,27 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,
-                "歌曲名修正模式",
-                settings.titleCorrectionMode.displayName,
+                "地区替换",
+                settings.regionSelection.displayName,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
                     EmbeddedSettingsPalette.accent,
                 ),
                 inlineSummary = true,
             ) {
-                showEmbeddedTitleCorrectionModePicker(
+                showEmbeddedRegionSelectionPicker(
                     activity = activity,
-                ) { mode ->
-                    onSettingsChanged(settings.copy(titleCorrectionMode = mode))
+                ) { region ->
+                    onSettingsChanged(settings.copy(regionSelection = region))
                     pageRefresh?.invoke()
                 }
             })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "替换中日韩歌曲信息为原地区原名",
+                "歌曲名称修正",
                 if (settings.restoreCjkOriginalMetadata) {
-                    "中日韩歌曲按原地区语言显示原名"
+                    "按歌曲原地区显示原名"
                 } else {
                     "保持 Apple Music 当前显示的名称"
                 },

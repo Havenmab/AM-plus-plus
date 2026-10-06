@@ -1,7 +1,7 @@
 package dev.amenhancer.module.model
 
 import dev.amenhancer.module.ModuleConstants
-import dev.amenhancer.module.config.TitleCorrectionMode
+import dev.amenhancer.module.config.RegionSelection
 
 data class ModuleSettings(
     val dualPaneEnabled: Boolean = true,
@@ -21,17 +21,22 @@ data class ModuleSettings(
     val lyricBlurRadiusOffsetPx: Int = 0,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
+    /** Master opt-in gate for the whole HLE metadata runtime. */
     val titleCorrectionEnabled: Boolean = false,
-    /** Selected metadata profile; ignored while [titleCorrectionEnabled] is false. */
-    val titleCorrectionMode: TitleCorrectionMode = TitleCorrectionMode.ORIGINAL_HYPER,
     /**
-     * Restores CJK songs to their original-region names.  Independent of
-     * [titleCorrectionMode]: it can be combined with a region replacement.
+     * Which region's storefront/language content requests are resolved against;
+     * [RegionSelection.NONE] keeps the account's own region.  Independent of
+     * [restoreCjkOriginalMetadata] and ignored while [titleCorrectionEnabled] is false.
+     */
+    val regionSelection: RegionSelection = RegionSelection.NONE,
+    /**
+     * The 歌曲名称修正 switch: restores CJK songs to their original-region names.
+     * Independent of [regionSelection]: it can be combined with any region.
      *
      * Defaults to true because that is the behaviour a fresh installation had
      * before the region extras existed (the old default profile restored names).
-     * [dev.amenhancer.module.config.ModuleSettingsSchema] derives it from the stored
-     * profile when the key is absent, so migrating users keep their old behaviour.
+     * [dev.amenhancer.module.config.ModuleSettingsSchema] derives it from the retired
+     * picker value when the key is absent, so migrating users keep their old behaviour.
      */
     val restoreCjkOriginalMetadata: Boolean = true,
     /**

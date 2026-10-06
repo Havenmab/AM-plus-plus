@@ -22,7 +22,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import dev.amenhancer.module.ModuleConstants
-import dev.amenhancer.module.config.TitleCorrectionMode
+import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.ModuleSettings
 
@@ -549,17 +549,17 @@ internal fun EmbeddedSettingsHost.showEmbeddedDpiOverrideDialog(
     }
 
 
-internal fun EmbeddedSettingsHost.showEmbeddedTitleCorrectionModePicker(
+internal fun EmbeddedSettingsHost.showEmbeddedRegionSelectionPicker(
         activity: Activity,
-        onSelected: (TitleCorrectionMode) -> Unit,
+        onSelected: (RegionSelection) -> Unit,
     ) {
-        val modes = TitleCorrectionMode.values()
-        val current = controller.currentSettings().titleCorrectionMode
-        val labels = modes.map(TitleCorrectionMode::displayName).toTypedArray()
+        val regions = RegionSelection.values()
+        val current = controller.currentSettings().regionSelection
+        val labels = regions.map(RegionSelection::displayName).toTypedArray()
         AlertDialog.Builder(activity)
-            .setTitle("歌曲名修正模式")
-            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
-                modes.getOrNull(which)?.let(onSelected)
+            .setTitle("地区替换")
+            .setSingleChoiceItems(labels, regions.indexOf(current)) { dialog, which ->
+                regions.getOrNull(which)?.let(onSelected)
                 dialog.dismiss()
             }
             .setNegativeButton("取消", null)

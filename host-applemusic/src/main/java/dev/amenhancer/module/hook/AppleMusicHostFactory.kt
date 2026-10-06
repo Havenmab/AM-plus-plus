@@ -100,7 +100,7 @@ object AppleMusicHostFactory {
             ),
             catalogLanguage = AppleMusicCatalogLanguageTarget(
                 symbols = resolver,
-                rawTargetLanguage = settings.titleCorrectionMode.catalogLanguage.orEmpty(),
+                rawTargetLanguage = settings.regionSelection.catalogLanguage.orEmpty(),
             ),
             hleMetadata = HleMetadataTarget {
                 val activeModule = ModernXposedRuntime.activeModule()
@@ -112,7 +112,7 @@ object AppleMusicHostFactory {
                         module = activeModule,
                         application = application,
                         classLoader = classLoader,
-                        mode = settings.titleCorrectionMode,
+                        region = settings.regionSelection,
                         restoreCjkOriginalMetadata = settings.restoreCjkOriginalMetadata,
                         localizedMetadataCache = settings.localizedMetadataCache,
                     ).install()

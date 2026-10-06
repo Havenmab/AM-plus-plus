@@ -113,7 +113,7 @@ class OrdinarySettingsWritePolicyTest {
                 "lyric_blur_radius_offset_px" to 6,
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,
-                "title_correction_mode" to "original_hyper",
+                "region_selection" to "none",
                 "restore_cjk_original_metadata" to true,
                 "localized_metadata_cache" to true,
                 "custom_lyrics_enabled" to false,

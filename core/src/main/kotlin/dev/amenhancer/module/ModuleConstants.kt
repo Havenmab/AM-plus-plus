@@ -15,8 +15,13 @@ object ModuleConstants {
      * order and the global-best flag) and 19 adds the missing-translation
      * enrichment toggle.  The merged tree keeps the region keys and the whole
      * lyric chain under the single final version, 19.
+     *
+     * 20 splits the retired single `title_correction_mode` picker into the
+     * `region_selection` control plus the existing `restore_cjk_original_metadata`
+     * title-correction switch.  The migration rewrites the old value so an
+     * existing installation keeps the exact behaviour it had.
      */
-    const val CONFIG_SCHEMA_VERSION = 19
+    const val CONFIG_SCHEMA_VERSION = 20
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

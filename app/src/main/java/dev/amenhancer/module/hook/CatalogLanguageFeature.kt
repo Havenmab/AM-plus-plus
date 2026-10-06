@@ -8,7 +8,7 @@ import dev.amenhancer.module.ModuleConstants
  * The rewrite itself lives in the HLE localization hooks (MediaApi storefront, catalog executor
  * arguments, the content HTTP seam and the amp-api interceptor), which are installed by
  * [HleMetadataRuntime].  This feature owns no hooks of its own — it only surfaces whether the
- * selected profile actually redirects ordinary Apple Music traffic, so the health report cannot
+ * selected region actually redirects ordinary Apple Music traffic, so the health report cannot
  * claim an active region while the account region is still in force.
  */
 internal class CatalogLanguageFeature : FeatureHook {
@@ -18,15 +18,15 @@ internal class CatalogLanguageFeature : FeatureHook {
         val settings = context.config.settings()
         if (!settings.titleCorrectionEnabled) return FeatureInstallResult.disabled()
 
-        val mode = settings.titleCorrectionMode
-        if (!mode.replacesRegion) {
+        val region = settings.regionSelection
+        if (!region.replacesRegion) {
             return FeatureInstallResult.active(
                 "No region selected; catalog requests follow the Apple Music account",
             )
         }
         return FeatureInstallResult.active(
-            "Catalog requests are localized to ${mode.displayName} " +
-                "(${mode.catalogStorefront}); radio, lyrics and playback requests keep the " +
+            "Catalog requests are localized to ${region.displayName} " +
+                "(${region.catalogStorefront}); radio, lyrics and playback requests keep the " +
                 "account storefront",
         )
     }

@@ -8,11 +8,16 @@ import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
 
 object ModuleSettingsSchema {
-    /** Keys removed by the profile migration. */
-    val obsoleteKeys: Set<String> = setOf(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
+    /** Keys removed by the profile migrations. */
+    val obsoleteKeys: Set<String> = setOf(
+        KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
+        // v20: the retired single picker; its region half moves to KEY_REGION_SELECTION
+        // and its name half to KEY_RESTORE_CJK_ORIGINAL_METADATA.
+        KEY_TITLE_CORRECTION_MODE,
+    )
 
     fun decode(values: Map<String, *>): ModuleSettings {
-        val titleCorrectionMode = values.titleCorrectionMode()
+        val regionSelection = values.regionSelection()
         return ModuleSettings(
             dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
             disableEditorialVideoOnTablet = values.boolean(
@@ -55,15 +60,13 @@ object ModuleSettingsSchema {
                 KEY_TITLE_CORRECTION_ENABLED,
                 default = false,
             ),
-            titleCorrectionMode = titleCorrectionMode,
-            // v16: a configuration that predates the region extras keeps the behaviour
-            // of its stored profile.  The old profiles did not separate "replace the
-            // region" from "restore original names": ORIGINAL_HYPER always restored
-            // names while the fixed regions never did.  Deriving the default here keeps
-            // that mapping without a value-by-value migration table.
+            regionSelection = regionSelection,
+            // Stores that predate the separate switch keep the behaviour of the retired
+            // picker: its no-region value restored names, every region value did not.
+            // Once the key exists it always wins, so the two controls are independent.
             restoreCjkOriginalMetadata = values.boolean(
                 KEY_RESTORE_CJK_ORIGINAL_METADATA,
-                default = titleCorrectionMode == TitleCorrectionMode.ORIGINAL_HYPER,
+                default = values.legacyRestoreCjkOriginalMetadataDefault(),
             ),
             localizedMetadataCache = values.boolean(
                 KEY_LOCALIZED_METADATA_CACHE,
@@ -152,7 +155,7 @@ object ModuleSettingsSchema {
                 settings.appleMusicDpiOverrideDpi,
             ),
             KEY_TITLE_CORRECTION_ENABLED to settings.titleCorrectionEnabled,
-            KEY_TITLE_CORRECTION_MODE to settings.titleCorrectionMode.storageValue,
+            KEY_REGION_SELECTION to settings.regionSelection.storageValue,
             KEY_RESTORE_CJK_ORIGINAL_METADATA to settings.restoreCjkOriginalMetadata,
             KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
@@ -249,33 +252,67 @@ object ModuleSettingsSchema {
     private fun Map<String, *>.customLyricsManifest(): CustomLyricsManifest =
         decodeLegacyCustomLyricsManifest(this)
 
-    private fun Map<String, *>.titleCorrectionMode(): TitleCorrectionMode {
-        val storedMode = string(KEY_TITLE_CORRECTION_MODE)
-        if (storedMode.isNotBlank()) return TitleCorrectionMode.decode(storedMode)
-        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) {
-            return TitleCorrectionMode.ORIGINAL_HYPER
+    /**
+     * Reads the region control.  The new key wins; a store written before the split
+     * still carries the retired picker value, and the v11 target language is the last
+     * fallback for a store that predates the picker entirely.
+     */
+    private fun Map<String, *>.regionSelection(): RegionSelection {
+        val storedRegion = string(KEY_REGION_SELECTION)
+        if (storedRegion.isNotBlank()) return RegionSelection.decode(storedRegion)
+        val storedLegacyMode = string(KEY_TITLE_CORRECTION_MODE)
+        if (storedLegacyMode.isNotBlank()) {
+            return RegionSelection.fromLegacyTitleCorrectionMode(storedLegacyMode)
         }
-        return TitleCorrectionMode.fromLegacyTargetLanguage(
+        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) {
+            return RegionSelection.NONE
+        }
+        return RegionSelection.fromLegacyTargetLanguage(
             string(KEY_TITLE_CORRECTION_TARGET_LANGUAGE),
         )
     }
 
     /**
-     * Returns the host-local values required before removing the v11 target
-     * language key.  This is intentionally independent of the schema version:
-     * an already-initialized embedded store skips remote migration, so it must
-     * still be able to upgrade its own legacy value in place.
+     * The title-correction default for a store that predates the separate switch.
+     * It deliberately reads only the retired picker and its v11 predecessor, never
+     * [KEY_REGION_SELECTION], so the region control can never imply the switch.
+     */
+    private fun Map<String, *>.legacyRestoreCjkOriginalMetadataDefault(): Boolean {
+        val storedLegacyMode = string(KEY_TITLE_CORRECTION_MODE)
+        if (storedLegacyMode.isNotBlank()) {
+            return RegionSelection.fromLegacyTitleCorrectionMode(storedLegacyMode) ==
+                RegionSelection.NONE
+        }
+        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) return true
+        return RegionSelection.fromLegacyTargetLanguage(
+            string(KEY_TITLE_CORRECTION_TARGET_LANGUAGE),
+        ) == RegionSelection.NONE
+    }
+
+    /**
+     * Returns the host-local values required before removing the retired keys.  This
+     * is intentionally independent of the schema version: an already-initialized
+     * embedded store skips remote migration, so it must still be able to upgrade its
+     * own legacy values in place.
+     *
+     * It publishes the region selection and, when the store predates the separate
+     * switch, that switch's derived value, because both legacy keys are deleted
+     * right after this call.
      */
     fun legacyTitleCorrectionMigrationValues(values: Map<String, *>): Map<String, Any> {
-        if (!values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE) ||
-            values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
-        ) {
-            return emptyMap()
-        }
-        return linkedMapOf(
-            KEY_TITLE_CORRECTION_MODE to values.titleCorrectionMode().storageValue,
-            KEY_SCHEMA_VERSION to ModuleConstants.CONFIG_SCHEMA_VERSION,
+        if (values.string(KEY_REGION_SELECTION).isNotBlank()) return emptyMap()
+        val hasLegacyMode = values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
+        val hasLegacyTarget = values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
+        if (!hasLegacyMode && !hasLegacyTarget) return emptyMap()
+        val migration = linkedMapOf<String, Any>(
+            KEY_REGION_SELECTION to values.regionSelection().storageValue,
         )
+        if (!values.containsKey(KEY_RESTORE_CJK_ORIGINAL_METADATA)) {
+            migration[KEY_RESTORE_CJK_ORIGINAL_METADATA] =
+                values.legacyRestoreCjkOriginalMetadataDefault()
+        }
+        migration[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
+        return migration
     }
 
     private fun Map<String, *>.string(key: String): String = this[key] as? String ?: ""
@@ -320,9 +357,12 @@ object ModuleSettingsSchema {
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_TITLE_CORRECTION_ENABLED,
-        KEY_TITLE_CORRECTION_MODE,
+        KEY_REGION_SELECTION,
         KEY_RESTORE_CJK_ORIGINAL_METADATA,
         KEY_LOCALIZED_METADATA_CACHE,
+        // Retired keys still count as settings so an old store migrates its own
+        // values instead of falling back to the legacy source.
+        KEY_TITLE_CORRECTION_MODE,
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
@@ -364,6 +404,8 @@ object ModuleSettingsSchema {
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"
+    private const val KEY_REGION_SELECTION = "region_selection"
+    /** Retired v20: the single picker that carried both region and title correction. */
     private const val KEY_TITLE_CORRECTION_MODE = "title_correction_mode"
     private const val KEY_RESTORE_CJK_ORIGINAL_METADATA = "restore_cjk_original_metadata"
     private const val KEY_LOCALIZED_METADATA_CACHE = "localized_metadata_cache"

@@ -136,11 +136,34 @@ private fun AppleInternalCatalogResolver.restoreConfiguredStorefront(access: Cat
 
 internal fun AppleInternalCatalogResolver.captureAccountStorefront(access: CatalogAccess) {
     val current = access.storefrontField.get(access.mediaApi) as? String ?: return
-    if (!accountStorefrontCaptured || current != lastAppliedConfiguredStorefront) {
-        accountStorefront = current
-        accountStorefrontCaptured = true
-    }
+    if (!shouldCaptureAccountStorefront(current, lastAppliedConfiguredStorefront)) return
+    accountStorefront = current
+    accountStorefrontCaptured = true
 }
+
+/**
+ * Whether [current] is a value worth remembering as the account's own storefront.
+ *
+ * A value this resolver itself wrote for the configured region is never the account's.  Recording
+ * it would pin playback and every account-scoped lookup to the selected region instead of the
+ * account's real one, so a field still holding our own last write is skipped.
+ */
+internal fun shouldCaptureAccountStorefront(
+    current: String?,
+    lastAppliedConfiguredStorefront: String?,
+): Boolean = current != null &&
+    (lastAppliedConfiguredStorefront == null || current != lastAppliedConfiguredStorefront)
+
+/**
+ * Whether the shared storefront field must be restored after a module-internal lookup that
+ * temporarily wrote [applied] into it.
+ *
+ * The region apply/retry writes the same field, so a value different from [applied] means that
+ * writer owns the field now.  Restoring an observation taken before the call would then silently
+ * undo the region, so only our own still-in-place write is restored.
+ */
+internal fun shouldRestoreModuleLookupStorefront(applied: String?, current: String?): Boolean =
+    applied != null && current == applied
 
 /**
  * The account's real storefront, used to bring entitlement-bound requests back home.

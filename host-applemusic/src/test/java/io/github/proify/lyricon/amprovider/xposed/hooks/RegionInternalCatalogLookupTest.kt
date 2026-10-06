@@ -3,6 +3,8 @@ package io.github.proify.lyricon.amprovider.xposed.hooks
 import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.RegionTitleRequestPolicy
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
+import io.github.proify.lyricon.amprovider.xposed.shouldCaptureAccountStorefront
+import io.github.proify.lyricon.amprovider.xposed.shouldRestoreModuleLookupStorefront
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -173,5 +175,169 @@ class RegionInternalCatalogLookupTest {
             // that the *derivation* ignores the region, not that the two values differ.
             assertEquals("jp", probeStorefront)
         }
+    }
+
+    // ---- The shared MediaApi storefront field: the lever the executor argument is built from ----
+
+    /** A Turkish account browsing with a region selected, as in the device evidence. */
+    private val accountStorefront = "tr"
+
+    private fun fieldStorefront(storefront: String?, language: String?, rewrite: Boolean) =
+        AppleInternalCatalogResolver.moduleCatalogLookupFieldStorefront(
+            storefront = storefront,
+            language = language,
+            regionRewriteEnabled = rewrite,
+            accountStorefront = accountStorefront,
+        )
+
+    @Test
+    fun `an untargeted module lookup runs against the account storefront while a region is active`() {
+        regions.forEach { region ->
+            val rewrite = region.catalogStorefront != null
+            if (rewrite) {
+                assertEquals(
+                    "${region.name} must hand the shared field back to the account",
+                    accountStorefront,
+                    fieldStorefront(storefront = null, language = null, rewrite = true),
+                )
+            } else {
+                assertNull(
+                    "${region.name} must leave the field untouched",
+                    fieldStorefront(storefront = null, language = null, rewrite = false),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the field switch fails open for an unknown account and never overrides a targeted lookup`() {
+        // Account storefront never captured: the field must be left exactly as it is.
+        assertNull(
+            AppleInternalCatalogResolver.moduleCatalogLookupFieldStorefront(
+                storefront = null,
+                language = null,
+                regionRewriteEnabled = true,
+                accountStorefront = null,
+            ),
+        )
+        assertNull(
+            AppleInternalCatalogResolver.moduleCatalogLookupFieldStorefront(
+                storefront = null,
+                language = null,
+                regionRewriteEnabled = true,
+                accountStorefront = "",
+            ),
+        )
+        // A targeted lookup owns its storefront argument; the field is not that lever.
+        assertNull(fieldStorefront(storefront = "jp", language = "ja-JP", rewrite = true))
+        assertNull(fieldStorefront(storefront = "jp", language = null, rewrite = true))
+        assertNull(fieldStorefront(storefront = null, language = "ja-JP", rewrite = true))
+    }
+
+    @Test
+    fun `the identity probe keeps a target-less executor localization while the field carries the account`() {
+        regions.forEach { region ->
+            val rewrite = region.catalogStorefront != null
+            val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
+                storefront = null,
+                language = null,
+                regionRewriteEnabled = rewrite,
+            )
+            if (!rewrite) {
+                assertNull(localization)
+                return@forEach
+            }
+            requireNotNull(localization)
+            // The executor storefront argument stays exactly as Apple's client built it...
+            assertNull(localization.storefront)
+            assertNull(localization.language)
+            assertTrue(AppleInternalCatalogResolver.keepsAccountCatalogTarget(localization))
+            // ...because the shared field is what hands Apple the account storefront to build it
+            // from.  The two levers are complementary: neither one alone is the fix.
+            assertEquals(
+                accountStorefront,
+                fieldStorefront(storefront = null, language = null, rewrite = true),
+            )
+        }
+    }
+
+    @Test
+    fun `the region's own write is never captured as the account storefront`() {
+        // Any value that is not this resolver's own region write is the account's.
+        assertTrue(shouldCaptureAccountStorefront(current = "tr", lastAppliedConfiguredStorefront = null))
+        assertTrue(shouldCaptureAccountStorefront(current = "tr", lastAppliedConfiguredStorefront = "us"))
+        // The field still holds the region storefront we applied: capturing it would pin the
+        // account fallbacks to the selected region.
+        assertFalse(shouldCaptureAccountStorefront(current = "us", lastAppliedConfiguredStorefront = "us"))
+        // Nothing to capture.
+        assertFalse(shouldCaptureAccountStorefront(current = null, lastAppliedConfiguredStorefront = null))
+        assertFalse(shouldCaptureAccountStorefront(current = null, lastAppliedConfiguredStorefront = "us"))
+    }
+
+    @Test
+    fun `a field another writer changed is not restored from a stale observation`() {
+        // Our write is still in place: restore the value observed before the call.
+        assertTrue(
+            shouldRestoreModuleLookupStorefront(applied = accountStorefront, current = accountStorefront),
+        )
+        // The region apply/retry wrote the field while the probe was in flight: it owns the
+        // value now, so restoring the stale observation would undo the chosen region.
+        assertFalse(shouldRestoreModuleLookupStorefront(applied = accountStorefront, current = "us"))
+        assertFalse(shouldRestoreModuleLookupStorefront(applied = accountStorefront, current = null))
+        // Nothing was written: nothing to restore.
+        assertFalse(shouldRestoreModuleLookupStorefront(applied = null, current = "us"))
+        assertFalse(shouldRestoreModuleLookupStorefront(applied = null, current = null))
+    }
+
+    @Test
+    fun `the identity diagnostic states the field before, the value used and the account storefront`() {
+        val captured = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
+            fieldBefore = "us",
+            fieldUsed = accountStorefront,
+            idsCount = 1,
+            storefront = null,
+            language = null,
+            accountStorefront = accountStorefront,
+            accountStorefrontCaptured = true,
+        )
+        assertTrue(captured.contains("fieldStorefront=us->tr"))
+        assertTrue(captured.contains("ids=1"))
+        assertTrue(captured.contains("localization=none/none"))
+        assertTrue(captured.contains("accountStorefront=tr"))
+
+        // Unknown account: the line must say so, not imply the region value is the account's.
+        val unknown = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
+            fieldBefore = "us",
+            fieldUsed = null,
+            idsCount = 1,
+            storefront = null,
+            language = null,
+            accountStorefront = null,
+            accountStorefrontCaptured = false,
+        )
+        assertTrue(unknown.contains("fieldStorefront=us->unchanged"))
+        assertTrue(unknown.contains("accountStorefront=not-captured"))
+
+        // Captured but unread is distinct from never captured.
+        val unset = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
+            fieldBefore = null,
+            fieldUsed = null,
+            idsCount = 0,
+            storefront = null,
+            language = null,
+            accountStorefront = null,
+            accountStorefrontCaptured = true,
+        )
+        assertTrue(unset.contains("fieldStorefront=unset->unchanged"))
+        assertTrue(unset.contains("accountStorefront=unset"))
+    }
+
+    @Test
+    fun `the id count follows the ids parameter and the isrc probe`() {
+        assertEquals(0, AppleInternalCatalogResolver.catalogLookupIdCount(emptyMap()))
+        assertEquals(1, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("ids" to "1440833098")))
+        assertEquals(3, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("ids" to "1,2,3")))
+        assertEquals(1, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("filter[isrc]" to "JPDN1")))
+        assertEquals(0, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("ids" to "")))
     }
 }

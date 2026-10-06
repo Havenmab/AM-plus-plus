@@ -289,6 +289,15 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
             var timeout: Runnable? = null
 
             val responseDiagnostic = AtomicReference<String?>(null)
+            // Set only for the module-internal, untargeted identity probe.  It carries the one
+            // bounded decision line that says which storefront the lookup actually used; the
+            // outcome (response size or failure) is appended when this request terminates.
+            var moduleIdentityDetail: String? = null
+            fun logModuleIdentityOutcome(outcome: String) {
+                val detail = moduleIdentityDetail ?: return
+                moduleIdentityDetail = null
+                logModuleIdentityLookup(detail, outcome)
+            }
             val responseTask = catalogResponseDispatcher.newTask<Any, CatalogResponseSnapshot, Result>(
                 snapshotOnMain = { response ->
                     val snapshot = response?.let {
@@ -309,6 +318,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = responseDiagnostic.get(),
                     )
+                    logModuleIdentityOutcome(responseDiagnostic.get() ?: "response")
                     onResult(result)
                 },
                 failOnMain = { error ->
@@ -326,6 +336,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = "error=${error.javaClass.name}:${error.message}",
                     )
+                    logModuleIdentityOutcome("transform_failed:${error.javaClass.simpleName}")
                     onResult(null)
                 },
             )
@@ -392,6 +403,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                     detail = "error=${error.javaClass.name}:${error.message}",
                 )
+                logModuleIdentityOutcome("$event:${error.javaClass.simpleName}")
                 // Continuations may resume from an Apple network thread.  Preserve the resolver
                 // callback contract by publishing failures on the host main executor as well.
                 mainHandler.post { onResult(null) }
@@ -399,19 +411,34 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
 
             runCatching {
                 val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
-                // An untargeted module query is the identity/ISRC/genre probe.  It must keep
-                // the catalog target Apple's own client resolves -- including its storefront
-                // argument -- because its catalog IDs only exist there.  A module token marks
-                // it as resolver-owned so the region rewrite leaves it alone, but the
-                // localization deliberately carries no storefront of its own: forcing one
-                // overrode the app's own resolution and emptied the identity, which stopped
-                // the per-song original-name correction.
+                // An untargeted module query is the identity/ISRC/genre probe.  It must keep the
+                // catalog target Apple's own client resolves, because its catalog IDs only exist
+                // there.  A module token marks it as resolver-owned so the region rewrite leaves
+                // it alone, and the executor storefront argument is never written from outside:
+                // forcing one replaced the app's own resolution and emptied the identity, which
+                // stopped the per-song original-name correction.  The shared MediaApi storefront
+                // field is the storefront Apple's client builds that argument from, so while the
+                // region rewrite holds it at the region's value it has to be handed back to the
+                // captured account storefront for the duration of this call, then restored.
                 val regionRewriteEnabled = isGlobalRegionRewriteEnabled()
+                val untargetedModuleLookup = storefront == null && language == null
+                if (untargetedModuleLookup && regionRewriteEnabled) {
+                    // Capture before anything switches the field, and only from a value the
+                    // region rewrite did not itself write.
+                    captureAccountStorefront(access)
+                }
                 val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
                     storefront = storefront,
                     language = language,
                     regionRewriteEnabled = regionRewriteEnabled,
                 )
+                val temporaryFieldStorefront =
+                    AppleInternalCatalogResolver.moduleCatalogLookupFieldStorefront(
+                        storefront = storefront,
+                        language = language,
+                        regionRewriteEnabled = regionRewriteEnabled,
+                        accountStorefront = accountStorefront?.takeIf { accountStorefrontCaptured },
+                    )
                 if (localization != null) {
                     if (localization.storefront != null) {
                         // Capture before the field is temporarily switched below, otherwise the
@@ -452,6 +479,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = "mode=direct-network, timeoutMs=$QUERY_TIMEOUT_MS",
                     )
+                    logModuleIdentityOutcome("timeout")
                     onResult(null)
                 }.also { mainHandler.postDelayed(it, QUERY_TIMEOUT_MS) }
 
@@ -462,10 +490,24 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                 )
                 val previousStorefront = access.storefrontField.get(access.mediaApi) as? String
                 val targetStorefront = localization?.storefront
+                // The field value actually written for the call: the temporary account
+                // storefront for an untargeted identity probe, or the request's own target.
+                val appliedStorefront = temporaryFieldStorefront ?: targetStorefront
+                if (localization != null && untargetedModuleLookup) {
+                    moduleIdentityDetail = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
+                        fieldBefore = previousStorefront,
+                        fieldUsed = temporaryFieldStorefront,
+                        idsCount = AppleInternalCatalogResolver.catalogLookupIdCount(queryParams),
+                        storefront = localization.storefront,
+                        language = localization.language,
+                        accountStorefront = accountStorefront,
+                        accountStorefrontCaptured = accountStorefrontCaptured,
+                    )
+                }
                 val directResult = try {
                     activeCatalogRequest.set(localization)
-                    if (targetStorefront != null) {
-                        access.storefrontField.set(access.mediaApi, targetStorefront)
+                    if (appliedStorefront != null) {
+                        access.storefrontField.set(access.mediaApi, appliedStorefront)
                     }
                     access.directQueryMethod.invoke(
                         access.mediaApi,
@@ -475,7 +517,12 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     )
                 } finally {
                     activeCatalogRequest.remove()
-                    if (targetStorefront != null) {
+                    // Only a field still holding our own write is restored to the value observed
+                    // before the call.  The region apply/retry writes the same field from another
+                    // site; if it won the race, that newer value owns the field and restoring the
+                    // stale observation would silently undo the chosen region.
+                    val currentStorefront = access.storefrontField.get(access.mediaApi) as? String
+                    if (shouldRestoreModuleLookupStorefront(appliedStorefront, currentStorefront)) {
                         access.storefrontField.set(access.mediaApi, previousStorefront)
                     }
                 }
@@ -640,6 +687,19 @@ internal fun AppleInternalCatalogResolver.logCatalogRequestDiagnostic(
                 detail?.let { ", $it" }.orEmpty()
         )
     }
+
+
+/**
+ * One bounded decision line per module-internal, untargeted identity lookup: which storefront
+ * the shared MediaApi field held, which one the call used, how many ids it sent, the chosen
+ * localization, the captured account storefront at that moment, and the response size or failure.
+ * Debug-only and emitted through the same diagnostic channel as the other catalog traces, so the
+ * next device log states plainly which storefront the identity lookup used.
+ */
+internal fun logModuleIdentityLookup(detail: String, outcome: String) {
+    if (!BuildConfig.DEBUG) return
+    ProviderLogger.diagnostic("AppleCatalogModuleIdentity: $detail, outcome=$outcome")
+}
 
 
 internal fun AppleInternalCatalogResolver.catalogResponseDiagnostic(

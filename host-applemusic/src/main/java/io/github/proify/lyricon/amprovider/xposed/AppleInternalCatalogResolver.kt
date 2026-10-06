@@ -201,6 +201,29 @@ internal class AppleInternalCatalogResolver(
         }
     }
 
+    /**
+     * User-facing 清空检索库 maintenance seam: drops every memoized lookup in this
+     * resolver and closes both persistent SQLite handles so the caller can delete
+     * the database files without leaving a stale open connection behind.
+     *
+     * The callback maps that track in-flight requests are intentionally left
+     * alone so pending callers still receive their result; the request that
+     * follows a clear always misses and re-queries the catalog.
+     */
+    internal fun dropMetadataCachesForMaintenance(): Int {
+        val dropped = persistentLocalizedCache.closeForMaintenance() +
+            persistentOriginalCache.resetForMaintenance()
+        synchronized(cache) { cache.clear() }
+        synchronized(localizedCache) { localizedCache.clear() }
+        synchronized(localizedArtistAliasCache) { localizedArtistAliasCache.clear() }
+        synchronized(requestPriorityByMediaId) { requestPriorityByMediaId.clear() }
+        synchronized(warmedSelections) { warmedSelections.clear() }
+        synchronized(warmingSelections) { warmingSelections.clear() }
+        catalogIdentityCache.clear()
+        originalArtistLanguageCache.clear()
+        return dropped
+    }
+
     fun cachedLocalizedArtist(selection: Int, artistKeys: Collection<String>): Alias? {
         val languageTags = languageTagsForContentUiLanguage(selection)
         val keys = artistKeys.flatMap { key ->

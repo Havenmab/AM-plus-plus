@@ -116,6 +116,7 @@ class OrdinarySettingsWritePolicyTest {
                 "override_account_language" to false,
                 "restore_cjk_original_metadata" to false,
                 "localized_metadata_cache" to true,
+                "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,

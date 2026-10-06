@@ -9,6 +9,7 @@ import android.os.Handler
 import com.juren233.hyperlyricsenhanced.BuildConfig
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /** Independent persistent cache for original-region song, album, and artist metadata. */
 internal class AppleOriginalMetadataCache(
@@ -44,11 +45,43 @@ internal class AppleOriginalMetadataCache(
     private var warmed = false
     private var warming = false
     private val warmCallbacks = mutableListOf<(Int?) -> Unit>()
+    /**
+     * Bumped by [resetForMaintenance]; an in-flight warm refuses to publish rows it
+     * read before a maintenance clear, so a concurrently deleted cache cannot leak
+     * back into memory.
+     */
+    private val maintenanceEpoch = AtomicLong(0L)
     @Volatile
     private var enabled = true
 
     fun setEnabled(value: Boolean) {
         enabled = value
+    }
+
+    /**
+     * Maintenance seam for the user-facing 清空检索库 action: drops the warmed
+     * in-memory rows, clears the artist-region preferences (in disk and in the
+     * live `SharedPreferences` instance) and closes the SQLite handle so the
+     * caller can delete the files without leaving a stale open connection.
+     */
+    fun resetForMaintenance(): Int {
+        val dropped = synchronized(memoryCache) {
+            val size = memoryCache.size
+            memoryCache.clear()
+            size
+        }
+        maintenanceEpoch.incrementAndGet()
+        synchronized(warmLock) {
+            warmed = false
+            warming = false
+        }
+        synchronized(artistRegionLock) {
+            runCatching { artistRegionPreferences.edit().clear().commit() }
+                .onFailure { ProviderLogger.error("Apple 原地区歌手地区偏好清理失败", it) }
+        }
+        runCatching { helper.close() }
+            .onFailure { ProviderLogger.error("Apple 原地区元数据缓存关闭失败", it) }
+        return dropped
     }
 
     fun get(
@@ -163,6 +196,7 @@ internal class AppleOriginalMetadataCache(
             }
         }
         if (!startWarm) return
+        val epoch = maintenanceEpoch.get()
         warmExecutor.execute {
             val aliases = if (enabled) {
                 runCatching { readRecent() }
@@ -171,7 +205,7 @@ internal class AppleOriginalMetadataCache(
             } else {
                 null
             }
-            if (aliases != null) {
+            if (aliases != null && maintenanceEpoch.get() == epoch) {
                 synchronized(memoryCache) { memoryCache.putAll(aliases) }
             }
             val callbacks = synchronized(warmLock) {

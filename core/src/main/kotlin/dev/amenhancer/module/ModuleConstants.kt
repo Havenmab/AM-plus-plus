@@ -27,8 +27,13 @@ object ModuleConstants {
      * The migration carries the retired master over onto the new switch for a
      * store that already selected a region, and leaves the original-name switch
      * off by default as HLE does.
+     *
+     * 22 adds `metadata_cache_clear_generation`, the monotonic one-shot signal the
+     * 「清空检索库」 action uses to ask the live runtime to drop the persistent
+     * region/original metadata caches.  It defaults to 0, so an upgrading store
+     * starts with no pending clear.
      */
-    const val CONFIG_SCHEMA_VERSION = 21
+    const val CONFIG_SCHEMA_VERSION = 22
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

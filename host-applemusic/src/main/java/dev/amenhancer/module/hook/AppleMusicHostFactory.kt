@@ -116,6 +116,9 @@ object AppleMusicHostFactory {
                         overrideAccountLanguage = settings.overrideAccountLanguage,
                         restoreCjkOriginalMetadata = settings.restoreCjkOriginalMetadata,
                         localizedMetadataCache = settings.localizedMetadataCache,
+                        // Live read: the settings page can clear the index at any
+                        // time, so the runtime must not snapshot the generation.
+                        metadataCacheClearSignal = { config.metadataCacheClearGeneration() },
                     ).install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)

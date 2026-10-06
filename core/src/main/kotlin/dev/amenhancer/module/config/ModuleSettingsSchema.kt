@@ -81,6 +81,7 @@ object ModuleSettingsSchema {
                 KEY_LOCALIZED_METADATA_CACHE,
                 default = true,
             ),
+            metadataCacheClearGeneration = metadataCacheClearGeneration(values),
             customLyricsEnabled = values.boolean(
                 KEY_CUSTOM_LYRICS_ENABLED,
                 default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
@@ -167,6 +168,8 @@ object ModuleSettingsSchema {
             KEY_OVERRIDE_ACCOUNT_LANGUAGE to settings.overrideAccountLanguage,
             KEY_RESTORE_CJK_ORIGINAL_METADATA to settings.restoreCjkOriginalMetadata,
             KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
+            KEY_METADATA_CACHE_CLEAR_GENERATION to
+                settings.metadataCacheClearGeneration.coerceAtLeast(0L),
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
             KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
@@ -239,6 +242,14 @@ object ModuleSettingsSchema {
     /** Avoid turning an unrelated/empty remote group into a completed migration. */
     fun hasMigratableValues(values: Map<String, *>): Boolean =
         values.keys.any { it in settingKeys || it in obsoleteKeys || it in indexPointerKeys }
+
+    /**
+     * Cheap single-key read of the one-shot 「清空检索库」 signal.  The metadata
+     * runtime polls this on its request seams, so it must not decode every
+     * setting (and the map values are already loaded by the caller).
+     */
+    fun metadataCacheClearGeneration(values: Map<String, *>): Long =
+        values.long(KEY_METADATA_CACHE_CLEAR_GENERATION)?.coerceAtLeast(0L) ?: 0L
 
     /** Legacy v1 preference-string manifest, kept for pre-migration reads. */
     fun decodeLegacyCustomLyricsManifest(values: Map<String, *>): CustomLyricsManifest =
@@ -396,6 +407,7 @@ object ModuleSettingsSchema {
         KEY_OVERRIDE_ACCOUNT_LANGUAGE,
         KEY_RESTORE_CJK_ORIGINAL_METADATA,
         KEY_LOCALIZED_METADATA_CACHE,
+        KEY_METADATA_CACHE_CLEAR_GENERATION,
         // Retired keys still count as settings so an old store migrates its own
         // values instead of falling back to the legacy source.
         KEY_TITLE_CORRECTION_ENABLED,
@@ -449,6 +461,8 @@ object ModuleSettingsSchema {
     private const val KEY_TITLE_CORRECTION_MODE = "title_correction_mode"
     private const val KEY_RESTORE_CJK_ORIGINAL_METADATA = "restore_cjk_original_metadata"
     private const val KEY_LOCALIZED_METADATA_CACHE = "localized_metadata_cache"
+    /** Monotonic one-shot signal written by the 「清空检索库」 action. */
+    private const val KEY_METADATA_CACHE_CLEAR_GENERATION = "metadata_cache_clear_generation"
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"

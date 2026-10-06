@@ -81,6 +81,7 @@ class ModuleSettingsSchemaTest {
                 "override_account_language" to false,
                 "restore_cjk_original_metadata" to false,
                 "localized_metadata_cache" to true,
+                "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
@@ -131,6 +132,7 @@ class ModuleSettingsSchemaTest {
                 "override_account_language" to false,
                 "restore_cjk_original_metadata" to false,
                 "localized_metadata_cache" to true,
+                "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
                 "online_lyrics_supplement_enabled" to false,
@@ -376,7 +378,7 @@ class ModuleSettingsSchemaTest {
     @Test
     fun `a region-era schema upgrades with the online toggle absent and off`() {
         // The region-only state: v16 carried the region extras but none of the
-        // online lyric keys.  Its stored region values must survive the jump to 21.
+        // online lyric keys.  Its stored region values must survive the jump to 22.
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 16,
@@ -392,7 +394,7 @@ class ModuleSettingsSchemaTest {
 
         assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
         assertEquals(true, upgraded["custom_lyrics_enabled"])
-        // v16 -> v21 transition: the region extras are preserved, not re-derived, and
+        // v16 -> v22 transition: the region extras are preserved, not re-derived, and
         // the retired picker is rewritten onto the region key.  The retired master
         // switch carried over onto HLE's account-language override.
         assertEquals("japan", upgraded["region_selection"])
@@ -470,7 +472,7 @@ class ModuleSettingsSchemaTest {
             legacyValues = emptyMap<String, Any?>(),
         )!!
 
-        // v17 -> v21 transition: region values preserved, the retired master carried
+        // v17 -> v22 transition: region values preserved, the retired master carried
         // over onto the override switch.
         assertEquals("japan", upgraded["region_selection"])
         assertEquals(true, upgraded["override_account_language"])
@@ -738,6 +740,47 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
+    fun `metadata cache clear generation defaults to zero and survives a v21 upgrade`() {
+        assertEquals(
+            0L,
+            ModuleSettingsSchema.decode(emptyMap<String, Any>()).metadataCacheClearGeneration,
+        )
+        // A malformed value reads as "no pending clear" instead of throwing.
+        assertEquals(
+            0L,
+            ModuleSettingsSchema.metadataCacheClearGeneration(
+                mapOf("metadata_cache_clear_generation" to "not-a-number"),
+            ),
+        )
+        assertEquals(
+            3L,
+            ModuleSettingsSchema.metadataCacheClearGeneration(
+                mapOf("metadata_cache_clear_generation" to 3L),
+            ),
+        )
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(metadataCacheClearGeneration = 2L),
+        )
+        assertEquals(2L, encoded["metadata_cache_clear_generation"])
+        assertEquals(2L, ModuleSettingsSchema.decode(encoded).metadataCacheClearGeneration)
+
+        // A v21 store has no generation key: the upgrade adds the default and
+        // keeps every other value untouched.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 21,
+                "region_selection" to "japan",
+                "restore_cjk_original_metadata" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+        assertEquals(0L, upgraded["metadata_cache_clear_generation"])
+        assertEquals("japan", upgraded["region_selection"])
+        assertEquals(true, upgraded["restore_cjk_original_metadata"])
+    }
+
+    @Test
     fun `every region selection survives a settings round trip`() {
         RegionSelection.values().forEach { region ->
             val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
@@ -753,7 +796,7 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
-    fun `a v15 configuration upgrades to v21 without losing its region behaviour`() {
+    fun `a v15 configuration upgrades to v22 without losing its region behaviour`() {
         val upgradedRegion = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 15,

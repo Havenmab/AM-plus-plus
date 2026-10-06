@@ -55,6 +55,14 @@ data class ModuleSettings(
      * does not have to re-query Apple Music's catalog.
      */
     val localizedMetadataCache: Boolean = true,
+    /**
+     * Monotonic one-shot signal for the 「清空检索库」 action.  The settings page
+     * increments it, and the live metadata runtime observes the new value through
+     * the target config client (`TargetConfigClient`, in host-api) to delete the
+     * persistent region/original metadata caches (and drop its in-memory copies)
+     * exactly once.  It carries no state of its own and defaults to 0.
+     */
+    val metadataCacheClearGeneration: Long = 0L,
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,

@@ -402,6 +402,62 @@ class HleMetadataIntegrationStructuralTest {
         // The picker enumerates the model, so new regions appear without a UI change.
         assertTrue(embedded.contains("RegionSelection.values()"))
         assertFalse(embedded.contains("刷新资料库"))
+        // AM++ adds the one-shot 「清空检索库」 action right after HLE's four controls,
+        // with its own confirmation dialog and the persisted generation signal.
+        assertTrue(embedded.contains("清空检索库"))
+        assertTrue(embedded.contains("metadataCacheClearGeneration"))
+        assertTrue(embedded.contains("confirmEmbeddedMetadataCacheClear"))
+        assertTrue(embedded.contains("下次读取时重新向 Apple Music 获取"))
+    }
+
+    @Test
+    fun `clear index action signals the live runtime through the config generation`() {
+        val schema = source("core/src/main/kotlin/dev/amenhancer/module/config/ModuleSettingsSchema.kt")
+        val factory = source(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt",
+        )
+        val runtime = source(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt",
+        )
+        val bridge = source(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataSurfaceBridge.kt",
+        )
+        val index = source(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataCacheIndex.kt",
+        )
+        // The UI only writes one schema field; the host reads it live.
+        assertTrue(schema.contains("metadata_cache_clear_generation"))
+        assertTrue(
+            factory.contains(
+                "metadataCacheClearSignal = { config.metadataCacheClearGeneration() }",
+            ),
+        )
+        assertTrue(runtime.contains("HleMetadataCacheClearObserver("))
+        assertTrue(runtime.contains("HleMetadataCacheClearHandledStore("))
+        assertTrue(runtime.contains("metadataCacheClearObserver.observe()"))
+        assertTrue(runtime.contains("observeMetadataCacheClear = metadataCacheClearObserver::observe"))
+        assertTrue(index.contains("HleMetadataCacheClearHandledStore"))
+        assertTrue(index.contains("handled_clear_generation"))
+        assertTrue(bridge.contains("observeMetadataCacheClear()"))
+        // Every region namespace is derived from the model, and all three SQLite
+        // sidecars plus the artist-region preferences are removed.
+        assertTrue(index.contains("RegionSelection.values().map(RegionSelection::cacheNamespace)"))
+        assertTrue(index.contains("-journal"))
+        assertTrue(index.contains("-wal"))
+        assertTrue(index.contains("-shm"))
+        assertTrue(index.contains("deleteSharedPreferences"))
+        assertTrue(index.contains("hyperlyricsenhanced_apple_metadata\""))
+        assertTrue(index.contains("hyperlyricsenhanced_apple_original_metadata\""))
+        assertTrue(index.contains("hyperlyricsenhanced_apple_original_artist_regions\""))
+        // The retired un-namespaced databases are always included.
+        assertTrue(index.contains("\${LOCALIZED_DATABASE_PREFIX}.db"))
+        assertTrue(index.contains("\${ORIGINAL_DATABASE_PREFIX}.db"))
+        // ... including the fork's short-lived pre-namespace v5 files.
+        assertTrue(index.contains("_v5.db"))
+        assertTrue(index.contains("\${ARTIST_REGION_PREFERENCES_PREFIX}_v5"))
+        // The one visible log line uses ProviderLogger.info, never diagnostic.
+        assertTrue(index.contains("ProviderLogger.info"))
+        assertFalse(index.contains("ProviderLogger.diagnostic"))
     }
 
     @Test

@@ -43,6 +43,14 @@ class TargetConfigClient private constructor(
     /** Ordinary feature settings only; never opens the potentially large lyrics index. */
     fun settings(): ModuleSettings = ModuleSettingsSchema.decode(valuesProvider())
 
+    /**
+     * Cheap single-key read of the one-shot 「清空检索库」 signal.  The metadata
+     * runtime polls this on its request seams, so it deliberately does not decode
+     * the whole [ModuleSettings] on every call.
+     */
+    fun metadataCacheClearGeneration(): Long =
+        ModuleSettingsSchema.metadataCacheClearGeneration(valuesProvider())
+
     /** Background custom-lyrics index read. */
     fun customLyricsManifest(): CustomLyricsManifest {
         val values = valuesProvider()

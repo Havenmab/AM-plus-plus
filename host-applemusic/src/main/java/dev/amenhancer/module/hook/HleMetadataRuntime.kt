@@ -56,6 +56,13 @@ internal class HleMetadataRuntime(
     private val restoreCjkOriginalMetadata: Boolean = false,
     /** Persist region/original metadata lookups in SQLite across cold starts. */
     private val localizedMetadataCache: Boolean = true,
+    /**
+     * Cheap read of the one-shot 「清空检索库」 signal.  The runtime polls it on its
+     * metadata request seams and clears the persistent and in-memory caches once
+     * per generation.  Defaults to "no pending clear" so test/dynamic runtimes
+     * stay inert.
+     */
+    private val metadataCacheClearSignal: () -> Long = { 0L },
 ) {
     /** The three controls projected onto the request seams; see [RegionTitleRequestPolicy]. */
     private val requestPlan = RegionTitleRequestPolicy.plan(
@@ -102,6 +109,19 @@ internal class HleMetadataRuntime(
         hookResolver = hookResolver,
         mainHandler = runtime.mainHandler,
         cacheNamespace = requestPlan.cacheNamespace,
+    )
+    /**
+     * Owns the user-facing 「清空检索库」 action: the settings page only bumps a
+     * persisted generation, and this observer deletes the caches the first time
+     * the runtime sees the new value on a request seam (or at install, if the
+     * clear was requested just before the previous process ended).
+     */
+    private val metadataCacheClearHandledStore = HleMetadataCacheClearHandledStore(application)
+    private val metadataCacheClearObserver = HleMetadataCacheClearObserver(
+        signal = metadataCacheClearSignal,
+        onClear = { HleMetadataCacheIndex.clear(application, catalogResolver, metadataStore) },
+        initialHandledGeneration = metadataCacheClearHandledStore.read(),
+        onHandled = metadataCacheClearHandledStore::write,
     )
     private lateinit var contentLocalizationHooks: AppleContentLocalizationHooks
     private lateinit var frameworkHooks: AppleFrameworkMetadataHooks
@@ -164,6 +184,9 @@ internal class HleMetadataRuntime(
             regionReplacementRequested = requestPlan.rewritesCatalogRequests,
             localizedMetadataCacheEnabled = localizedMetadataCache,
         )
+        // A clear requested just before the previous process ended has no live
+        // request seam to ride on, so settle it as soon as the runtime is up.
+        metadataCacheClearObserver.observe()
 
         contentLocalizationHooks = AppleContentLocalizationHooks(
             runtime = runtime,
@@ -423,6 +446,7 @@ internal class HleMetadataRuntime(
             configuredContentUiLanguage = requestPlan.contentUiLanguageSelection,
             restoreOriginalMetadata = requestPlan.probesOriginalMetadata,
             profileId = requestPlan.cacheNamespace,
+            observeMetadataCacheClear = metadataCacheClearObserver::observe,
         )
         installedBridge.install()
         surfaceBridge = installedBridge

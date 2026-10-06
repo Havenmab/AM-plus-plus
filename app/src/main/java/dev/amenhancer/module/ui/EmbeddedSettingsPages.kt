@@ -490,6 +490,41 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     ),
                 ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
             }
+            // AM++: the 检索库 exists whenever the runtime can write it — a region
+            // replacement caches localized results even without the override switch —
+            // so the clear row follows HLE's four controls in every installable state.
+            if (settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata) {
+                addView(embeddedDivider(activity))
+                addView(embeddedNavigationRow(
+                    activity,
+                    "清空检索库",
+                    "删除已缓存的所有地区歌曲信息与原地区原名结果，下次读取时重新向 Apple Music 获取",
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.DocumentSearch,
+                        EmbeddedSettingsPalette.accent,
+                    ),
+                ) {
+                    confirmEmbeddedMetadataCacheClear(activity) {
+                        // Read the persisted draft so an earlier toggle that did not
+                        // re-render the page is not reverted by this action's copy.
+                        val current = runCatching { controller.currentSettings() }
+                            .getOrElse { settings }
+                        onSettingsChanged(
+                            current.copy(
+                                metadataCacheClearGeneration =
+                                    current.metadataCacheClearGeneration + 1L,
+                            ),
+                        )
+                        // Re-render so a second tap carries the incremented value.
+                        pageRefresh?.invoke()
+                        Toast.makeText(
+                            activity,
+                            "已请求清空检索库，将在下次读取歌曲信息时生效",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                })
+            }
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,
@@ -918,6 +953,22 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
             }, LinearLayout.LayoutParams(dp(activity, if (isEmbeddedPhone(activity)) 36 else 32), dp(activity, 44)))
         }, matchWidthWrapContent())
     }
+
+
+internal fun EmbeddedSettingsHost.confirmEmbeddedMetadataCacheClear(
+    activity: Activity,
+    onConfirmed: () -> Unit,
+) {
+    AlertDialog.Builder(activity)
+        .setTitle("清空检索库")
+        .setMessage(
+            "将删除所有地区已缓存的歌曲信息与原地区原名结果，下次读取时重新向 Apple Music 获取。" +
+                "歌词、字体等自定义内容不受影响。",
+        )
+        .setNegativeButton("取消", null)
+        .setPositiveButton("清空") { _, _ -> onConfirmed() }
+        .show()
+}
 
 
 internal fun EmbeddedSettingsHost.confirmEmbeddedLyricsDelete(activity: Activity, group: CustomLyricsUiGroup) {

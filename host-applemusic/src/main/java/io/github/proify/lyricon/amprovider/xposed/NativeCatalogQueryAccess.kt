@@ -399,27 +399,25 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
 
             runCatching {
                 val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
-                // An untargeted module query is the identity/ISRC/genre probe.  It must address
-                // the account's own storefront, because its catalog IDs only exist there, but it
-                // has no language of its own.  Giving it the same token as every other module
-                // request keeps the user's region rewrite from redirecting it to a storefront
-                // the IDs are absent from -- a redirect that silently emptied the identity and
-                // stopped the per-song original-name correction.
+                // An untargeted module query is the identity/ISRC/genre probe.  It must keep
+                // the catalog target Apple's own client resolves -- including its storefront
+                // argument -- because its catalog IDs only exist there.  A module token marks
+                // it as resolver-owned so the region rewrite leaves it alone, but the
+                // localization deliberately carries no storefront of its own: forcing one
+                // overrode the app's own resolution and emptied the identity, which stopped
+                // the per-song original-name correction.
                 val regionRewriteEnabled = isGlobalRegionRewriteEnabled()
                 val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
                     storefront = storefront,
                     language = language,
                     regionRewriteEnabled = regionRewriteEnabled,
-                    accountStorefront = if (regionRewriteEnabled) {
-                        accountStorefrontForPlaybackRequest()
-                    } else {
-                        null
-                    },
                 )
                 if (localization != null) {
-                    // Capture before the field is temporarily switched below, otherwise the
-                    // module's own target storefront would be remembered as the account's.
-                    captureAccountStorefront(access)
+                    if (localization.storefront != null) {
+                        // Capture before the field is temporarily switched below, otherwise the
+                        // module's own target storefront would be remembered as the account's.
+                        captureAccountStorefront(access)
+                    }
                     requestToken = catalogRequestSequence.incrementAndGet().toString(36)
                     pendingCatalogRequests[requestToken] = localization
                 }
@@ -463,10 +461,11 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     onFailure = { error -> fail("request_failed", error) },
                 )
                 val previousStorefront = access.storefrontField.get(access.mediaApi) as? String
+                val targetStorefront = localization?.storefront
                 val directResult = try {
                     activeCatalogRequest.set(localization)
-                    localization?.let {
-                        access.storefrontField.set(access.mediaApi, it.storefront)
+                    if (targetStorefront != null) {
+                        access.storefrontField.set(access.mediaApi, targetStorefront)
                     }
                     access.directQueryMethod.invoke(
                         access.mediaApi,
@@ -476,7 +475,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     )
                 } finally {
                     activeCatalogRequest.remove()
-                    if (localization != null) {
+                    if (targetStorefront != null) {
                         access.storefrontField.set(access.mediaApi, previousStorefront)
                     }
                 }

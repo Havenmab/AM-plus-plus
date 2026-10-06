@@ -790,7 +790,13 @@ internal class AppleInternalCatalogResolver(
     )
 
     data class CatalogRequestLocalization(
-        val storefront: String,
+        /**
+         * Catalog storefront this module request targets, or null when the request has no
+         * target of its own (the untargeted identity/ISRC/genre probe).  A null storefront
+         * means every seam must leave the request's storefront to Apple's own client: writing
+         * one from outside bypasses the app's own resolution of the account-owned catalog ID.
+         */
+        val storefront: String?,
         /**
          * Catalog `l` language this module request targets, or null when the request
          * deliberately keeps the host's own request language (the untargeted
@@ -931,6 +937,14 @@ internal class AppleInternalCatalogResolver(
         internal const val QUERY_TIMEOUT_MS = 30_000L
         internal const val ARTIST_ALIAS_CACHE_SCHEMA = "V2"
         internal const val CATALOG_REQUEST_TOKEN_PARAM = "hle_catalog_request"
+
+        /**
+         * Minimum shared run between a kana artist reading and the localized Latin artist
+         * before a same-title alias is trusted as the original-region artist.  Four covers
+         * "Hige Driver"/"ヒゲドライバー" (shared "higed") while rejecting "OneRepublic"/
+         * "ワンリパブリック" (longest shared run "rik").
+         */
+        internal const val ORIGINAL_ARTIST_CORRESPONDENCE_MIN_RUN = 4
 
         /**
          * Marks a request the catalog-executor layer already localized by rewriting its
@@ -1298,15 +1312,16 @@ internal class AppleInternalCatalogResolver(
             }
 
         /**
-         * True when [localization] describes a module-owned request that deliberately keeps
-         * the account's own catalog storefront and request language.
+         * True when [localization] describes a module-owned request that has no catalog
+         * target of its own and must keep the host's own storefront and request language.
          *
          * Such a request (the untargeted identity/ISRC/genre probe) still carries the
-         * module's token, so every seam knows the module owns it, but it has no region target
-         * of its own: its catalog IDs are only meaningful in the storefront they were read
-         * from.  The region rewrite must therefore leave its storefront argument, `l`
-         * parameter and `Accept-Language`/storefront headers untouched.  A null localization
-         * is ordinary Apple Music traffic and is not covered.
+         * module's token, so every seam knows the module owns it, but it deliberately
+         * writes neither a storefront nor a language: its catalog IDs are only meaningful
+         * in the storefront Apple's client resolves them from.  The region rewrite must
+         * therefore leave its storefront argument, `l` parameter and
+         * `Accept-Language`/storefront headers untouched.  A null localization is ordinary
+         * Apple Music traffic and is not covered.
          */
         internal fun keepsAccountCatalogTarget(
             localization: CatalogRequestLocalization?,
@@ -1317,24 +1332,22 @@ internal class AppleInternalCatalogResolver(
          *
          * A query with both a storefront and a language keeps them (the original-region probe
          * and the fixed-region batch lookups).  An untargeted query -- the identity/ISRC/genre
-         * probe, which deliberately asks the account's own storefront -- is pinned to
-         * [accountStorefront] with no language of its own while a region rewrite is active, so
-         * every region seam can recognise it as module-owned and leave it alone.  With no
-         * region configured the probe keeps its historical token-less shape, and when the
-         * account storefront is unknown the probe fails open to that same shape.
+         * probe, whose catalog IDs only exist in the storefront Apple's client already resolved
+         * them from -- is marked module-owned with no target of its own while a region rewrite
+         * is active.  Its token keeps every region seam from redirecting it, but it must carry
+         * neither a storefront nor a language: writing either one overrides the app's own
+         * request shape and empties the identity again.  With no region configured the probe
+         * keeps its historical token-less shape.
          */
         internal fun moduleCatalogRequestLocalization(
             storefront: String?,
             language: String?,
             regionRewriteEnabled: Boolean,
-            accountStorefront: String?,
         ): CatalogRequestLocalization? = when {
             storefront != null && language != null ->
                 CatalogRequestLocalization(storefront, language)
             storefront == null && language == null && regionRewriteEnabled ->
-                accountStorefront?.let { account ->
-                    CatalogRequestLocalization(storefront = account, language = null)
-                }
+                CatalogRequestLocalization(storefront = null, language = null)
             else -> null
         }
 
@@ -1381,7 +1394,111 @@ internal class AppleInternalCatalogResolver(
             localizedTitle: String,
             localizedArtist: String,
         ): Boolean = isOriginalTitle(alias, localizedTitle) ||
-            nonLatinLetterCount(localizedTitle) > 0
+            nonLatinLetterCount(localizedTitle) > 0 ||
+            isConfidentSameTitleOriginalArtist(
+                alias = alias,
+                localizedTitle = localizedTitle,
+                localizedArtist = localizedArtist,
+            )
+
+        /**
+         * True when a catalog alias keeps the account's Latin title and only carries the
+         * original-region artist credit, e.g. "Catchphrase"/"Yabasu & Hatsune Miku" ->
+         * "Catchphrase"/"ヤバス, Hatsune Miku".  The device evidence requires the artist to be
+         * corrected even when the title is unchanged, which [isOriginalTitle] cannot see.
+         *
+         * The guard must not accept a storefront localization of a Western artist
+         * ("OneRepublic" -> "ワンリパブリック") merely because it is non-Latin.  The strongest
+         * evidence available without a name database is that the localized Latin artist reads
+         * as the candidate's kana credit: the candidate must be kana-only (a Han credit such
+         * as "當山 みれい" is a different name, not a reading of "MIREI") and the romanized
+         * kana must share a substantial run with the normalized localized artist.
+         */
+        internal fun isConfidentSameTitleOriginalArtist(
+            alias: Alias,
+            localizedTitle: String,
+            localizedArtist: String,
+        ): Boolean {
+            if (localizedTitle.isBlank() || localizedArtist.isBlank()) return false
+            if (normalize(alias.title) != normalize(localizedTitle)) return false
+            val artist = alias.artist
+            if (nonLatinLetterCount(artist) == 0) return false
+            if (containsHanCharacters(artist)) return false
+            val reading = kanaReadingOf(artist) ?: return false
+            val localizedKey = normalizedLatinArtistKey(localizedArtist)
+            if (localizedKey.isEmpty()) return false
+            return longestCommonSubstringLength(reading, localizedKey) >=
+                ORIGINAL_ARTIST_CORRESPONDENCE_MIN_RUN
+        }
+
+        /**
+         * Hepburn-ish romanization of every kana in [value], ignoring Latin, Han and
+         * punctuation.  Returns null when [value] carries no kana at all.
+         */
+        internal fun kanaReadingOf(value: String): String? {
+            val folded = buildString(value.length) {
+                value.forEach { character ->
+                    val code = character.code
+                    append(
+                        if (code in 0x30a1..0x30f6) (code - 0x60).toChar() else character
+                    )
+                }
+            }
+            val builder = StringBuilder()
+            var index = 0
+            while (index < folded.length) {
+                val base = KANA_ROMAJI[folded[index]]
+                if (base == null) {
+                    index += Character.charCount(folded.codePointAt(index))
+                    continue
+                }
+                val yoonVowel = folded.getOrNull(index + 1)?.let(YOON_VOWELS::get)
+                if (yoonVowel != null) {
+                    builder.append(yoonStem(base)).append(yoonVowel)
+                    index += 2
+                } else {
+                    builder.append(base)
+                    index += 1
+                }
+            }
+            return builder.toString().takeIf(String::isNotEmpty)
+        }
+
+        /** Leading consonant of a yōon base, with Hepburn's sh/ch/j digraphs preserved. */
+        private fun yoonStem(base: String): String = when (base) {
+            "shi" -> "sh"
+            "chi" -> "ch"
+            "ji" -> "j"
+            else -> base.dropLast(1) + "y"
+        }
+
+        /** Canonical Latin form used only for the artist-reading correspondence check. */
+        internal fun normalizedLatinArtistKey(value: String): String {
+            val latin = buildString(value.length) {
+                value.lowercase().forEach { character ->
+                    if (character in 'a'..'z') append(character)
+                }
+            }
+            return latin
+                .replace("c", "k")
+                .replace("l", "r")
+                .replace("v", "b")
+                .replace(Regex("(.)\\1+"), "$1")
+        }
+
+        internal fun longestCommonSubstringLength(first: String, second: String): Int {
+            var longest = 0
+            val previous = IntArray(second.length + 1)
+            val current = IntArray(second.length + 1)
+            for (i in first.indices) {
+                for (j in second.indices) {
+                    current[j + 1] = if (first[i] == second[j]) previous[j] + 1 else 0
+                    if (current[j + 1] > longest) longest = current[j + 1]
+                }
+                previous.indices.forEach { index -> previous[index] = current[index] }
+            }
+            return longest
+        }
 
         internal fun isReusableOriginalSongAlias(
             alias: Alias,
@@ -1444,6 +1561,32 @@ internal class AppleInternalCatalogResolver(
         internal val collaborationArtistCache = AppleCollaborationArtistCache { credit ->
             COLLABORATION_ARTIST_PATTERNS.any { pattern -> pattern.containsMatchIn(credit) }
         }
+
+        /** Hiragana basis of the kana reading used only by the artist-correspondence guard. */
+        private val KANA_ROMAJI: Map<Char, String> = mapOf(
+            'あ' to "a", 'い' to "i", 'う' to "u", 'え' to "e", 'お' to "o",
+            'か' to "ka", 'き' to "ki", 'く' to "ku", 'け' to "ke", 'こ' to "ko",
+            'が' to "ga", 'ぎ' to "gi", 'ぐ' to "gu", 'げ' to "ge", 'ご' to "go",
+            'さ' to "sa", 'し' to "shi", 'す' to "su", 'せ' to "se", 'そ' to "so",
+            'ざ' to "za", 'じ' to "ji", 'ず' to "zu", 'ぜ' to "ze", 'ぞ' to "zo",
+            'た' to "ta", 'ち' to "chi", 'つ' to "tsu", 'て' to "te", 'と' to "to",
+            'だ' to "da", 'ぢ' to "ji", 'づ' to "zu", 'で' to "de", 'ど' to "do",
+            'な' to "na", 'に' to "ni", 'ぬ' to "nu", 'ね' to "ne", 'の' to "no",
+            'は' to "ha", 'ひ' to "hi", 'ふ' to "fu", 'へ' to "he", 'ほ' to "ho",
+            'ば' to "ba", 'び' to "bi", 'ぶ' to "bu", 'べ' to "be", 'ぼ' to "bo",
+            'ぱ' to "pa", 'ぴ' to "pi", 'ぷ' to "pu", 'ぺ' to "pe", 'ぽ' to "po",
+            'ま' to "ma", 'み' to "mi", 'む' to "mu", 'め' to "me", 'も' to "mo",
+            'や' to "ya", 'ゆ' to "yu", 'よ' to "yo",
+            'ら' to "ra", 'り' to "ri", 'る' to "ru", 'れ' to "re", 'ろ' to "ro",
+            'わ' to "wa", 'ゐ' to "i", 'ゑ' to "e", 'を' to "o", 'ん' to "n",
+            'ゔ' to "bu", 'ぁ' to "a", 'ぃ' to "i", 'ぅ' to "u", 'ぇ' to "e", 'ぉ' to "o",
+        )
+
+        private val YOON_VOWELS: Map<Char, String> = mapOf(
+            'ゃ' to "a",
+            'ゅ' to "u",
+            'ょ' to "o",
+        )
 
         internal fun shouldCacheCatalogIdentity(
             isrc: String?,

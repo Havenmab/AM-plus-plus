@@ -849,6 +849,11 @@ internal object AppleCatalogExecutorArgs {
         val localization = localizationForToken(token)
         val target = localization?.storefront
         val rewritten = args.toTypedArray()
+        // A null target is the untargeted identity/ISRC/genre probe.  It has no storefront
+        // of its own: leave the argument exactly as Apple's own client built it, or the
+        // app's resolution of the account-owned catalog ID is replaced by ours and the
+        // identity comes back empty.  The module marker above still keeps the request out
+        // of the HTTP region rewrite.
         if (target != null) {
             rewritten[STOREFRONT_ARG_INDEX] = target
         }

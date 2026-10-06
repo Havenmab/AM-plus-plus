@@ -693,12 +693,15 @@ internal fun AppleInternalCatalogResolver.logCatalogRequestDiagnostic(
  * One bounded decision line per module-internal, untargeted identity lookup: which storefront
  * the shared MediaApi field held, which one the call used, how many ids it sent, the chosen
  * localization, the captured account storefront at that moment, and the response size or failure.
- * Debug-only and emitted through the same diagnostic channel as the other catalog traces, so the
- * next device log states plainly which storefront the identity lookup used.
+ *
+ * Emitted through [ProviderLogger.info] -- the same channel as the neighbouring catalog traces
+ * (`Apple 内部原名候选`, `Apple 内部歌曲身份已就绪`) instead of the `[debug]`-prefixed diagnostic
+ * channel that the exported device log filters out.  Like those neighbours it is not gated on
+ * `BuildConfig.DEBUG`, so the line is present in the same log the identity/original-name traces
+ * appear in.
  */
 internal fun logModuleIdentityLookup(detail: String, outcome: String) {
-    if (!BuildConfig.DEBUG) return
-    ProviderLogger.diagnostic("AppleCatalogModuleIdentity: $detail, outcome=$outcome")
+    ProviderLogger.info("AppleCatalogModuleIdentity: $detail, outcome=$outcome")
 }
 
 

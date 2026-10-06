@@ -812,6 +812,18 @@ internal class AppleInternalCatalogResolver(
         val album: String = "",
     )
 
+    /** The alias source chosen for one derived original language. */
+    internal sealed interface OriginalLanguageResolution {
+        /** The origin-region lookup returned a usable alias; it is that region's own form. */
+        data class Regional(val alias: Alias) : OriginalLanguageResolution
+
+        /** The lookup yielded nothing usable; the identity's own alias for the language stands in. */
+        data class IdentityFallback(val alias: Alias) : OriginalLanguageResolution
+
+        /** Neither source produced an alias for this language. */
+        data object None : OriginalLanguageResolution
+    }
+
     data class OriginalResolution(
         val alias: Alias?,
         val language: String?,
@@ -1179,6 +1191,37 @@ internal class AppleInternalCatalogResolver(
             return aliases.firstOrNull { alias ->
                 canonicalOriginalLanguage(alias.language) == canonicalLanguage &&
                     (alias.title.isNotBlank() || alias.artist.isNotBlank())
+            }
+        }
+
+        /**
+         * Preference order for one derived original language.
+         *
+         * The origin-region lookup is authoritative: a [storefrontAlias] that passes the existing
+         * confidence check wins, because a lookup that reached the storefront derived from the
+         * song's own origin is that region's form by construction.  The identity's account-catalog
+         * alias ([identityAlias]) is consulted only when the lookup yields nothing usable, so the
+         * artist-only corrections it already provides do not regress.  A [storefrontAlias] that is
+         * present but not confident is a miss -- the caller invalidates it -- exactly as before.
+         */
+        internal fun decideOriginalLanguageResolution(
+            storefrontAlias: Alias?,
+            identityAlias: Alias?,
+            localizedTitle: String,
+            localizedArtist: String,
+        ): OriginalLanguageResolution {
+            val regionalAlias = storefrontAlias?.takeIf { alias ->
+                (alias.title.isNotBlank() || alias.artist.isNotBlank()) &&
+                    isConfidentOriginalSongAlias(
+                        alias = alias,
+                        localizedTitle = localizedTitle,
+                        localizedArtist = localizedArtist,
+                    )
+            }
+            return when {
+                regionalAlias != null -> OriginalLanguageResolution.Regional(regionalAlias)
+                identityAlias != null -> OriginalLanguageResolution.IdentityFallback(identityAlias)
+                else -> OriginalLanguageResolution.None
             }
         }
 

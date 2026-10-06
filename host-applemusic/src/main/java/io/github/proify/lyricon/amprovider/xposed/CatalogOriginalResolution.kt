@@ -85,6 +85,8 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.isAcceptableOriginalAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactOriginalEntityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactIdentityAlias
+import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.decideOriginalLanguageResolution
+import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.OriginalLanguageResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHanCharacters
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.hasCjkArtistScript
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsJapaneseKana
@@ -174,16 +176,13 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
                     return
                 }
                 val language = languages[index]
-                selectExactIdentityAlias(identity.fallbackAliases, language)?.let { exactAlias ->
-                    finishResolve(
-                        metadata = metadata,
-                        languages = listOf(language),
-                        results = listOf(exactAlias),
-                        originKnown = true,
-                        artistIds = identity.artistIds,
-                    )
-                    return
-                }
+                // The identity's account-catalog alias for this language is only a fallback: it
+                // is read here but consulted only after the origin-region lookup below, so a
+                // matching one can no longer replace the query that actually returns the region's
+                // own form.  Removing the old early return is deliberate -- for a Japanese song
+                // whose identity carried the account's romanized ja-JP alias, it short-circuited
+                // the Japanese storefront lookup and the romanized title was kept.
+                val identityAlias = selectExactIdentityAlias(identity.fallbackAliases, language)
                 resolveOriginalEntityForLanguage(
                     mediaId = metadata.id,
                     lookupIds = listOf(metadata.id),
@@ -191,36 +190,52 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
                     language = language,
                     priority = currentRequestPriority(metadata.id, priority),
                 ) { resolvedAlias ->
-                    val exactAlias = resolvedAlias?.takeIf { alias ->
-                        (alias.title.isNotBlank() || alias.artist.isNotBlank()) &&
-                            isConfidentOriginalSongAlias(
-                                alias = alias,
-                                localizedTitle = metadata.title.orEmpty(),
-                                localizedArtist = metadata.artist.orEmpty(),
+                    when (val resolution = decideOriginalLanguageResolution(
+                        storefrontAlias = resolvedAlias,
+                        identityAlias = identityAlias,
+                        localizedTitle = metadata.title.orEmpty(),
+                        localizedArtist = metadata.artist.orEmpty(),
+                    )) {
+                        is OriginalLanguageResolution.Regional -> {
+                            val regionalArtistIds =
+                                catalogIdentityCache[metadata.id]?.artistIds.orEmpty()
+                            finishResolve(
+                                metadata = metadata,
+                                languages = listOf(language),
+                                results = listOf(resolution.alias),
+                                originKnown = true,
+                                artistIds = (
+                                    identity.artistIds + regionalArtistIds
+                                ).distinct(),
                             )
-                    }
-                    if (exactAlias != null) {
-                        val regionalArtistIds =
-                            catalogIdentityCache[metadata.id]?.artistIds.orEmpty()
-                        finishResolve(
-                            metadata = metadata,
-                            languages = listOf(language),
-                            results = listOf(exactAlias),
-                            originKnown = true,
-                            artistIds = (
-                                identity.artistIds + regionalArtistIds
-                            ).distinct(),
-                        )
-                    } else {
-                        if (resolvedAlias != null) {
-                            invalidateOriginalEntity(metadata.id, LocalizedEntityType.SONG)
                         }
-                        if (isrc == null) {
-                            queryNext(index + 1)
-                        } else {
-                            queryByIsrc(isrc, language) { song ->
-                                song?.alias?.let(results::add)
+
+                        is OriginalLanguageResolution.IdentityFallback -> {
+                            if (resolvedAlias != null) {
+                                invalidateOriginalEntity(metadata.id, LocalizedEntityType.SONG)
+                            }
+                            // Same finish as the removed shortcut, so every artist-only
+                            // correction that worked through the identity alias still applies.
+                            finishResolve(
+                                metadata = metadata,
+                                languages = listOf(language),
+                                results = listOf(resolution.alias),
+                                originKnown = true,
+                                artistIds = identity.artistIds,
+                            )
+                        }
+
+                        OriginalLanguageResolution.None -> {
+                            if (resolvedAlias != null) {
+                                invalidateOriginalEntity(metadata.id, LocalizedEntityType.SONG)
+                            }
+                            if (isrc == null) {
                                 queryNext(index + 1)
+                            } else {
+                                queryByIsrc(isrc, language) { song ->
+                                    song?.alias?.let(results::add)
+                                    queryNext(index + 1)
+                                }
                             }
                         }
                     }

@@ -287,6 +287,7 @@ internal class AppleInternalCatalogResolver(
         onResolved: (OriginalResolution) -> Unit,
     ) = resolveOriginalMetadata(
         metadata = metadata,
+        lookupIds = emptyList(),
         onCandidate = null,
         priority = priority,
         onResolved = onResolved,
@@ -294,6 +295,7 @@ internal class AppleInternalCatalogResolver(
 
     fun resolveOriginalMetadata(
         metadata: MediaMetadataCache.Metadata,
+        lookupIds: Collection<String> = emptyList(),
         onCandidate: ((Alias) -> Unit)?,
         priority: RequestPriority = RequestPriority.ACTIVE_PAGE,
         onResolved: (OriginalResolution) -> Unit,
@@ -362,7 +364,11 @@ internal class AppleInternalCatalogResolver(
                     persistentOriginalCache.remove(originalSongCacheKey(metadata.id))
                 }
                 persistentOriginalCache.remove(legacyAmbiguousSongCacheKey(metadata.id))
-                resolveOriginalMetadataFromCatalog(metadata, priority = priority)
+                resolveOriginalMetadataFromCatalog(
+                    metadata = metadata,
+                    lookupIds = lookupIds,
+                    priority = priority,
+                )
             }
         }
     }

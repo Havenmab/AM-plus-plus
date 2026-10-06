@@ -111,6 +111,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 internal fun AppleInternalCatalogResolver.queryById(
         mediaId: String,
         language: String?,
+        storefrontOverride: String? = null,
         onResult: (CatalogSong?) -> Unit
     ) {
         val queryParams = linkedMapOf(
@@ -120,9 +121,13 @@ internal fun AppleInternalCatalogResolver.queryById(
         )
         language?.let { queryParams["l"] = it }
         query(
-            storefront = language?.let(::storefrontForLanguage),
+            storefront = storefrontOverride ?: language?.let(::storefrontForLanguage),
             language = language,
-            description = "id=$mediaId",
+            description = if (storefrontOverride == null) {
+                "id=$mediaId"
+            } else {
+                "id=$mediaId, storefront=$storefrontOverride"
+            },
             path = "songs",
             queryParams = queryParams,
             onResult = onResult
@@ -730,4 +735,3 @@ internal fun AppleInternalCatalogResolver.storefrontForLanguage(language: String
 
 internal fun AppleInternalCatalogResolver.catalogMember(member: AppleMusicRuntimeMember): String =
         resolvedCatalogHolder.target.runtimeMemberName(member)
-

@@ -876,6 +876,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
         var bindingPhase = true
         catalogResolver.resolveOriginalMetadata(
             metadata = metadata,
+            lookupIds = metadataStore.lookupIds(mediaId),
             priority = priority,
             onCandidate = candidate@{ candidate ->
                 if (!host.isRestoreOriginalEnabled()) return@candidate

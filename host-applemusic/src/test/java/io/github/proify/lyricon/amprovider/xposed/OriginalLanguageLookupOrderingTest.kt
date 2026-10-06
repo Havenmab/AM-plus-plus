@@ -163,6 +163,21 @@ class OriginalLanguageLookupOrderingTest {
         )
     }
 
+    @Test
+    fun `configured storefront supplements identity facts without becoming an original alias`() {
+        val source = sequenceOf(
+            File("host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogOriginalResolution.kt"),
+            File("../host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogOriginalResolution.kt"),
+        ).firstOrNull(File::isFile)?.readText() ?: error("Missing CatalogOriginalResolution.kt")
+        assertTrue(source.contains("queryIdentityWithConfiguredFallback"))
+        assertTrue(source.contains("storefrontOverride = storefront"))
+        assertTrue(source.contains("fallbackAliases = listOfNotNull(currentSong?.alias)"))
+        assertTrue(
+            "the configured storefront must contribute facts, not its localized title",
+            source.contains("configuredSong?.genres.orEmpty()"),
+        )
+    }
+
     // ---- Source contract: the lookup is not suppressed before it is dispatched. ----
 
     private fun queryNextBody(): String {

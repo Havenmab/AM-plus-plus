@@ -113,6 +113,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 
 internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
         metadata: MediaMetadataCache.Metadata,
+        lookupIds: Collection<String> = emptyList(),
         allowEmptyIdentityRetry: Boolean = true,
         priority: RequestPriority = RequestPriority.ACTIVE_PAGE,
     ) {
@@ -121,7 +122,11 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
         } else {
             emptyList()
         }
-        resolveCatalogIdentity(metadata.id, fallbackLanguages) { identity ->
+        resolveCatalogIdentity(
+            mediaId = metadata.id,
+            languages = fallbackLanguages,
+            lookupIds = lookupIds,
+        ) { identity ->
             identity.fallbackAliases.firstOrNull()?.let { alias ->
                 publishOriginalCandidate(metadata.id, alias)
             }
@@ -141,6 +146,7 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
                 mainHandler.post {
                     resolveOriginalMetadataFromCatalog(
                         metadata = metadata,
+                        lookupIds = lookupIds,
                         allowEmptyIdentityRetry = false,
                         priority = currentRequestPriority(metadata.id, priority),
                     )
@@ -548,9 +554,61 @@ internal fun AppleInternalCatalogResolver.discardOriginalCandidates(mediaId: Str
     }
 
 
+private fun AppleInternalCatalogResolver.queryIdentityWithConfiguredFallback(
+        mediaId: String,
+        lookupIds: Collection<String>,
+        onResult: (CatalogSong?, CatalogSong?) -> Unit,
+    ) {
+    val storefront = configuredStorefrontOrNull()
+    val language = configuredLanguageOrNull()
+    val candidateIds = (listOf(mediaId) + lookupIds)
+        .map(String::trim)
+        .filter { it.isNotEmpty() && it.all(Char::isDigit) }
+        .distinct()
+    queryById(mediaId, null) { currentSong ->
+        if (
+            currentSong?.isrc != null ||
+            storefront == null ||
+            language == null
+        ) {
+            onResult(currentSong, null)
+            return@queryById
+        }
+        fun queryNext(index: Int) {
+            if (index >= candidateIds.size) {
+                onResult(currentSong, null)
+                return
+            }
+            queryById(
+                mediaId = candidateIds[index],
+                language = language,
+                storefrontOverride = storefront,
+            ) { configuredSong ->
+                if (
+                    configuredSong?.isrc != null ||
+                    shouldCacheCatalogIdentity(
+                        configuredSong?.isrc,
+                        configuredSong?.genres.orEmpty(),
+                    )
+                ) {
+                    ProviderLogger.info(
+                        "Apple 鍘熷悕身份配置地区回退: id=$mediaId, " +
+                            "storefront=$storefront, language=$language, sourceId=${candidateIds[index]}",
+                    )
+                    onResult(currentSong, configuredSong)
+                } else {
+                    queryNext(index + 1)
+                }
+            }
+        }
+        queryNext(0)
+    }
+}
+
 internal fun AppleInternalCatalogResolver.resolveCatalogIdentity(
         mediaId: String,
         languages: List<String>,
+        lookupIds: Collection<String> = emptyList(),
         onResult: (CatalogIdentity) -> Unit
     ) {
         catalogIdentityCache[mediaId]?.takeIf(::isUsefulCatalogIdentity)?.let {
@@ -570,19 +628,24 @@ internal fun AppleInternalCatalogResolver.resolveCatalogIdentity(
         }
         if (!ownsRequest) return
 
-        queryById(mediaId, null) { currentSong ->
-            currentSong?.isrc?.let { isrc ->
+        queryIdentityWithConfiguredFallback(mediaId, lookupIds) { currentSong, configuredSong ->
+            val identityIsrc = currentSong?.isrc ?: configuredSong?.isrc
+            identityIsrc?.let { isrc ->
                 ProviderLogger.info("Apple 内部歌曲 ISRC: id=$mediaId, isrc=$isrc")
                 finishCatalogIdentity(
                     mediaId,
                     CatalogIdentity(
                         isrc = isrc,
-                        fallbackAliases = listOfNotNull(currentSong.alias),
-                        genres = currentSong.genres,
-                        artistIds = currentSong.artistIds,
+                        fallbackAliases = listOfNotNull(currentSong?.alias),
+                        genres = (
+                            currentSong?.genres.orEmpty() + configuredSong?.genres.orEmpty()
+                        ).distinct(),
+                        artistIds = (
+                            currentSong?.artistIds.orEmpty() + configuredSong?.artistIds.orEmpty()
+                        ).distinct(),
                     ),
                 )
-                return@queryById
+                return@queryIdentityWithConfiguredFallback
             }
 
             val fallbackAliases = mutableListOf<Alias>().apply {
@@ -590,6 +653,7 @@ internal fun AppleInternalCatalogResolver.resolveCatalogIdentity(
             }
             val fallbackGenres = mutableListOf<String>().apply {
                 currentSong?.genres?.let(::addAll)
+                configuredSong?.genres?.let(::addAll)
             }
             fun queryNext(index: Int) {
                 if (index >= languages.size) {
@@ -599,7 +663,10 @@ internal fun AppleInternalCatalogResolver.resolveCatalogIdentity(
                             isrc = null,
                             fallbackAliases = fallbackAliases,
                             genres = fallbackGenres,
-                            artistIds = currentSong?.artistIds.orEmpty(),
+                            artistIds = (
+                                currentSong?.artistIds.orEmpty() +
+                                    configuredSong?.artistIds.orEmpty()
+                            ).distinct(),
                         ),
                     )
                     return
@@ -696,4 +763,3 @@ internal fun AppleInternalCatalogResolver.finishCatalogIdentity(mediaId: String,
 
 internal fun AppleInternalCatalogResolver.isUsefulCatalogIdentity(identity: CatalogIdentity): Boolean =
         shouldCacheCatalogIdentity(identity.isrc, identity.genres)
-

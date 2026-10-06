@@ -939,14 +939,6 @@ internal class AppleInternalCatalogResolver(
         internal const val CATALOG_REQUEST_TOKEN_PARAM = "hle_catalog_request"
 
         /**
-         * Minimum shared run between a kana artist reading and the localized Latin artist
-         * before a same-title alias is trusted as the original-region artist.  Four covers
-         * "Hige Driver"/"ヒゲドライバー" (shared "higed") while rejecting "OneRepublic"/
-         * "ワンリパブリック" (longest shared run "rik").
-         */
-        internal const val ORIGINAL_ARTIST_CORRESPONDENCE_MIN_RUN = 4
-
-        /**
          * Marks a request the catalog-executor layer already localized by rewriting its
          * storefront argument.  The HTTP layer skips these so it cannot re-apply the global
          * region to a request that deliberately targeted a different one.
@@ -1407,12 +1399,18 @@ internal class AppleInternalCatalogResolver(
          * "Catchphrase"/"ヤバス, Hatsune Miku".  The device evidence requires the artist to be
          * corrected even when the title is unchanged, which [isOriginalTitle] cannot see.
          *
-         * The guard must not accept a storefront localization of a Western artist
-         * ("OneRepublic" -> "ワンリパブリック") merely because it is non-Latin.  The strongest
-         * evidence available without a name database is that the localized Latin artist reads
-         * as the candidate's kana credit: the candidate must be kana-only (a Han credit such
-         * as "當山 みれい" is a different name, not a reading of "MIREI") and the romanized
-         * kana must share a substantial run with the normalized localized artist.
+         * The candidate only has to keep the normalized title and carry non-Latin script
+         * (artist or title).  That is sufficient because the probe's target region is derived
+         * from the song's own origin -- genre and ISRC country via
+         * [languageTagsForOriginalMetadata], then [storefrontForOriginalLanguage] -- so a
+         * lookup that reached this storefront is a release of that origin by construction and
+         * what it reports is the original-region form.  A storefront localization of a
+         * Western artist cannot appear here: that song is never probed against this storefront.
+         *
+         * An earlier revision additionally required a kana-only artist whose romanized reading
+         * shared a run with the localized Latin artist.  That heuristic added no evidence (the
+         * region already establishes the candidate's provenance) and rejected legitimate
+         * originals whose artist name contains kanji, e.g. "Kenshi Yonezu" -> "米津玄師".
          */
         internal fun isConfidentSameTitleOriginalArtist(
             alias: Alias,
@@ -1421,83 +1419,7 @@ internal class AppleInternalCatalogResolver(
         ): Boolean {
             if (localizedTitle.isBlank() || localizedArtist.isBlank()) return false
             if (normalize(alias.title) != normalize(localizedTitle)) return false
-            val artist = alias.artist
-            if (nonLatinLetterCount(artist) == 0) return false
-            if (containsHanCharacters(artist)) return false
-            val reading = kanaReadingOf(artist) ?: return false
-            val localizedKey = normalizedLatinArtistKey(localizedArtist)
-            if (localizedKey.isEmpty()) return false
-            return longestCommonSubstringLength(reading, localizedKey) >=
-                ORIGINAL_ARTIST_CORRESPONDENCE_MIN_RUN
-        }
-
-        /**
-         * Hepburn-ish romanization of every kana in [value], ignoring Latin, Han and
-         * punctuation.  Returns null when [value] carries no kana at all.
-         */
-        internal fun kanaReadingOf(value: String): String? {
-            val folded = buildString(value.length) {
-                value.forEach { character ->
-                    val code = character.code
-                    append(
-                        if (code in 0x30a1..0x30f6) (code - 0x60).toChar() else character
-                    )
-                }
-            }
-            val builder = StringBuilder()
-            var index = 0
-            while (index < folded.length) {
-                val base = KANA_ROMAJI[folded[index]]
-                if (base == null) {
-                    index += Character.charCount(folded.codePointAt(index))
-                    continue
-                }
-                val yoonVowel = folded.getOrNull(index + 1)?.let(YOON_VOWELS::get)
-                if (yoonVowel != null) {
-                    builder.append(yoonStem(base)).append(yoonVowel)
-                    index += 2
-                } else {
-                    builder.append(base)
-                    index += 1
-                }
-            }
-            return builder.toString().takeIf(String::isNotEmpty)
-        }
-
-        /** Leading consonant of a yōon base, with Hepburn's sh/ch/j digraphs preserved. */
-        private fun yoonStem(base: String): String = when (base) {
-            "shi" -> "sh"
-            "chi" -> "ch"
-            "ji" -> "j"
-            else -> base.dropLast(1) + "y"
-        }
-
-        /** Canonical Latin form used only for the artist-reading correspondence check. */
-        internal fun normalizedLatinArtistKey(value: String): String {
-            val latin = buildString(value.length) {
-                value.lowercase().forEach { character ->
-                    if (character in 'a'..'z') append(character)
-                }
-            }
-            return latin
-                .replace("c", "k")
-                .replace("l", "r")
-                .replace("v", "b")
-                .replace(Regex("(.)\\1+"), "$1")
-        }
-
-        internal fun longestCommonSubstringLength(first: String, second: String): Int {
-            var longest = 0
-            val previous = IntArray(second.length + 1)
-            val current = IntArray(second.length + 1)
-            for (i in first.indices) {
-                for (j in second.indices) {
-                    current[j + 1] = if (first[i] == second[j]) previous[j] + 1 else 0
-                    if (current[j + 1] > longest) longest = current[j + 1]
-                }
-                previous.indices.forEach { index -> previous[index] = current[index] }
-            }
-            return longest
+            return nonLatinLetterCount(alias.artist) > 0 || nonLatinLetterCount(alias.title) > 0
         }
 
         internal fun isReusableOriginalSongAlias(
@@ -1561,32 +1483,6 @@ internal class AppleInternalCatalogResolver(
         internal val collaborationArtistCache = AppleCollaborationArtistCache { credit ->
             COLLABORATION_ARTIST_PATTERNS.any { pattern -> pattern.containsMatchIn(credit) }
         }
-
-        /** Hiragana basis of the kana reading used only by the artist-correspondence guard. */
-        private val KANA_ROMAJI: Map<Char, String> = mapOf(
-            'あ' to "a", 'い' to "i", 'う' to "u", 'え' to "e", 'お' to "o",
-            'か' to "ka", 'き' to "ki", 'く' to "ku", 'け' to "ke", 'こ' to "ko",
-            'が' to "ga", 'ぎ' to "gi", 'ぐ' to "gu", 'げ' to "ge", 'ご' to "go",
-            'さ' to "sa", 'し' to "shi", 'す' to "su", 'せ' to "se", 'そ' to "so",
-            'ざ' to "za", 'じ' to "ji", 'ず' to "zu", 'ぜ' to "ze", 'ぞ' to "zo",
-            'た' to "ta", 'ち' to "chi", 'つ' to "tsu", 'て' to "te", 'と' to "to",
-            'だ' to "da", 'ぢ' to "ji", 'づ' to "zu", 'で' to "de", 'ど' to "do",
-            'な' to "na", 'に' to "ni", 'ぬ' to "nu", 'ね' to "ne", 'の' to "no",
-            'は' to "ha", 'ひ' to "hi", 'ふ' to "fu", 'へ' to "he", 'ほ' to "ho",
-            'ば' to "ba", 'び' to "bi", 'ぶ' to "bu", 'べ' to "be", 'ぼ' to "bo",
-            'ぱ' to "pa", 'ぴ' to "pi", 'ぷ' to "pu", 'ぺ' to "pe", 'ぽ' to "po",
-            'ま' to "ma", 'み' to "mi", 'む' to "mu", 'め' to "me", 'も' to "mo",
-            'や' to "ya", 'ゆ' to "yu", 'よ' to "yo",
-            'ら' to "ra", 'り' to "ri", 'る' to "ru", 'れ' to "re", 'ろ' to "ro",
-            'わ' to "wa", 'ゐ' to "i", 'ゑ' to "e", 'を' to "o", 'ん' to "n",
-            'ゔ' to "bu", 'ぁ' to "a", 'ぃ' to "i", 'ぅ' to "u", 'ぇ' to "e", 'ぉ' to "o",
-        )
-
-        private val YOON_VOWELS: Map<Char, String> = mapOf(
-            'ゃ' to "a",
-            'ゅ' to "u",
-            'ょ' to "o",
-        )
 
         internal fun shouldCacheCatalogIdentity(
             isrc: String?,

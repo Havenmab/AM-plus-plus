@@ -1,5 +1,7 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.net.Uri
@@ -13,18 +15,18 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
-    val manager = plugins ?: return Toast.makeText(activity, "插件运行时不可用", Toast.LENGTH_LONG).show()
+    val manager = plugins ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE), Toast.LENGTH_LONG).show()
     val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(activity, 12), 0, dp(activity, 12), 0) }
     val scroll = ScrollView(activity).apply { addView(content) }
-    val dialog = AlertDialog.Builder(activity).setTitle("插件").setView(scroll)
-        .setPositiveButton("导入 ZIP", null).setNegativeButton("关闭", null).create()
+    val dialog = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.PLUGINS)).setView(scroll)
+        .setPositiveButton(localizedText(ModuleText.IMPORT_ZIP), null).setNegativeButton(localizedText(ModuleText.CLOSE), null).create()
     pluginDialogs += WeakReference(dialog)
     val refreshing = AtomicBoolean()
     fun action(block: () -> Unit) {
         manager.execute {
             val result = runCatching(block)
             mainHandler.post {
-                currentActivity()?.let { Toast.makeText(it, result.exceptionOrNull()?.message ?: "已保存，重启 Apple Music 后生效", Toast.LENGTH_LONG).show() }
+                currentActivity()?.let { Toast.makeText(it, result.exceptionOrNull()?.message ?: localizedText(ModuleText.SAVED_RESTART), Toast.LENGTH_LONG).show() }
             }
         }
     }
@@ -38,38 +40,42 @@ internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
                     if (!dialog.isShowing || activity.isDestroyed) return@post
                     val scrollPosition = scroll.scrollY
                     content.removeAllViews()
-                    content.addView(embeddedInfoCard(activity, "启用、停用、更新和删除均在重启 Apple Music 后生效。"))
-                    manager.startupError?.let { content.addView(embeddedInfoCard(activity, "加载错误：$it")) }
-                    statuses.onFailure { content.addView(embeddedInfoCard(activity, "无法读取插件：${it.message}")) }
-                    if (statuses.getOrNull()?.isEmpty() == true) content.addView(embeddedInfoCard(activity, "尚未导入插件"))
+                    content.addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)))
+                    manager.startupError?.let { content.addView(embeddedInfoCard(activity, localizedText(ModuleText.LOAD_ERROR, it))) }
+                    statuses.onFailure { content.addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGINS_READ_FAILED, it.message))) }
+                    if (statuses.getOrNull()?.isEmpty() == true) content.addView(embeddedInfoCard(activity, localizedText(ModuleText.NO_PLUGINS)))
                     statuses.getOrDefault(emptyList()).forEach { status ->
                         val manifest = status.installed.manifest
                         val state = when (status.state) {
-                            PluginRunState.ACTIVE -> "运行中"
-                            PluginRunState.DISABLED -> "未运行"
-                            PluginRunState.LOADING -> "加载中"
-                            PluginRunState.BLOCKED -> "冲突阻止"
-                            PluginRunState.UNSUPPORTED -> "不支持"
-                            PluginRunState.FAILED -> "失败"
+                            PluginRunState.ACTIVE -> localizedText(ModuleText.PLUGIN_ACTIVE)
+                            PluginRunState.DISABLED -> localizedText(ModuleText.PLUGIN_DISABLED)
+                            PluginRunState.LOADING -> localizedText(ModuleText.PLUGIN_LOADING)
+                            PluginRunState.BLOCKED -> localizedText(ModuleText.PLUGIN_BLOCKED)
+                            PluginRunState.UNSUPPORTED -> localizedText(ModuleText.PLUGIN_UNSUPPORTED)
+                            PluginRunState.FAILED -> localizedText(ModuleText.PLUGIN_FAILED)
                         }
                         content.addView(embeddedSpacer(activity, 12))
                         content.addView(embeddedCard(activity, manifest.name) {
-                            addView(embeddedInfoCard(activity, "${manifest.author} · ${manifest.versionName}\n${manifest.id}\n本次：$state${status.runningVersion?.let { "（版本号 $it）" }.orEmpty()}\n${status.message}"))
-                            addView(embeddedSettingRow(activity, "下次启动启用", if (status.pendingRestart) "待重启" else "", status.installed.enabled) { enabled ->
+                            addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_STATUS_DETAILS, manifest.author, manifest.versionName, manifest.id, state, status.runningVersion?.let { localizedText(ModuleText.PLUGIN_RUNNING_VERSION, it) }.orEmpty(), status.message)))
+                            addView(embeddedSettingRow(activity, localizedText(ModuleText.ENABLE_NEXT_START), if (status.pendingRestart) localizedText(ModuleText.RESTART_PENDING) else "", status.installed.enabled) { enabled ->
                                 action { manager.store.setEnabled(manifest.id, enabled) }
                             })
-                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, "冲突详情", "${status.conflicts.size} 项") {
-                                val details = status.conflicts.joinToString("\n\n") { "${if (it.blocking) "阻止" else "提示"}：${it.reason}\n${it.target}\n${it.owners.joinToString(" / ")}" }
-                                val info = AlertDialog.Builder(activity).setTitle("冲突详情").setMessage(details).setPositiveButton("关闭", null).create()
+                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, localizedText(ModuleText.CONFLICT_DETAILS), localizedText(ModuleText.ITEM_COUNT, status.conflicts.size)) {
+                                val details = status.conflicts.joinToString("\n\n") {
+                                    localizedText(ModuleText.PLUGIN_CONFLICT_DETAILS,
+                                        localizedText(if (it.blocking) ModuleText.CONFLICT_BLOCKING else ModuleText.CONFLICT_WARNING),
+                                        it.reason, it.target, it.owners.joinToString(" / "))
+                                }
+                                val info = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.CONFLICT_DETAILS)).setMessage(details).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
                                 pluginDialogs += WeakReference(info); info.show()
                             })
-                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, "插件设置", "") { openPluginSettings(activity, manifest.id) })
+                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "") { openPluginSettings(activity, manifest.id) })
                             addView(Button(activity).apply {
-                                text = "删除"
+                                text = localizedText(ModuleText.DELETE)
                                 setOnClickListener {
-                                    val confirm = AlertDialog.Builder(activity).setTitle("删除 ${manifest.name}？")
-                                        .setMessage("重启后删除插件及其配置和缓存。")
-                                        .setPositiveButton("删除") { _, _ -> action { manager.store.delete(manifest.id) } }.setNegativeButton("取消", null).create()
+                                    val confirm = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
+                                        .setMessage(localizedText(ModuleText.PLUGIN_DELETE_NOTICE))
+                                        .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ -> action { manager.store.delete(manifest.id) } }.setNegativeButton(localizedText(ModuleText.CANCEL), null).create()
                                     pluginDialogs += WeakReference(confirm); confirm.show()
                                 }
                             })
@@ -93,13 +99,13 @@ internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
     val manager = plugins ?: return
     manager.execute {
         val result = runCatching {
-            val input = application.contentResolver.openInputStream(uri) ?: error("无法读取文件")
+            val input = application.contentResolver.openInputStream(uri) ?: error(localizedText(ModuleText.FILE_UNREADABLE))
             manager.store.prepare(input, Build.VERSION.SDK_INT)
         }
         mainHandler.post {
             val activity = currentActivity()
             if (activity == null || activity.isDestroyed) { manager.execute { result.getOrNull()?.close() }; return@post }
-            result.onFailure { Toast.makeText(activity, "导入失败：${it.message}", Toast.LENGTH_LONG).show() }
+            result.onFailure { Toast.makeText(activity, localizedText(ModuleText.IMPORT_FAILED, it.message), Toast.LENGTH_LONG).show() }
             val prepared = result.getOrNull() ?: return@post
             // Read the installed version off the UI thread before showing replacement details.
             manager.execute {
@@ -107,23 +113,23 @@ internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
                 mainHandler.post confirm@{
                     val current = currentActivity()
                     if (current == null || current.isDestroyed || oldResult.isFailure) {
-                        if (current != null && oldResult.isFailure) Toast.makeText(current, "无法读取已安装版本：${oldResult.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                        if (current != null && oldResult.isFailure) Toast.makeText(current, localizedText(ModuleText.INSTALLED_PLUGIN_READ_FAILED, oldResult.exceptionOrNull()?.message), Toast.LENGTH_LONG).show()
                         manager.execute { prepared.close() }; return@confirm
                     }
                     val old = oldResult.getOrNull()
                     val committed = AtomicBoolean()
-                    val dialog = AlertDialog.Builder(current).setTitle(if (old == null) "导入插件" else "替换插件")
-                        .setMessage("${prepared.manifest.name}\n作者：${prepared.manifest.author}\n" +
+                    val dialog = AlertDialog.Builder(current).setTitle(if (old == null) localizedText(ModuleText.IMPORT_PLUGIN) else localizedText(ModuleText.REPLACE_PLUGIN))
+                        .setMessage(localizedText(ModuleText.PLUGIN_AUTHOR_DETAILS, prepared.manifest.name, prepared.manifest.author) +
                             (old?.let { "${it.manifest.versionName} → " } ?: "") + prepared.manifest.versionName +
-                            "\n${prepared.manifest.description}\n" + if (old == null) "导入后默认关闭。" else "保留配置及启用状态，重启后生效。")
-                        .setPositiveButton(if (old == null) "导入" else "替换") { _, _ ->
+                            "\n${prepared.manifest.description}\n" + if (old == null) localizedText(ModuleText.PLUGIN_IMPORTED_DISABLED) else localizedText(ModuleText.PLUGIN_REPLACEMENT_NOTICE))
+                        .setPositiveButton(if (old == null) localizedText(ModuleText.IMPORT) else localizedText(ModuleText.REPLACE)) { _, _ ->
                             committed.set(true)
                             manager.execute {
                                 val saved = runCatching { manager.store.commit(prepared) }
                                 prepared.close()
-                                mainHandler.post { currentActivity()?.let { Toast.makeText(it, saved.exceptionOrNull()?.message ?: "已导入，请在插件列表启用并重启", Toast.LENGTH_LONG).show() } }
+                                mainHandler.post { currentActivity()?.let { Toast.makeText(it, saved.exceptionOrNull()?.message ?: localizedText(ModuleText.PLUGIN_IMPORTED), Toast.LENGTH_LONG).show() } }
                             }
-                        }.setNegativeButton("取消", null).create()
+                        }.setNegativeButton(localizedText(ModuleText.CANCEL), null).create()
                     dialog.setOnDismissListener { if (!committed.get()) manager.execute { prepared.close() } }
                     pluginDialogs += WeakReference(dialog); dialog.show()
                 }
@@ -133,12 +139,12 @@ internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
 }
 
 internal fun EmbeddedSettingsHost.openPluginSettings(activity: Activity, id: String) {
-    val session = plugins?.openSettings(id, activity) ?: return Toast.makeText(activity, "插件未运行或没有设置页", Toast.LENGTH_SHORT).show()
+    val session = plugins?.openSettings(id, activity) ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_NO_SETTINGS), Toast.LENGTH_SHORT).show()
     try {
-        val dialog = AlertDialog.Builder(activity).setTitle("插件设置").setView(session.view).setPositiveButton("关闭", null).create()
+        val dialog = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.PLUGIN_SETTINGS)).setView(session.view).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
         dialog.setOnDismissListener { session.close() }
         pluginDialogs += WeakReference(dialog); dialog.show()
     } catch (error: Throwable) {
-        session.close(); Toast.makeText(activity, "无法打开设置：${error.message}", Toast.LENGTH_LONG).show()
+        session.close(); Toast.makeText(activity, localizedText(ModuleText.SETTINGS_OPEN_FAILED, error.message), Toast.LENGTH_LONG).show()
     }
 }

@@ -32,15 +32,15 @@ class CustomLyricsListPageStructuralRegressionTest {
     fun `paginates with search, load more and a shown total counter`() {
         val host = projectFile("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
 
-        assertTrue(host.contains("搜索名称或 Apple Music ID"))
+        assertTrue(host.contains("ModuleText.SEARCH_LYRICS"))
         assertTrue(host.contains("addTextChangedListener"))
         assertTrue(host.contains("afterTextChanged"))
         assertTrue(host.contains("customLyricsSearchQuery"))
-        assertTrue(host.contains("加载更多"))
+        assertTrue(host.contains("ModuleText.LOAD_MORE"))
         assertTrue(host.contains("customLyricsListState.loadMore()"))
         assertTrue(
             host.contains(
-                "已显示 \${state.visibleCount} / 共 \${state.totalCount} 首",
+                "localizedText(ModuleText.LYRICS_VISIBLE_COUNT, state.visibleCount, state.totalCount)",
             ),
         )
     }
@@ -65,10 +65,10 @@ class CustomLyricsListPageStructuralRegressionTest {
     fun `keeps embedded empty and no match states`() {
         val host = projectFile("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
 
-        assertTrue(host.contains("暂无自定义歌词"))
-        assertTrue(host.contains("未找到匹配结果"))
-        assertTrue(host.contains("添加歌词后会显示在这里"))
-        assertTrue(host.contains("尝试更换关键词或检查 ID 是否正确"))
+        assertTrue(host.contains("ModuleText.NO_CUSTOM_LYRICS"))
+        assertTrue(host.contains("ModuleText.NO_SEARCH_RESULTS"))
+        assertTrue(host.contains("ModuleText.ADD_LYRICS_EMPTY_HINT"))
+        assertTrue(host.contains("ModuleText.SEARCH_LYRICS_EMPTY_HINT"))
     }
 
     @Test
@@ -94,8 +94,8 @@ class CustomLyricsListPageStructuralRegressionTest {
         )
 
         assertTrue(embeddedHost.contains("onUpdate = { updateEmbeddedLyrics(activity) }"))
-        assertTrue(embeddedHost.contains("label = \"更新\""))
-        assertTrue(embeddedHost.contains("description = \"歌词更新\""))
+        assertTrue(embeddedHost.contains("label = localizedText(ModuleText.UPDATE)"))
+        assertTrue(embeddedHost.contains("description = localizedText(ModuleText.LYRICS_UPDATE)"))
         assertTrue(embeddedHost.contains("internal fun EmbeddedSettingsHost.updateEmbeddedLyrics(activity: Activity)"))
         assertFalse(embeddedHost.contains("syncEmbeddedGitHub"))
         assertFalse(embeddedHost.contains("syncFromGitHub"))

@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -118,14 +120,14 @@ class CustomLyricsUpdateTransaction(
     ): CustomLyricsUpdateResult {
         val safeOld = CustomLyricsManifestPolicy.sanitize(oldManifest)
         if (safeOld.entries.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("本地歌词索引无效，无法更新")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LOCAL_LYRICS_INDEX_INVALID.text())
         }
         val oldById = oldManifest.entries.associateBy(CustomLyricsEntry::appleMusicId)
         if (oldById.size != oldManifest.entries.size ||
             items.size != oldManifest.entries.size ||
             items.map(CustomLyricsUpdateItem::appleMusicId).toSet() != oldById.keys
         ) {
-            return CustomLyricsUpdateResult.Failed("歌词更新基线已变化，请重试")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_BASELINE_CHANGED.text())
         }
 
         val summary = summarize(items, oldManifest.entries.size)
@@ -161,7 +163,7 @@ class CustomLyricsUpdateTransaction(
                 ?: run {
                     cleanupNewFiles()
                     return CustomLyricsUpdateResult.Failed(
-                        "更新后的歌词无效",
+                        ModuleText.UPDATED_LYRICS_INVALID.text(),
                         summary,
                     )
                 }
@@ -169,12 +171,12 @@ class CustomLyricsUpdateTransaction(
                 ?.takeIf(CustomLyricsManifestPolicy::isValidFileId)
             if (fileId == null || !allocatedIds.add(fileId)) {
                 cleanupNewFiles()
-                return CustomLyricsUpdateResult.Failed("无法生成唯一歌词文件 ID", summary)
+                return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UNIQUE_ID_FAILED.text(), summary)
             }
             if (!runCatching { writeRemoteFile(fileId, accepted.bytes) }.getOrDefault(false)) {
                 runCatching { deleteRemoteFile(fileId) }
                 cleanupNewFiles()
-                return CustomLyricsUpdateResult.Failed("无法写入共享歌词文件", summary)
+                return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text(), summary)
             }
             writtenIds += fileId
             val previous = oldById.getValue(item.appleMusicId)
@@ -195,7 +197,7 @@ class CustomLyricsUpdateTransaction(
         if (!runCatching { isBaselineCurrent() }.getOrDefault(false)) {
             cleanupNewFiles()
             return CustomLyricsUpdateResult.Failed(
-                "歌词索引在更新期间已被修改，请重试",
+                ModuleText.LYRICS_INDEX_CHANGED.text(),
                 summary,
             )
         }
@@ -212,11 +214,11 @@ class CustomLyricsUpdateTransaction(
                 oldManifest.entries.map(CustomLyricsEntry::appleMusicId)
         ) {
             cleanupNewFiles()
-            return CustomLyricsUpdateResult.Failed("更新后的歌词索引无效", summary)
+            return CustomLyricsUpdateResult.Failed(ModuleText.UPDATED_INDEX_INVALID.text(), summary)
         }
         if (!runCatching { publishManifest(nextManifest) }.getOrDefault(false)) {
             cleanupNewFiles()
-            return CustomLyricsUpdateResult.Failed("无法发布歌词索引", summary)
+            return CustomLyricsUpdateResult.Failed(ModuleText.INDEX_PUBLISH_FAILED.text(), summary)
         }
 
         val nextFileIds = nextManifest.entries.mapTo(mutableSetOf(), CustomLyricsEntry::fileId)

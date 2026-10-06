@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.source.LunabeatClient
 import dev.amenhancer.module.lyrics.source.HttpLyricTransport
 import dev.amenhancer.module.lyrics.source.FileLunabeatCatalogCache
@@ -70,7 +72,7 @@ internal fun createAutoLyricsRuntime(
             else -> {
                 val displayName = candidate.displayName
                     ?.takeIf(String::isNotBlank)
-                    ?: "自动缓存歌词 · $appleMusicId"
+                    ?: ModuleText.AUTO_CACHED_LYRICS_NAME.text(appleMusicId)
                 when (
                     runCatching {
                         configuredContent.saveLyrics(

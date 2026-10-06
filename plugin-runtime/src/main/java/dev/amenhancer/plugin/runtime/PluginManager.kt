@@ -1,5 +1,7 @@
 package dev.amenhancer.plugin.runtime
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Application
 import android.os.Build
 import android.os.Handler
@@ -56,7 +58,7 @@ class PluginManager(private val application: Application, private val hostLoader
                 for (session in pending) tasks.loadPlugin(
                     load = {
                         val installed = session.installed
-                        if (Build.VERSION.SDK_INT < installed.manifest.minAndroidApi) throw PluginUnsupportedException("Android 版本不足")
+                        if (Build.VERSION.SDK_INT < installed.manifest.minAndroidApi) throw PluginUnsupportedException(ModuleText.PLUGIN_ANDROID_UNSUPPORTED.text())
                         PluginStore.validateCode(File(installed.directory, "code.jar"))
                         val loader = DexClassLoader(File(installed.directory, "code.jar").path,
                             application.codeCacheDir.path, null, AmppPlugin::class.java.classLoader)
@@ -88,7 +90,7 @@ class PluginManager(private val application: Application, private val hostLoader
     fun statuses(): List<PluginStatus> = store.installed().map { installed ->
         val session = sessions[installed.manifest.id]
         val pending = if (session == null) installed.enabled else !installed.enabled || installed.directory != session.installed.directory
-        PluginStatus(installed, session?.state ?: PluginRunState.DISABLED, session?.message ?: "未运行",
+        PluginStatus(installed, session?.state ?: PluginRunState.DISABLED, session?.message ?: ModuleText.PLUGIN_DISABLED.text(),
             session?.installed?.manifest?.versionCode, conflicts.filter { installed.manifest.id in it.owners }, pending)
     }
     fun openSettings(id: String, context: android.content.Context): PluginSettingsSession? {
@@ -120,7 +122,7 @@ class PluginManager(private val application: Application, private val hostLoader
         // Keep the explanation after blocked registrations have been released.
         conflicts = (conflicts.filter { it.blocking } + found).distinct()
         found.filter { it.blocking }.flatMap { it.owners }.distinct().forEach { id ->
-            sessions[id]?.close(PluginRunState.BLOCKED, "存在独占冲突；调整启用选项后重启")
+            sessions[id]?.close(PluginRunState.BLOCKED, ModuleText.PLUGIN_CONFLICT_RESTART.text())
         }
     }
     private fun context(session: Session): PluginContext {

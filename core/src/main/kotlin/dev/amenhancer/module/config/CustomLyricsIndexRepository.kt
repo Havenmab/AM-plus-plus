@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.model.CustomLyricsManifest
 import java.io.InputStream
@@ -45,20 +47,20 @@ class CustomLyricsIndexRepository(
         allowRecovery: Boolean = false,
     ): CustomLyricsIndexCommitResult {
         if (!state.canCommit && !allowRecovery) {
-            return CustomLyricsIndexCommitResult.Failed("歌词索引文件不可读，无法修改")
+            return CustomLyricsIndexCommitResult.Failed(ModuleText.LYRICS_INDEX_UNREADABLE.text())
         }
         val encoded = CustomLyricsManifestCodec.encode(next).toByteArray(Charsets.UTF_8)
         if (encoded.size > maxIndexBytes) {
-            return CustomLyricsIndexCommitResult.Failed("歌词索引超出大小上限")
+            return CustomLyricsIndexCommitResult.Failed(ModuleText.LYRICS_INDEX_TOO_LARGE.text())
         }
         val fileId = runCatching(newIndexFileId).getOrNull()
-            ?: return CustomLyricsIndexCommitResult.Failed("无法生成歌词索引文件 ID")
+            ?: return CustomLyricsIndexCommitResult.Failed(ModuleText.INDEX_ID_CREATE_FAILED.text())
         if (!CustomLyricsManifestPolicy.isValidFileId(fileId)) {
-            return CustomLyricsIndexCommitResult.Failed("生成的歌词索引文件 ID 无效")
+            return CustomLyricsIndexCommitResult.Failed(ModuleText.INDEX_ID_INVALID.text())
         }
         if (!runCatching { writeRemoteFile(fileId, encoded) }.getOrDefault(false)) {
             runCatching { deleteRemoteFile(fileId) }
-            return CustomLyricsIndexCommitResult.Failed("无法写入共享歌词索引文件")
+            return CustomLyricsIndexCommitResult.Failed(ModuleText.INDEX_WRITE_FAILED.text())
         }
         val pointer = CustomLyricsIndexPointer(
             fileId = fileId,
@@ -68,7 +70,7 @@ class CustomLyricsIndexRepository(
         )
         if (!runCatching { publishPointer(pointer) }.getOrDefault(false)) {
             runCatching { deleteRemoteFile(fileId) }
-            return CustomLyricsIndexCommitResult.Failed("无法发布歌词索引")
+            return CustomLyricsIndexCommitResult.Failed(ModuleText.INDEX_PUBLISH_FAILED.text())
         }
         state.pointer?.fileId
             ?.takeIf { it != fileId }

@@ -1,5 +1,7 @@
 package dev.amenhancer.plugin.runtime
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.hook.HookAccess
 import dev.amenhancer.module.hook.HookRegistrationRecord
 
@@ -19,7 +21,7 @@ object PluginConflictAnalysis {
             val blocking = a.exclusive || b.exclusive
             if (resource && !blocking) continue
             result += PluginConflict(setOf(a.owner, b.owner), a.resource ?: a.target.toString(), blocking,
-                if (blocking && (a.builtin || b.builtin)) "独占目标被 AM++ 内置注册占用" else if (blocking) "独占目标重叠" else "多个注册可能修改同一目标；内置未知注册也计入提示")
+                if (blocking && (a.builtin || b.builtin)) ModuleText.BUILTIN_EXCLUSIVE_CONFLICT.text() else if (blocking) ModuleText.EXCLUSIVE_CONFLICT.text() else ModuleText.SHARED_TARGET_WARNING.text())
         }
         return result.distinct()
     }

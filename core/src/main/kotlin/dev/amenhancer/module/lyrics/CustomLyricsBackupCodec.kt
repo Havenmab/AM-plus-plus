@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestCodec
 import dev.amenhancer.module.config.CustomLyricsManifestPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
@@ -87,14 +89,14 @@ object CustomLyricsBackupCodec {
     ): CustomLyricsBackupEncodeResult {
         val safe = CustomLyricsManifestPolicy.sanitize(manifest)
         if (safe.entries.size != manifest.entries.size) {
-            return CustomLyricsBackupEncodeResult.Failed("歌词映射无效，无法备份")
+            return CustomLyricsBackupEncodeResult.Failed(ModuleText.BACKUP_MAPPING_INVALID.text())
         }
         val manifestBytes = CustomLyricsManifestCodec.encode(safe).toByteArray(Charsets.UTF_8)
         if (manifestBytes.size > MAX_MANIFEST_JSON_BYTES) {
-            return CustomLyricsBackupEncodeResult.Failed("歌词索引超出备份大小上限")
+            return CustomLyricsBackupEncodeResult.Failed(ModuleText.BACKUP_INDEX_TOO_LARGE.text())
         }
         if (safe.entries.sumOf(CustomLyricsEntry::sizeBytes) > MAX_TOTAL_TTML_BYTES) {
-            return CustomLyricsBackupEncodeResult.Failed("歌词备份总量超过上限")
+            return CustomLyricsBackupEncodeResult.Failed(ModuleText.BACKUP_TOTAL_TOO_LARGE.text())
         }
         return try {
             ZipOutputStream(BufferedOutputStream(out)).use { zip ->
@@ -103,14 +105,14 @@ object CustomLyricsBackupCodec {
                 zip.closeEntry()
                 safe.entries.forEach { entry ->
                     val bytes = runCatching { readRemoteFile(entry.fileId) }.getOrNull()
-                        ?: return CustomLyricsBackupEncodeResult.Failed("读取歌词文件失败：${entry.displayName}")
+                        ?: return CustomLyricsBackupEncodeResult.Failed(ModuleText.LYRICS_FILE_READ_FAILED.text(entry.displayName))
                     if (
                         bytes.size.toLong() != entry.sizeBytes ||
                         !CustomLyricsFilePolicy.sha256(bytes).equals(entry.sha256, ignoreCase = true) ||
                         CustomLyricsFilePolicy.inspect(bytes.toString(Charsets.UTF_8))
                             !is CustomLyricsInspection.Accepted
                     ) {
-                        return CustomLyricsBackupEncodeResult.Failed("读取歌词文件失败：${entry.displayName}")
+                        return CustomLyricsBackupEncodeResult.Failed(ModuleText.LYRICS_FILE_READ_FAILED.text(entry.displayName))
                     }
                     zip.putNextEntry(ZipEntry(entry.fileId))
                     zip.write(bytes)
@@ -119,7 +121,7 @@ object CustomLyricsBackupCodec {
             }
             CustomLyricsBackupEncodeResult.Encoded(safe.entries.size)
         } catch (e: IOException) {
-            CustomLyricsBackupEncodeResult.Failed("写入备份失败")
+            CustomLyricsBackupEncodeResult.Failed(ModuleText.BACKUP_WRITE_FAILED.text())
         }
     }
 
@@ -146,39 +148,39 @@ object CustomLyricsBackupCodec {
                     val entry = zip.nextEntry ?: break
                     entryCount += 1
                     if (entryCount > MAX_ZIP_ENTRIES) {
-                        return CustomLyricsBackupDecodeResult.Rejected("备份条目过多")
+                        return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_TOO_MANY_ENTRIES.text())
                     }
                     if (entry.isDirectory) {
-                        return CustomLyricsBackupDecodeResult.Rejected("备份包含目录条目")
+                        return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_CONTAINS_DIRECTORIES.text())
                     }
                     val name = entry.name
                     if (name == MANIFEST_JSON_NAME) {
                         if (manifestJson != null) {
-                            return CustomLyricsBackupDecodeResult.Rejected("备份包含重复的 manifest.json")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_DUPLICATE_MANIFEST.text())
                         }
                         manifestJson = CustomLyricsFilePolicy.readBounded(zip, MAX_MANIFEST_JSON_BYTES)
                         val parsed = parseManifestStrict(manifestJson.toString(Charsets.UTF_8))
-                            ?: return CustomLyricsBackupDecodeResult.Rejected("manifest.json 无效或不支持的版本")
+                            ?: return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_MANIFEST_INVALID.text())
                         if (parsed.entries.map(CustomLyricsEntry::fileId).distinct().size != parsed.entries.size) {
-                            return CustomLyricsBackupDecodeResult.Rejected("备份文件与映射不一致")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_MAPPING_MISMATCH.text())
                         }
                         manifest = parsed
                         expectedByFileId = parsed.entries.associateBy(CustomLyricsEntry::fileId)
                     } else {
                         if (!CustomLyricsManifestPolicy.isValidFileId(name)) {
-                            return CustomLyricsBackupDecodeResult.Rejected("备份包含非法文件名：$name")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_FILENAME_INVALID.text(name))
                         }
                         if (!seenFileIds.add(name)) {
-                            return CustomLyricsBackupDecodeResult.Rejected("备份包含重复文件：$name")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_DUPLICATE_FILE.text(name))
                         }
                         val bytes = CustomLyricsFilePolicy.readBounded(zip)
                         totalTtmlBytes += bytes.size
                         if (totalTtmlBytes > MAX_TOTAL_TTML_BYTES) {
-                            return CustomLyricsBackupDecodeResult.Rejected("备份解压总量超过上限")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_EXPANDED_TOO_LARGE.text())
                         }
                         val expected = expectedByFileId?.get(name)
                             ?: return CustomLyricsBackupDecodeResult.Rejected(
-                                if (manifestJson == null) "备份缺少 manifest.json" else "备份文件与映射不一致",
+                                if (manifestJson == null) ModuleText.BACKUP_MANIFEST_MISSING.text() else ModuleText.BACKUP_MAPPING_MISMATCH.text(),
                             )
                         if (
                             bytes.size.toLong() != expected.sizeBytes ||
@@ -186,23 +188,23 @@ object CustomLyricsBackupCodec {
                             CustomLyricsFilePolicy.inspect(bytes.toString(Charsets.UTF_8))
                                 !is CustomLyricsInspection.Accepted
                         ) {
-                            return CustomLyricsBackupDecodeResult.Rejected("歌词文件校验失败：${expected.displayName}")
+                            return CustomLyricsBackupDecodeResult.Rejected(ModuleText.LYRICS_CHECKSUM_FAILED.text(expected.displayName))
                         }
                         onFile(name, bytes)
                     }
                     zip.closeEntry()
                 }
                 val parsed = manifest
-                    ?: return CustomLyricsBackupDecodeResult.Rejected("备份缺少 manifest.json")
+                    ?: return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_MANIFEST_MISSING.text())
                 if (parsed.entries.any { it.fileId !in seenFileIds }) {
-                    return CustomLyricsBackupDecodeResult.Rejected("备份文件与映射不一致")
+                    return CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_MAPPING_MISMATCH.text())
                 }
                 CustomLyricsBackupDecodeResult.Decoded(CustomLyricsBackup(parsed))
             }
         } catch (e: CustomLyricsFilePolicy.SizeLimitExceeded) {
-            CustomLyricsBackupDecodeResult.Rejected("备份解压超过大小上限")
+            CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_EXPANSION_LIMIT.text())
         } catch (e: IOException) {
-            CustomLyricsBackupDecodeResult.Rejected("读取备份失败")
+            CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_READ_FAILED.text())
         }
     }
 

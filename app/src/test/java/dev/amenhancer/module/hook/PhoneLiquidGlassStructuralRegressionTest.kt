@@ -68,10 +68,10 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(models.contains("val phoneLiquidGlassBottomGapDp: Int"))
         assertTrue(models.contains("val phoneLiquidGlassPanelBlurDp: Int"))
         assertTrue(settings.contains("if (settings.phoneLiquidGlassEnabled)"))
-        assertTrue(settings.contains("底栏高度"))
-        assertTrue(settings.contains("底栏背景模糊强度"))
+        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_HEIGHT"))
+        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_BLUR"))
         // Each gated row carries a small one-tap restore button for its own default.
-        assertTrue(settings.contains("\"恢复默认\""))
+        assertTrue(settings.contains("ModuleText.RESET_DEFAULT"))
         assertTrue(settings.contains("defaultValue = GlassPolicy.BOTTOM_DP"))
         assertTrue(settings.contains("defaultValue = GlassPolicy.PANEL_BLUR_DP.toInt()"))
         // The restore button uses the AM++-authored SVG glyph, not the legacy drawable.

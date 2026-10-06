@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics.source
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.hook.AutoLyricsCandidate
 import dev.amenhancer.module.hook.TtmlTimingPolicy
 
@@ -151,7 +153,7 @@ class AmLyricsClient(private val transport: LyricHttpTransport) {
                     listOfNotNull(
                         raw.optString("title").takeIf(String::isNotBlank),
                         raw.optString("artist").takeIf(String::isNotBlank),
-                    ).joinToString(" - ").ifBlank { "GitHub 自定义歌词" }
+                    ).joinToString(" - ").ifBlank { ModuleText.GITHUB_LYRICS_NAME.text() }
                 }
                 add(
                     AmLyricsIndexEntry(

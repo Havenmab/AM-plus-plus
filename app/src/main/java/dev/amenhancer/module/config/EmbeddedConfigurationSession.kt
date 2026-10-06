@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -97,7 +99,7 @@ internal class EmbeddedConfigurationSession(
         manifest: CustomLyricsManifest,
         allowRecovery: Boolean = false,
     ): CustomLyricsIndexCommitResult = if (!writable) {
-        CustomLyricsIndexCommitResult.Failed("嵌入配置迁移未完成，当前仅可读")
+        CustomLyricsIndexCommitResult.Failed(ModuleText.MIGRATION_READ_ONLY.text())
     } else {
         synchronized(INDEX_MUTATION_LOCK) {
             indexRepository.commit(
@@ -125,13 +127,13 @@ internal class EmbeddedConfigurationSession(
         manifest: CustomLyricsManifest,
         allowRecovery: Boolean = false,
     ): CustomLyricsIndexCommitResult = if (!writable) {
-        CustomLyricsIndexCommitResult.Failed("嵌入配置迁移未完成，当前仅可读")
+        CustomLyricsIndexCommitResult.Failed(ModuleText.MIGRATION_READ_ONLY.text())
     } else {
         synchronized(INDEX_MUTATION_LOCK) {
             val current = indexRepository.state(storage.values())
             if (current != expected) {
                 return@synchronized CustomLyricsIndexCommitResult.Failed(
-                    "歌词索引在更新期间已被修改，请重试",
+                    ModuleText.LYRICS_INDEX_CHANGED.text(),
                 )
             }
             indexRepository.commit(

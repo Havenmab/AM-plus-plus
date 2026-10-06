@@ -1,6 +1,9 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import com.juren233.hyperlyricsenhanced.common.RootConstants
+import java.util.Locale
 
 /**
  * Metadata presentation profile used by the title-correction feature.
@@ -12,7 +15,7 @@ import com.juren233.hyperlyricsenhanced.common.RootConstants
  */
 enum class TitleCorrectionMode(
     val storageValue: String,
-    val displayName: String,
+    val displayText: ModuleText,
     val contentUiLanguageSelection: Int,
     val catalogStorefront: String?,
     val catalogLanguage: String?,
@@ -20,7 +23,7 @@ enum class TitleCorrectionMode(
 ) {
     ORIGINAL_HYPER(
         storageValue = "original_hyper",
-        displayName = "按歌曲原地区修正",
+        displayText = ModuleText.TITLE_REGION_ORIGINAL,
         contentUiLanguageSelection = RootConstants.APPLE_MUSIC_CONTENT_UI_LANGUAGE_NONE,
         catalogStorefront = null,
         catalogLanguage = null,
@@ -28,7 +31,7 @@ enum class TitleCorrectionMode(
     ),
     MAINLAND_CHINA(
         storageValue = "mainland_china",
-        displayName = "固定中国大陆",
+        displayText = ModuleText.TITLE_REGION_CHINA,
         contentUiLanguageSelection = RootConstants.APPLE_MUSIC_CONTENT_UI_LANGUAGE_ZH_HANS_CN,
         catalogStorefront = "cn",
         catalogLanguage = "zh-CN",
@@ -36,12 +39,16 @@ enum class TitleCorrectionMode(
     ),
     JAPAN(
         storageValue = "japan",
-        displayName = "固定日本",
+        displayText = ModuleText.TITLE_REGION_JAPAN,
         contentUiLanguageSelection = RootConstants.APPLE_MUSIC_CONTENT_UI_LANGUAGE_JA_JP,
         catalogStorefront = "jp",
         catalogLanguage = "ja-JP",
         cacheNamespace = "jp_v1",
     );
+
+    val displayName: String get() = displayName(Locale.getDefault())
+
+    fun displayName(locale: Locale): String = displayText.text(locale = locale)
 
     companion object {
         fun decode(raw: String?): TitleCorrectionMode = values().firstOrNull {

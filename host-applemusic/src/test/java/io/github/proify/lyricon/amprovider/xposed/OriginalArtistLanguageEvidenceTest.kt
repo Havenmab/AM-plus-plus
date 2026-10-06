@@ -52,18 +52,40 @@ class OriginalArtistLanguageEvidenceTest {
     }
 
     @Test
-    fun sameEnglishTitleDoesNotApplyJapaneseArtistOnlyAlias() {
+    fun sameTitleJapaneseScriptArtistOnlyAliasIsApplied() {
+        // The probe's target storefront is derived from the song's own origin (genre / ISRC
+        // country), so a Japanese-script artist alias can only come from the song's own region.
+        // MIREI -> 當山 みれい is exactly the correction this feature exists for.
         val alias = AppleInternalCatalogResolver.Alias(
             title = "Let Me Know",
             artist = "當山 みれい",
             language = "ja-JP",
         )
 
-        assertFalse(
+        assertTrue(
             AppleInternalCatalogResolver.isConfidentOriginalSongAlias(
                 alias = alias,
                 localizedTitle = "Let Me Know",
                 localizedArtist = "MIREI",
+            ),
+        )
+    }
+
+    @Test
+    fun sameTitleHanScriptArtistOnlyAliasIsApplied() {
+        // Han-only original names have no reading we can compute, so no correspondence heuristic
+        // could ever admit them; the region derivation is the evidence, not the script shape.
+        val alias = AppleInternalCatalogResolver.Alias(
+            title = "Lemon",
+            artist = "米津玄師",
+            language = "ja-JP",
+        )
+
+        assertTrue(
+            AppleInternalCatalogResolver.isConfidentOriginalSongAlias(
+                alias = alias,
+                localizedTitle = "Lemon",
+                localizedArtist = "Kenshi Yonezu",
             ),
         )
     }
@@ -86,14 +108,19 @@ class OriginalArtistLanguageEvidenceTest {
     }
 
     @Test
-    fun oneRepublicJapaneseStorefrontArtistAliasIsNotAnOriginalSongAlias() {
+    fun aJapaneseStorefrontArtistAliasForAWesternSongIsAcceptedByTheSameTitleRule() {
+        // The rule cannot tell this apart from a genuine correction, but the input is unreachable
+        // through the probe: the target storefront comes from the song's own genre/ISRC, so a
+        // Western release is never looked up in the Japanese storefront.  Accepting it is the
+        // deliberate trade-off -- the correspondence heuristic that used to reject it also rejected
+        // legitimate Han-only and kana originals, which is the costlier error of the two.
         val alias = AppleInternalCatalogResolver.Alias(
             title = "I Ain't Worried",
             artist = "ワンリパブリック",
             language = "ja-JP",
         )
 
-        assertFalse(
+        assertTrue(
             AppleInternalCatalogResolver.isConfidentOriginalSongAlias(
                 alias = alias,
                 localizedTitle = "I Ain't Worried",

@@ -44,6 +44,25 @@ internal class CustomLyricsReadyReapply(
      * Matching is explicit `===` identity rather than equals/hashCode.
      */
     private val pending = mutableListOf<PendingMiss>()
+    private val installed = mutableListOf<InstalledLyrics>()
+
+    fun recordInstalled(fragment: Any, appleMusicId: Long, pointer: Any) {
+        synchronized(pending) {
+            sweepCleared()
+            installed.removeAll { it.key.get() === fragment }
+            if (installed.size >= MAX_PENDING) installed.removeAt(0)
+            installed += InstalledLyrics(FragmentKey(fragment), appleMusicId, pointer)
+        }
+    }
+
+    fun onSongChanged(appleMusicId: Long?) {
+        synchronized(pending) {
+            sweepCleared()
+            installed.removeAll { it.appleMusicId != appleMusicId }
+        }
+    }
+
+    fun clear() { synchronized(pending) { pending.clear(); installed.clear() } }
 
     /**
      * I2 hot path: remembers a fragment whose replacement was still preparing.
@@ -53,6 +72,7 @@ internal class CustomLyricsReadyReapply(
     fun recordMiss(fragment: Any, appleMusicId: Long) {
         synchronized(pending) {
             sweepCleared()
+            installed.removeAll { it.key.get() === fragment }
             pending.firstOrNull { it.key.get() === fragment }?.let { existing ->
                 existing.appleMusicId = appleMusicId
                 return@synchronized
@@ -110,6 +130,32 @@ internal class CustomLyricsReadyReapply(
                 logger("custom lyrics ready-late re-entry failed: $error")
             }
         }
+        refreshInstalled(appleMusicId)
+    }
+
+    private fun refreshInstalled(appleMusicId: Long) {
+        if (currentSong.current()?.details?.appleMusicId != appleMusicId) return
+        val replacement = readyReplacementFor(appleMusicId) ?: return
+        val visible = synchronized(pending) {
+            sweepCleared()
+            installed.filter { it.appleMusicId == appleMusicId && it.pointer !== replacement }
+        }
+        for (entry in visible) {
+            val fragment = entry.key.get() ?: continue
+            try {
+                if (!isFragmentUsable(fragment) || seam.currentItemAdamIdOf(fragment) != appleMusicId ||
+                    currentSong.current()?.details?.appleMusicId != appleMusicId ||
+                    readyReplacementFor(appleMusicId) !== replacement) continue
+                val apply = synchronized(pending) {
+                    if (entry !in installed || entry.pointer === replacement) false
+                    else { entry.pointer = replacement; true }
+                }
+                if (!apply) continue
+                installMethod.invoke(fragment, replacement)
+            } catch (error: Throwable) {
+                logger("custom lyrics updated re-entry failed: $error")
+            }
+        }
     }
 
     /**
@@ -137,6 +183,7 @@ internal class CustomLyricsReadyReapply(
 
     /** Removes entries whose fragment has been collected. Must hold [pending]. */
     private fun sweepCleared() {
+        installed.removeAll { it.key.get() == null }
         val iterator = pending.iterator()
         while (iterator.hasNext()) {
             if (iterator.next().key.get() == null) {
@@ -149,6 +196,8 @@ internal class CustomLyricsReadyReapply(
         val key: FragmentKey,
         var appleMusicId: Long,
     )
+
+    private class InstalledLyrics(val key: FragmentKey, val appleMusicId: Long, var pointer: Any)
 
     /**
      * The list owns this wrapper, while the wrapper owns only a weak reference

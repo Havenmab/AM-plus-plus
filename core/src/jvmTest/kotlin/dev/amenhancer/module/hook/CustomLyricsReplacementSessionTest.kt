@@ -612,6 +612,89 @@ class CustomLyricsReplacementSessionTest {
         logger = {},
     ).also(CustomLyricsReplacementSession::start)
 
+    @Test
+    fun `single entry refresh retains old pointer until successful parse and verifies latest index`() {
+        val queue = QueuedExecutor()
+        val old = entry(42)
+        val new = old.copy(fileId = "lyrics_new", sha256 = "b".repeat(64))
+        var indexEntry = old
+        var failParse = false
+        var invalidateDuringParse = false
+        val oldPointer = Pointer(42)
+        val newPointer = Pointer(42)
+        var published = 0
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider { mapOf(42L to indexEntry) },
+            readTtml = { it.fileId },
+            parseTtml = { file ->
+                if (file == old.fileId) oldPointer else {
+                    if (invalidateDuringParse) indexEntry = new.copy(enabled = false)
+                    if (failParse) null else newPointer
+                }
+            },
+            isAlive = { true }, verifyPtr = { true }, readAdamId = { (it as Pointer).adamId },
+            bindAdamId = { _, _ -> true }, onReplacementPublished = { published++ },
+            executor = queue, logger = {},
+        )
+        session.start(); queue.runAll()
+        session.ensureRequested(42); queue.runAll()
+        assertSame(oldPointer, session.readyReplacementFor(42))
+        indexEntry = new
+        failParse = true
+        session.refreshEntry(new)
+        assertSame(oldPointer, session.readyReplacementFor(42))
+        queue.runAll()
+        assertSame(oldPointer, session.readyReplacementFor(42))
+        // Another lookup can reload the disk index while this update has no usable native pointer.
+        session.ensureRequested(999); queue.runAll()
+        assertSame(oldPointer, session.readyReplacementFor(42))
+        failParse = false; invalidateDuringParse = true
+        session.refreshEntry(new); queue.runAll()
+        assertSame(oldPointer, session.readyReplacementFor(42))
+        invalidateDuringParse = false; indexEntry = new
+        session.refreshEntry(new); queue.runAll()
+        assertSame(newPointer, session.readyReplacementFor(42))
+        assertEquals(2, published)
+    }
+
+    @Test
+    fun `cancelled single entry refresh never parses or publishes`() {
+        val queue = QueuedExecutor()
+        var parses = 0
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider { mapOf(42L to entry(42)) }, readTtml = { TTML },
+            parseTtml = { parses++; Pointer(42) }, isAlive = { true }, verifyPtr = { true },
+            readAdamId = { 42L }, bindAdamId = { _, _ -> true }, executor = queue, logger = {},
+        )
+        session.refreshEntry(entry(42), isCancelled = { true })
+        queue.runAll()
+        assertEquals(0, parses)
+        assertNull(session.readyReplacementFor(42))
+    }
+
+    @Test
+    fun `unchanged body or recovered origin does not parse or reapply a ready cache`() {
+        val queue = QueuedExecutor()
+        val old = entry(42).copy(source = CustomLyricsSources.AUTO_CACHE)
+        var latest = old
+        var parses = 0
+        var published = 0
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider { mapOf(42L to latest) }, readTtml = { TTML },
+            parseTtml = { parses++; Pointer(42) }, isAlive = { true }, verifyPtr = { true },
+            readAdamId = { 42L }, bindAdamId = { _, _ -> true }, executor = queue, logger = {},
+            onReplacementPublished = { published++ },
+        )
+        session.start(); queue.runAll()
+        session.ensureRequested(42); queue.runAll()
+        session.refreshEntry(old); queue.runAll()
+        latest = old.copy(source = CustomLyricsSources.AMLL)
+        session.refreshEntry(latest); queue.runAll()
+        assertEquals(1, parses)
+        assertEquals(1, published)
+        assertTrue(session.readyReplacementFor(42) != null)
+    }
+
     private fun manifest(entry: CustomLyricsEntry) = CustomLyricsManifest(listOf(entry))
 
     private fun manyEntries(count: Int): CustomLyricsManifest = CustomLyricsManifest(

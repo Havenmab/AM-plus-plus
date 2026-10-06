@@ -311,6 +311,8 @@ internal class EmbeddedContentManager(
         sources: CustomLyricsUpdateSources,
         isCancelled: () -> Boolean = { false },
         onProgress: (CustomLyricsUpdateProgress) -> Unit = {},
+        targetIds: Set<Long>? = null,
+        requireWordTiming: Boolean = false,
     ): CustomLyricsUpdateResult {
         val baseline = synchronized(mutationLock) { session.customLyricsIndexState() }
         if (!baseline.canCommit) {
@@ -321,14 +323,25 @@ internal class EmbeddedContentManager(
             fileIdFactory = { fileIdFactory("lyrics") },
             writeRemoteFile = session::writeFile,
             publishManifest = { next ->
-                session.commitCustomLyricsIfUnchanged(baseline, next) is CustomLyricsIndexCommitResult.Committed
+                session.withCustomLyricsMutation {
+                    !isCancelled() && session.commitCustomLyricsIfUnchanged(baseline, next) is CustomLyricsIndexCommitResult.Committed
+                }
             },
             deleteRemoteFile = { fileId -> session.deleteFile(fileId) },
             isBaselineCurrent = { session.customLyricsIndexState() == baseline },
             isCancelled = isCancelled,
             onProgress = onProgress,
+            targetIds = targetIds,
+            requireWordTiming = requireWordTiming,
         )
     }
+
+    fun updateSong(
+        appleMusicId: Long,
+        sources: CustomLyricsUpdateSources,
+        isCancelled: () -> Boolean = { false },
+    ): CustomLyricsUpdateResult = updateLyrics(sources, isCancelled,
+        targetIds = setOf(appleMusicId), requireWordTiming = true)
 
     private fun currentLyricsManifest(): CustomLyricsManifest =
         CustomLyricsIndexRepository.resolve(session.values(), session::openFile)

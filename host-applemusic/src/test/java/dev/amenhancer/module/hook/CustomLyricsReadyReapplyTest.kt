@@ -14,6 +14,61 @@ import org.junit.Test
 class CustomLyricsReadyReapplyTest {
 
     @Test
+    fun `an already installed cache switches to a new pointer exactly once`() {
+        val item = LyricsItem("42")
+        val fragment = LyricsFragment(item)
+        val old = Any()
+        var ready = old
+        val cache = CurrentSongIdentityCache().apply { publish(item, CurrentSongDetails(42L)) }
+        val (reapply, _) = reapply(fragment, ready = { ready }, cache = cache)
+        fragment.I2(old)
+        reapply.recordInstalled(fragment, 42, old)
+        reapply.onReplacementPublished(42)
+        assertEquals(1, fragment.installs)
+        ready = Any()
+        reapply.onReplacementPublished(42)
+        reapply.onReplacementPublished(42)
+        assertSame(ready, fragment.installed)
+        assertEquals(2, fragment.installs)
+    }
+
+    @Test
+    fun `visible cache refresh requires current usable matching fragment`() {
+        val item = LyricsItem("42")
+        for (scenario in listOf("changed-song", "changed-fragment", "detached", "closed")) {
+            val fragment = LyricsFragment(item)
+            val old = Any()
+            val new = Any()
+            val cache = CurrentSongIdentityCache().apply { publish(item, CurrentSongDetails(42L)) }
+            val (reapply, _) = reapply(fragment, ready = { new }, usable = { scenario != "detached" }, cache = cache)
+            fragment.I2(old)
+            reapply.recordInstalled(fragment, 42, old)
+            when (scenario) {
+                "changed-song" -> { cache.publish(LyricsItem("43"), CurrentSongDetails(43L)); reapply.onSongChanged(43) }
+                "changed-fragment" -> fragment.c = LyricsItem("43")
+                "closed" -> reapply.clear()
+            }
+            reapply.onReplacementPublished(42)
+            assertSame(old, fragment.installed)
+            assertEquals(1, fragment.installs)
+        }
+    }
+
+    @Test
+    fun `failed visible refresh logs once and leaves installed lyrics usable`() {
+        val item = LyricsItem("42")
+        val fragment = LyricsFragment(item, failOnInstall = true)
+        val cache = CurrentSongIdentityCache().apply { publish(item, CurrentSongDetails(42L)) }
+        val new = Any()
+        val (stableReapply, stableLogs) = reapply(fragment, ready = { new }, cache = cache)
+        stableReapply.recordInstalled(fragment, 42, Any())
+        stableReapply.onReplacementPublished(42)
+        stableReapply.onReplacementPublished(42)
+        assertEquals(1, fragment.attempts)
+        assertEquals(1, stableLogs.size)
+    }
+
+    @Test
     fun `first i2 miss then ready late publish re-enters i2 with the replacement`() {
         val fragment = LyricsFragment(LyricsItem("42"))
         val pointer = Any()

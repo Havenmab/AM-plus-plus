@@ -62,6 +62,8 @@ class CustomLyricsReplacementSession(
     private val lock = Any()
     private val pendingPrepares = mutableSetOf<Long>()
     private var refreshQueued = false
+    private data class RefreshFallback(val target: CustomLyricsEntry, val previous: CustomLyricsEntry)
+    private val refreshFallbacks = mutableMapOf<Long, RefreshFallback>()
 
     /** Queues the initial lightweight index load; never prepares lyric bodies. */
     fun start() {
@@ -116,6 +118,64 @@ class CustomLyricsReplacementSession(
         readyReplacementFor(appleMusicId)?.let { return it }
         request(appleMusicId, refreshOnUnknown = false)
         return readyReplacementFor(appleMusicId)
+    }
+
+    /** Keep the old ready pointer until the new entry has a verified native replacement. */
+    fun refreshEntry(
+        entry: CustomLyricsEntry,
+        isCancelled: () -> Boolean = { false },
+        prepareExecutor: Executor = executor,
+        onReady: ((Long) -> Unit)? = onReplacementPublished,
+    ) {
+        if (!entry.enabled || entry.appleMusicId <= 0) return
+        synchronized(lock) {
+            refreshFallbacks.keys.removeAll { readyReplacementFor(it) == null }
+            entriesById[entry.appleMusicId]?.let { old ->
+                if (readyReplacementFor(entry.appleMusicId) != null) {
+                    refreshFallbacks[entry.appleMusicId] = RefreshFallback(entry, old)
+                }
+            }
+        }
+        try {
+            prepareExecutor.execute {
+                runCatching {
+                    if (isCancelled()) return@runCatching
+                    val previous = synchronized(lock) { entriesById[entry.appleMusicId] }
+                    if (previous?.fileId == entry.fileId && previous.sha256 == entry.sha256 &&
+                        readyReplacementFor(entry.appleMusicId) != null
+                    ) {
+                        if (index.load()?.get(entry.appleMusicId) != entry || isCancelled()) return@runCatching
+                        synchronized(lock) {
+                            if (isCancelled()) return@runCatching
+                            entriesById = entriesById + (entry.appleMusicId to entry)
+                            refreshFallbacks.remove(entry.appleMusicId)
+                        }
+                        return@runCatching
+                    }
+                    val ttml = readTtml(entry) ?: return@runCatching
+                    val replacement = parseTtml(ttml) ?: return@runCatching
+                    if (!isPrepared(replacement, entry.appleMusicId) && !bindAdamId(replacement, entry.appleMusicId)) {
+                        return@runCatching
+                    }
+                    if (!isPrepared(replacement, entry.appleMusicId) || isCancelled()) return@runCatching
+                    // Index IO stays on this worker. A later edit/delete/disable must win.
+                    if (index.load()?.get(entry.appleMusicId) != entry || isCancelled()) return@runCatching
+                    synchronized(lock) {
+                        if (isCancelled()) return@runCatching
+                        synchronized(cache) {
+                            cache[CacheKey(entry.appleMusicId, entry.fileId, entry.sha256)] = replacement
+                            entriesById = entriesById + (entry.appleMusicId to entry)
+                            refreshFallbacks.remove(entry.appleMusicId)
+                            cache.keys.removeAll { it.appleMusicId == entry.appleMusicId &&
+                                (it.fileId != entry.fileId || it.sha256 != entry.sha256) }
+                        }
+                    }
+                    if (!isCancelled()) onReady?.invoke(entry.appleMusicId)
+                }.onFailure { logger("custom lyrics entry refresh failed id=${entry.appleMusicId}: $it") }
+            }
+        } catch (_: RejectedExecutionException) {
+            logger("custom lyrics entry refresh was rejected id=${entry.appleMusicId}")
+        }
     }
 
     /**
@@ -177,10 +237,16 @@ class CustomLyricsReplacementSession(
             }
             return
         }
-        val refreshed = loaded.orEmpty().filterValues(CustomLyricsEntry::enabled)
+        val refreshed = loaded.orEmpty().filterValues(CustomLyricsEntry::enabled).toMutableMap()
         val appeared = mutableListOf<Long>()
         synchronized(lock) {
             refreshQueued = false
+            // A new disk entry may still be parsing (or have failed native parsing).
+            // Preserve its last ready pointer while that exact target remains configured.
+            refreshFallbacks.entries.removeAll { (id, fallback) ->
+                loaded?.get(id) != fallback.target || readyReplacementFor(id) == null
+            }
+            refreshFallbacks.forEach { (id, fallback) -> refreshed[id] = fallback.previous }
             entriesById = refreshed
             val activeKeys = refreshed.values.mapTo(mutableSetOf()) { entry ->
                 CacheKey(entry.appleMusicId, entry.fileId, entry.sha256)

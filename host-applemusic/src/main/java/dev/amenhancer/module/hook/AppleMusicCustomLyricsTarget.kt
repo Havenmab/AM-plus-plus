@@ -542,12 +542,30 @@ internal fun selectAutoLyricsFetch(
     displayedTtml: String?,
     appleMusicId: Long,
     resolverFetch: (Long) -> AutoLyricsCandidate?,
-): AutoLyricsCandidate? = when {
-    enrich != null && displayedTtml != null ->
-        runCatching { enrich.invoke(appleMusicId, displayedTtml) }.getOrNull()
-            ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
-            ?: resolverFetch(appleMusicId)
-    else -> resolverFetch(appleMusicId)
+): AutoLyricsCandidate? {
+    val enriched: () -> AutoLyricsCandidate? = {
+        if (enrich == null || displayedTtml == null) {
+            null
+        } else {
+            runCatching { enrich.invoke(appleMusicId, displayedTtml) }.getOrNull()
+                ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
+        }
+    }
+    // Apple has no lyrics, or only unsynchronised text that does not scroll with playback: a
+    // third-party document carrying a real timeline is a strict improvement (it can be followed
+    // and tapped), so the replacement path runs FIRST and enrichment is only the fallback.
+    // Previously enrichment was always tried first, which meant it always produced something for a
+    // document that merely lacked a translation -- so the replacement path never ran at all for an
+    // unsynchronised document, and that permission was empty.
+    val replacementFirst = displayedTtml == null || !TtmlTimingPolicy.hasTiming(displayedTtml)
+    return if (replacementFirst) {
+        resolverFetch(appleMusicId) ?: enriched()
+    } else {
+        // Apple already carries line or word timing: a search source must never replace it, so only
+        // the translation lane is added.  The resolver stays the fallback when enrichment yields
+        // nothing -- it may still reach the bundled providers, which are allowed to replace.
+        enriched() ?: resolverFetch(appleMusicId)
+    }
 }
 
 internal fun shouldExposeCustomLyrics(

@@ -3,6 +3,7 @@ package dev.amenhancer.module.config
 import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -168,9 +169,10 @@ class RegionTitleCompositionTest {
             val overrideOff = RegionTitleRequestPolicy.plan(region, false, false)
             val restoreOn = RegionTitleRequestPolicy.plan(region, false, true)
 
-            // Flipping the override switch leaves the restore decision alone.
+            // Flipping the override switch leaves the restore decision alone, and the restore
+            // switch is the only thing that moves it.
             assertEquals(overrideOn.probesOriginalMetadata, overrideOff.probesOriginalMetadata)
-            assertEquals(restoreOn.probesOriginalMetadata, overrideOff.probesOriginalMetadata)
+            assertNotEquals(restoreOn.probesOriginalMetadata, overrideOff.probesOriginalMetadata)
             // Flipping the restore switch leaves the region decisions alone.
             assertEquals(overrideOff.rewritesCatalogRequests, restoreOn.rewritesCatalogRequests)
             assertEquals(overrideOff.catalogLanguage, restoreOn.catalogLanguage)

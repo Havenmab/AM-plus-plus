@@ -59,7 +59,7 @@ internal class FragmentPhoneGlassSession(
         clipChildren = false; clipToPadding = false
         z = checkNotNull(native.find(ChromeResource.BOTTOM_NAVIGATION)).z
         root.addView(this, native.navigationFrameParams(
-            ((GlassPolicy.NAV_HEIGHT_DP + config.settings().phoneLiquidGlassBottomGapDp) * density).toInt() + bottomInset))
+            ((geometry.navHeightDp + config.settings().phoneLiquidGlassBottomGapDp) * density).toInt() + bottomInset))
         frame = this
     }
     override fun miniMaterialParent(root: FrameLayout): FrameLayout {

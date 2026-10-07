@@ -6,7 +6,7 @@ import dev.amenhancer.module.model.EnhancementDefaults
 enum class GlassHostForm { PhoneStacked, TabletDualPane }
 
 /**
- * Capsule geometry per host form. Defaults match the accepted phone capsule.
+ * Capsule geometry per host form. The phone preset uses the reference 64dp panel.
  * Fork reference for a future tablet variant: sw640dp ships native
  * miniplayer_height=59dp / mini_player_thumbnail_height=41dp (phone 67/64, 48).
  */
@@ -19,7 +19,7 @@ data class GlassGeometry(
     val sideBySide: Boolean = false,
 ) {
     companion object {
-        val Phone = GlassGeometry()
+        val Phone = GlassGeometry(navHeightDp = GlassPolicy.NAV_HEIGHT_DP)
         /** Tablet dual-pane row: both capsules share one 56dp row (2026-09-22 sketch). */
         val Tablet = GlassGeometry(miniHeightDp = 56, sideBySide = true)
     }
@@ -27,7 +27,7 @@ data class GlassGeometry(
 
 /** Android-free invariants used by both the host bridge and regression tests. */
 object GlassPolicy {
-    const val NAV_HEIGHT_DP = 56
+    const val NAV_HEIGHT_DP = 64
     const val MINI_HEIGHT_DP = 43
     const val HORIZONTAL_DP = 16
     const val GAP_DP = 8

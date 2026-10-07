@@ -72,8 +72,6 @@ fun GlassNavigation(
             tabsCount = tabs.size,
             accentOverride = accent,
             panelHeight = panelHeight,
-            // Experiment: a 56dp bottom-tab lens reaches 78dp while held.
-            thumbHeight = if (style == GlassNavigationStyle.Stacked) 56.dp else panelHeight - 8.dp,
             panelBlur = panelBlur,
             leadingWidth = if (onDrawer == null) 0.dp else panelHeight - 8.dp,
             leadingContent = onDrawer?.let { open -> {

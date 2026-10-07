@@ -13,9 +13,6 @@ object CatalogLanguagePolicy {
     /** An empty value deliberately means "leave Apple Music's request language alone". */
     const val DISABLED_TARGET_LANGUAGE = ""
 
-    private const val DEFAULT_SCRIPT_SIMPLIFIED = "zh-Hans"
-    private const val DEFAULT_SCRIPT_TRADITIONAL = "zh-Hant"
-
     fun normalize(raw: String?): String {
         val candidate = raw.orEmpty().trim().replace('_', '-')
         if (candidate.isEmpty()) return DISABLED_TARGET_LANGUAGE
@@ -28,14 +25,6 @@ object CatalogLanguagePolicy {
     fun isConfigured(raw: String?): Boolean = normalize(raw).isNotEmpty()
 
     fun isValid(raw: String?): Boolean = normalize(raw).isNotEmpty()
-
-    /** Uses the script spelling Apple Music expects in Accept-Language. */
-    fun headerLanguage(tag: String): String = when (val normalized = normalize(tag)) {
-        "zh-CN", "zh-SG" -> DEFAULT_SCRIPT_SIMPLIFIED
-        "zh-TW", "zh-HK", "zh-MO" -> DEFAULT_SCRIPT_TRADITIONAL
-        "ja-JP" -> "ja"
-        else -> normalized
-    }
 
     fun displayName(tag: String?, displayLocale: Locale = Locale.getDefault()): String {
         val normalized = normalize(tag)

@@ -505,7 +505,9 @@ internal class AppleContentLocalizationHooks(
         }
         builder.appendQueryParameter("l", language)
         val rewrittenUrl = builder.build().toString()
-        val headerLanguage = CatalogLanguagePolicy.headerLanguage(language)
+        // HLE sends the language tag itself; it never downgrades it (ja-JP stays ja-JP),
+        // because Apple selects the storefront's own localization from this header.
+        val headerLanguage = CatalogLanguagePolicy.normalize(language)
         val sourceAcceptLanguage = requestHeader(request, "Accept-Language")
         val sourceStorefrontHeader = requestHeader(request, "X-Apple-Store-Front")
         val sourceRequestStorefrontHeader =

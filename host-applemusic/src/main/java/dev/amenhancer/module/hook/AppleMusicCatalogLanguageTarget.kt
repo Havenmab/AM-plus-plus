@@ -37,7 +37,8 @@ internal object CatalogLanguageRewritePolicy {
 
     fun withHeaderLanguageValue(original: Map<*, *>, targetLanguage: String): Map<Any?, Any?> {
         if (isHleResolverRequest(original)) return original as Map<Any?, Any?>
-        val header = CatalogLanguagePolicy.headerLanguage(targetLanguage)
+        // Same as the content-HTTP seam: the tag goes out as configured (HLE does not map it).
+        val header = CatalogLanguagePolicy.normalize(targetLanguage)
         val key = original.keys.firstOrNull {
             it?.toString()?.equals("Accept-Language", ignoreCase = true) == true
         } ?: return original as Map<Any?, Any?>

@@ -293,7 +293,6 @@ internal open class PhoneGlassSession(
             glass.content { HostConfiguration {
                 GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab,
                     panelHeight = geometry.navHeightDp.dp,
-                    thumbHeight = if (geometry.sideBySide) (geometry.navHeightDp - 8).dp else 56.dp,
                     panelBlur = navBlurDp.dp)
             } }
             val navSlot = capsuleMarginsPx(frame.width, mini = false)

@@ -6,7 +6,7 @@ import dev.amenhancer.module.model.EnhancementDefaults
 enum class GlassHostForm { PhoneStacked, TabletDualPane }
 
 /**
- * Capsule geometry per host form. The phone panel and selection lens can be sized independently.
+ * Capsule geometry per host form. The selection lens keeps a 4dp vertical inset inside the panel.
  * Fork reference for a future tablet variant: sw640dp ships native
  * miniplayer_height=59dp / mini_player_thumbnail_height=41dp (phone 67/64, 48).
  */

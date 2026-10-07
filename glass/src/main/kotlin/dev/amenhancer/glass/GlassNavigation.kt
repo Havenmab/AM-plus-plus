@@ -44,7 +44,6 @@ fun GlassNavigation(
     backdrop: Backdrop,
     onSelect: (Int) -> Int,
     panelHeight: Dp = GlassPolicy.NAV_HEIGHT_DP.dp,
-    thumbHeight: Dp = panelHeight - 8.dp,
     panelBlur: Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     style: GlassNavigationStyle = GlassNavigationStyle.Stacked,
     drawerIcon: Drawable? = null,
@@ -73,7 +72,6 @@ fun GlassNavigation(
             tabsCount = tabs.size,
             accentOverride = accent,
             panelHeight = panelHeight,
-            thumbHeight = thumbHeight,
             panelBlur = panelBlur,
             leadingWidth = if (onDrawer == null) 0.dp else panelHeight - 8.dp,
             leadingContent = onDrawer?.let { open -> {

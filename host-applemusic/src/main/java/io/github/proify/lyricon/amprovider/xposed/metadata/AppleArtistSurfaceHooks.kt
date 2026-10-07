@@ -90,6 +90,8 @@ internal class AppleArtistSurfaceHooks(
     private val host: AppleArtistSurfaceHost,
     private val refreshQueue: AppleInAppMetadataRefreshQueue? = null,
 ) {
+    // Compose album page (collection2) on 7.0.0-beta. Fail-open: absent targets leave it inert.
+    private val albumComposeMetadataHooks = AppleAlbumComposeMetadataHooks(runtime, host)
     private val pageBuildData = Collections.synchronizedMap(WeakHashMap<Any, ArtistPageBuildData>())
     private val topSongModels = WeakIdentityMap<Any, ArtistTopSongModelSnapshot>()
     private val topSongBindings = WeakIdentityMap<Any, ArtistTopSongModelSnapshot>()
@@ -143,7 +145,14 @@ internal class AppleArtistSurfaceHooks(
         }
     }
 
+    /** Republishes an album alias to the Compose album page (rows and the separate header). */
+    fun refreshComposeMetadata(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+    ): Int = albumComposeMetadataHooks.refresh(mediaId, alias)
+
     fun installTopSongHooks() {
+        albumComposeMetadataHooks.install()
         val classes = artistClasses() ?: return
         val recycler = checkNotNull(classes["recycler"])
         val mediaEntity = checkNotNull(classes["media_entity"])

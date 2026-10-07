@@ -152,15 +152,19 @@ class DampedDragAnimation(
 
     fun updateValue(value: Float) {
         val targetValue = value.coerceIn(valueRange)
-        val generation = beginMotion()
+        val generation = velocityGeneration
         motionJob = animationScope.launch {
-            valueAnimation.animateTo(targetValue, valueAnimationSpec) { updateVelocity(generation) }
+            // Retarget the running spring through Animatable's own cancellation.
+            // Eager cancellation on every move discards its frame time and velocity.
+            if (generation == velocityGeneration) {
+                valueAnimation.animateTo(targetValue, valueAnimationSpec) { updateVelocity(generation) }
+            }
         }
     }
 
     fun animateToValue(value: Float) {
         val targetValue = value.coerceIn(valueRange)
-        beginMotion()
+        beginSettling()
         press()
         motionJob = animationScope.launch {
             coroutineScope {
@@ -172,11 +176,10 @@ class DampedDragAnimation(
         release()
     }
 
-    private fun beginMotion(): Int {
+    private fun beginSettling() {
         velocityGeneration++
         motionJob?.cancel()
         velocityJob?.cancel()
-        return velocityGeneration
     }
 
     private suspend fun resetVelocity() {

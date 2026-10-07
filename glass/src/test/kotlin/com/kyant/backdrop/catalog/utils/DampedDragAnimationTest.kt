@@ -13,6 +13,35 @@ import org.junit.Test
 import kotlin.coroutines.CoroutineContext
 
 class DampedDragAnimationTest {
+    @Test fun heldDragFollowsTargetsUpdatedEveryFrame() {
+        assertHeldDragFollowsTargets(frames = 60, movesPerFrame = 1)
+    }
+
+    @Test fun heldDragFollowsTheLatestOfSeveralMovesPerFrame() {
+        assertHeldDragFollowsTargets(frames = 45, movesPerFrame = 3)
+    }
+
+    private fun assertHeldDragFollowsTargets(frames: Int, movesPerFrame: Int) {
+        val harness = Harness()
+        try {
+            harness.animation.press()
+            repeat(frames) { frame ->
+                repeat(movesPerFrame) { move ->
+                    val step = frame * movesPerFrame + move + 1
+                    harness.animation.updateValue(4f * step / (frames * movesPerFrame))
+                }
+                harness.frame()
+            }
+            // Assert before lifting the finger or giving the final target extra frames.
+            assertTrue("Held drag must follow the finger; value=${harness.animation.value}",
+                harness.animation.value > 3.5f)
+            assertEquals(4f, harness.animation.targetValue, .001f)
+            assertEquals(1f, harness.animation.pressProgress, .001f)
+            assertEquals(1.5f, harness.animation.scaleX, .001f)
+            assertEquals(1.45f, harness.animation.scaleY, .001f)
+        } finally { harness.close() }
+    }
+
     @Test fun queuedDragFrameCannotRestoreVelocityAfterTabSettles() {
         val harness = Harness()
         try {

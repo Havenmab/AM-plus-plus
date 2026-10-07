@@ -337,7 +337,7 @@ fun LiquidBottomTabs(
                     layerBlock = {
                         scaleX = dampedDragAnimation.scaleX
                         scaleY = dampedDragAnimation.scaleY
-                        val velocity = dampedDragAnimation.velocity / 10f
+                        val velocity = dampedDragAnimation.velocity / 10f * dampedDragAnimation.pressProgress
                         scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
                         scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
                     },

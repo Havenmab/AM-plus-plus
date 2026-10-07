@@ -444,6 +444,7 @@ internal class HleMetadataRuntime(
             queueMetadataHooks = queueMetadataHooks,
             actionSheetMetadataHooks = actionSheetMetadataHooks,
             configuredContentUiLanguage = requestPlan.contentUiLanguageSelection,
+            overrideAccountLanguage = requestPlan.overrideAccountLanguage,
             restoreOriginalMetadata = requestPlan.probesOriginalMetadata,
             profileId = requestPlan.cacheNamespace,
             observeMetadataCacheClear = metadataCacheClearObserver::observe,

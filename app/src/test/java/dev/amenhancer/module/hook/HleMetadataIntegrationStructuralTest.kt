@@ -80,6 +80,9 @@ class HleMetadataIntegrationStructuralTest {
         val resolver = source(
             "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
         )
+        val bridge = source(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataSurfaceBridge.kt",
+        )
         // The runtime applies the region plan and installs all four localization seams.
         assertTrue(runtime.contains("applyRegionConfiguration("))
         assertTrue(runtime.contains("regionReplacementRequested = requestPlan.rewritesCatalogRequests"))
@@ -87,8 +90,15 @@ class HleMetadataIntegrationStructuralTest {
         assertTrue(runtime.contains("RegionTitleRequestPolicy.plan("))
         assertTrue(runtime.contains("overrideAccountLanguage = overrideAccountLanguage"))
         assertTrue(runtime.contains("restoreCjkOriginalMetadata = restoreCjkOriginalMetadata"))
-        // And the account-language override follows HLE's region+override pair, not the region alone.
+        // And the account-language override follows HLE's region+override pair, not the region
+        // alone.  That pair reaches BOTH hosts: the playback host straight from the plan, and the
+        // in-app resolution host through the surface bridge.  Leaving the resolution host on
+        // `configuredContentUiLanguage != 0` was the fork-only deviation.
         assertTrue(runtime.contains("requestPlan.overrideAccountLanguage"))
+        assertTrue(runtime.contains("overrideAccountLanguage = requestPlan.overrideAccountLanguage"))
+        assertTrue(bridge.contains("internal val overrideAccountLanguage: Boolean"))
+        assertTrue(bridge.contains("this@createMetadataHostAdapters.overrideAccountLanguage"))
+        assertFalse(bridge.contains("configuredContentUiLanguage != 0"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installCatalogRequestLocalization()"))
         assertTrue(runtime.contains("contentLocalizationHooks.installContentHttpLocalization()"))

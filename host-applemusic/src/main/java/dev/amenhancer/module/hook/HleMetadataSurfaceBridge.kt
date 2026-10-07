@@ -23,6 +23,13 @@ internal class HleMetadataSurfaceBridge(
     internal val queueMetadataHooks: AppleQueueMetadataHooks,
     internal val actionSheetMetadataHooks: AppleActionSheetMetadataHooks,
     internal val configuredContentUiLanguage: Int,
+    /**
+     * HLE's `AppleOrchestratorCatalogLanguageAssembly.shouldOverrideAccountLanguage`: true only
+     * when a region is selected **and** the 「歌曲信息替换至设定地区语言」 switch is on.  The
+     * fork's pure projection of that pair is `RegionTitleRequestPlan.overrideAccountLanguage`,
+     * which is what [HleMetadataRuntime] passes here.
+     */
+    internal val overrideAccountLanguage: Boolean,
     internal val restoreOriginalMetadata: Boolean,
     internal val profileId: String,
     /**

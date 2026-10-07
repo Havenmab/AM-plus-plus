@@ -6,7 +6,7 @@ import dev.amenhancer.module.model.EnhancementDefaults
 enum class GlassHostForm { PhoneStacked, TabletDualPane }
 
 /**
- * Capsule geometry per host form. The phone preset uses the reference 64dp panel.
+ * Capsule geometry per host form. The phone panel and selection lens can be sized independently.
  * Fork reference for a future tablet variant: sw640dp ships native
  * miniplayer_height=59dp / mini_player_thumbnail_height=41dp (phone 67/64, 48).
  */
@@ -27,7 +27,7 @@ data class GlassGeometry(
 
 /** Android-free invariants used by both the host bridge and regression tests. */
 object GlassPolicy {
-    const val NAV_HEIGHT_DP = 64
+    const val NAV_HEIGHT_DP = 56
     const val MINI_HEIGHT_DP = 43
     const val HORIZONTAL_DP = 16
     const val GAP_DP = 8

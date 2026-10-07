@@ -290,7 +290,12 @@ internal open class PhoneGlassSession(
             }
             val glass = GlassHostView(moduleContext()).also { navGlass = it }
             glass.alpha = 0f
-            glass.content { HostConfiguration { GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab, panelHeight = geometry.navHeightDp.dp, panelBlur = navBlurDp.dp) } }
+            glass.content { HostConfiguration {
+                GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab,
+                    panelHeight = geometry.navHeightDp.dp,
+                    thumbHeight = if (geometry.sideBySide) (geometry.navHeightDp - 8).dp else 56.dp,
+                    panelBlur = navBlurDp.dp)
+            } }
             val navSlot = capsuleMarginsPx(frame.width, mini = false)
             frame.addView(glass, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(geometry.navHeightDp), Gravity.TOP).apply {
                 leftMargin = navSlot[0]; rightMargin = navSlot[1]

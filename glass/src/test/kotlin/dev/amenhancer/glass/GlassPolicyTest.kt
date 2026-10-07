@@ -23,9 +23,9 @@ class GlassPolicyTest {
         assertNull(GlassPolicy.selectedIndex(emptyList(), 30))
     }
     @Test fun absentMiniPlayerDoesNotLeavePhantomSpaceAndInsetsArePixels() {
-        assertEquals(184, GlassPolicy.occupiedHeight(2f, 24, false))
-        assertEquals(286, GlassPolicy.occupiedHeight(2f, 24, true))
-        assertEquals(80, GlassPolicy.occupiedHeight(1f, 0, false))
+        assertEquals(168, GlassPolicy.occupiedHeight(2f, 24, false))
+        assertEquals(270, GlassPolicy.occupiedHeight(2f, 24, true))
+        assertEquals(72, GlassPolicy.occupiedHeight(1f, 0, false))
     }
     @Test fun bottomGapOverrideKeepsTheDefaultContract() {
         // The parameter defaults to BOTTOM_DP, so existing callers are unchanged.
@@ -34,8 +34,8 @@ class GlassPolicyTest {
             GlassPolicy.occupiedHeight(2f, 24, false, GlassPolicy.BOTTOM_DP),
         )
         // A larger lift grows the occupied area: the capsule sits higher above the edge.
-        assertEquals(200, GlassPolicy.occupiedHeight(2f, 24, false, bottomGapDp = 24))
-        assertEquals(302, GlassPolicy.occupiedHeight(2f, 24, true, bottomGapDp = 24))
-        assertEquals(64, GlassPolicy.occupiedHeight(1f, 0, false, bottomGapDp = 0))
+        assertEquals(184, GlassPolicy.occupiedHeight(2f, 24, false, bottomGapDp = 24))
+        assertEquals(286, GlassPolicy.occupiedHeight(2f, 24, true, bottomGapDp = 24))
+        assertEquals(56, GlassPolicy.occupiedHeight(1f, 0, false, bottomGapDp = 0))
     }
 }

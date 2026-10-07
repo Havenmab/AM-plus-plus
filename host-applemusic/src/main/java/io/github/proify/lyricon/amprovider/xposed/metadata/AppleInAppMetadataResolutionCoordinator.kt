@@ -919,6 +919,19 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     if (!host.isRestoreOriginalEnabled()) return
                     metadataStore.markOriginalResolved(mediaId)
                     metadataStore.clearOriginalPending(mediaId)
+                    if (shouldRetryMissingOriginalSongIdentity(resolution)) {
+                        // The identity lookup timed out or came back empty, so no original-region
+                        // language could be derived and the probe never ran.  Record the miss so
+                        // the existing cache-miss policy lets a later visibility pass retry.
+                        metadataStore.recordOriginalCacheMiss(
+                            mediaId,
+                            SystemClock.uptimeMillis(),
+                        )
+                        ProviderLogger.info(
+                            "Apple App 原地区歌曲身份未就绪: id=$mediaId, reason=identity_missing, " +
+                                "retryable=true"
+                        )
+                    }
                     val safeAlias = validatedOriginalSongAlias(
                         alias = alias,
                         localizedTitle = account.title,

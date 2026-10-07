@@ -379,6 +379,19 @@ internal class ApplePlaybackMetadataCoordinator(
                     localizedArtist = metadata.artist,
                 )
                 metadataStore.markOriginalResolved(metadata.id)
+                if (shouldRetryMissingOriginalSongIdentity(resolution)) {
+                    // A timed-out identity never produced a probe language, so this song is not
+                    // permanently unnamed.  Record the miss so the existing cache-miss policy can
+                    // retry it instead of suppressing every later lookup for the song.
+                    metadataStore.recordOriginalCacheMiss(
+                        metadata.id,
+                        android.os.SystemClock.uptimeMillis(),
+                    )
+                    ProviderLogger.info(
+                        "Apple 原名查询身份未就绪: id=${metadata.id}, reason=identity_missing, " +
+                            "retryable=true"
+                    )
+                }
                 resolution.language?.takeIf {
                     host.shouldShareOriginalSongLanguage(
                         localizedTitle = metadata.title,

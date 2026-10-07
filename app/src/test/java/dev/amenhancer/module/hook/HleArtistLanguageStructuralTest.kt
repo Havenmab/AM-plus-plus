@@ -34,4 +34,26 @@ class HleArtistLanguageStructuralTest {
         assertTrue(coordinator.contains("associatedMediaIds"))
         assertTrue(coordinator.contains("RequestPriority.VISIBLE"))
     }
+
+    @Test
+    fun inconclusiveIdentityLookupsStayRetryableInsteadOfConcludingTheSong() {
+        // A timed-out catalog-identity lookup publishes an alias-less, origin-unknown
+        // resolution.  Concluding the song permanently there is what left the device-log song
+        // uncorrected for the whole session, so both song owners must mark the inconclusive
+        // probe as a cache miss; the existing 750 ms policy then reopens the next visible pass.
+        val coordinator = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/AppleInAppMetadataResolutionCoordinator.kt",
+        )
+        assertTrue(coordinator.contains("shouldRetryMissingOriginalSongIdentity(resolution)"))
+        assertTrue(coordinator.contains("metadataStore.recordOriginalCacheMiss("))
+
+        val playback = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/ApplePlaybackMetadataCoordinator.kt",
+        )
+        assertTrue(playback.contains("shouldRetryMissingOriginalSongIdentity(resolution)"))
+        assertTrue(playback.contains("metadataStore.recordOriginalCacheMiss("))
+
+        // The retry gate itself must keep reading the miss timestamp the fix writes.
+        assertTrue(coordinator.contains("metadataStore.originalCacheMissUptimeMillis(mediaId)"))
+    }
 }

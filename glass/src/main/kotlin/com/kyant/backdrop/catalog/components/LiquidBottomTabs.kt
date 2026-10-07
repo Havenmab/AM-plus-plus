@@ -161,7 +161,8 @@ fun LiquidBottomTabs(
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 onTap = { selectedTabClick.value?.invoke(currentIndex) },
-                pressedScale = 78f / 56f,
+                pressedScale = 1.5f,
+                pressedScaleY = 1.45f,
                 // Only the thumb's own gesture may light the highlight. A tap on another tab
                 // selects that tab without lighting the thumb while it settles there.
                 onDragStarted = {
@@ -242,7 +243,7 @@ fun LiquidBottomTabs(
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
-                        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 16f.dp.toPx(), progress)
+                        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 8f.dp.toPx(), progress)
                         scaleX = scale
                         scaleY = scale
                     },
@@ -336,7 +337,7 @@ fun LiquidBottomTabs(
                     layerBlock = {
                         scaleX = dampedDragAnimation.scaleX
                         scaleY = dampedDragAnimation.scaleY
-                        val velocity = dampedDragAnimation.velocity / 10f
+                        val velocity = dampedDragAnimation.velocity / 10f * dampedDragAnimation.pressProgress
                         scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
                         scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
                     },

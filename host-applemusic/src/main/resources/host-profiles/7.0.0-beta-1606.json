@@ -344,6 +344,303 @@
   "versionName": "7.0.0-beta",
   "family": "fragment-content",
   "hookTargets": {
+    "ALBUM_COMPOSE_RESUME": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "onResume",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.fragment.AlbumPageFragment",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_RESUME",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_CONTENT": [
+      {
+        "parameterTypeNames": [
+          "z0.m"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "r1",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.fragment.AlbumPageFragment",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_CONTENT",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_VIEW_MODEL_GETTER": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "com.apple.android.music.collection2.viewmodel.AlbumViewModel",
+        "allowFirstMatch": false,
+        "methodName": "G1",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.fragment.AlbumPageFragment",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_VIEW_MODEL_GETTER",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_PAGE_ID": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "java.lang.String",
+        "allowFirstMatch": false,
+        "methodName": "getId",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.BaseCollectionViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_PAGE_ID",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_CURRENT_DATA": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "allowFirstMatch": false,
+        "methodName": "getData",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.BaseCollectionViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_CURRENT_DATA",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_TRACK_MAPPER": [
+      {
+        "parameterTypeNames": [
+          "com.apple.android.music.mediaapi.models.Album"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "java.util.List",
+        "allowFirstMatch": false,
+        "methodName": "transformToTrackList",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.AlbumViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_TRACK_MAPPER",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_TRACK_COMPARATOR": [
+      {
+        "parameterTypeNames": [
+          "com.apple.android.music.mediaapi.models.MediaEntity",
+          "com.apple.android.music.mediaapi.models.MediaEntity"
+        ],
+        "isStatic": true,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 2,
+        "returnTypeName": "boolean",
+        "allowFirstMatch": false,
+        "methodName": "trackDisplayItems_delegate$lambda$14$lambda$12",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.BaseCollectionViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_TRACK_COMPARATOR",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_REFRESH": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "refreshState",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.BaseCollectionViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_REFRESH",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_HEADER_REFRESH": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "publishHeader",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.collection2.viewmodel.BaseCollectionViewModel",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_HEADER_REFRESH",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_ROW": [
+      {
+        "parameterTypeNames": [
+          "O0.j",
+          "D7.i",
+          "D7.t",
+          "Rb.x5",
+          "Vb.t",
+          "Rb.w5",
+          "Rb.y5",
+          "int",
+          "boolean",
+          "D7.o",
+          "D7.p",
+          "pi.l",
+          "pi.p",
+          "pi.p",
+          "z0.m",
+          "int"
+        ],
+        "isStatic": true,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 16,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "a",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "y7.n",
+        "runtimeMemberNames": {
+          "ALBUM_COMPOSE_ROW_KEY_FIELD": "a",
+          "ALBUM_COMPOSE_KEY_ID_FIELD": "a"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_ROW",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ALBUM_COMPOSE_ENTITY_ID": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "java.lang.String",
+        "allowFirstMatch": false,
+        "methodName": "getId",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ALBUM_COMPOSE_ENTITY_ID",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ARTIST_COMPOSE_ENTITY_TYPE": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "java.lang.String",
+        "allowFirstMatch": false,
+        "methodName": "getType",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ARTIST_COMPOSE_ENTITY_TYPE",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ARTIST_COMPOSE_ENTITY_RELATIONSHIPS": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "java.util.Map",
+        "allowFirstMatch": false,
+        "methodName": "getRelationships",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ARTIST_COMPOSE_ENTITY_RELATIONSHIPS",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ARTIST_COMPOSE_RELATIONSHIP_ENTITIES": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "[Lcom.apple.android.music.mediaapi.models.MediaEntity;",
+        "allowFirstMatch": false,
+        "methodName": "getEntities",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.mediaapi.models.internals.Relationship",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ARTIST_COMPOSE_RELATIONSHIP_ENTITIES",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "ARTIST_COMPOSE_FRAGMENT_RESUMED": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "boolean",
+        "allowFirstMatch": false,
+        "methodName": "isResumed",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "androidx.fragment.app.m",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "ARTIST_COMPOSE_FRAGMENT_RESUMED",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "EXO_AUDIO_SESSION_ID": [],
     "LYRICS_RESULT_PRESENTATION": [],
     "IN_APP_CONTAINER_ARTIST_CLASS": [

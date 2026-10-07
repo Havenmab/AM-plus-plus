@@ -2,7 +2,7 @@
  * Derived from AndroidLiquidGlass / Backdrop 2.0.1
  * (https://github.com/Kyant0/AndroidLiquidGlass), commit
  * 65ab177e90e5c1d8c62e70cf7755841982da65f6, Apache License 2.0.
- * Changed by AM++: optional host accent and tap-only native reselection.
+ * Changed by AM++: tap-only native reselection and independent pressed Y scale.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -36,6 +36,7 @@ class DampedDragAnimation(
     val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
     // AM++: observe a completed tap on the floating indicator for native tab reselection.
     val onTap: (() -> Unit)? = null,
+    val pressedScaleY: Float = pressedScale,
 ) {
 
     private val valueAnimationSpec =
@@ -100,7 +101,7 @@ class DampedDragAnimation(
         animationScope.launch {
             launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
             launch { scaleXAnimation.animateTo(pressedScale, scaleXAnimationSpec) }
-            launch { scaleYAnimation.animateTo(pressedScale, scaleYAnimationSpec) }
+            launch { scaleYAnimation.animateTo(pressedScaleY, scaleYAnimationSpec) }
         }
     }
 

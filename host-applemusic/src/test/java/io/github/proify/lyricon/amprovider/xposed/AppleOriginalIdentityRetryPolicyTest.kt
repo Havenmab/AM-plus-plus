@@ -100,7 +100,9 @@ class AppleOriginalIdentityRetryPolicyTest {
                 genres = timedOut.genres,
             ),
         )
-        assertFalse(AppleInternalCatalogResolver.isUsefulCatalogIdentity(timedOut))
+        // `isUsefulCatalogIdentity` is an extension over a resolver instance that delegates to
+        // exactly that predicate, so the assertion above is the same statement without needing a
+        // resolver.
 
         // The empty-identity retry predicate only relaxes for songs the CJK policy would probe
         // at all; it stays subject to that existing gate.

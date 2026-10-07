@@ -88,6 +88,7 @@ fun LiquidBottomTabs(
     onSelectedTabClick: ((Int) -> Unit)? = null,
     isTabEnabled: (Int) -> Boolean = { true },
     panelHeight: androidx.compose.ui.unit.Dp = 64f.dp,
+    thumbHeight: androidx.compose.ui.unit.Dp = panelHeight - 8f.dp,
     panelBlur: androidx.compose.ui.unit.Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     leadingWidth: androidx.compose.ui.unit.Dp = 0f.dp,
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
@@ -288,7 +289,7 @@ fun LiquidBottomTabs(
                         onDrawSurface = { drawRect(containerColor) }
                     )
                     .then(interactiveHighlight.modifier)
-                    .height(panelHeight - 8f.dp)
+                    .height(thumbHeight)
                     .fillMaxWidth()
                     .padding(horizontal = 4f.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
@@ -350,7 +351,7 @@ fun LiquidBottomTabs(
                         drawRect(Color.Black.copy(alpha = 0.03f * progress))
                     }
                 )
-                .height(panelHeight - 8f.dp)
+                .height(thumbHeight)
                 .then(if (leadingPx == 0f) Modifier.fillMaxWidth(1f / tabsCount)
                     else Modifier.width(with(density) { tabWidth.toDp() }))
         )

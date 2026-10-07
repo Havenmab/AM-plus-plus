@@ -5,7 +5,7 @@ import org.junit.Test
 
 class GlassGeometryTest {
     @Test fun phoneAndTabletPresetsDivergeOnTheTabletRow() {
-        // The phone uses a 56dp panel; the tablet dual-pane row
+        // The phone keeps the accepted stacked capsule; the tablet dual-pane row
         // puts both capsules in one 56dp row (2026-09-22 sketch).
         assertEquals(
             GlassGeometry(navHeightDp = 56, miniHeightDp = 43, horizontalDp = 16, gapDp = 8),

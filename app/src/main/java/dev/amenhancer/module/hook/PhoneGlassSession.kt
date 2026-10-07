@@ -290,13 +290,9 @@ internal open class PhoneGlassSession(
             }
             val glass = GlassHostView(moduleContext()).also { navGlass = it }
             glass.alpha = 0f
-            glass.content { HostConfiguration {
-                GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab,
-                    panelHeight = geometry.navHeightDp.dp,
-                    panelBlur = navBlurDp.dp)
-            } }
+            glass.content { HostConfiguration { GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab, panelBlur = navBlurDp.dp) } }
             val navSlot = capsuleMarginsPx(frame.width, mini = false)
-            frame.addView(glass, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(geometry.navHeightDp), Gravity.TOP).apply {
+            frame.addView(glass, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(GlassPolicy.NAV_HEIGHT_DP), Gravity.TOP).apply {
                 leftMargin = navSlot[0]; rightMargin = navSlot[1]
             })
             observer = activity.window.decorView.viewTreeObserver.also { it.addOnPreDrawListener(this); it.addOnGlobalLayoutListener(layoutListener) }
@@ -531,7 +527,7 @@ internal open class PhoneGlassSession(
     }
 
     private fun updateGeometry() {
-        val height = dp(geometry.navHeightDp + bottomGapDp) + bottomInset
+        val height = dp(GlassPolicy.NAV_HEIGHT_DP + bottomGapDp) + bottomInset
         navFrame?.let { frame ->
             // A generic copy constructor drops the host ConstraintLayout's bottom anchor.
             if (frame.layoutParams.height != height) frame.layoutParams = frame.layoutParams.apply { this.height = height }

@@ -151,6 +151,40 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
+    fun `the identity probe takes HLE's catalog path instead of the fork's field switch`() {
+        val resolver = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
+        )
+        val query = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/NativeCatalogQueryAccess.kt",
+        )
+        val localization = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
+        )
+        // HLE's queryById(mediaId, null) builds no localization: the untargeted identity probe
+        // is not tokenized, so the region seams localize it like ordinary traffic...
+        assertFalse(resolver.contains("moduleCatalogLookupFieldStorefront"))
+        assertFalse(resolver.contains("keepsAccountCatalogTarget"))
+        assertFalse(query.contains("temporaryFieldStorefront"))
+        // ...and the shared MediaApi storefront field, which the direct query derives its
+        // catalog target from, is left at the region's value instead of being switched.
+        val untargeted = query
+            .substringAfter("val untargetedModuleLookup")
+            .substringBefore("if (localization != null)")
+        assertFalse(untargeted.contains("storefrontField.set"))
+        assertTrue(untargeted.contains("moduleCatalogRequestLocalization("))
+        // The request language is written for module requests too, exactly like HLE.  Suppressing
+        // it for a target-less request is what returned the romanized alias and let HLE's
+        // matching-language shortcut accept it as the original name.
+        val mediaApiHook = localization
+            .substringAfter("fun installMediaApiLocalization()")
+            .substringBefore("fun installCatalogRequestLocalization()")
+        assertFalse(mediaApiHook.contains("keepsAccountCatalogTarget"))
+        assertTrue(mediaApiHook.contains("requestLocalization?.language"))
+        assertTrue(mediaApiHook.contains("params[\"l\"] = language"))
+    }
+
+    @Test
     fun `library and album refresh paths delegate to HLE stateful hosts`() {
         val bridge = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataSurfaceBridge.kt")
         val runtime = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt")

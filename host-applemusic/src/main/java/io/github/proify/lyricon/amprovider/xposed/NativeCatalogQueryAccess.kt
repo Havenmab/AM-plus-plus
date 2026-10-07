@@ -406,34 +406,21 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
 
             runCatching {
                 val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
-                // An untargeted module query is the identity/ISRC/genre probe.  It must keep the
-                // catalog target Apple's own client resolves, because its catalog IDs only exist
-                // there.  A module token marks it as resolver-owned so the region rewrite leaves
-                // it alone, and the executor storefront argument is never written from outside:
-                // forcing one replaced the app's own resolution and emptied the identity, which
-                // stopped the per-song original-name correction.  The shared MediaApi storefront
-                // field is the storefront Apple's client builds that argument from, so while the
-                // region rewrite holds it at the region's value it has to be handed back to the
-                // captured account storefront for the duration of this call, then restored.
+                // An untargeted module query is the identity/ISRC/genre probe.  HLE builds no
+                // localization for it (`queryById(mediaId, null)`), so every region seam treats
+                // it like ordinary traffic -- the HTTP seam localizes its URL storefront and `l`
+                // parameter -- and the shared MediaApi storefront field, which is what this
+                // direct query derives its catalog target from, is left exactly as it is.  The
+                // fork used to mark the probe module-owned and switch that field to the account
+                // storefront for the call; the device log showed every switched lookup coming
+                // back empty (`fieldStorefront=us->tr`/`cn->tr` -> `dataSize=0`).
                 val regionRewriteEnabled = isGlobalRegionRewriteEnabled()
                 val untargetedModuleLookup = storefront == null && language == null
-                if (untargetedModuleLookup && regionRewriteEnabled) {
-                    // Capture before anything switches the field, and only from a value the
-                    // region rewrite did not itself write.
-                    captureAccountStorefront(access)
-                }
                 val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
                     storefront = storefront,
                     language = language,
                     regionRewriteEnabled = regionRewriteEnabled,
                 )
-                val temporaryFieldStorefront =
-                    AppleInternalCatalogResolver.moduleCatalogLookupFieldStorefront(
-                        storefront = storefront,
-                        language = language,
-                        regionRewriteEnabled = regionRewriteEnabled,
-                        accountStorefront = accountStorefront?.takeIf { accountStorefrontCaptured },
-                    )
                 if (localization != null) {
                     if (localization.storefront != null) {
                         // Capture before the field is temporarily switched below, otherwise the
@@ -484,17 +471,17 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     onFailure = { error -> fail("request_failed", error) },
                 )
                 val previousStorefront = access.storefrontField.get(access.mediaApi) as? String
-                val targetStorefront = localization?.storefront
-                // The field value actually written for the call: the temporary account
-                // storefront for an untargeted identity probe, or the request's own target.
-                val appliedStorefront = temporaryFieldStorefront ?: targetStorefront
-                if (localization != null && untargetedModuleLookup) {
+                // The request's own target.  An untargeted identity probe carries no
+                // localization (HLE parity), so its storefront argument stays exactly as
+                // Apple's client built it and the shared field is never switched for it.
+                val appliedStorefront = localization?.storefront
+                if (untargetedModuleLookup) {
                     moduleIdentityDetail = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
                         fieldBefore = previousStorefront,
-                        fieldUsed = temporaryFieldStorefront,
+                        fieldUsed = appliedStorefront,
                         idsCount = AppleInternalCatalogResolver.catalogLookupIdCount(queryParams),
-                        storefront = localization.storefront,
-                        language = localization.language,
+                        storefront = localization?.storefront,
+                        language = localization?.language,
                         accountStorefront = accountStorefront,
                         accountStorefrontCaptured = accountStorefrontCaptured,
                     )

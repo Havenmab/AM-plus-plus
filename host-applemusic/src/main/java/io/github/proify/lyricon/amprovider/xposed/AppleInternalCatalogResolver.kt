@@ -1294,71 +1294,28 @@ internal class AppleInternalCatalogResolver(
             }
 
         /**
-         * True when [localization] describes a module-owned request that has no catalog
-         * target of its own and must keep the host's own storefront and request language.
-         *
-         * Such a request (the untargeted identity/ISRC/genre probe) still carries the
-         * module's token, so every seam knows the module owns it, but it deliberately
-         * writes neither a storefront nor a language: its catalog IDs are only meaningful
-         * in the storefront Apple's client resolves them from.  The region rewrite must
-         * therefore leave its storefront argument, `l` parameter and
-         * `Accept-Language`/storefront headers untouched.  A null localization is ordinary
-         * Apple Music traffic and is not covered.
-         */
-        internal fun keepsAccountCatalogTarget(
-            localization: CatalogRequestLocalization?,
-        ): Boolean = localization != null && localization.language == null
-
-        /**
          * The localization a module-owned direct query must carry.
          *
          * A query with both a storefront and a language keeps them (the original-region probe
          * and the fixed-region batch lookups).  An untargeted query -- the identity/ISRC/genre
-         * probe, whose catalog IDs only exist in the storefront Apple's client already resolved
-         * them from -- is marked module-owned with no *executor* target of its own while a
-         * region rewrite is active.  Its token keeps every region seam from redirecting it, and
-         * the executor must leave its storefront argument exactly as Apple's client built it:
-         * writing one there replaces the app's own resolution of the account-owned catalog ID.
-         * The MediaApi storefront field, which is what Apple's client builds that argument from,
-         * is handled separately by [moduleCatalogLookupFieldStorefront].  With no region
-         * configured the probe keeps its historical token-less shape.
+         * probe -- carries none, exactly like HLE's `queryById(mediaId, null)`: every region
+         * seam then treats it like ordinary traffic instead of pinning it to the account
+         * storefront.
+         *
+         * The fork previously invented a target-less module localization for this probe and
+         * switched the shared MediaApi storefront field to the account storefront for the call.
+         * Device evidence showed every switched lookup coming back empty (`fieldStorefront=
+         * us->tr`/`cn->tr` -> `dataSize=0`) while the unswitched ones resolved; HLE never
+         * performs that switch.  See `RegionInternalCatalogLookupTest`.
          */
         internal fun moduleCatalogRequestLocalization(
             storefront: String?,
             language: String?,
-            regionRewriteEnabled: Boolean,
+            @Suppress("UNUSED_PARAMETER") regionRewriteEnabled: Boolean,
         ): CatalogRequestLocalization? = when {
             storefront != null && language != null ->
                 CatalogRequestLocalization(storefront, language)
-            storefront == null && language == null && regionRewriteEnabled ->
-                CatalogRequestLocalization(storefront = null, language = null)
             else -> null
-        }
-
-        /**
-         * The storefront the shared MediaApi storefront field must hold while a module-internal,
-         * untargeted lookup is in flight, or null when the lookup must leave the field alone.
-         *
-         * That field is the storefront Apple's own client derives its catalog target from, and
-         * the region rewrite sets it globally (`restoreConfiguredStorefront`).  A module `ids=`
-         * identity probe was read from the account's own catalog, so with a region active the
-         * field has to be handed back to the captured account storefront for the duration of the
-         * call.  This is deliberately independent of [moduleCatalogRequestLocalization]: the
-         * executor's storefront argument stays exactly as Apple's client built it, which is the
-         * value this field hands it.  A targeted query carries its own storefront and never needs
-         * this; with the feature off the account's value is already in place; an unknown account
-         * storefront fails open by touching nothing.
-         */
-        internal fun moduleCatalogLookupFieldStorefront(
-            storefront: String?,
-            language: String?,
-            regionRewriteEnabled: Boolean,
-            accountStorefront: String?,
-        ): String? = when {
-            storefront != null || language != null -> null
-            !regionRewriteEnabled -> null
-            accountStorefront.isNullOrEmpty() -> null
-            else -> accountStorefront
         }
 
         /**

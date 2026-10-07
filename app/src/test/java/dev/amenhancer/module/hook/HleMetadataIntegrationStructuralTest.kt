@@ -106,24 +106,28 @@ class HleMetadataIntegrationStructuralTest {
         // Module-owned lookups still win through their token.
         assertTrue(localization.contains("resolver.catalogRequestLocalization(requestToken)"))
         assertTrue(localization.contains("resolver.activeCatalogRequestLocalization()"))
-        // Ordinary traffic is only rewritten while the user enabled a region replacement.
+        // Ordinary traffic is only rewritten while the user enabled a region replacement, and the
+        // decision is now a pure seam action that a token-carrying request with no resolvable
+        // localization fails open on instead of falling back to the configured region.
+        assertTrue(localization.contains("catalogSeamAction("))
         assertTrue(
             localization.contains(
-                "if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return",
+                "globalRegionRewriteEnabled = resolver.isGlobalRegionRewriteEnabled()",
             ),
         )
+        assertTrue(localization.contains("CatalogSeamAction.SKIP_MARKED"))
         // Radio/station and lyrics requests are pulled back to the account storefront, and that
-        // check must run BEFORE the module-marker early return: the catalog executor can stamp
-        // a request it already redirected, and leaving such a request on the configured region
-        // is what makes account-available radio/lyrics unplayable.
+        // check must run BEFORE the seam action decides: the catalog executor can stamp a request
+        // it already redirected, and leaving such a request on the configured region is what makes
+        // account-available radio/lyrics unplayable.
         assertTrue(localization.contains("AppleInternalCatalogResolver.isAccountScopedPlaybackPath"))
         assertTrue(localization.contains("resolver.accountStorefrontForPlaybackRequest()"))
         assertTrue(localization.contains("rewriteAccountScopedRequest("))
         val accountScopedCheck = localization.indexOf("isAccountScopedPlaybackPath(pathSegments)")
-        val moduleMarkerCheck = localization.indexOf("if (carriesModuleMarker)")
+        val seamDecisionCheck = localization.indexOf("val seamAction = catalogSeamAction(")
         assertTrue(accountScopedCheck >= 0)
-        assertTrue(moduleMarkerCheck >= 0)
-        assertTrue(accountScopedCheck < moduleMarkerCheck)
+        assertTrue(seamDecisionCheck >= 0)
+        assertTrue(accountScopedCheck < seamDecisionCheck)
         assertTrue(localization.contains("Accept-Language"))
         // HLE writes the request language itself into Accept-Language.  The fork may normalize
         // the tag, but it must not map it: the removed CatalogLanguagePolicy.headerLanguage

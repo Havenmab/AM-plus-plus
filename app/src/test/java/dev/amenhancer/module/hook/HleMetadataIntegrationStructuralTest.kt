@@ -125,6 +125,14 @@ class HleMetadataIntegrationStructuralTest {
         assertTrue(moduleMarkerCheck >= 0)
         assertTrue(accountScopedCheck < moduleMarkerCheck)
         assertTrue(localization.contains("Accept-Language"))
+        // HLE writes the request language itself into Accept-Language.  The fork may normalize
+        // the tag, but it must not map it: the removed CatalogLanguagePolicy.headerLanguage
+        // turned "ja-JP" into "ja", and Apple selects the storefront's own localization from
+        // this header, so the downgrade made the jp original-region lookup return the account
+        // market's romanized title.  This pins the production content-HTTP seam (the
+        // CatalogLanguageRewritePolicy helper above is the inert legacy adapter).
+        assertTrue(localization.contains("CatalogLanguagePolicy.normalize(language)"))
+        assertFalse(localization.contains("CatalogLanguagePolicy.headerLanguage"))
         // The storefront is written into MediaApi only through the account-preserving helper.
         assertTrue(resolver.contains("restoreConfiguredStorefront(access)"))
         assertTrue(resolver.contains("captureAccountStorefront(access)"))

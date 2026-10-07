@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.config.CatalogLanguagePolicy
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -33,5 +34,28 @@ class CatalogLanguageCompositionTest {
 
         assertSame(source, rewritten)
         assertEquals("ko-KR", rewritten["l"])
+    }
+
+    @Test
+    fun acceptLanguageWritesTheConfiguredTagUnchanged() {
+        // Same contract as HLE's `Accept-Language = language`: the region's own tag is written
+        // through, never mapped to a language-only or script spelling.  The removed mapper sent
+        // "ja-JP" as "ja", "zh-CN" as "zh-Hans" and "zh-TW" as "zh-Hant".
+        assertEquals("ja-JP", CatalogLanguagePolicy.normalize("ja-JP"))
+        assertEquals("ko-KR", CatalogLanguagePolicy.normalize("ko-KR"))
+        assertEquals("zh-Hans", CatalogLanguagePolicy.normalize("zh-Hans"))
+        assertEquals("zh-CN", CatalogLanguagePolicy.normalize("zh-CN"))
+        assertEquals("zh-Hant", CatalogLanguagePolicy.normalize("zh-Hant"))
+        assertEquals("zh-TW", CatalogLanguagePolicy.normalize("zh-TW"))
+
+        val source = linkedMapOf<Any?, Any?>("Accept-Language" to "en-US")
+        assertEquals(
+            "ja-JP",
+            CatalogLanguageRewritePolicy.withHeaderLanguageValue(source, "ja-JP")["Accept-Language"],
+        )
+        assertEquals(
+            "zh-TW",
+            CatalogLanguageRewritePolicy.withHeaderLanguageValue(source, "zh-TW")["Accept-Language"],
+        )
     }
 }

@@ -17,7 +17,9 @@ class CatalogLanguageCompositionTest {
         val headers = CatalogLanguageRewritePolicy.withHeaderLanguageValue(source, "ja-JP")
 
         assertEquals("ja-JP", raw["l"])
-        assertEquals("ja", headers["Accept-Language"])
+        // The tag goes out unchanged, as in HLE: Apple picks the storefront's own
+        // localization from this header, so downgrading it (ja-JP -> ja) changed the answer.
+        assertEquals("ja-JP", headers["Accept-Language"])
     }
 
     @Test

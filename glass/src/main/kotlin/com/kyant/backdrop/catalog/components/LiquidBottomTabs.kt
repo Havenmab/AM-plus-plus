@@ -242,7 +242,7 @@ fun LiquidBottomTabs(
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
-                        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 16f.dp.toPx(), progress)
+                        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 8f.dp.toPx(), progress)
                         scaleX = scale
                         scaleY = scale
                     },

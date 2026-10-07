@@ -161,7 +161,7 @@ fun LiquidBottomTabs(
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 onTap = { selectedTabClick.value?.invoke(currentIndex) },
-                pressedScale = 1.45f,
+                pressedScale = 1.5f,
                 pressedScaleY = 1.45f,
                 // Only the thumb's own gesture may light the highlight. A tap on another tab
                 // selects that tab without lighting the thumb while it settles there.

@@ -37,7 +37,7 @@ class DampedDragAnimationTest {
                 harness.animation.value > 3.5f)
             assertEquals(4f, harness.animation.targetValue, .001f)
             assertEquals(1f, harness.animation.pressProgress, .001f)
-            assertEquals(1.45f, harness.animation.scaleX, .001f)
+            assertEquals(1.5f, harness.animation.scaleX, .001f)
             assertEquals(1.45f, harness.animation.scaleY, .001f)
         } finally { harness.close() }
     }
@@ -77,7 +77,7 @@ class DampedDragAnimationTest {
             harness.finish()
 
             assertEquals(1f, harness.animation.pressProgress, .001f)
-            assertEquals(1.45f, harness.animation.scaleX, .001f)
+            assertEquals(1.5f, harness.animation.scaleX, .001f)
             assertEquals(1.45f, harness.animation.scaleY, .001f)
         } finally { harness.close() }
     }
@@ -90,7 +90,7 @@ class DampedDragAnimationTest {
             CoroutineExceptionHandler { _, error -> errors += error })
         private var timeNanos = 0L
         val animation = DampedDragAnimation(scope, initialValue = 0f, valueRange = 0f..4f,
-            visibilityThreshold = .001f, initialScale = 1f, pressedScale = 1.45f,
+            visibilityThreshold = .001f, initialScale = 1f, pressedScale = 1.5f,
             pressedScaleY = 1.45f, onDragStarted = {}, onDragStopped = {}, onDrag = { _, _ -> })
 
         fun startDrag() {

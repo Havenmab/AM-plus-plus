@@ -42,7 +42,7 @@
 
 代码入口：地区档位与映射 `core/src/main/kotlin/dev/amenhancer/module/config/RegionSelection.kt`（storefront/语言/缓存命名空间；两款开关的请求侧投影见同目录 `RegionTitleRequestPolicy.kt`）；请求改写 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt`（五层安装与参数/URL 改写）；storefront 应用与账号回退 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogRegionAccess.kt` 与 `AppleInternalCatalogResolver.kt`（`applyRegionConfiguration` / `accountStorefrontForPlaybackRequest`）。
 
-`7.0.0-beta/1606` 上第 3 层是内容 HTTP 的 OkHttp **network** 拦截器（`y9.a#a`），第 5 层是 amp-api 的 **application** 拦截器（`y9.d#a`）；application 拦截器链路更靠前，先于 network 拦截器执行。目标描述符与 262 项/55 项原包校验见 `scripts/verify-host-profile.py`。
+`7.0.0-beta/1606` 上第 3 层是内容 HTTP 的 OkHttp 拦截器（`rb.a#a`，HLE 的 cookie/主客户端拦截器），第 5 层是 amp-api 的拦截器（`y9.d#a`）。两层必须挂在**不同**客户端上：`y9.a#a` 是 amp-api 客户端上更靠后的 OkHttp 拦截器，若把它当作第 3 层，第 5 层剥掉 executor 标记后它会把已经按原地区改写的请求再次改回配置地区，使原地区原名查询永远拿到配置地区的行。目标描述符与 262 项/55 项原包校验见 `scripts/verify-host-profile.py`。
 
 ## 页面架构变化 / 7.x
 

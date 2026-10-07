@@ -274,4 +274,44 @@ class RegionInternalCatalogLookupTest {
         assertEquals(1, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("filter[isrc]" to "JPDN1")))
         assertEquals(0, AppleInternalCatalogResolver.catalogLookupIdCount(mapOf("ids" to "")))
     }
+
+    @Test
+    fun `the targeted diagnostic states the requested storefront and the field during the call`() {
+        // The targeted decision line is what will tell the next device log whether a jp lookup
+        // really ran with the field at jp, or whether the request's own target was lost.
+        val detail = AppleInternalCatalogResolver.targetedCatalogLookupDetail(
+            description = "localized-songs-ids=1",
+            path = "songs",
+            requestedStorefront = "jp",
+            requestedLanguage = "ja-JP",
+            fieldBefore = "us",
+            fieldApplied = "jp",
+            fieldDuring = "jp",
+            token = "tok",
+            idsCount = 1,
+        )
+        assertTrue(detail.contains("requested=jp/ja-JP"))
+        assertTrue(detail.contains("description=localized-songs-ids=1"))
+        assertTrue(detail.contains("path=songs"))
+        assertTrue(detail.contains("fieldStorefront=us->jp(during=jp)"))
+        assertTrue(detail.contains("token=tok"))
+        assertTrue(detail.contains("ids=1"))
+
+        // The lost-target shape: the request asked for jp while the shared field stayed at the
+        // configured region and no token was attached.
+        val lost = AppleInternalCatalogResolver.targetedCatalogLookupDetail(
+            description = "isrc=JPDN12345678",
+            path = "songs",
+            requestedStorefront = "jp",
+            requestedLanguage = "ja-JP",
+            fieldBefore = "us",
+            fieldApplied = "us",
+            fieldDuring = "us",
+            token = null,
+            idsCount = 1,
+        )
+        assertTrue(lost.contains("requested=jp/ja-JP"))
+        assertTrue(lost.contains("fieldStorefront=us->us(during=us)"))
+        assertTrue(lost.contains("token=none"))
+    }
 }

@@ -203,6 +203,38 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
+    fun `targeted original-region lookups state their storefront and fail open at the seam`() {
+        val query = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/NativeCatalogQueryAccess.kt",
+        )
+        val resolver = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/AppleInternalCatalogResolver.kt",
+        )
+        val localization = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt",
+        )
+        // The targeted entity batch / ISRC shape gets its own visible-channel decision line.
+        assertTrue(query.contains("logTargetedCatalogLookup("))
+        assertTrue(query.contains("AppleCatalogTargetedLookup"))
+        assertTrue(query.contains("targetedCatalogLookupDetail("))
+        assertTrue(resolver.contains("requested=\${requestedStorefront"))
+        assertTrue(resolver.contains("fieldDuring"))
+        // The batch completion line names the storefront it asked for, next to the value.
+        val scheduling = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogRequestScheduling.kt",
+        )
+        assertTrue(scheduling.contains("storefront=\${request.storefront}"))
+        // The seam logs its own decision (source, action, headers) and never lets a module request
+        // whose localization is gone fall back to the configured region.
+        assertTrue(localization.contains("AppleCatalogSeam"))
+        assertTrue(localization.contains("CatalogSeamAction.FAIL_OPEN_UNRESOLVED_TOKEN"))
+        assertTrue(localization.contains("fail-open-unresolved-token"))
+        assertTrue(localization.contains("catalogSeamAction("))
+        assertTrue(localization.contains("AppleCatalogExecutor"))
+        assertTrue(localization.contains("localized=\${token != null}"))
+    }
+
+    @Test
     fun `library and album refresh paths delegate to HLE stateful hosts`() {
         val bridge = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataSurfaceBridge.kt")
         val runtime = source("host-applemusic/src/main/java/dev/amenhancer/module/hook/HleMetadataRuntime.kt")

@@ -293,6 +293,17 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                 moduleIdentityDetail = null
                 logModuleIdentityLookup(detail, outcome)
             }
+            // Set only for a *targeted* module lookup (the original-region entity batch and the
+            // ISRC shape).  It carries the decisive line for those lookups: the requested
+            // storefront/language, the storefront the shared MediaApi field held before, was
+            // written with and actually held while the call ran, and whether a request token
+            // was attached; the outcome (data size or failure) is appended on termination.
+            var targetedLookupDetail: String? = null
+            fun logTargetedOutcome(outcome: String) {
+                val detail = targetedLookupDetail ?: return
+                targetedLookupDetail = null
+                logTargetedCatalogLookup(detail, outcome)
+            }
             val responseTask = catalogResponseDispatcher.newTask<Any, CatalogResponseSnapshot, Result>(
                 snapshotOnMain = { response ->
                     val snapshot = response?.let {
@@ -314,6 +325,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         detail = responseDiagnostic.get(),
                     )
                     logModuleIdentityOutcome(responseDiagnostic.get() ?: "response")
+                    logTargetedOutcome(responseDiagnostic.get() ?: "response")
                     onResult(result)
                 },
                 failOnMain = { error ->
@@ -332,6 +344,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         detail = "error=${error.javaClass.name}:${error.message}",
                     )
                     logModuleIdentityOutcome("transform_failed:${error.javaClass.simpleName}")
+                    logTargetedOutcome("transform_failed:${error.javaClass.simpleName}")
                     onResult(null)
                 },
             )
@@ -399,6 +412,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     detail = "error=${error.javaClass.name}:${error.message}",
                 )
                 logModuleIdentityOutcome("$event:${error.javaClass.simpleName}")
+                logTargetedOutcome("$event:${error.javaClass.simpleName}")
                 // Continuations may resume from an Apple network thread.  Preserve the resolver
                 // callback contract by publishing failures on the host main executor as well.
                 mainHandler.post { onResult(null) }
@@ -462,6 +476,7 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         detail = "mode=direct-network, timeoutMs=$QUERY_TIMEOUT_MS",
                     )
                     logModuleIdentityOutcome("timeout")
+                    logTargetedOutcome("timeout")
                     onResult(null)
                 }.also { mainHandler.postDelayed(it, QUERY_TIMEOUT_MS) }
 
@@ -490,6 +505,25 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     activeCatalogRequest.set(localization)
                     if (appliedStorefront != null) {
                         access.storefrontField.set(access.mediaApi, appliedStorefront)
+                    }
+                    if (localization != null && !untargetedModuleLookup) {
+                        // The decisive line for a targeted lookup: the storefront/lang the
+                        // request asked for, the storefront the shared field held before, was
+                        // written with and actually holds now, the token state, and the path.
+                        targetedLookupDetail =
+                            AppleInternalCatalogResolver.targetedCatalogLookupDetail(
+                                description = description,
+                                path = path,
+                                requestedStorefront = storefront,
+                                requestedLanguage = language,
+                                fieldBefore = previousStorefront,
+                                fieldApplied = appliedStorefront,
+                                fieldDuring = access.storefrontField.get(access.mediaApi) as? String,
+                                token = requestToken,
+                                idsCount = AppleInternalCatalogResolver.catalogLookupIdCount(
+                                    queryParams
+                                ),
+                            )
                     }
                     access.directQueryMethod.invoke(
                         access.mediaApi,
@@ -684,6 +718,26 @@ internal fun AppleInternalCatalogResolver.logCatalogRequestDiagnostic(
  */
 internal fun logModuleIdentityLookup(detail: String, outcome: String) {
     ProviderLogger.info("AppleCatalogModuleIdentity: $detail, outcome=$outcome")
+}
+
+/** Bounded trace budget for the targeted-lookup decision lines. */
+private const val TARGETED_LOOKUP_TRACE_LIMIT = 400
+private val targetedLookupTraceKeys = ConcurrentHashMap.newKeySet<String>()
+
+/**
+ * One bounded decision line per *targeted* module lookup (the original-region entity batch and
+ * the ISRC shape): the storefront/language the request asked for, the shared MediaApi storefront
+ * field before, after the resolver's write and while the call ran, the attached request token,
+ * the ids it sent, and the response size or failure.
+ *
+ * Same visible channel and shape as [logModuleIdentityLookup]; unlike the identity probe the
+ * targeted lookups are batched, so identical shapes are collapsed by a bounded trace set instead
+ * of repeating for every queued song.
+ */
+internal fun logTargetedCatalogLookup(detail: String, outcome: String) {
+    if (targetedLookupTraceKeys.size >= TARGETED_LOOKUP_TRACE_LIMIT) return
+    if (!targetedLookupTraceKeys.add("$detail|$outcome")) return
+    ProviderLogger.info("AppleCatalogTargetedLookup: $detail, outcome=$outcome")
 }
 
 

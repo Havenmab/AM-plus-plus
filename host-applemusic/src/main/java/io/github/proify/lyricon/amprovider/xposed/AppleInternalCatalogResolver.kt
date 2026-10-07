@@ -1350,6 +1350,32 @@ internal class AppleInternalCatalogResolver(
                 "accountStorefront=$account"
         }
 
+        /**
+         * The bounded decision line for one *targeted* module lookup.
+         *
+         * It states the storefront/language the request asked for, the shared MediaApi
+         * storefront field before, as written and as actually observed while the call ran, the
+         * attached request token, the ids it sent, and the path.  [fieldDuring] is the value read
+         * back immediately after the resolver's write and before the host invocation: a value
+         * that is not the requested storefront is the decisive proof that the request's own
+         * catalog target was lost before the wire.
+         */
+        internal fun targetedCatalogLookupDetail(
+            description: String,
+            path: String,
+            requestedStorefront: String?,
+            requestedLanguage: String?,
+            fieldBefore: String?,
+            fieldApplied: String?,
+            fieldDuring: String?,
+            token: String?,
+            idsCount: Int,
+        ): String = "requested=${requestedStorefront ?: "none"}/${requestedLanguage ?: "none"}, " +
+            "description=$description, path=$path, ids=$idsCount, " +
+            "fieldStorefront=${fieldBefore ?: "unset"}->${fieldApplied ?: "unchanged"}" +
+            "(during=${fieldDuring ?: "unset"}), " +
+            "token=${token ?: "none"}"
+
         internal fun selectLocalizedArtistName(
             attributeArtist: String,
             relationshipArtists: List<String>,

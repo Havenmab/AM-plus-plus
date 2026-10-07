@@ -320,6 +320,33 @@ class AppleMusic653ProfileTest {
         assertEquals(listOf("w8.d"), ampOwner(version653))
         assertEquals(listOf("y9.d"), ampOwner(version700))
     }
+
+    @Test
+    fun `1606 content http localization is HLE's cookie interceptor not a second amp seam`() {
+        // HLE's 1606 mapping is cookie = rb.a, AMD/amp-api = y9.d.  The fork pinned y9.a here,
+        // which is an OkHttp interceptor on the amp-api client that runs *after* the amp seam
+        // (y9.d).  The amp seam strips the module marker from an executor-localized request, so
+        // that later seam saw a plain request and re-localized it to the configured region,
+        // overwriting the requested original-region storefront.  Keep the two seams on distinct
+        // clients exactly as HLE does.
+        val version700 = AppleMusicVersion("7.0.0-beta", 1606L)
+        val localization = AppleMusicHookProfiles
+            .exactTargets(version700, AppleMusicHookPoint.CONTENT_HTTP_LOCALIZATION)
+            .single()
+        assertEquals("rb.a", localization.className)
+        assertEquals("a", localization.methodName)
+        assertEquals(1, localization.parameterCount)
+        assertEquals(listOf("pk.f"), localization.parameterTypeNames)
+        assertEquals("kk.D", localization.returnTypeName)
+        val amp = AppleMusicHookProfiles
+            .exactTargets(version700, AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR)
+            .single()
+        assertEquals("y9.d", amp.className)
+        assertFalse(
+            "the content seam must not share the amp-api interceptor owner",
+            localization.className == amp.className,
+        )
+    }
 }
 
 private class Profile653FakeClassSource(

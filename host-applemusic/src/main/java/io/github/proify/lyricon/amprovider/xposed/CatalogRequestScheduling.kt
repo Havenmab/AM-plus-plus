@@ -190,6 +190,7 @@ internal fun AppleInternalCatalogResolver.processOriginalEntityBatch() {
                     ProviderLogger.info(
                         "Apple 原地区实体查询完成: id=${request.mediaId}, " +
                             "entityType=${request.entityType}, language=${request.language}, " +
+                            "storefront=${request.storefront}, " +
                             "batch=${batch.size}, priority=${request.priority}, hit=${alias != null}, " +
                             "value=${alias?.title}/${alias?.artist}/${alias?.album}"
                     )

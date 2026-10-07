@@ -28,6 +28,50 @@ import io.github.proify.lyricon.amprovider.xposed.isGlobalRegionRewriteEnabled
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
+/** Bounded trace budgets for the visible-channel region-seam decision lines. */
+private const val CATALOG_SEAM_TRACE_LIMIT = 300
+private const val CATALOG_EXECUTOR_TRACE_LIMIT = 200
+
+/**
+ * What a content-HTTP seam does with one request.
+ *
+ * The decision is pure so the region rewrite's module-owned cases stay verifiable on the JVM
+ * without a device: an executor-marked request is already localized for its own target and only
+ * has its marker stripped; a request that still carries the resolver token but whose localization
+ * can no longer be resolved is a module request seen by a later seam and must fail open rather
+ * than be re-localized to the configured region; everything else follows the user's region.
+ */
+internal enum class CatalogSeamAction {
+    /** The catalog executor already wrote this request's storefront; only strip the marker. */
+    SKIP_MARKED,
+
+    /** Resolver-owned but its localization is gone: never apply the configured region. */
+    FAIL_OPEN_UNRESOLVED_TOKEN,
+
+    /** Ordinary traffic while the region feature is off: leave it exactly as Apple built it. */
+    PASS,
+
+    /** A resolver-owned request with its own target: rewrite to the token's storefront. */
+    REWRITE_MODULE,
+
+    /** Ordinary traffic while the region feature is on: rewrite to the configured storefront. */
+    REWRITE_REGION,
+}
+
+internal fun catalogSeamAction(
+    carriesModuleMarker: Boolean,
+    requestToken: String?,
+    localizationResolved: Boolean,
+    globalRegionRewriteEnabled: Boolean,
+): CatalogSeamAction = when {
+    carriesModuleMarker -> CatalogSeamAction.SKIP_MARKED
+    requestToken != null && !localizationResolved ->
+        CatalogSeamAction.FAIL_OPEN_UNRESOLVED_TOKEN
+    !localizationResolved && !globalRegionRewriteEnabled -> CatalogSeamAction.PASS
+    localizationResolved -> CatalogSeamAction.REWRITE_MODULE
+    else -> CatalogSeamAction.REWRITE_REGION
+}
+
 internal class AppleContentLocalizationHooks(
     private val runtime: AppleMusicProviderRuntime,
     private val catalogResolver: () -> AppleInternalCatalogResolver,
@@ -39,6 +83,8 @@ internal class AppleContentLocalizationHooks(
     private val contentRequestHeaderTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val mediaApiLocalizationTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val mediaApiGlobalTraceKeys = ConcurrentHashMap.newKeySet<String>()
+    private val catalogSeamTraceKeys = ConcurrentHashMap.newKeySet<String>()
+    private val catalogExecutorTraceKeys = ConcurrentHashMap.newKeySet<String>()
     private val contentHttpTimingTracker by lazy {
         AppleContentHttpTimingTracker(clock = SystemClock::elapsedRealtime)
     }
@@ -190,6 +236,12 @@ internal class AppleContentLocalizationHooks(
                     ) { token ->
                         resolver.catalogRequestLocalization(token)
                     }
+                    logCatalogExecutorRewrite(
+                        executor = "${resolved.target.className}#${target.methodName}",
+                        queryArgIndex = queryArgIndex,
+                        originalArgs = chain.args,
+                        result = result,
+                    )
                     result?.args
                 }
                 installed += 1
@@ -212,6 +264,7 @@ internal class AppleContentLocalizationHooks(
         installContentHttpHook(
             hookPoint = AppleMusicHookPoint.CONTENT_HTTP_LOCALIZATION,
             label = "Apple 内容 HTTP 本地化",
+            source = "content-http",
         )
     }
 
@@ -223,6 +276,7 @@ internal class AppleContentLocalizationHooks(
         installContentHttpHook(
             hookPoint = AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR,
             label = "Apple amp-api 内容请求网络拦截",
+            source = "amp-api",
             // Unlike the content HTTP seam below, this one has no verified owner on 6.5.0-6.5.2
             // and no compatibility candidate that can match, so without this gate its resolution
             // degenerates into a whole-DEX DexKit query for every one-argument method named "a"
@@ -239,6 +293,7 @@ internal class AppleContentLocalizationHooks(
     private fun installContentHttpHook(
         hookPoint: AppleMusicHookPoint,
         label: String,
+        source: String,
         requireExactTargets: Boolean = false,
     ) {
         // Deliberately not applied to CONTENT_HTTP_LOCALIZATION: it has no exact target on
@@ -255,16 +310,19 @@ internal class AppleContentLocalizationHooks(
             contentHttpTarget = resolved.target
             runtime.hookRegistrar.installHook(
                 resolved.method,
-                before = ::contentHttpLocalizationBefore,
+                before = { chain -> contentHttpLocalizationBefore(chain, source) },
                 after = ::contentHttpLocalizationAfter,
             )
-            ProviderLogger.info("$label Hook 已安装")
+            ProviderLogger.info(
+                "$label Hook 已安装: target=${resolved.target.className}#" +
+                    "${resolved.target.methodName}"
+            )
         }.onFailure {
             ProviderLogger.error("$label Hook 安装失败", it)
         }
     }
 
-    private fun contentHttpLocalizationBefore(chain: Chain) {
+    private fun contentHttpLocalizationBefore(chain: Chain, source: String) {
         val httpChain = chain.args.firstOrNull() ?: return
         val request = AppleReflection.field(
             httpChain,
@@ -287,6 +345,13 @@ internal class AppleContentLocalizationHooks(
         )
         val requestLocalization = resolver.catalogRequestLocalization(requestToken)
             ?: resolver.activeCatalogRequestLocalization()
+        // Read the storefront the outgoing request actually carries.  These headers are the
+        // second way (next to the URL path segment) Apple can pick a catalog region, so the
+        // decision line below records them before and after this seam.
+        val sourceAcceptLanguage = requestHeader(request, "Accept-Language")
+        val sourceStorefrontHeader = requestHeader(request, "X-Apple-Store-Front")
+        val sourceRequestStorefrontHeader =
+            requestHeader(request, "X-Apple-Request-Store-Front")
 
         // Entitlement-bound paths are checked BEFORE the module marker: the catalog executor
         // may already have redirected such a request to the configured region, and leaving it
@@ -297,6 +362,19 @@ internal class AppleContentLocalizationHooks(
             isAppleLyricsRequestPath(pathSegments)
         ) {
             val accountStorefront = resolver.accountStorefrontForPlaybackRequest()
+            logCatalogSeamDecision(
+                source = source,
+                uri = requestUri,
+                action = "account-storefront",
+                requestToken = requestToken,
+                marker = carriesModuleMarker,
+                resolved = requestLocalization != null,
+                targetStorefront = accountStorefront,
+                targetLanguage = null,
+                acceptLanguage = sourceAcceptLanguage,
+                storefrontHeader = sourceStorefrontHeader,
+                requestStorefrontHeader = sourceRequestStorefrontHeader,
+            )
             val rewritten = rewriteAccountScopedRequest(
                 request = request,
                 uri = requestUri,
@@ -318,10 +396,65 @@ internal class AppleContentLocalizationHooks(
             return
         }
 
+        // The seam's action for this request: an executor-marked request was already localized
+        // for its own target and is only stripped, a module request whose localization is gone
+        // fails open, and everything else follows the user's region.
+        val seamAction = catalogSeamAction(
+            carriesModuleMarker = carriesModuleMarker,
+            requestToken = requestToken,
+            localizationResolved = requestLocalization != null,
+            globalRegionRewriteEnabled = resolver.isGlobalRegionRewriteEnabled(),
+        )
         // The catalog executor already localized this request by rewriting its storefront
         // argument.  Rewriting again here could undo a deliberate original-region target, so
         // only strip the module's own parameters so they never reach Apple.
-        if (carriesModuleMarker) {
+        if (seamAction == CatalogSeamAction.SKIP_MARKED) {
+            logCatalogSeamDecision(
+                source = source,
+                uri = requestUri,
+                action = "skip-marked",
+                requestToken = requestToken,
+                marker = true,
+                resolved = requestLocalization != null,
+                targetStorefront = AppleInternalCatalogResolver.storefrontFromContentPath(
+                    pathSegments
+                ),
+                targetLanguage = requestUri.getQueryParameter("l"),
+                acceptLanguage = sourceAcceptLanguage,
+                storefrontHeader = sourceStorefrontHeader,
+                requestStorefrontHeader = sourceRequestStorefrontHeader,
+            )
+            stripModuleParameters(request, requestUri)?.let { stripped ->
+                AppleReflection.setField(
+                    httpChain,
+                    member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
+                    stripped,
+                )
+            }
+            return
+        }
+
+        // Resolver-owned but its localization is no longer attached: a later seam is seeing a
+        // request whose marker an earlier seam already stripped.  Applying the configured
+        // region here is exactly what turns a targeted original-region lookup into a configured
+        // region one, so fail open and leave Apple's own storefront untouched.  Only the
+        // module's own parameters are removed.
+        if (seamAction == CatalogSeamAction.FAIL_OPEN_UNRESOLVED_TOKEN) {
+            logCatalogSeamDecision(
+                source = source,
+                uri = requestUri,
+                action = "fail-open-unresolved-token",
+                requestToken = requestToken,
+                marker = false,
+                resolved = false,
+                targetStorefront = AppleInternalCatalogResolver.storefrontFromContentPath(
+                    pathSegments
+                ),
+                targetLanguage = requestUri.getQueryParameter("l"),
+                acceptLanguage = sourceAcceptLanguage,
+                storefrontHeader = sourceStorefrontHeader,
+                requestStorefrontHeader = sourceRequestStorefrontHeader,
+            )
             stripModuleParameters(request, requestUri)?.let { stripped ->
                 AppleReflection.setField(
                     httpChain,
@@ -333,7 +466,7 @@ internal class AppleContentLocalizationHooks(
         }
 
         // Preserve the historical behaviour for ordinary traffic while the feature is off.
-        if (requestLocalization == null && !resolver.isGlobalRegionRewriteEnabled()) return
+        if (seamAction == CatalogSeamAction.PASS) return
 
         val storefront = requestLocalization?.storefront
             ?: resolver.configuredStorefrontOrNull()
@@ -348,6 +481,29 @@ internal class AppleContentLocalizationHooks(
             targetStorefront = storefront,
             targetLanguage = language,
         )
+        logCatalogSeamDecision(
+            source = source,
+            uri = requestUri,
+            action = if (requestLocalization != null) "rewrite-module" else "rewrite-region",
+            requestToken = requestToken,
+            marker = false,
+            resolved = requestLocalization != null,
+            targetStorefront = storefront,
+            targetLanguage = language,
+            acceptLanguage = sourceAcceptLanguage,
+            storefrontHeader = sourceStorefrontHeader,
+            requestStorefrontHeader = sourceRequestStorefrontHeader,
+            targetAcceptLanguage = CatalogLanguagePolicy.normalize(language),
+            targetStorefrontHeader = AppleInternalCatalogResolver.localizedStorefrontHeaderValue(
+                storefront = storefront,
+                currentValue = sourceStorefrontHeader,
+            ),
+            targetRequestStorefrontHeader =
+                AppleInternalCatalogResolver.localizedStorefrontHeaderValue(
+                    storefront = storefront,
+                    currentValue = sourceRequestStorefrontHeader,
+                ),
+        )
         val rewritten = rewriteContentRequest(
             request = request,
             uri = requestUri,
@@ -360,6 +516,90 @@ internal class AppleContentLocalizationHooks(
             httpChain,
             member(AppleMusicRuntimeMember.CONTENT_HTTP_CHAIN_REQUEST_FIELD),
             rewritten,
+        )
+    }
+
+    /**
+     * One bounded, visible-channel decision line per module-owned content request (token or
+     * executor marker): which seam saw it, the URL storefront it currently carries, whether the
+     * resolver token was present and resolvable, what this seam did, the storefront/language it
+     * targeted, and the two catalog storefront headers before and after.
+     *
+     * This is the evidence that separates "the request was answered by the storefront it asked
+     * for" from "a later seam re-localized it to the configured region".  Like the neighbouring
+     * catalog traces it uses [ProviderLogger.info], not the `[debug]`-filtered diagnostic
+     * channel, and is bounded so a long session cannot flood the log.
+     */
+    private fun logCatalogSeamDecision(
+        source: String,
+        uri: Uri,
+        action: String,
+        requestToken: String?,
+        marker: Boolean,
+        resolved: Boolean,
+        targetStorefront: String?,
+        targetLanguage: String?,
+        acceptLanguage: String?,
+        storefrontHeader: String?,
+        requestStorefrontHeader: String?,
+        targetAcceptLanguage: String? = acceptLanguage,
+        targetStorefrontHeader: String? = storefrontHeader,
+        targetRequestStorefrontHeader: String? = requestStorefrontHeader,
+    ) {
+        if (catalogSeamTraceKeys.size >= CATALOG_SEAM_TRACE_LIMIT) return
+        val key = listOf(
+            source, action, uri.host, uri.encodedPath, uri.query,
+            targetStorefront, targetLanguage, marker, requestToken,
+        ).joinToString("|")
+        if (!catalogSeamTraceKeys.add(key)) return
+        ProviderLogger.info(
+            "AppleCatalogSeam: source=$source, action=$action, host=${uri.host.orEmpty()}, " +
+                "pathStorefront=" +
+                "${AppleInternalCatalogResolver.storefrontFromContentPath(uri.pathSegments)
+                    ?: "none"}, " +
+                "l=${uri.getQueryParameter("l") ?: "unset"}, " +
+                "marker=$marker, token=${requestToken ?: "none"}, resolved=$resolved, " +
+                "target=${targetStorefront ?: "none"}/${targetLanguage ?: "none"}, " +
+                "acceptLanguage=${acceptLanguage ?: "unset"}->" +
+                "${targetAcceptLanguage ?: "unset"}, " +
+                "storefrontHeader=${storefrontHeader ?: "unset"}->" +
+                "${targetStorefrontHeader ?: "unset"}, " +
+                "requestStorefrontHeader=${requestStorefrontHeader ?: "unset"}->" +
+                "${targetRequestStorefrontHeader ?: "unset"}"
+        )
+    }
+
+    /**
+     * One bounded, visible-channel line per catalog-executor storefront rewrite.
+     *
+     * It states the executor target, whether the request carried the resolver's per-request
+     * token (and therefore whether `localizationForToken` found the module's own storefront), and
+     * the storefront argument before and after.  A module request that reaches this hook
+     * *without* a resolvable token is the decisive proof that the executor classified it as
+     * native and overwrote the requested original storefront with the configured region.
+     */
+    private fun logCatalogExecutorRewrite(
+        executor: String,
+        queryArgIndex: Int,
+        originalArgs: List<Any?>,
+        result: AppleCatalogExecutorArgs.Result?,
+    ) {
+        result ?: return
+        if (catalogExecutorTraceKeys.size >= CATALOG_EXECUTOR_TRACE_LIMIT) return
+        val token = result.token
+        val beforeStorefront = originalArgs
+            .getOrNull(AppleCatalogExecutorArgs.STOREFRONT_ARG_INDEX)
+            ?.toString()
+        val afterStorefront = result.args
+            .getOrNull(AppleCatalogExecutorArgs.STOREFRONT_ARG_INDEX)
+            ?.toString()
+        val key = "$executor|${token ?: "native"}|${result.storefront}"
+        if (!catalogExecutorTraceKeys.add(key)) return
+        ProviderLogger.info(
+            "AppleCatalogExecutor: executor=$executor, queryArg=$queryArgIndex, " +
+                "token=${token ?: "none"}, localized=${token != null}, " +
+                "storefront=${result.storefront ?: "unchanged"}, " +
+                "arg3=${beforeStorefront ?: "unset"}->${afterStorefront ?: "unset"}"
         )
     }
 

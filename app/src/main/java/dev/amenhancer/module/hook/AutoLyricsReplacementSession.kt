@@ -16,6 +16,8 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
+import dev.amenhancer.module.lyrics.CustomLyricsUpdateSources
 import dev.amenhancer.module.model.CustomLyricsSources
 import java.io.File
 import java.io.FileInputStream
@@ -53,9 +55,11 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
+    val amll = AmllTtmlClient(lyricTransport)
+    val amLyrics = AmLyricsClient(lyricTransport)
     val resolver = AutoLyricsSourceResolver.fixed(
-        amll = AmllTtmlClient(lyricTransport),
-        amLyrics = AmLyricsClient(lyricTransport),
+        amll = amll,
+        amLyrics = amLyrics,
         lunabeat = lunabeat,
     )
     val cache = FileAutoLyricsCache(root)
@@ -105,14 +109,13 @@ internal fun createAutoLyricsRuntime(
         executor.execute {
             cache.cachedIds().forEach { appleMusicId ->
                 if (appleMusicId in suppressedIds) return@forEach
-                val ttml = cache.read(appleMusicId)
-                    ?.takeIf(TtmlTimingPolicy::isWord)
+                val candidate = cache.readCandidate(appleMusicId)
                     ?: return@forEach
                 when (
                     runCatching {
                         publisher.publish(
                             appleMusicId,
-                            AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, ttml),
+                            candidate,
                         )
                     }.getOrDefault(AutoLyricsPublishResult.FAILED)
                 ) {
@@ -124,12 +127,60 @@ internal fun createAutoLyricsRuntime(
             }
         }
     }
+    val refreshExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        { runnable -> Thread(runnable, "ampp-lyrics-refresh").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+    val sources = CustomLyricsUpdateSources(
+        fetchAmll = amll::fetch,
+        loadAmLyricsIndex = amLyrics::fetchIndex,
+        fetchAmLyricsTtml = amLyrics::fetchTtml,
+        loadLunabeatCatalog = lunabeat::loadCatalog,
+        fetchLunabeatTtml = lunabeat::fetch,
+        fetchAutoCache = resolver::fetch,
+    )
     return AutoLyricsRuntime(
         resolver = resolver,
         cache = cache,
         executor = executor,
         publisher = publisher,
         suppressedIds = suppressedIds,
+        refreshExecutor = Executor { task ->
+            // Old waiting visits have already been cancelled by the session's generation.
+            refreshExecutor.queue.clear()
+            refreshExecutor.execute(task)
+        },
+        closeRefresh = { refreshExecutor.shutdownNow() },
+        refreshSong = refresh@{ appleMusicId, isCancelled ->
+            if (isCancelled()) return@refresh null
+            var previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
+            if (previous == null) {
+                // A restart may still have a temporary cache awaiting migration.
+                val cached = cache.readCandidate(appleMusicId) ?: return@refresh null
+                if (isCancelled()) return@refresh null
+                if (publisher.publish(appleMusicId, cached) == AutoLyricsPublishResult.FAILED) return@refresh null
+                cache.delete(appleMusicId)
+                previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
+            }
+            val entry = previous ?: return@refresh null
+            if (!entry.enabled || entry.source == CustomLyricsSources.MANUAL || isCancelled()) return@refresh null
+            val result = configuredContent.updateSong(appleMusicId, sources, isCancelled)
+            val updated = result as? CustomLyricsUpdateResult.Updated ?: run {
+                if (result is CustomLyricsUpdateResult.Failed && !isCancelled()) {
+                    ModernXposedRuntime.log("cached lyrics update failed id=$appleMusicId: ${result.message}")
+                }
+                return@refresh null
+            }
+            if (updated.failed > 0) {
+                ModernXposedRuntime.log("cached lyrics update failed id=$appleMusicId: ${updated.issues.firstOrNull()?.message.orEmpty()}")
+                return@refresh null
+            }
+            // Lunabeat can fall back to an older catalog, so don't log an authoritative 'unchanged'.
+            if (updated.skipped > 0 || isCancelled()) return@refresh null
+            // The native session skips identical keys; this also retries a formerly failed native parse.
+            updated.manifest.entries.firstOrNull { it.appleMusicId == appleMusicId }
+        },
     )
 }
 

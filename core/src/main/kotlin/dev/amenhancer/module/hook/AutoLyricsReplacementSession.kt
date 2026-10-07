@@ -19,6 +19,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
+import org.json.JSONObject
 
 
 /** A validated candidate returned by one of the automatic lyric sources. */
@@ -32,6 +33,10 @@ data class AutoLyricsCandidate(
 interface AutoLyricsCache {
     fun read(appleMusicId: Long): String?
     fun write(appleMusicId: Long, ttml: String): Boolean
+    fun readCandidate(appleMusicId: Long): AutoLyricsCandidate? =
+        read(appleMusicId)?.let { AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, it) }
+    fun writeCandidate(appleMusicId: Long, candidate: AutoLyricsCandidate): Boolean =
+        write(appleMusicId, candidate.ttml)
     fun delete(appleMusicId: Long): Boolean = false
     fun cachedIds(): List<Long> = emptyList()
 }
@@ -60,6 +65,9 @@ data class AutoLyricsRuntime(
     val executor: Executor,
     val publisher: AutoLyricsPublisher? = null,
     val suppressedIds: Set<Long> = emptySet(),
+    val refreshSong: ((Long, () -> Boolean) -> dev.amenhancer.module.model.CustomLyricsEntry?)? = null,
+    val refreshExecutor: Executor? = null,
+    val closeRefresh: () -> Unit = {},
 )
 
 /**
@@ -74,34 +82,54 @@ class FileAutoLyricsCache(
 ) : AutoLyricsCache {
     private val indexFile = File(directory, INDEX_FILE_NAME)
 
-    override fun read(appleMusicId: Long): String? {
+    override fun read(appleMusicId: Long): String? = readCandidate(appleMusicId)?.ttml
+
+    override fun readCandidate(appleMusicId: Long): AutoLyricsCandidate? {
         if (appleMusicId <= 0L) return null
+        val encoded = candidateFile(appleMusicId) ?: return null
+        val candidate = runCatching {
+            if (!encoded.isFile || encoded.length() !in 1L..MAX_CANDIDATE_BYTES) return@runCatching null
+            val raw = JSONObject(encoded.readText(Charsets.UTF_8))
+            if (raw.optInt("version") != 1) return@runCatching null
+            val source = raw.optString("source")
+            val ttml = raw.optString("ttml")
+            if (source !in CACHE_SOURCES || !validTtml(ttml)) return@runCatching null
+            AutoLyricsCandidate(source, ttml, raw.optString("displayName").takeIf(String::isNotBlank))
+        }.getOrNull()
+        if (candidate != null) return candidate
         val file = lyricFile(appleMusicId) ?: return null
         return runCatching {
             if (!file.isFile || file.length() !in 1L..MAX_TTML_BYTES) return@runCatching null
-            FileInputStream(file).use { input ->
+            val ttml = FileInputStream(file).use { input ->
                 CustomLyricsFilePolicy.readBounded(input).toString(Charsets.UTF_8)
             }
+            if (!validTtml(ttml)) return@runCatching null
+            AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, ttml)
         }.getOrNull()
     }
 
     override fun delete(appleMusicId: Long): Boolean {
         if (appleMusicId <= 0L) return false
-        val file = lyricFile(appleMusicId) ?: return false
-        return runCatching { file.isFile && file.delete() }.getOrDefault(false)
+        return runCatching {
+            val files = listOfNotNull(lyricFile(appleMusicId), candidateFile(appleMusicId))
+            val existed = files.any(File::isFile)
+            val removed = files.map { !it.exists() || it.delete() }.all { it }
+            existed && removed
+        }.getOrDefault(false)
     }
 
     override fun cachedIds(): List<Long> = readIds()
 
-    override fun write(appleMusicId: Long, ttml: String): Boolean {
-        if (
-            appleMusicId <= 0L ||
-            !TtmlInputPolicy.isAcceptable(ttml) ||
-            !TtmlTimingPolicy.isWord(ttml)
-        ) return false
-        val bytes = ttml.toByteArray(Charsets.UTF_8)
-        val file = lyricFile(appleMusicId) ?: return false
-        if (bytes.size > MAX_TTML_BYTES) return false
+    override fun write(appleMusicId: Long, ttml: String): Boolean =
+        writeCandidate(appleMusicId, AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, ttml))
+
+    override fun writeCandidate(appleMusicId: Long, candidate: AutoLyricsCandidate): Boolean {
+        if (appleMusicId <= 0L || candidate.source !in CACHE_SOURCES || !validTtml(candidate.ttml)) return false
+        val bytes = JSONObject().put("version", 1).put("source", candidate.source)
+            .put("displayName", candidate.displayName.orEmpty().take(120))
+            .put("ttml", candidate.ttml).toString().toByteArray(Charsets.UTF_8)
+        val file = candidateFile(appleMusicId) ?: return false
+        if (bytes.size > MAX_CANDIDATE_BYTES) return false
         return runCatching {
             if (!directory.exists() && !directory.mkdirs()) return@runCatching false
             atomicWrite(file, bytes)
@@ -110,9 +138,10 @@ class FileAutoLyricsCache(
                 add(appleMusicId)
             }
             val keep = ids.takeLast(maxEntries.coerceAtLeast(1))
-            ids.dropLast(keep.size).forEach { oldId -> lyricFile(oldId)?.delete() }
+            ids.dropLast(keep.size).forEach(::delete)
             val index = JSONArray().apply { keep.forEach(::put) }
             atomicWrite(indexFile, index.toString().toByteArray(Charsets.UTF_8))
+            lyricFile(appleMusicId)?.delete()
             true
         }.getOrDefault(false)
     }
@@ -132,6 +161,13 @@ class FileAutoLyricsCache(
     private fun lyricFile(appleMusicId: Long): File? = appleMusicId
         .takeIf { it > 0L }
         ?.let { File(directory, "$FILE_PREFIX$it$FILE_SUFFIX") }
+
+    private fun candidateFile(appleMusicId: Long): File? = appleMusicId
+        .takeIf { it > 0L }?.let { File(directory, "$FILE_PREFIX$it.json") }
+
+    private fun validTtml(ttml: String): Boolean =
+        ttml.toByteArray(Charsets.UTF_8).size <= MAX_TTML_BYTES &&
+            TtmlInputPolicy.isAcceptable(ttml) && TtmlTimingPolicy.isWord(ttml)
 
     private fun atomicWrite(destination: File, bytes: ByteArray) {
         val pending = File.createTempFile("pending_", ".tmp", directory)
@@ -167,6 +203,9 @@ class FileAutoLyricsCache(
         const val MAX_ENTRIES = 64
         const val MAX_TTML_BYTES = 512 * 1024L
         const val MAX_INDEX_BYTES = 16 * 1024L
+        const val MAX_CANDIDATE_BYTES = MAX_TTML_BYTES * 6 + 2048
+        val CACHE_SOURCES = setOf(CustomLyricsSources.AUTO_CACHE, CustomLyricsSources.AMLL,
+            CustomLyricsSources.LUNABEAT, CustomLyricsSources.AM_LYRICS)
     }
 }
 
@@ -189,6 +228,7 @@ class AutoLyricsReplacementSession(
     private val logger: (String) -> Unit,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
     private val retryCooldownMs: Long = DEFAULT_RETRY_COOLDOWN_MS,
+    private val onFreshCandidate: ((Long) -> Unit)? = null,
 ) {
     private val pointers = object : LinkedHashMap<Long, Any>(CACHE_CAPACITY, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Any>?): Boolean =
@@ -316,9 +356,9 @@ class AutoLyricsReplacementSession(
         var preparedPointer: Any? = null
         try {
             if (!isCurrentRequest(appleMusicId, requestGeneration)) return
-            val cached = runCatching { cache.read(appleMusicId) }.getOrNull()
+            val cached = runCatching { cache.readCandidate(appleMusicId) }.getOrNull()
             if (cached != null && isCurrentRequest(appleMusicId, requestGeneration)) {
-                val candidate = AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, cached)
+                val candidate = cached
                 preparedPointer = preparePointer(
                     candidate.ttml,
                     appleMusicId,
@@ -340,8 +380,9 @@ class AutoLyricsReplacementSession(
                     published = preparedPointer != null
                     if (published) {
                         preparedCandidate = candidate
+                        onFreshCandidate?.invoke(appleMusicId)
                         if (isCurrentRequest(appleMusicId, requestGeneration)) {
-                            runCatching { cache.write(appleMusicId, candidate.ttml) }
+                            runCatching { cache.writeCandidate(appleMusicId, candidate) }
                         }
                     }
                 }

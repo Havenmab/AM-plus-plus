@@ -272,6 +272,75 @@ class AutoLyricsReplacementSessionTest {
         )
     }
 
+    @Test
+    fun `file cache preserves candidate origin and name across restarts`() {
+        val directory = Files.createTempDirectory("ampp-origin-test").toFile()
+        try {
+            val candidate = AutoLyricsCandidate(CustomLyricsSources.LUNABEAT, WORD_TTML, "Song")
+            assertTrue(FileAutoLyricsCache(directory).writeCandidate(42, candidate))
+            assertEquals(candidate, FileAutoLyricsCache(directory).readCandidate(42))
+            assertEquals(WORD_TTML, FileAutoLyricsCache(directory).read(42))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun `legacy body remains usable and corrupt envelope falls back to it`() {
+        val directory = Files.createTempDirectory("ampp-legacy-test").toFile()
+        try {
+            java.io.File(directory, "lyric_42.ttml").writeText(WORD_TTML)
+            java.io.File(directory, "lyric_42.json").writeText("broken")
+            val cache = FileAutoLyricsCache(directory)
+            assertEquals(AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, WORD_TTML), cache.readCandidate(42))
+            assertTrue(cache.writeCandidate(42, AutoLyricsCandidate(CustomLyricsSources.AMLL, WORD_TTML)))
+            assertTrue(!java.io.File(directory, "lyric_42.ttml").exists())
+            assertEquals(CustomLyricsSources.AMLL, cache.readCandidate(42)?.source)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun `cache bounds deletes and evicts both formats including JSON escaped text`() {
+        val directory = Files.createTempDirectory("ampp-capacity-test").toFile()
+        try {
+            val cache = FileAutoLyricsCache(directory, maxEntries = 1)
+            val quoted = WORD_TTML.replace("hello", "&quot;\\hello")
+            assertTrue(cache.writeCandidate(42, AutoLyricsCandidate(CustomLyricsSources.AMLL, quoted)))
+            assertEquals(quoted, cache.read(42))
+            java.io.File(directory, "lyric_42.ttml").writeText(WORD_TTML)
+            assertTrue(cache.write(43, WORD_TTML))
+            assertNull(cache.read(42))
+            assertTrue(!java.io.File(directory, "lyric_42.ttml").exists())
+            assertTrue(!java.io.File(directory, "lyric_42.json").exists())
+            assertEquals(listOf(43L), cache.cachedIds())
+            java.io.File(directory, "lyric_43.ttml").writeText(WORD_TTML)
+            assertTrue(cache.delete(43))
+            assertNull(cache.read(43))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun `cached candidate publishes its recorded provider without any remote request`() {
+        val queued = QueuedExecutor()
+        val candidate = AutoLyricsCandidate(CustomLyricsSources.AMLL, WORD_TTML, "Cached song")
+        var published: AutoLyricsCandidate? = null
+        val cache = object : AutoLyricsCache {
+            override fun read(appleMusicId: Long): String? = candidate.ttml
+            override fun write(appleMusicId: Long, ttml: String) = true
+            override fun readCandidate(appleMusicId: Long) = candidate
+        }
+        val session = AutoLyricsReplacementSession(
+            fetchCandidate = { error("must use cache") }, cache = cache,
+            parseTtml = { Pointer() }, isAlive = { true }, verifyPtr = { true },
+            readAdamId = { (it as Pointer).adamId },
+            bindAdamId = { pointer, id -> (pointer as Pointer).adamId = id; true },
+            publisher = AutoLyricsPublisher { _, value -> published = value; AutoLyricsPublishResult.PUBLISHED },
+            executor = queued, logger = {},
+        )
+        session.onSongChanged(42)
+        session.ensureRequested(42)
+        queued.runAll()
+        assertEquals(candidate, published)
+    }
+
     private class Pointer(
         var adamId: Long = 0L,
         var live: Boolean = true,

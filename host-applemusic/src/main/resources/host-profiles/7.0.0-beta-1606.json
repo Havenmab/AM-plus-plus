@@ -4,7 +4,8 @@
   "capabilities": {
     "glass": true,
     "cellular": true,
-    "staticCollapsedIntercept": false
+    "staticCollapsedIntercept": false,
+    "playerRecovery": true
   },
   "evidence": {
     "baseSha256": "3d09687ed752e48e73f2c72524e18cffff69c66b523096c2e97c8f9135980603",
@@ -321,6 +322,77 @@
         ],
         "returns": "void",
         "static": false
+      },
+      "player-fragment-view": {
+        "owner": "androidx.fragment.app.m",
+        "name": "getView",
+        "parameters": [],
+        "returns": "android.view.View",
+        "static": false
+      },
+      "player-controller-resume": {
+        "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
+        "name": "onResume",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "player-controller-destroy-view": {
+        "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
+        "name": "onDestroyView",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "player-pane-view-created": {
+        "owner": "com.apple.android.music.player.fragment.l",
+        "name": "onViewCreated",
+        "parameters": [
+          "android.view.View",
+          "android.os.Bundle"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "player-artwork-resize": {
+        "owner": "com.apple.android.music.player.fragment.l",
+        "name": "E1",
+        "parameters": [
+          "boolean",
+          "android.util.Size"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "player-fragment-parent": {
+        "owner": "androidx.fragment.app.m",
+        "name": "getParentFragment",
+        "parameters": [],
+        "returns": "androidx.fragment.app.m",
+        "static": false
+      },
+      "player-background-detach": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "onDetachedFromWindow",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "player-background-artwork": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "setArtwork",
+        "parameters": [
+          "android.graphics.Bitmap"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "player-fragment-destroy-view": {
+        "owner": "androidx.fragment.app.m",
+        "name": "onDestroyView",
+        "parameters": [],
+        "returns": "void",
+        "static": false
       }
     },
     "fieldContracts": {
@@ -328,6 +400,86 @@
         "owner": "com.apple.android.music.player.fragment.l",
         "name": "c",
         "type": "com.apple.android.music.model.BaseContentItem"
+      },
+      "player-artwork-video-mode": {
+        "owner": "com.apple.android.music.player.fragment.l",
+        "name": "L",
+        "type": "boolean"
+      },
+      "player-artwork-size-animation": {
+        "owner": "com.apple.android.music.player.fragment.l",
+        "name": "V",
+        "type": "android.animation.AnimatorSet"
+      },
+      "player-artwork-static-baseline": {
+        "owner": "com.apple.android.music.player.fragment.PlayerSongViewFragment",
+        "name": "h0",
+        "type": "android.util.Size"
+      },
+      "player-artwork-target-size": {
+        "owner": "com.apple.android.music.player.fragment.l",
+        "name": "Q",
+        "type": "android.util.Size"
+      },
+      "player-pane-enter-running": {
+        "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
+        "name": "j",
+        "type": "boolean"
+      },
+      "player-pane-shared-running": {
+        "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
+        "name": "k",
+        "type": "boolean"
+      },
+      "player-page-behavior": {
+        "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
+        "name": "c",
+        "type": "com.google.android.material.bottomsheet.BottomSheetBehavior"
+      },
+      "player-page-behavior-state": {
+        "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
+        "name": "p0",
+        "type": "int"
+      },
+      "player-background-source": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "b",
+        "type": "android.graphics.Bitmap"
+      },
+      "player-background-queued": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "c",
+        "type": "android.graphics.Bitmap"
+      },
+      "player-background-derived": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "e",
+        "type": "android.graphics.Bitmap"
+      },
+      "player-background-shader": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "f",
+        "type": "android.graphics.BitmapShader"
+      },
+      "player-background-previous-shader": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "h",
+        "type": "android.graphics.BitmapShader"
+      },
+      "player-background-paint": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "g",
+        "type": "android.graphics.Paint"
+      },
+      "player-background-previous-paint": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "j",
+        "type": "android.graphics.Paint"
+      },
+      "player-background-fade": {
+        "owner": "com.apple.android.music.player.LyricsBackgroundLayerView",
+        "name": "y",
+        "type": "android.animation.ValueAnimator"
       }
     }
   },
@@ -2597,5 +2749,11 @@
     "bindingClass": "q8.p9",
     "flexboxField": "a0",
     "flexboxClass": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout"
+  },
+  "playerRecovery": {
+    "containerId": "artwork_container",
+    "cardId": "fullplayerSongImage",
+    "imageId": "artwork_image",
+    "backgroundId": "background_layers"
   }
 }

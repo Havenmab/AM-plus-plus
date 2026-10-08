@@ -67,6 +67,7 @@ object AppleMusicHostFactory {
             identity = build.displayName,
             build = build,
             currentSong = currentSong,
+            playerRecovery = FragmentPlayerRecoveryTarget(resolver, build),
             dualPane = if (profile.family == "fragment-content") FragmentDualPaneTarget(resolver, build)
                 else AppleMusicDualPaneTarget(resolver, build),
             editorialVideo = editorialVideoTargetForFamily(profile.family) {

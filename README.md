@@ -45,10 +45,6 @@
 
 支持通过 ZIP 导入和管理插件；开发说明见 [插件开发手册](docs/plugin-development.md)。
 
-设置界面支持中文和英文，跟随 Apple Music 当前界面语言；其他语言回退英文。包含歌词管理、插件管理、操作提示与无障碍标签。
-
-AM++ settings support English and Chinese and follow Apple Music's current interface language. Other languages fall back to English. This includes lyrics management, plugin management, operation messages, and accessibility labels. See [localization notes](docs/localization.md) for translation details.
-
 ## 功能
 
 | 功能 | 默认 | 说明 |

@@ -200,7 +200,6 @@ scripts/                 Optional device regression, recording analysis, and hos
 - [x] Lyric font import and restore
 - [x] Liquid Glass navigation and mini player (phones; device validation pending for tablets in landscape with dual-pane mode enabled)
 - [x] Song title correction
-- [ ] Address the two degraded capabilities on Apple Music 6.5.3
 - [ ] Continue adapting to future Apple Music versions
 
 ## Contributing

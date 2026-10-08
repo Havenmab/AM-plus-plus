@@ -41,10 +41,19 @@ import java.util.concurrent.ConcurrentHashMap
  *    available; the Mandarin rule still returns false for a hidden song.
  *  - The preferred-language request arrays are expanded with
  *    `ja-Latn`/`ko-Latn`/`zh-Latn` (HLE's
- *    `hookAppleLyricsPreferredLanguages`), the official pronunciation language
- *    match returns the third-party fallback language (system language when it
- *    is a Latin tag, else `und-Latn`), and `setPronunciation` is selected when
- *    the model offers nothing of its own.
+ *    `hookAppleLyricsPreferredLanguages`), and the official pronunciation
+ *    language match returns the third-party fallback language (system language
+ *    when it is a Latin tag, else `und-Latn`).
+ *  - `setPronunciation` is handed Apple's own advertised Latin language whenever
+ *    the song offers one, so the third-party lane can never displace it; the
+ *    third-party fallback is used only when Apple offers no lane of its own. This
+ *    is deliberately not gated on the per-line `getHtmlPronunciationLineText`
+ *    probe as HLE gates it: on 1606 that getter stays empty until a
+ *    pronunciation language has already been selected, so the strict mirror
+ *    always took the fallback and overwrote Apple's lane (device log:
+ *    `languages=ja-Latn officialPronunciation=false` becoming `und-Latn`).
+ *    The HLE probe is still evaluated, per call as HLE does, for the availability
+ *    override and the diagnostic.
  *
  * Every step fails open: an unresolved profile target, a missing member name, a
  * malformed vector or a throwing getter leaves Apple's own value in place. The
@@ -81,9 +90,6 @@ internal class AppleNativeLyricModelHooks(
 
     @Volatile
     private var applePronunciationLanguages: List<String> = emptyList()
-
-    @Volatile
-    private var hasValidOfficialPronunciation: Boolean = false
 
     @Volatile
     private var mandarinHidden: Boolean = false
@@ -155,21 +161,43 @@ internal class AppleNativeLyricModelHooks(
                 AppleMusicRuntimeMember.LYRICS_VIEW_MODEL_CURRENT_LANGUAGE_METHOD,
             ) as? String
         }
-        val languages = vectorStrings(
-            call(songNative, AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD),
-        )
+        val languages = songPronunciationLanguages(songNative)
         applePronunciationLanguages = languages
-        mandarinHidden = ApplePronunciationVisibilityPolicy.shouldHide(
-            genre = genreFor(songId).orEmpty().takeIf(String::isNotBlank),
-            pronunciationLanguages = languages,
-            hideMandarinPinyin = hideMandarinPinyin,
-        )
+        mandarinHidden = isMandarinHidden(languages)
 
         installSongAvailabilityHooks(songNative.javaClass)
         val lines = nativeLines(songNative)
-        // Read Apple's own pronunciation with the line hooks bypassed: a hooked
-        // getter would hand back our online lane and make it look official.
-        hasValidOfficialPronunciation = lines.any { line ->
+        // HLE-compatible per-call probe as the build-time reading, for the
+        // diagnostic and for the "did Apple populate the lines yet" signal. It is
+        // not the decision input: on 1606 it is false until a language is
+        // selected, which is exactly why the selection may not gate Apple's own
+        // lane behind it.
+        val officialAtBuild = hasValidOfficialPronunciation(songNative)
+        lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
+        val selectedLanguage = applyAppleNativePronunciationSelection(songNative, languages)
+        reportNativeWrite(
+            lines = lines,
+            officialAtBuild = officialAtBuild,
+            officialNow = hasValidOfficialPronunciation(songNative),
+            selectedLanguage = selectedLanguage,
+        )
+    }
+
+    /**
+     * HLE's `hasValidOfficialRomanization`, evaluated on every call the way HLE
+     * evaluates it (from the availability override and from the selection) and
+     * never once at BUILD time. On 1606 Apple fills
+     * `getHtmlPronunciationLineText` only after a pronunciation language has been
+     * selected, so the build-time reading is always false: the device log's
+     * `officialPronunciation=false ×100` sits beside Apple's own
+     * `languages=ja-Latn`. Reading it per call lets Apple's value become visible
+     * as soon as the app has selected a track. Raw reads bypass our own getter, so
+     * the online lane can never masquerade as Apple's.
+     */
+    private fun hasValidOfficialPronunciation(songNative: Any?): Boolean {
+        if (songNative == null) return false
+        if (isMandarinHidden(songPronunciationLanguages(songNative))) return false
+        return nativeLines(songNative).any { line ->
             val text = rawLineText(line)
             val pronunciation = withRawRead {
                 call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD) as? String
@@ -177,17 +205,30 @@ internal class AppleNativeLyricModelHooks(
             !text.isNullOrBlank() &&
                 RomanizationPolicy.sanitize(text, pronunciation) != null
         }
-        lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
-        applyAppleNativePronunciationSelection(songNative, languages)
-        reportNativeWrite(lines)
     }
+
+    /** Apple's advertised pronunciation languages; updates the cache when present. */
+    private fun songPronunciationLanguages(songNative: Any?): List<String> {
+        val languages = vectorStrings(
+            call(songNative, AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD),
+        )
+        if (languages.isNotEmpty()) applePronunciationLanguages = languages
+        return languages
+    }
+
+    private fun isMandarinHidden(languages: List<String>): Boolean =
+        ApplePronunciationVisibilityPolicy.shouldHide(
+            genre = genreFor(modelSongId).orEmpty().takeIf(String::isNotBlank),
+            pronunciationLanguages = languages,
+            hideMandarinPinyin = hideMandarinPinyin,
+        )
 
     private fun installSongAvailabilityHooks(clazz: Class<*>) {
         listOf(
             AppleMusicRuntimeMember.LYRICS_NATIVE_SET_TRANSLATION_METHOD,
             AppleMusicRuntimeMember.LYRICS_NATIVE_HAS_TRANSLATION_METHOD,
         ).forEach { member ->
-            installBooleanAvailability(clazz, member) { original ->
+            installBooleanAvailability(clazz, member) { _, original ->
                 NativeLyricModelPolicy.hasTranslationAvailability(
                     original = original,
                     enabled = enabled,
@@ -199,32 +240,47 @@ internal class AppleNativeLyricModelHooks(
             AppleMusicRuntimeMember.LYRICS_NATIVE_SET_PRONUNCIATION_METHOD,
             AppleMusicRuntimeMember.LYRICS_NATIVE_HAS_PRONUNCIATION_METHOD,
         ).forEach { member ->
-            installBooleanAvailability(clazz, member) { original ->
+            installBooleanAvailability(clazz, member) { song, original ->
+                // Per call, exactly as HLE re-runs `hasValidOfficialRomanization`
+                // from this override. Apple's advertised Latin lane is itself
+                // proof of an official pronunciation, so availability never
+                // withdraws Apple's own value while the per-line probe is still
+                // empty.
+                val languages = songPronunciationLanguages(song)
                 NativeLyricModelPolicy.hasPronunciationAvailability(
                     original = original,
                     enabled = enabled,
                     hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
-                    hasValidOfficialPronunciation = hasValidOfficialPronunciation,
-                    mandarinHidden = mandarinHidden,
+                    hasValidOfficialPronunciation = hasValidOfficialPronunciation(song) ||
+                        NativeLyricModelPolicy.officialPronunciationLanguage(languages) != null,
+                    mandarinHidden = isMandarinHidden(languages),
                 )
             }
         }
     }
 
     /**
-     * HLE's `applyAppleNativePronunciationSelection`: pick Apple's own Latin
-     * language when it carries a valid romanization, otherwise the third-party
-     * fallback, and hand it to the app's own setter. Skipped entirely while the
-     * Mandarin rule hides the song.
+     * HLE's `applyAppleNativePronunciationSelection`: hand the app's own setter
+     * Apple's official Latin language when the song advertises one, otherwise the
+     * third-party fallback. Apple's own lane always wins, so the third-party
+     * language can never displace it. Skipped entirely while the Mandarin rule
+     * hides the song. Returns the language that was selected, for the diagnostic.
      */
-    private fun applyAppleNativePronunciationSelection(songNative: Any, languages: List<String>) {
-        if (mandarinHidden) return
-        val officialLanguages = languages.filter(RomanizationPolicy::isLatinLanguageTag)
-        val language = officialLanguages.firstOrNull()?.takeIf { hasValidOfficialPronunciation }
-            ?: fallbackLanguage()
-            ?: return
-        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SET_PRONUNCIATION_METHOD] ?: return
+    private fun applyAppleNativePronunciationSelection(
+        songNative: Any,
+        languages: List<String>,
+    ): String? {
+        if (mandarinHidden) return null
+        val language = NativeLyricModelPolicy.selectPronunciationLanguage(
+            appleLanguages = languages,
+            thirdPartyFallbackLanguage = fallbackLanguage(languages),
+        ) ?: return null
+        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SET_PRONUNCIATION_METHOD] ?: return null
         runCatching { AppleReflection.call(songNative, name, language) }
+            .onFailure { error ->
+                log("online-translation native-write selectPronunciation failed: ${error.message}")
+            }
+        return language
     }
 
     private fun installLineTextHooks(clazz: Class<*>) {
@@ -276,7 +332,7 @@ internal class AppleNativeLyricModelHooks(
     private fun installBooleanAvailability(
         clazz: Class<*>,
         member: AppleMusicRuntimeMember,
-        resolve: (Boolean) -> Boolean,
+        resolve: (Any?, Boolean) -> Boolean,
     ) {
         val name = nativeNames[member] ?: return
         val method = AppleReflection.findMethodOrNull(clazz, name, parameterCount = 1) ?: return
@@ -285,7 +341,7 @@ internal class AppleNativeLyricModelHooks(
         ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val original = param.result as? Boolean ?: return
-                runCatching { param.result = resolve(original) }
+                runCatching { param.result = resolve(param.thisObject, original) }
             }
         }, scope)
     }
@@ -364,14 +420,15 @@ internal class AppleNativeLyricModelHooks(
         }, scope)
     }
 
-    private fun fallbackLanguage(): String? = NativeLyricModelPolicy.thirdPartyPronunciationFallbackLanguage(
-        systemLanguage = systemLyricsLanguage,
-        enabled = enabled,
-        hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
-        hideMandarinPinyin = hideMandarinPinyin,
-        pronunciationLanguages = applePronunciationLanguages,
-        genre = genreFor(modelSongId).orEmpty().takeIf(String::isNotBlank),
-    )
+    private fun fallbackLanguage(languages: List<String> = applePronunciationLanguages): String? =
+        NativeLyricModelPolicy.thirdPartyPronunciationFallbackLanguage(
+            systemLanguage = systemLyricsLanguage,
+            enabled = enabled,
+            hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
+            hideMandarinPinyin = hideMandarinPinyin,
+            pronunciationLanguages = languages,
+            genre = genreFor(modelSongId).orEmpty().takeIf(String::isNotBlank),
+        )
 
     private fun onlineTranslation(line: Any): String? {
         if (!enabled) return null
@@ -390,18 +447,33 @@ internal class AppleNativeLyricModelHooks(
         )
     }
 
-    /** The device-facing per-track proof that the native model was written. */
-    private fun reportNativeWrite(lines: List<Any>) {
+    /**
+     * The device-facing per-track proof that the native model was written.
+     * `officialPronunciation` is the per-call reading that now drives the
+     * decision; `officialAtBuild` is the old build-time reading, kept so a log
+     * can show the two diverging; `officialLanguage` is Apple's advertised own
+     * lane and `selectedLanguage` what `setPronunciation` was handed.
+     */
+    private fun reportNativeWrite(
+        lines: List<Any>,
+        officialAtBuild: Boolean,
+        officialNow: Boolean,
+        selectedLanguage: String?,
+    ) {
         val songId = modelSongId
         val translationLines = lines.count { onlineTranslation(it) != null }
         val pronunciationLines = lines.count { onlinePronunciation(it, rawLineText(it)) != null }
+        val officialLanguage = NativeLyricModelPolicy.officialPronunciationLanguage(applePronunciationLanguages)
         diagnostic.log(
             songId,
             "online-translation native-write id=$songId " +
                 "translationLines=$translationLines " +
                 "pronunciationLines=$pronunciationLines " +
                 "languages=${applePronunciationLanguages.joinToString(",")} " +
-                "officialPronunciation=$hasValidOfficialPronunciation " +
+                "officialPronunciation=$officialNow " +
+                "officialAtBuild=$officialAtBuild " +
+                "officialLanguage=${officialLanguage ?: NONE} " +
+                "selectedLanguage=${selectedLanguage ?: NONE} " +
                 "mandarinHidden=$mandarinHidden",
         )
     }
@@ -493,6 +565,9 @@ internal class AppleNativeLyricModelHooks(
         const val MAX_SECTIONS = 8
         const val MAX_LINES_PER_SECTION = 64
         const val MAX_LANGUAGES = 32
+
+        /** Placeholder for a diagnostic field with no language to report. */
+        const val NONE = "none"
 
         /**
          * HLE emits one full native-model line per build, but the shared

@@ -79,6 +79,75 @@ class NativeLyricModelPolicyTest {
         assertNull(select(system = "ja", apple = emptyList(), onlineFallback = null))
     }
 
+    private fun trackLanguage(apple: List<String>, fallback: String?) =
+        NativeLyricModelPolicy.selectPronunciationLanguage(
+            appleLanguages = apple,
+            thirdPartyFallbackLanguage = fallback,
+        )
+
+    @Test
+    fun `an Apple-advertised Latin lane is Apple's own and never the placeholder`() {
+        assertTrue(NativeLyricModelPolicy.isOfficialPronunciationLanguage("ja-Latn"))
+        assertTrue(NativeLyricModelPolicy.isOfficialPronunciationLanguage("ko-Latn"))
+        assertTrue(NativeLyricModelPolicy.isOfficialPronunciationLanguage("zh-Hans-Latn"))
+        // HLE's script-neutral third-party tag is not an Apple lane.
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage("und-Latn"))
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage("UND-LATN"))
+        // A non-Latin tag, a blank and null carry no romanization.
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage("ja"))
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage("cmn-Hans"))
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage("  "))
+        assertFalse(NativeLyricModelPolicy.isOfficialPronunciationLanguage(null))
+    }
+
+    @Test
+    fun `the first Apple lane wins and the placeholder is skipped`() {
+        assertEquals(
+            "ja-Latn",
+            NativeLyricModelPolicy.officialPronunciationLanguage(listOf("ja", "ja-Latn", "und-Latn")),
+        )
+        assertEquals(
+            "ko-Latn",
+            NativeLyricModelPolicy.officialPronunciationLanguage(listOf("und-Latn", "ko-Latn")),
+        )
+        assertNull(NativeLyricModelPolicy.officialPronunciationLanguage(listOf("und-Latn")))
+        assertNull(NativeLyricModelPolicy.officialPronunciationLanguage(emptyList()))
+    }
+
+    /**
+     * The reported bug: Apple advertises `ja-Latn`, the build-time per-line probe
+     * reads false because 1606 leaves `getHtmlPronunciationLineText` empty until a
+     * language has been selected, and the third-party fallback `und-Latn` used to
+     * displace Apple's lane. Apple's own advertised lane must win.
+     */
+    @Test
+    fun `Apple's advertised lane beats the third-party fallback even before the line probe is valid`() {
+        assertEquals("ja-Latn", trackLanguage(listOf("ja-Latn"), "und-Latn"))
+        assertEquals("ko-Latn", trackLanguage(listOf("ko-Latn"), "ja-Latn"))
+        // No Apple lane of its own: the third-party fallback still fills the gap.
+        assertEquals("und-Latn", trackLanguage(listOf("und-Latn"), "und-Latn"))
+        assertEquals("ja-Latn", trackLanguage(listOf("ja"), "ja-Latn"))
+        assertNull(trackLanguage(emptyList(), null))
+    }
+
+    @Test
+    fun `Apple's advertised lane keeps pronunciation available without the online lane`() {
+        fun available(systemMatch: Boolean, languages: List<String>) =
+            NativeLyricModelPolicy.hasPronunciationAvailability(
+                original = true,
+                enabled = false,
+                hasOnlinePronunciation = false,
+                hasValidOfficialPronunciation = systemMatch ||
+                    NativeLyricModelPolicy.officialPronunciationLanguage(languages) != null,
+                mandarinHidden = false,
+            )
+
+        // The old build-time probe alone withdrew Apple's own value.
+        assertFalse(available(systemMatch = false, languages = emptyList()))
+        // Apple's advertised ja-Latn keeps it visible before the line probe is valid.
+        assertTrue(available(systemMatch = false, languages = listOf("ja-Latn")))
+    }
+
     private fun translationAvailability(
         original: Boolean,
         enabled: Boolean,

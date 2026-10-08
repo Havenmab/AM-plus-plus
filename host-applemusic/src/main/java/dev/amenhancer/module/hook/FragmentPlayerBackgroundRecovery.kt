@@ -14,6 +14,9 @@ import java.util.WeakHashMap
 internal class FragmentPlayerBackgroundRecovery(
     private val contract: FragmentPlayerRecoveryContract,
     private val scope: HookRegistrationScope,
+    private val register: (Method, ModernMethodHook, HookRegistrationScope) -> Boolean = { method, callback, registration ->
+        ModernXposedRuntime.hookMethod(method, callback, registration)
+    },
 ) {
     private val pending = WeakHashMap<View, Boolean>()
     private var reportedFailure = false
@@ -57,7 +60,7 @@ internal class FragmentPlayerBackgroundRecovery(
     }
 
     private fun observe(method: Method, after: (ModernMethodHook.MethodHookParam) -> Unit) {
-        check(ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+        check(register(method, object : ModernMethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.throwable == null) safely { after(param) }
             }

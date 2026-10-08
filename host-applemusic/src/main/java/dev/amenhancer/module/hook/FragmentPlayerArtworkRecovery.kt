@@ -17,6 +17,9 @@ import java.util.WeakHashMap
 internal class FragmentPlayerArtworkRecovery(
     private val contract: FragmentPlayerRecoveryContract,
     private val scope: HookRegistrationScope,
+    private val register: (Method, ModernMethodHook, HookRegistrationScope) -> Boolean = { method, callback, registration ->
+        ModernXposedRuntime.hookMethod(method, callback, registration)
+    },
 ) {
     private val mainType = contract.createView.declaringClass
     private val views = IdentityHashMap<Any, View>()
@@ -24,6 +27,8 @@ internal class FragmentPlayerArtworkRecovery(
     private val originals = WeakHashMap<View, Pair<Int, Int>>()
     private val owners = WeakHashMap<View, WeakReference<Any>>()
     private val listeners = IdentityHashMap<Animator, ArtworkAnimationListener>()
+    private val lookups = IdentityHashMap<View, ArtworkViews>()
+    private val mains = IdentityHashMap<Any, Any>()
 
     fun install() {
         // Register cleanup before hooks. The composition owner activates/closes this scope.
@@ -36,6 +41,8 @@ internal class FragmentPlayerArtworkRecovery(
             originals.clear()
             owners.clear()
             views.clear()
+            lookups.clear()
+            mains.clear()
         }
         hook(contract.paneViewCreated, object : ModernMethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) = guarded {
@@ -123,7 +130,7 @@ internal class FragmentPlayerArtworkRecovery(
     }
 
     private fun hook(method: Method, callback: ModernMethodHook) {
-        check(ModernXposedRuntime.hookMethod(method, callback, scope)) { "Artwork recovery hook failed: $method" }
+        check(register(method, callback, scope)) { "Artwork recovery hook failed: $method" }
     }
 
     private fun guarded(action: () -> Unit) {
@@ -133,16 +140,35 @@ internal class FragmentPlayerArtworkRecovery(
         }
     }
 
-    private fun resource(root: View, key: String): Int = root.resources.getIdentifier(
-        contract.names.getString(key), "id", ModuleConstants.TARGET_PACKAGE,
-    )
+    /** Stable identities belong to this view lifetime; missing children may appear later. */
+    private inner class ArtworkViews(val root: View) {
+        private fun resource(key: String) = root.resources.getIdentifier(
+            contract.names.getString(key), "id", ModuleConstants.TARGET_PACKAGE,
+        )
+        private val cardId = resource("cardId")
+        private val containerId = resource("containerId")
+        private val imageId = resource("imageId")
+        var cover: View? = null
+            private set
+        private var image: View? = null
 
-    private fun card(root: View): View? {
-        val cardId = resource(root, "cardId").takeIf { it != 0 } ?: return null
-        val containerId = resource(root, "containerId").takeIf { it != 0 } ?: return null
-        val cover = root.findViewById<View>(cardId) ?: return null
-        return cover.takeIf { (it.parent as? ViewGroup)?.id == containerId }
+        fun card(): View? {
+            cover?.takeIf { (it.parent as? ViewGroup)?.id == containerId && within(it, root) }?.let { return it }
+            image = null
+            cover = if (cardId == 0 || containerId == 0) null else root.findViewById<View>(cardId)
+                ?.takeIf { (it.parent as? ViewGroup)?.id == containerId }
+            return cover
+        }
+
+        fun image(cover: View): View? {
+            image?.takeIf { within(it, cover) }?.let { return it }
+            image = if (imageId == 0) null else cover.findViewById(imageId)
+            return image
+        }
     }
+
+    private fun lookup(root: View) = lookups.getOrPut(root) { ArtworkViews(root) }
+    private fun card(root: View): View? = lookup(root).card()
 
     private fun desired(cover: View): FragmentArtworkRecoveryPolicy.SlotSize? {
         val slot = cover.parent as? ViewGroup ?: return null
@@ -153,27 +179,42 @@ internal class FragmentPlayerArtworkRecovery(
 
     private fun visible(cover: View): Boolean = cover.isShown && cover.alpha > .01f
 
-    private fun eligible(main: Any, root: View, pane: Any): Boolean =
-        root.isAttachedToWindow && FragmentArtworkRecoveryPolicy.canRecover(
-            shown = root.isShown,
-            laidOut = root.isLaidOut,
-            sheetState = contract.behavior.get(main)?.let(contract.behaviorState::getInt),
+    private fun eligible(
+        main: Any, root: View, pane: Any,
+        videoMode: Boolean = contract.videoMode.getBoolean(pane),
+        sizeAnimationRunning: Boolean = animation(pane)?.isRunning == true,
+    ): Boolean {
+        if (!root.isAttachedToWindow || !root.isShown || !root.isLaidOut) return false
+        val state = contract.behavior.get(main)?.let(contract.behaviorState::getInt)
+        if (state != 3) return false
+        return FragmentArtworkRecoveryPolicy.canRecover(
+            shown = true,
+            laidOut = true,
+            sheetState = state,
             entering = contract.entering.getBoolean(main),
             sharedElement = contract.sharedElement.getBoolean(main),
-            videoMode = contract.videoMode.getBoolean(pane),
-            sizeAnimationRunning = animation(pane)?.isRunning == true,
+            videoMode = videoMode,
+            sizeAnimationRunning = sizeAnimationRunning,
         )
+    }
 
     private fun currentMain(pane: Any, root: View): Any? {
         if (!contract.baselineSize.declaringClass.isInstance(pane) || views[pane] !== root ||
             contract.getView.invoke(pane) !== root) return null
+        fun valid(candidate: Any): Boolean {
+            val mainRoot = views[candidate] ?: return false
+            return watches[candidate]?.root === mainRoot &&
+                contract.getView.invoke(candidate) === mainRoot && within(root, mainRoot)
+        }
+        mains[pane]?.let { candidate ->
+            if (valid(candidate)) return candidate
+            mains.remove(pane)
+        }
         var parent = contract.parentFragment.invoke(pane)
         repeat(5) {
             val candidate = parent ?: return null
             if (mainType.isInstance(candidate)) {
-                val mainRoot = views[candidate] ?: return null
-                return candidate.takeIf { watches[candidate]?.root === mainRoot &&
-                    contract.getView.invoke(candidate) === mainRoot && within(root, mainRoot) }
+                return candidate.takeIf { valid(it) }?.also { mains[pane] = it }
             }
             parent = contract.parentFragment.invoke(candidate)
         }
@@ -206,18 +247,19 @@ internal class FragmentPlayerArtworkRecovery(
         val cover = card(root) ?: return
         val pane = owners[cover]?.get() ?: return
         val paneRoot = views[pane] ?: return
-        if (currentMain(pane, paneRoot) !== main) return
-        if (contract.videoMode.getBoolean(pane) || animation(pane)?.isRunning == true) {
-            restoreNativeSize(cover)
+        val videoMode = contract.videoMode.getBoolean(pane)
+        val running = animation(pane)?.isRunning == true
+        if (videoMode || running) {
+            if (currentMain(pane, paneRoot) === main) restoreNativeSize(cover)
             return
         }
-        if (!eligible(main, root, pane) || !visible(cover)) return
+        if (!eligible(main, root, pane, videoMode, running) || !visible(cover)) return
+        if (currentMain(pane, paneRoot) !== main) return
         val slot = desired(cover) ?: return
         prepare(cover)
         val size = Size(slot.width, slot.height)
         if (contract.baselineSize.get(pane) != size) contract.baselineSize.set(pane, size)
-        val imageId = resource(root, "imageId").takeIf { it != 0 } ?: return
-        val params = cover.findViewById<View>(imageId)?.layoutParams ?: return
+        val params = lookup(root).image(cover)?.layoutParams ?: return
         if (!FragmentArtworkRecoveryPolicy.needsResize(params.width, params.height, slot)) return
         // Native resize may otherwise early-return while a transition left stale child params.
         if (contract.targetSize.get(pane) == size) contract.targetSize.set(pane, null)
@@ -252,6 +294,13 @@ internal class FragmentPlayerArtworkRecovery(
         // Ignore unrelated fragments and repeated main/base lifecycle callbacks.
         val root = views.remove(owner) ?: return
         val retired = views.keys.filter { within(checkNotNull(views[it]), root) }
+        val retiredRoots = retired.map { checkNotNull(views[it]) }
+        lookups.entries.removeIf { (cachedRoot, cached) ->
+            cachedRoot === root || retiredRoots.any { it === cachedRoot } ||
+                cached.cover?.let { owners[it]?.get() === owner || within(it, root) } == true
+        }
+        mains.entries.removeIf { (pane, main) -> pane === owner || main === owner ||
+            retired.any { it === pane || it === main } }
         retired.forEach { views.remove(it); watches.remove(it)?.let { watch -> runCatching { watch.close() } } }
         watches.remove(owner)?.let { runCatching { it.close() } }
         listeners.values.toList().filter { it.pane === owner || it.main === owner ||

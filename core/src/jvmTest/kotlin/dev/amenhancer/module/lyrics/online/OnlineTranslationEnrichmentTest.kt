@@ -320,6 +320,32 @@ class OnlineTranslationEnrichmentTest {
         )
     }
 
+    @Test
+    fun `the merged lanes are exposed per line for the native-model overlay`() {
+        val translated = OnlineTranslationEnrichment.enrich(
+            ttml = UNTRANSLATED_DOCUMENT,
+            candidates = listOf(thirdParty()),
+            durationMs = 5_000L,
+        )!!
+
+        assertEquals(translated.totalLines, translated.lines.size)
+        assertEquals("你好，世界", translated.lines[0].translation)
+        assertEquals("第二行", translated.lines[1].translation)
+        assertEquals(1_000L, translated.lines[0].begin)
+        assertEquals(2_500L, translated.lines[0].end)
+
+        val romanized = OnlineTranslationEnrichment.enrich(
+            ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
+            candidates = listOf(pronunciationOnlyCandidate()),
+            pronunciationRequested = true,
+            durationMs = 5_000L,
+        )!!
+
+        assertEquals("Kimi no na wa", romanized.lines.mapNotNull { it.roma }.firstOrNull())
+        assertEquals(2, romanized.lines.count { !it.roma.isNullOrBlank() })
+        assertNull(romanized.lines[0].translation)
+    }
+
     private fun thirdParty() = OnlineTranslationCandidate(
         source = Source.NE,
         lines = listOf(

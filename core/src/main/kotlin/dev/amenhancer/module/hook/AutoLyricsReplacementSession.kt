@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
@@ -66,6 +67,18 @@ data class AutoLyricsRuntime(
      * resolver lookup.
      */
     val translationEnricher: ((Long, String) -> String?)? = null,
+    /**
+     * Timing-keyed online lanes for the native lyric-model delivery. The
+     * enricher writes the merged per-track lanes here and the host reads them
+     * back from Apple's own lyric-model getters, the way HLE writes through
+     * `AppleNativeOnlineTranslationStore` instead of relying on an injected
+     * TTML head track (which 1606 does not render).
+     */
+    val nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
+    /** HLE's 「不显示国语歌拼音」 switch, re-checked against the model's languages. */
+    val hideMandarinPinyin: Boolean = false,
+    /** Catalog genre for the Mandarin rule; null (unresolved) hides nothing. */
+    val genreFor: (Long) -> String? = { null },
 )
 
 /**

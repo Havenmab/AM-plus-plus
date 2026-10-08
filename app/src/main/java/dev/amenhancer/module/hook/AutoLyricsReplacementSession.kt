@@ -16,6 +16,7 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
@@ -113,6 +114,12 @@ internal fun translationEnricher(
     logger: (String) -> Unit = {},
     hideMandarinPronunciation: Boolean = false,
     genreFor: (Long) -> String? = { null },
+    /**
+     * Timing-keyed native-model overlay. On success the merged per-line lanes
+     * are written here so the host's lyric-model getters can deliver them even
+     * when Apple renders no transliteration track from the merged document.
+     */
+    overlay: NativeLyricOverlayStore? = null,
 ): (Long, String) -> String? {
     val scoped = TrackScopedDiagnostics(logger)
     return { appleMusicId, rawTtml ->
@@ -127,7 +134,15 @@ internal fun translationEnricher(
                 durationMs = currentTrack()?.durationMs ?: 0L,
                 appleMusicId = appleMusicId,
                 diagnostic = { line -> scoped.log(appleMusicId, line) },
-            )?.ttml
+            )?.let { outcome ->
+                overlay?.update(
+                    songId = appleMusicId.toString(),
+                    lines = outcome.lines,
+                    translationSource = outcome.translationSource,
+                    pronunciationSource = outcome.pronunciationSource,
+                )
+                outcome.ttml
+            }
         }.getOrNull()
     }
 }
@@ -254,6 +269,10 @@ internal fun createAutoLyricsRuntime(
             }
         }
     }
+    // One overlay for the active track. The enricher writes it and the host's
+    // native lyric-model hooks read it back, so pronunciation renders even when
+    // Apple ignores the injected transliteration head track (1606).
+    val nativeLyricOverlay = NativeLyricOverlayStore()
     val enricher = chain.composite
         ?.takeIf { onlineLyricsTranslationEnabled }
         ?.let { composite ->
@@ -263,6 +282,7 @@ internal fun createAutoLyricsRuntime(
                 logger = logger,
                 hideMandarinPronunciation = hideMandarinPronunciation,
                 genreFor = genreFor,
+                overlay = nativeLyricOverlay,
             )
         }
     logger(
@@ -280,6 +300,9 @@ internal fun createAutoLyricsRuntime(
         publisher = publisher,
         suppressedIds = suppressedIds,
         translationEnricher = enricher,
+        nativeLyricOverlay = nativeLyricOverlay,
+        hideMandarinPinyin = hideMandarinPronunciation,
+        genreFor = genreFor,
     )
 }
 

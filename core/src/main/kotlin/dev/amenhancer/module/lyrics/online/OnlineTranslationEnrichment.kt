@@ -46,6 +46,14 @@ object OnlineTranslationEnrichment {
         val pronunciationSource: String = LANE_NONE,
         /** Lines in the published document that carry a transliteration entry. */
         val pronunciationLines: Int = 0,
+        /**
+         * The merged per-line lanes (Apple's own values preserved), keyed by the
+         * displayed timing and text. The native lyric-model delivery writes these
+         * into the app's own model through [NativeLyricOverlayStore]; the
+         * document alone is not enough on 1606, which renders no transliteration
+         * lane from an injected head track.
+         */
+        val lines: List<NativeLyricLine> = emptyList(),
     )
 
     /**
@@ -228,6 +236,7 @@ object OnlineTranslationEnrichment {
             translationSource = translationSource,
             pronunciationSource = pronunciationSource,
             pronunciationLines = pronunciationLines,
+            lines = merged.map(::nativeLine),
         )
     }
 

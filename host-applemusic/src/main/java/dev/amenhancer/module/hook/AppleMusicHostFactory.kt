@@ -3,6 +3,8 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
 
 /** Apple Music composition; the application supplies configuration and automatic-lyric services. */
 object AppleMusicHostFactory {
@@ -64,6 +66,13 @@ object AppleMusicHostFactory {
             source = ApkTargetClassSource(application, classLoader),
         )
         val settings = config.settings()
+        // Exact-profile resolver for HLE's native lyric-model delivery. A plain
+        // class-loader lookup is enough here: 1606 is a strict profile, so the
+        // resolver never guesses by DexKit, and an unresolved target fails open.
+        val nativeLyricResolver = AppleMusicHookResolver(
+            version = AppleMusicVersion(build.versionName, build.versionCode),
+            classLoader = classLoader,
+        )
         return TargetAdaptation(
             identity = build.displayName,
             build = build,
@@ -93,6 +102,7 @@ object AppleMusicHostFactory {
                 currentSong = currentSong,
                 autoLyricsRuntime = autoLyricsRuntime,
                 timingObservations = timingObservations,
+                hookResolver = nativeLyricResolver,
             ),
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,

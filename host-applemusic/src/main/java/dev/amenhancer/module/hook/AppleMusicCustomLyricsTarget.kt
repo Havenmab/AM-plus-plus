@@ -7,6 +7,7 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -23,6 +24,12 @@ internal class AppleMusicCustomLyricsTarget(
      * so it must be the one the parse seam below records into.
      */
     private val timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
+    /**
+     * Exact-profile resolver for HLE's native lyric-model delivery. Present only
+     * for builds whose profile pins the native member dictionary; a null value
+     * or an unresolved target leaves the document lane exactly as it was.
+     */
+    private val hookResolver: AppleMusicHookResolver? = null,
 ) : CustomLyricsTarget {
     private var installedResult: TargetCapabilityInstall? = null
     private val registration = HookRegistrationScope()
@@ -196,6 +203,29 @@ internal class AppleMusicCustomLyricsTarget(
         val isTracking: (Long) -> Boolean = { appleMusicId ->
             session.isTracking(appleMusicId) || autoSession?.isTracking(appleMusicId) == true
         }
+        // HLE's model-level delivery. The document lane alone does not make
+        // Apple render an injected transliteration track on 1606, so the online
+        // lanes are also written into the app's own lyric model (availability,
+        // line text and language lists). Off unless the translation toggle
+        // produced an enricher; every target resolution fails open.
+        val nativeLyricDelivery = autoLyricsRuntime
+            ?.takeIf { it.translationEnricher != null }
+            ?.let { runtime ->
+                hookResolver?.let { resolver ->
+                    AppleNativeLyricModelHooks(
+                        resolver = resolver,
+                        overlay = runtime.nativeLyricOverlay,
+                        enabled = true,
+                        hideMandarinPinyin = runtime.hideMandarinPinyin,
+                        genreFor = runtime.genreFor,
+                        scope = registration,
+                    )
+                }
+            }
+        runCatching { nativeLyricDelivery?.install() }
+            .onFailure { error ->
+                ModernXposedRuntime.log("native lyric model hooks failed: $error")
+            }
         val fragmentUsable = fragmentIsAddedPredicate(installMethod.declaringClass)
         readyReapply = CustomLyricsReadyReapply(
             installMethod = installMethod,
@@ -268,6 +298,13 @@ internal class AppleMusicCustomLyricsTarget(
                             publishedAdamId = publishedAdamId,
                         )
                         adamId ?: return@runCatching
+                        // Ask the native-model delivery to install its per-line
+                        // and availability hooks for the pointer that is about
+                        // to be shown. HLE does this from the result
+                        // presentation as well as the view-model build, because
+                        // the build seam is not guaranteed to carry the pointer
+                        // on every build.
+                        nativeLyricDelivery?.onLyricsPointer(original)
                         // The displayed Apple document was captured at parse
                         // time before its Adam ID was bound. This is the first
                         // seam that knows the track identity, so bind the
@@ -474,6 +511,7 @@ internal class AppleMusicCustomLyricsTarget(
                     parserResolution.summary,
                     parseMethodResolution.summary,
                     "timingHooked=$parserHooked",
+                    "nativeLyricModel=${nativeLyricDelivery != null}",
                     seam.fieldSummary.orEmpty(),
                 ).joinToString("; "),
         )

@@ -11,14 +11,19 @@ import java.util.zip.InflaterInputStream
 
 /**
  * Kugou search-based lyric source, ported from HyperLyricsEnhanced's
- * `KugouSource`/`KugouApiProtocol`/`KugouLyricsParser`. The v2 search and
- * download endpoints are signed GETs; the download body is a base64 KRC blob
- * (a 16-byte-XOR + zlib envelope tagged with a `krc1` header), or plain LRC
- * when the candidate has no KRC.
+ * `KugouSource`/`KugouApiProtocol`/`KugouLyricsParser` but moved onto the
+ * current player-path protocol (probed live 2026, see [KugouNetwork]):
+ *
+ *  * search is `GET /v1/search`, whose candidates live at the response root
+ *    and whose query is signed with the Lite credential pair;
+ *  * lyrics are `GET /download` (`fmt`/`id`/`accesskey`); the retired
+ *    `/v2/search` and `/v2/download` endpoints no longer authenticate;
+ *  * the body is a base64 KRC blob (a 16-byte-XOR + zlib envelope tagged with
+ *    a `krc1` header), plain LRC, or plain text with no timing at all.
  *
  * Network access goes through the shared [LyricHttpTransport] so callers can
- * fake it; no socket is opened here. HLE's `accesskey`/`contenttype` ride the
- * existing [SongSearchResult.extras] map rather than a new field.
+ * fake it; no socket is opened here. The `accesskey`/`contenttype` pair rides
+ * the existing [SongSearchResult.extras] map rather than a new field.
  */
 class KugouSource(private val transport: LyricHttpTransport) : SearchLyricsSource {
 
@@ -68,32 +73,58 @@ internal data class KugouCandidate(
     val durationMs: Long,
 )
 
+/**
+ * The live player-path endpoints, probed against `lyrics.kugou.com` in 2026.
+ *
+ * Search is a signed `GET /v1/search` carrying the *Lite* Android credential
+ * pair. The signature is validated server-side (a wrong salt or a missing
+ * `signature` comes back as an empty `200` body, not an error), and the salt is
+ * selected by `appid`: the Standard pair must not be mixed with the Lite salt.
+ * There is no `clienttime` anywhere — not in the query and not as a header.
+ *
+ * Download is `GET /download`; it accepts `id`/`accesskey` with `fmt`, `client`,
+ * `charset` and `ver`, and needs no signature at all. `/v2/search` answers
+ * `errcode 400 "auth fail, invalid clienttime"` and `/v2/download` answers
+ * `error_code 20006`, so both are retired.
+ *
+ * The inbound keyword is the pipeline's `<title> <artist>`; KuGou's index
+ * prefers `<artist>-<title>`, so a first attempt that yields nothing is retried
+ * with the final token moved to the front (see [KugouApiProtocol.artistFirst]).
+ */
 internal object KugouNetwork {
-    internal const val SEARCH_URL = "https://lyrics.kugou.com/v2/search"
-    internal const val DOWNLOAD_URL = "https://lyrics.kugou.com/v2/download"
-    internal const val APP_ID = "1005"
-    internal const val CLIENT_VERSION = "20759"
+    internal const val SEARCH_URL = "https://lyrics.kugou.com/v1/search"
+    internal const val DOWNLOAD_URL = "https://lyrics.kugou.com/download"
+    internal const val APP_ID = "3116"
+    internal const val CLIENT_VERSION = "11070"
 
-    /** HLE's `mid`, a constant MD5 of a fixed seed, so it is pinned at load. */
-    internal val MID = KugouApiProtocol.clientMid("HyperLyrics-Enhanced-online-translation")
+    internal const val MAX_KEYWORD_LENGTH = 200
+    internal const val MAX_CANDIDATES = 30
 
     /**
-     * Effective headers HLE sent on its own HttpURLConnection. The shared
-     * AM++ transport identifies differently and lets the JVM negotiate gzip,
-     * so every Kugou request overrides both, plus HLE's client metadata.
+     * Only the headers the endpoint needs. The old HLE client metadata
+     * (`mid`/`dfid`/`uuid`/`userid`/`token`) and the millisecond `clienttime`
+     * header are gone: a live probe returns the same candidates with them, with
+     * a foreign user agent, or with no headers at all, so they were noise.
      */
     internal val REQUEST_HEADERS = mapOf(
         "Accept" to "application/json",
         "Accept-Encoding" to "identity",
         "User-Agent" to "Android-KuGou/$CLIENT_VERSION",
-        "mid" to MID,
-        "dfid" to "-",
-        "uuid" to MID,
-        "userid" to "0",
-        "token" to "",
     )
 
     fun search(
+        transport: LyricHttpTransport,
+        keyword: String,
+        durationMs: Long,
+        pageSize: Int,
+    ): List<KugouCandidate> {
+        val primary = searchOnce(transport, keyword, durationMs, pageSize)
+        if (primary.isNotEmpty()) return primary
+        val alternate = KugouApiProtocol.artistFirst(keyword) ?: return emptyList()
+        return searchOnce(transport, alternate, durationMs, pageSize)
+    }
+
+    private fun searchOnce(
         transport: LyricHttpTransport,
         keyword: String,
         durationMs: Long,
@@ -105,20 +136,24 @@ internal object KugouNetwork {
             "clientver" to CLIENT_VERSION,
             "duration" to (durationMs.coerceAtLeast(0L) / 1_000L * 1_000L).toString(),
             "hash" to "",
-            "keyword" to keyword.take(200),
+            "keyword" to keyword.take(MAX_KEYWORD_LENGTH),
             "lrctxt" to "1",
             "man" to "yes",
-            "query_copyright" to "1",
         )
         val json = requestJson(
             transport,
             "$SEARCH_URL?${KugouApiProtocol.signedQuery(parameters)}",
         ) ?: return emptyList()
-        val array = json.optJSONObject("data")?.optJSONArray("candidates") ?: return emptyList()
+        return parseCandidates(json, pageSize)
+    }
+
+    /** The v1 envelope puts `candidates` at the response root, not under `data`. */
+    internal fun parseCandidates(json: JSONObject, pageSize: Int): List<KugouCandidate> {
+        val array = json.optJSONArray("candidates") ?: return emptyList()
         return buildList {
-            for (index in 0 until minOf(array.length(), pageSize.coerceIn(1, 30))) {
+            for (index in 0 until minOf(array.length(), pageSize.coerceIn(1, MAX_CANDIDATES))) {
                 val item = array.optJSONObject(index) ?: continue
-                val id = item.optString("download_id").ifBlank { item.optString("id") }
+                val id = item.optString("id").ifBlank { item.optString("download_id") }
                 val accessKey = item.optString("accesskey")
                 if (id.isBlank() || accessKey.isBlank()) continue
                 add(
@@ -144,32 +179,53 @@ internal object KugouNetwork {
         val parameters = mapOf(
             "accesskey" to accessKey,
             "appid" to APP_ID,
+            "charset" to "utf8",
+            "client" to "android",
             "clientver" to CLIENT_VERSION,
-            "contenttype" to contentType.toString(),
-            "download_id" to downloadId,
+            "fmt" to fmtFor(contentType),
+            "id" to downloadId,
+            "ver" to "1",
         )
         val json = requestJson(
             transport,
             "$DOWNLOAD_URL?${KugouApiProtocol.signedQuery(parameters)}",
         ) ?: return ByteArray(0)
-        val content = json.optJSONObject("data")?.optString("content").orEmpty()
+        return parseDownload(json)
+    }
+
+    /** The download envelope also puts `content` at the response root. */
+    internal fun parseDownload(json: JSONObject): ByteArray {
+        val content = json.optString("content")
         return runCatching { Base64.getDecoder().decode(content) }.getOrDefault(ByteArray(0))
+    }
+
+    /**
+     * KuGou's `suggested_fmt`: a KRC envelope unless the candidate is explicitly
+     * an LRC (`1`) or an untimed text (`2`) lyric. Requesting `krc` for a text
+     * candidate is harmless — the server returns the text it has — but matching
+     * the candidate's own format keeps the request honest.
+     */
+    internal fun fmtFor(contentType: Int): String = when (contentType) {
+        1 -> "lrc"
+        2 -> "txt"
+        else -> "krc"
     }
 
     private fun requestJson(transport: LyricHttpTransport, url: String): JSONObject? {
         val bytes = runCatching {
-            transport.getBytes(url, REQUEST_HEADERS + clientTimeHeader())
+            transport.getBytes(url, REQUEST_HEADERS)
         }.getOrNull() ?: return null
         return runCatching { JSONObject(bytes.toString(StandardCharsets.UTF_8)) }.getOrNull()
     }
-
-    /** HLE stamped the wall clock per request; kept so the wire shape is unchanged. */
-    private fun clientTimeHeader(): Map<String, String> =
-        mapOf("clienttime" to System.currentTimeMillis().toString())
 }
 
 internal object KugouApiProtocol {
-    private const val SIGNING_SECRET = "OIlwieks28dk2k092lksi2UIkp"
+    /**
+     * The Lite (概念版) Android salt, paired with [KugouNetwork.APP_ID]. The
+     * server keeps this salt for `appid=3116`; the Standard salt belongs to
+     * `appid=1005` and is rejected for the Lite appid (empty `200` body).
+     */
+    private const val SIGNING_SECRET = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
 
     fun signedQuery(parameters: Map<String, String>): String {
         val signed = parameters.toSortedMap().toMutableMap()
@@ -186,7 +242,23 @@ internal object KugouApiProtocol {
         return md5Hex("$SIGNING_SECRET$joined$SIGNING_SECRET")
     }
 
-    fun clientMid(seed: String): String = md5Hex(seed)
+    /**
+     * Rewrites the pipeline's `<title> <artist>` into KuGou's preferred
+     * `<artist>-<title>` by moving the last whitespace-delimited token to the
+     * front. A probe of twelve real CJK tracks returned zero candidates for the
+     * space form but twenty for this one on every track; the hyphen is what the
+     * index matches, not the order alone. Returns null when there is nothing to
+     * move so callers do not resend the identical keyword.
+     */
+    fun artistFirst(keyword: String): String? {
+        val trimmed = keyword.trim()
+        val split = trimmed.lastIndexOf(' ')
+        if (split <= 0 || split >= trimmed.lastIndex) return null
+        val title = trimmed.substring(0, split).trim()
+        val artist = trimmed.substring(split + 1).trim()
+        if (title.isEmpty() || artist.isEmpty()) return null
+        return "$artist-$title"
+    }
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name())

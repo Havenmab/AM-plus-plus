@@ -131,28 +131,64 @@ class AppleLyricTtmlLaneInjectorTest {
     }
 
     @Test
+    fun `a Latin-only Apple line gets no transliterations lane`() {
+        // `RomanizationPolicy` refuses a Latin "romanization" of Latin lyrics, so
+        // the provider's pronunciation column never reaches an English line.
+        val outcome = OnlineTranslationEnrichment.enrich(
+            ttml = APPLE_WORD_DOCUMENT,
+            candidates = listOf(
+                OnlineTranslationCandidate(
+                    source = Source.NE,
+                    lines = listOf(
+                        OnlineTranslationLine(
+                            startTimeMs = 1_000L,
+                            content = "Nice to meet you, where you been?",
+                            translation = "很高兴见到你，你去过哪里？",
+                            romanization = "Nais tu mit yu",
+                        ),
+                        OnlineTranslationLine(
+                            startTimeMs = 5_000L,
+                            content = "Got Ooh yeah baby",
+                            translation = "得到了，噢耶，宝贝",
+                            romanization = "Got Ooh yeah baby",
+                        ),
+                    ),
+                ),
+            ),
+            pronunciationRequested = true,
+            durationMs = 10_000L,
+        )
+
+        assertNotNull(outcome)
+        assertFalse(outcome!!.ttml.contains("<transliterations>"))
+        assertTrue(outcome.ttml.contains("<translations>"))
+        assertEquals("none", outcome.pronunciationSource)
+    }
+
+    @Test
     fun `romanization the winner supplies opens a transliterations lane`() {
         val candidate = OnlineTranslationCandidate(
             source = Source.NE,
             lines = listOf(
                 OnlineTranslationLine(
                     startTimeMs = 1_000L,
-                    content = "Nice to meet you, where you been?",
-                    translation = "很高兴见到你，你去过哪里？",
-                    romanization = "Nais tu mit yu",
+                    content = "君の名は",
+                    translation = "你的名字",
+                    romanization = "Kimi no na wa",
                 ),
                 OnlineTranslationLine(
                     startTimeMs = 5_000L,
-                    content = "Got Ooh yeah baby",
-                    translation = "得到了，噢耶，宝贝",
-                    romanization = "Got Ooh yeah baby",
+                    content = "ありがとう",
+                    translation = "谢谢",
+                    romanization = "Arigatou",
                 ),
             ),
         )
 
         val outcome = OnlineTranslationEnrichment.enrich(
-            ttml = APPLE_WORD_DOCUMENT,
+            ttml = JAPANESE_APPLE_DOCUMENT,
             candidates = listOf(candidate),
+            pronunciationRequested = true,
             durationMs = 10_000L,
         )
 
@@ -161,10 +197,46 @@ class AppleLyricTtmlLaneInjectorTest {
         assertTrue(
             ttml.contains(
                 "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
-                    "<text for=\"L1\">Nais tu mit yu</text>",
+                    "<text for=\"L1\">Kimi no na wa</text>" +
+                    "<text for=\"L2\">Arigatou</text>",
             ),
         )
-        assertEquals(bodyOf(APPLE_WORD_DOCUMENT), bodyOf(ttml))
+        assertEquals(bodyOf(JAPANESE_APPLE_DOCUMENT), bodyOf(ttml))
+        assertEquals("NE", outcome.pronunciationSource)
+        assertEquals(2, outcome.pronunciationLines)
+    }
+
+    @Test
+    fun `a pronunciation only pass opens a transliterations lane without a translations lane`() {
+        val outcome = OnlineTranslationEnrichment.enrich(
+            ttml = JAPANESE_APPLE_DOCUMENT,
+            candidates = listOf(
+                OnlineTranslationCandidate(
+                    source = Source.KUWO,
+                    lines = listOf(
+                        OnlineTranslationLine(
+                            startTimeMs = 1_000L,
+                            content = "君の名は",
+                            romanization = "Kimi no na wa",
+                        ),
+                        OnlineTranslationLine(
+                            startTimeMs = 5_000L,
+                            content = "ありがとう",
+                            romanization = "Arigatou",
+                        ),
+                    ),
+                ),
+            ),
+            pronunciationRequested = true,
+            durationMs = 10_000L,
+        )
+
+        assertNotNull("a pronunciation-only pass must publish", outcome)
+        val ttml = outcome!!.ttml
+        assertFalse(ttml.contains("<translations>"))
+        assertTrue(ttml.contains("<transliterations>"))
+        assertTrue(ttml.contains(">Kimi no na wa<"))
+        assertEquals(bodyOf(JAPANESE_APPLE_DOCUMENT), bodyOf(ttml))
     }
 
     private fun translationCandidate() = OnlineTranslationCandidate(
@@ -222,6 +294,27 @@ class AppleLyricTtmlLaneInjectorTest {
                 "<text for=\"L1\">Nais tu mit yu</text><text for=\"L2\">Got Ooh yeah baby</text>" +
                 "</transliteration></transliterations>",
         )
+
+        /** Apple-shaped, non-Latin lyrics: a valid pronunciation is admissible. */
+        val JAPANESE_APPLE_DOCUMENT = """
+            <?xml version='1.0' encoding='utf-8'?>
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+                xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+                itunes:timing="Word" xml:lang="ja">
+              <head><metadata>
+                <ttm:agent type="person" xml:id="v1"/>
+                <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+                  <songwriters><songwriter>Fujii Kaze</songwriter></songwriters>
+                </iTunesMetadata>
+              </metadata></head>
+              <body dur="0:10.000">
+                <div begin="0:00.000" end="0:10.000" itunes:song-part="Verse">
+                  <p begin="0:01.000" end="0:04.000" ttm:agent="v1" itunes:key="L1"><span begin="0:01.000" end="0:02.000">君の</span> <span begin="0:02.000" end="0:04.000">名は</span></p>
+                  <p begin="0:05.000" end="0:08.000" ttm:agent="v1" itunes:key="L2"><span begin="0:05.000" end="0:06.000">ありが</span> <span begin="0:06.000" end="0:08.000">とう</span></p>
+                </div>
+              </body>
+            </tt>
+        """.trimIndent()
 
         fun bodyOf(ttml: String): String {
             val start = ttml.indexOf("<body")

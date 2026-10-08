@@ -26,6 +26,12 @@ enum class OnlineTranslationReason(val token: String) {
  * rejected the document. Pure over plain data, so the reason tokens are covered
  * by JVM tests instead of by reading a device log, and the caller's decision
  * and its diagnostic can never disagree.
+ *
+ * Pronunciation is folded in exactly as [OnlineEnrichmentPolicy] does it: the
+ * translation half keeps HLE's rules (Apple's lane, fully-Chinese lyrics), while
+ * the pronunciation half only needs some non-blank line with no romanization —
+ * Apple's own transliterations lane counts as supplied, because the reader reads
+ * it back.
  */
 object OnlineTranslationGate {
 
@@ -35,18 +41,37 @@ object OnlineTranslationGate {
         document: TtmlDocumentMetadata,
         lines: List<NativeLyricLine>,
         translationRequested: Boolean = true,
+        pronunciationRequested: Boolean = false,
     ): OnlineTranslationReason = when {
         candidateCount == 0 -> OnlineTranslationReason.NO_CANDIDATES
         baseLineCount == 0 -> OnlineTranslationReason.EMPTY_APPLE_DOCUMENT
+        needsTranslation(document, lines, translationRequested) -> OnlineTranslationReason.PROCEED
+        needsPronunciation(lines, pronunciationRequested) -> OnlineTranslationReason.PROCEED
         !translationRequested -> OnlineTranslationReason.NO_LINE_NEEDS_TRANSLATION
         document.hasTranslation -> OnlineTranslationReason.APPLE_ALREADY_TRANSLATED
         ChineseLyricsPolicy.isFullyChinese(lines) -> OnlineTranslationReason.FULLY_CHINESE
-        !lines.any { line ->
+        else -> OnlineTranslationReason.NO_LINE_NEEDS_TRANSLATION
+    }
+
+    /** Mirrors [OnlineEnrichmentPolicy]'s translation half verbatim. */
+    private fun needsTranslation(
+        document: TtmlDocumentMetadata,
+        lines: List<NativeLyricLine>,
+        translationRequested: Boolean,
+    ): Boolean = translationRequested &&
+        !document.hasTranslation &&
+        !ChineseLyricsPolicy.isFullyChinese(lines) &&
+        lines.any { line ->
             !line.text.isNullOrBlank() &&
                 !OnlineTranslationContentPolicy.isMeaningful(line.translation)
-        } -> OnlineTranslationReason.NO_LINE_NEEDS_TRANSLATION
-        else -> OnlineTranslationReason.PROCEED
-    }
+        }
+
+    /** Mirrors [OnlineEnrichmentPolicy]'s pronunciation half verbatim. */
+    private fun needsPronunciation(
+        lines: List<NativeLyricLine>,
+        pronunciationRequested: Boolean,
+    ): Boolean = pronunciationRequested &&
+        lines.any { line -> !line.text.isNullOrBlank() && line.roma.isNullOrBlank() }
 }
 
 /**

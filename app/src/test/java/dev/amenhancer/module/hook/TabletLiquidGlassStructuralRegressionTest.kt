@@ -164,7 +164,9 @@ class TabletLiquidGlassStructuralRegressionTest {
         // region extras (16), online lyric supplement (17), source chain (18) and
         // translation enrichment toggle (19).  Schema 21 retires the fork-only master
         // switch and adds HLE's override_account_language; schema 22 adds the
-        // metadata_cache_clear_generation one-shot signal.  Glass still reuses its keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 22"))
+        // metadata_cache_clear_generation one-shot signal; schema 23 adds HLE's
+        // hide-Mandarin-pinyin switch and widens the translation toggle to both
+        // lanes.  Glass still reuses its keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 23"))
     }
 }

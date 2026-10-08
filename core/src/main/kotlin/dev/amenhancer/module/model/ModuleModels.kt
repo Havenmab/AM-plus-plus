@@ -95,12 +95,22 @@ data class ModuleSettings(
      */
     val onlineLyricsGlobalBestEnabled: Boolean = false,
     /**
-     * Fills in a missing lyric translation from the online chain while Apple's
-     * document is showing. Defaults off, and only the translation lane is
-     * touched: Apple's own translation always wins, and a document that needs
-     * no translation is left exactly as it is.
+     * HLE's 「补全歌词翻译与发音」: fills a missing translation **and**
+     * pronunciation lane from the online chain while Apple's document is
+     * showing. Defaults off. Apple's own lane always wins for whichever lane it
+     * supplied, a document that needs neither is left exactly as it is, and the
+     * pronunciation lane is filtered through `RomanizationPolicy`. The storage
+     * key keeps its historical `online_lyrics_translation_enabled` name — it now
+     * gates both lanes, so an upgrading store keeps the opt-in it already made.
      */
     val onlineLyricsTranslationEnabled: Boolean = false,
+    /**
+     * HLE's 「不显示国语歌拼音」: never publish an online pronunciation lane for a
+     * Mandarin song. Cantonese genre markers and jyutping/`yue-Latn`
+     * pronunciation languages keep their pronunciation; an unknown genre hides
+     * nothing. Defaults off.
+     */
+    val onlineLyricsHideMandarinPinyinEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,

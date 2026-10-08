@@ -11,12 +11,16 @@ package dev.amenhancer.module.lyrics.online
  * paragraphs, word spans, the whitespace between them, `x-bg` markup, agents,
  * namespaces and attributes are copied through byte for byte.
  *
- * An existing `translations` block is replaced in place. Otherwise the new
- * track is inserted before `</iTunesMetadata>` (converting a self-closing
- * element), or inside `<metadata>` when Apple's document carries no
- * `iTunesMetadata` at all. A `transliterations` block the document already has
- * is never touched; one is only added when the document has none and a merged
- * line carries romanization.
+ * An existing `translations` block is rewritten in place (its lines are carried
+ * through the merge, so Apple's own entries survive); when the rebuilt track is
+ * empty the original block is kept verbatim. Otherwise the new tracks are
+ * inserted before `</iTunesMetadata>` (converting a self-closing element), or
+ * inside `<metadata>` when Apple's document carries no `iTunesMetadata` at all.
+ * A `transliterations` block the document already has is never touched; one is
+ * only added when the document has none and a merged line carries a sanitized
+ * romanization. Either lane may be the only one written — a document whose
+ * translation is Apple's own but whose pronunciation is missing gets just the
+ * `transliterations` track.
  *
  * Lane keys mirror [AppleLyricTtmlReader]: each `<p>`'s `itunes:key`, or its
  * document position `L<n>` when Apple omitted it. Returns null — leaving the
@@ -46,7 +50,7 @@ object AppleLyricTtmlLaneInjector {
      */
     fun inject(ttml: String, lines: List<AppleTtmlLine>): String? = runCatching {
         val keys = documentKeys(ttml)
-        val translations = AppleLyricTtmlWriter.translationsTrack(lines, keys) ?: return null
+        val translations = AppleLyricTtmlWriter.translationsTrack(lines, keys)
         val transliterations = if (transliterationsBlock.containsMatchIn(ttml)) {
             null
         } else {
@@ -54,9 +58,14 @@ object AppleLyricTtmlLaneInjector {
         }
         val existing = translationsBlock.find(ttml)
         if (existing != null) {
-            return ttml.replaceRange(existing.range, translations + (transliterations ?: ""))
+            // Apple's own block is rebuilt from the merged lines, which carry its
+            // entries; if nothing was built, keep the block exactly as it was
+            // rather than deleting it.
+            val replacement = (translations ?: existing.value) + (transliterations ?: "")
+            return ttml.replaceRange(existing.range, replacement)
         }
-        placeInsideMetadata(ttml, translations + (transliterations ?: ""))
+        if (translations == null && transliterations == null) return null
+        placeInsideMetadata(ttml, (translations ?: "") + (transliterations ?: ""))
     }.getOrNull()
 
     private fun placeInsideMetadata(ttml: String, lanes: String): String? {

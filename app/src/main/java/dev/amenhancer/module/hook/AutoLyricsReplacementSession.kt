@@ -94,6 +94,12 @@ internal fun buildOnlineLyricsChain(
  * [logger] receives the bounded per-track decision lines through the module's
  * existing log channel.
  *
+ * The single 「补全歌词翻译与发音」 opt-in requests both lanes, so the same
+ * candidate body can fill a missing translation and a missing pronunciation.
+ * [hideMandarinPronunciation] and [genreFor] feed HLE's 「不显示国语歌拼音」
+ * rule: the genre is resolved by the host from the metadata cache and is null
+ * whenever it is unavailable, which hides nothing.
+ *
  * The `rawTtml` this receives is Apple's own parsed document, so the lane only
  * runs once Apple has parsed the displayed document — in practice once the
  * lyrics view for the track has been on screen. That is the product constraint
@@ -105,6 +111,8 @@ internal fun translationEnricher(
     composite: CompositeOnlineSearchAutoLyricsSource,
     currentTrack: () -> CurrentSongDetails?,
     logger: (String) -> Unit = {},
+    hideMandarinPronunciation: Boolean = false,
+    genreFor: (Long) -> String? = { null },
 ): (Long, String) -> String? {
     val scoped = TrackScopedDiagnostics(logger)
     return { appleMusicId, rawTtml ->
@@ -113,6 +121,9 @@ internal fun translationEnricher(
                 ttml = rawTtml,
                 candidates = composite.fetchTranslationCandidates(appleMusicId),
                 translationRequested = true,
+                pronunciationRequested = true,
+                hideMandarinPronunciation = hideMandarinPronunciation,
+                genre = genreFor(appleMusicId),
                 durationMs = currentTrack()?.durationMs ?: 0L,
                 appleMusicId = appleMusicId,
                 diagnostic = { line -> scoped.log(appleMusicId, line) },
@@ -126,6 +137,8 @@ internal fun createAutoLyricsRuntime(
     suppressedIds: Set<Long> = emptySet(),
     onlineLyricsSupplementEnabled: Boolean = false,
     onlineLyricsTranslationEnabled: Boolean = false,
+    hideMandarinPronunciation: Boolean = false,
+    genreFor: (Long) -> String? = { null },
     onlineLyricsSelection: OnlineLyricSelection =
         OnlineLyricSourcePolicy.resolve(ModuleSettings()),
     currentTrack: () -> CurrentSongDetails? = { null },
@@ -243,10 +256,20 @@ internal fun createAutoLyricsRuntime(
     }
     val enricher = chain.composite
         ?.takeIf { onlineLyricsTranslationEnabled }
-        ?.let { composite -> translationEnricher(composite, currentTrack, logger) }
+        ?.let { composite ->
+            translationEnricher(
+                composite = composite,
+                currentTrack = currentTrack,
+                logger = logger,
+                hideMandarinPronunciation = hideMandarinPronunciation,
+                genreFor = genreFor,
+            )
+        }
     logger(
         "online-translation runtime supplement=$onlineLyricsSupplementEnabled " +
             "translation=$onlineLyricsTranslationEnabled " +
+            "pronunciation=$onlineLyricsTranslationEnabled " +
+            "hideMandarinPinyin=$hideMandarinPronunciation " +
             "sources=${onlineLyricsSelection.sources.joinToString(",")} " +
             "enricher=${enricher != null}",
     )

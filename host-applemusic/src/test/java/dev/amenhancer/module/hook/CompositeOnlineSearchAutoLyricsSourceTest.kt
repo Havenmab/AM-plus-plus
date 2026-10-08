@@ -380,6 +380,80 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
     }
 
     @Test
+    fun `a pronunciation-only candidate passes as the fallback`() {
+        // Apple already translated the song, so the provider returns only the
+        // romanization column; it must still reach the enrichment.
+        val pronunciationOnly = fake(
+            Source.NE,
+            songs = listOf(song("1", Source.NE)),
+            lyrics = romanizedLyrics("original", "orijinaru"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, pronunciationOnly)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertEquals(Source.NE, candidates.single().source)
+        assertEquals("orijinaru", candidates.single().lines.single().romanization)
+    }
+
+    @Test
+    fun `a translation-bearing candidate still beats an earlier pronunciation-only one`() {
+        val pronunciationOnly = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO)),
+            lyrics = romanizedLyrics("original", "orijinaru"),
+        )
+        val translated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, pronunciationOnly, translated)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.QM), candidates.map(OnlineTranslationCandidate::source))
+    }
+
+    @Test
+    fun `global best prefers translation-bearing candidates over pronunciation-only ones`() {
+        val pronunciationOnly = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO, duration = 202_000L)),
+            lyrics = romanizedLyrics("original", "orijinaru"),
+        )
+        val translated = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = chain(
+            LyricSelectionMode.GLOBAL_BEST,
+            pronunciationOnly,
+            translated,
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(listOf(Source.QM), candidates.map(OnlineTranslationCandidate::source))
+    }
+
+    @Test
+    fun `global best falls back to a pronunciation-only candidate`() {
+        val pronunciationOnly = fake(
+            Source.KUWO,
+            songs = listOf(song("1", Source.KUWO)),
+            lyrics = romanizedLyrics("original", "orijinaru"),
+        )
+
+        val candidates = chain(LyricSelectionMode.GLOBAL_BEST, pronunciationOnly)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertEquals("orijinaru", candidates.single().lines.single().romanization)
+    }
+
+    @Test
     fun `global best translation keeps only translation-bearing passing candidates`() {
         val lowerScoreTranslated = fake(
             Source.KUWO,
@@ -1292,6 +1366,26 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
             )
         },
         romanization = null,
+    )
+
+    /** A provider payload that carries only the pronunciation column. */
+    private fun romanizedLyrics(text: String, romanization: String): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            LyricsLine(
+                start = 0L,
+                end = 1_000L,
+                words = listOf(LyricsWord(start = 0L, end = 1_000L, text = text)),
+            ),
+        ),
+        translated = null,
+        romanization = listOf(
+            LyricsLine(
+                start = 0L,
+                end = 1_000L,
+                words = listOf(LyricsWord(start = 0L, end = 1_000L, text = romanization)),
+            ),
+        ),
     )
 
     private class FakeSearchSource(

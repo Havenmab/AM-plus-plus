@@ -64,6 +64,13 @@ data class NativeLyricDocument(
 
 /** Keys HLE stores on lyric metadata; values are part of the published contract. */
 object LyricMetadataKeys {
+    /**
+     * HLE's `appleCatalogGenre` / `applePronunciationLanguages`: the context
+     * [ApplePronunciationVisibilityPolicy] needs to decide whether a Mandarin
+     * pinyin lane must be suppressed.
+     */
+    const val APPLE_CATALOG_GENRE = "appleCatalogGenre"
+    const val APPLE_PRONUNCIATION_LANGUAGES = "applePronunciationLanguages"
     const val ONLINE_TRANSLATION_SOURCE = "onlineTranslationSource"
     const val ONLINE_TRANSLATION_MATCH_STATS = "onlineTranslationMatchStats"
     const val ONLINE_PRONUNCIATION_SOURCE = "onlinePronunciationSource"

@@ -93,6 +93,7 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
                 "online_lyrics_global_best_enabled" to false,
                 "online_lyrics_translation_enabled" to false,
+                "online_lyrics_hide_mandarin_pinyin" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -144,6 +145,7 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
                 "online_lyrics_global_best_enabled" to false,
                 "online_lyrics_translation_enabled" to false,
+                "online_lyrics_hide_mandarin_pinyin" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -378,7 +380,8 @@ class ModuleSettingsSchemaTest {
     @Test
     fun `a region-era schema upgrades with the online toggle absent and off`() {
         // The region-only state: v16 carried the region extras but none of the
-        // online lyric keys.  Its stored region values must survive the jump to 22.
+        // online lyric keys.  Its stored region values must survive the jump to the
+        // current schema.
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 16,
@@ -394,7 +397,7 @@ class ModuleSettingsSchemaTest {
 
         assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
         assertEquals(true, upgraded["custom_lyrics_enabled"])
-        // v16 -> v22 transition: the region extras are preserved, not re-derived, and
+        // v16 -> current transition: the region extras are preserved, not re-derived, and
         // the retired picker is rewritten onto the region key.  The retired master
         // switch carried over onto HLE's account-language override.
         assertEquals("japan", upgraded["region_selection"])
@@ -472,7 +475,7 @@ class ModuleSettingsSchemaTest {
             legacyValues = emptyMap<String, Any?>(),
         )!!
 
-        // v17 -> v22 transition: region values preserved, the retired master carried
+        // v17 -> current transition: region values preserved, the retired master carried
         // over onto the override switch.
         assertEquals("japan", upgraded["region_selection"])
         assertEquals(true, upgraded["override_account_language"])
@@ -566,6 +569,46 @@ class ModuleSettingsSchemaTest {
             true,
             ModuleSettingsSchema.decode(encoded).onlineLyricsTranslationEnabled,
         )
+    }
+
+    @Test
+    fun `hiding Mandarin pinyin defaults off rejects malformed values and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+                .onlineLyricsHideMandarinPinyinEnabled,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_hide_mandarin_pinyin" to "not-a-boolean"),
+            ).onlineLyricsHideMandarinPinyinEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsHideMandarinPinyinEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_hide_mandarin_pinyin"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsHideMandarinPinyinEnabled,
+        )
+    }
+
+    @Test
+    fun `a v22 store upgrades with the pinyin switch off and the combined key carried over`() {
+        // The pre-pronunciation store: the single `online_lyrics_translation_enabled`
+        // key must keep its value (it now gates both lanes) and the new
+        // hide-Mandarin key lands on its documented off default.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 22,
+                "online_lyrics_translation_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_translation_enabled"])
+        assertEquals(false, upgraded["online_lyrics_hide_mandarin_pinyin"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
     }
 
     @Test
@@ -796,7 +839,7 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
-    fun `a v15 configuration upgrades to v22 without losing its region behaviour`() {
+    fun `a v15 configuration upgrades to the current schema without losing its region behaviour`() {
         val upgradedRegion = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 15,

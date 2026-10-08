@@ -630,8 +630,8 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "补全歌词翻译",
-            "Apple 歌词缺少翻译时用在线来源补齐；Apple 自带翻译优先，需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            "补全歌词翻译与发音",
+            "优先使用Apple源，三方在线源兜底；缺少翻译或发音时补齐，需要开启“自动实时补全”，更改后重开 Apple Music 生效",
             settings.onlineLyricsTranslationEnabled,
             enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
@@ -640,9 +640,26 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            "不显示国语歌拼音",
+            "国语（普通话）歌曲不补充在线拼音；粤语歌不受影响",
+            settings.onlineLyricsHideMandarinPinyinEnabled,
+            enabled = settings.customLyricsEnabled &&
+                settings.automaticLyricsEnabled &&
+                settings.onlineLyricsTranslationEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.accent,
+            ),
+            compactWidePadding = true,
+        ) {
+            onSettingsChanged(settings.copy(onlineLyricsHideMandarinPinyinEnabled = it))
+        })
 
-        // The translation pass borrows the same provider chain as the
-        // supplement, so the chain rows stay usable while either opt-in is on.
+        // The translation/pronunciation pass borrows the same provider chain as
+        // the supplement, so the chain rows stay usable while either opt-in is on.
         val chainEnabled = settings.customLyricsEnabled &&
             (settings.onlineLyricsSupplementEnabled || settings.onlineLyricsTranslationEnabled)
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))

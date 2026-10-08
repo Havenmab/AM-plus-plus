@@ -32,8 +32,14 @@ object ModuleConstants {
      * 「清空检索库」 action uses to ask the live runtime to drop the persistent
      * region/original metadata caches.  It defaults to 0, so an upgrading store
      * starts with no pending clear.
+     *
+     * 23 adds HLE's 「不显示国语歌拼音」 switch
+     * (`online_lyrics_hide_mandarin_pinyin`).  It defaults off, so an upgrading
+     * store keeps publishing the pronunciation lane exactly as before; the
+     * existing `online_lyrics_translation_enabled` key is NOT renamed and now
+     * covers the pronunciation lane too, so no migration is needed for it.
      */
-    const val CONFIG_SCHEMA_VERSION = 22
+    const val CONFIG_SCHEMA_VERSION = 23
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

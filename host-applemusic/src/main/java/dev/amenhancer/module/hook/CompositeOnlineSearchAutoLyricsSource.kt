@@ -121,9 +121,13 @@ private const val ORIGINAL_METADATA_LABEL = "Apple 内部原名"
  * document.
  *
  * [fetchTranslationCandidates] is the translation-required variant of the same
- * chain: a candidate whose fetched lyrics carry no usable translation lane does
- * not pass, so first-passing keeps walking providers and global-best keeps only
- * translation-bearing passers. It is fail-open too, returning an empty list.
+ * chain: a candidate whose fetched lyrics carry neither a usable translation nor
+ * a romanization lane does not pass, so first-passing keeps walking providers
+ * and global-best keeps only lane-bearing passers. Translation-bearing
+ * candidates still win over pronunciation-only ones, so the translation-only
+ * behaviour is unchanged; the pronunciation-only fallback exists because a
+ * provider often returns only the pronunciation column for a song Apple already
+ * translated. It is fail-open too, returning an empty list.
  *
  * Every candidate is scored with the local album supplied by [originalMetadata],
  * so title plus artist plus album can carry the score on their own and the
@@ -346,7 +350,11 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }
 
     /**
-     * Ordered walk that skips any provider whose lyrics carry no translation.
+     * Ordered walk that skips any provider whose lyrics carry neither lane. A
+     * translation-bearing candidate wins immediately; a pronunciation-only
+     * candidate is remembered and only returned when no provider supplied a
+     * translation, so the translation-only selection is unchanged.
+     *
      * The displayed-metadata pass runs first; the original-metadata pass only
      * runs when the first found no candidate at or above the score floor.
      */
@@ -374,6 +382,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         ledger: SearchLedger,
     ): TranslationPassOutcome {
         var foundPassing = false
+        var pronunciationOnly: OnlineTranslationCandidate? = null
         providers.forEach { provider ->
             val searched = searchBounded(listOf(provider), request, metadata, ledger).firstOrNull()
                 ?: ProviderCandidates(provider, emptyList())
@@ -384,9 +393,15 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             if (selected == null) return@forEach
             foundPassing = true
             val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
-            return TranslationPassOutcome(listOf(candidate), true)
+            if (candidate.hasTranslationLane()) {
+                return TranslationPassOutcome(listOf(candidate), true)
+            }
+            // Pronunciation-only: keep walking providers for one that also
+            // carries the translation lane, and fall back to this candidate only
+            // when none does.
+            if (pronunciationOnly == null) pronunciationOnly = candidate
         }
-        return TranslationPassOutcome(emptyList(), foundPassing)
+        return TranslationPassOutcome(listOfNotNull(pronunciationOnly), foundPassing)
     }
 
     /**
@@ -415,10 +430,14 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             // A score-passing pass is a miss only for the translation lane; it
             // still must not trigger the original-metadata pass.
             if (passing.isNotEmpty()) {
-                return passing.sortedByDescending { it.candidate.score }
+                val accepted = passing.sortedByDescending { it.candidate.score }
                     .mapNotNull { entry ->
                         translationCandidate(entry.provider, entry.candidate.song, appleMusicId)
                     }
+                // Translation-bearing candidates first, so a pronunciation-only
+                // fallback can never displace the translation-only selection.
+                val translated = accepted.filter { it.hasTranslationLane() }
+                return translated.ifEmpty { accepted }
             }
         }
         return emptyList()
@@ -466,7 +485,13 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             }
     }
 
-    /** One provider's aligned lanes, or null when it contributes no translation. */
+    /**
+     * One provider's aligned lanes, or null when it contributes neither lane.
+     * A translation-bearing candidate is preferred by the callers; a
+     * pronunciation-only one is only the fallback, so a provider whose payload
+     * carries just the romanization column can still fill a missing
+     * transliterations lane on a song Apple already translated.
+     */
     private fun translationCandidate(
         provider: OnlineLyricProvider,
         song: SongSearchResult,
@@ -482,21 +507,30 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             return null
         }
         val lines = OnlineTranslationExtraction.extract(result)
-        if (lines.none { OnlineTranslationContentPolicy.isMeaningful(it.translation) }) {
+        val hasTranslation = lines.any {
+            OnlineTranslationContentPolicy.isMeaningful(it.translation)
+        }
+        val hasPronunciation = lines.any { !it.romanization.isNullOrBlank() }
+        if (!hasTranslation && !hasPronunciation) {
             scopedDiagnostic.log(
                 appleMusicId,
                 "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
-                    "reason=no_meaningful_translation lines=${lines.size}",
+                    "reason=no_meaningful_lane lines=${lines.size}",
             )
             return null
         }
         scopedDiagnostic.log(
             appleMusicId,
             "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
-                "reason=accepted lines=${lines.size}",
+                "reason=accepted lines=${lines.size} " +
+                "translation=$hasTranslation pronunciation=$hasPronunciation",
         )
         OnlineTranslationCandidate(provider.source.sourceType, lines)
     }.getOrNull()
+
+    /** True when the candidate would fill a translation lane. */
+    private fun OnlineTranslationCandidate.hasTranslationLane(): Boolean =
+        lines.any { OnlineTranslationContentPolicy.isMeaningful(it.translation) }
 
     /**
      * Ordered walk, short-circuiting on the first provider with usable lyrics.

@@ -103,13 +103,17 @@ class CustomLyricsListPageStructuralRegressionTest {
 
     @Test
     fun `renders the online lyric chain toggles from plain source data only`() {
+        // The custom-lyrics page rows live in EmbeddedSettingsPages.kt (the
+        // settings host was split before this test was written); reading the host
+        // file pinned nothing and silently passed over an empty search.
         val embeddedHost = projectFile(
-            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt",
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsPages.kt",
         )
 
         listOf(
             "onlineLyricsSupplementEnabled",
             "onlineLyricsTranslationEnabled",
+            "onlineLyricsHideMandarinPinyinEnabled",
             "onlineLyricsAutomaticOrderEnabled",
             "onlineLyricsGlobalBestEnabled",
             "OnlineLyricSources.DEFAULT_ORDER.forEach",

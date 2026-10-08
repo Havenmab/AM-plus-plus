@@ -85,6 +85,16 @@ class OnlineLyricsSupplementWiringTest {
                 "onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled",
             ),
         )
+        assertTrue(
+            assembly.contains(
+                "hideMandarinPronunciation = settings.onlineLyricsHideMandarinPinyinEnabled",
+            ),
+        )
+        assertTrue(
+            assembly.contains(
+                "MediaMetadataCache.getMetadataById(appleMusicId.toString())?.genre",
+            ),
+        )
         assertTrue(assembly.contains("onlineLyricsSelection = OnlineLyricSourcePolicy.resolve(settings)"))
         assertTrue(assembly.contains("currentTrack = { currentSong.current()?.details }"))
         assertTrue(runtime.contains("buildOnlineLyricsChain("))
@@ -93,6 +103,8 @@ class OnlineLyricsSupplementWiringTest {
         assertTrue(runtime.contains("trailing = onlineSources"))
         assertTrue(runtime.contains("val enricher = chain.composite"))
         assertTrue(runtime.contains(".takeIf { onlineLyricsTranslationEnabled }"))
+        assertTrue(runtime.contains("pronunciationRequested = true"))
+        assertTrue(runtime.contains("hideMandarinPronunciation = hideMandarinPronunciation"))
         assertTrue(runtime.contains("translationEnricher = enricher"))
         assertTrue(runtime.contains("online-translation runtime supplement="))
     }

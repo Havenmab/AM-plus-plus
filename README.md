@@ -104,7 +104,7 @@
 2. 在 LSPosed 或兼容的 Xposed 管理器中启用 **AM++**。
 3. 作用域只勾选 Apple Music（`com.apple.android.music`）。
 4. 强制停止并重新打开 Apple Music。
-5. 打开 Apple Music → 设置 → “AM++ 模块设置”，确认页面显示已连接 libxposed API 102 后再修改设置。
+5. 打开 Apple Music → 设置 → “AM++ 模块设置”。
 
 ### npatch 嵌入版
 

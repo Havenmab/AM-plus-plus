@@ -77,7 +77,7 @@ class AppleLyricTtmlWriterTranslationTest {
                     "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">" +
                     "<text for=\"L1\">你好</text><text for=\"L2\"> </text>" +
                     "</translation></translations>" +
-                    "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
+                    "<transliterations><transliteration xml:lang=\"und-Latn\">" +
                     "<text for=\"L1\">ni hao</text><text for=\"L2\"> </text>" +
                     "</transliteration></transliterations>" +
                     "</iTunesMetadata>",

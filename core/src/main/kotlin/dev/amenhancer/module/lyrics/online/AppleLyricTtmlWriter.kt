@@ -46,7 +46,15 @@ object AppleLyricTtmlWriter {
 
     /** Pinned the way `AmllTtmlFormatConverter` pins Apple's track languages. */
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
-    private const val TRANSLITERATION_LANGUAGE = "ko-Latn"
+
+    /**
+     * HLE reports third-party pronunciation under `und-Latn` ("undetermined, Latin script")
+     * when the system lyrics language is not itself a Latin tag
+     * (`AppleSupplementTextHooks.thirdPartyPronunciationFallbackLanguage`).  A tag naming a
+     * *different* language than the lyrics makes Apple ignore the transliterations track, which
+     * is why this must not be a language-specific tag.
+     */
+    private const val TRANSLITERATION_LANGUAGE = "und-Latn"
     private const val TRANSLATION_TYPE = "subtitle"
 
     /** Stands in for a line the track has no text for, keeping the entry there. */

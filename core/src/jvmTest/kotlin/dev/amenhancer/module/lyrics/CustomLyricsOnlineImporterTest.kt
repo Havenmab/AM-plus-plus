@@ -109,7 +109,7 @@ class CustomLyricsOnlineImporterTest {
                 "<translation type=\"subtitle\" xml:lang=\"zh-Hans\"><text for=\"L1\">T1</text>",
             ),
         )
-        assertTrue(imported.ttml.contains("<transliteration xml:lang=\"ko-Latn\"><text for=\"L1\">R1</text>"))
+        assertTrue(imported.ttml.contains("<transliteration xml:lang=\"und-Latn\"><text for=\"L1\">R1</text>"))
         assertTrue(TtmlInputPolicy.isAcceptable(imported.ttml))
     }
 

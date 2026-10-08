@@ -17,7 +17,7 @@ data class TtmlFormatConversion(
  *
  * <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
  *   <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">…</text></translation></translations>
- *   <transliterations><transliteration xml:lang="ko-Latn"><text for="L1">…</text></transliteration></transliterations>
+ *   <transliterations><transliteration xml:lang="und-Latn"><text for="L1">…</text></transliteration></transliterations>
  * </iTunesMetadata>
  * ```
  *
@@ -48,7 +48,7 @@ data class TtmlFormatConversion(
  *
  * The root is pinned rather than carried over. Android's TTML parser renders a
  * translation and a transliteration together only when the lyrics are Korean, so
- * the root is marked `ko`, translations `zh-Hans` and transliterations `ko-Latn`;
+ * the root is marked `ko`, translations `zh-Hans` and transliterations `und-Latn`;
  * because only one track of each kind survives that constraint, the first
  * translation and first romanization of each line win. The root also gets the
  * `itunes:timing` Apple expects — `Word` when the body carries timed syllables,
@@ -69,7 +69,8 @@ object AmllTtmlFormatConverter {
     /** Pinned so Apple Music on Android renders both auxiliary tracks. */
     private const val LYRIC_LANGUAGE = "ko"
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
-    private const val TRANSLITERATION_LANGUAGE = "ko-Latn"
+    /** Neutral Latin-script tag: a language-specific tag can make Apple drop the track. */
+    private const val TRANSLITERATION_LANGUAGE = "und-Latn"
 
     /** How Apple labels a translation meant to be shown under the lyric. */
     private const val TRANSLATION_TYPE = "subtitle"

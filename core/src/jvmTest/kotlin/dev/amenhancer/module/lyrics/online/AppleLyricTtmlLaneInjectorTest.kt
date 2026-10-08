@@ -196,7 +196,7 @@ class AppleLyricTtmlLaneInjectorTest {
         val ttml = outcome!!.ttml
         assertTrue(
             ttml.contains(
-                "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
+                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
                     "<text for=\"L1\">Kimi no na wa</text>" +
                     "<text for=\"L2\">Arigatou</text>",
             ),

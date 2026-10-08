@@ -49,7 +49,7 @@ class AmllTtmlFormatConverterTest {
 
         assertTrue(
             result.ttml.contains(
-                "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
+                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
                     "<text for=\"L1\">R1</text><text for=\"L2\">R2</text>" +
                     "</transliteration></transliterations>",
             ),
@@ -327,7 +327,7 @@ class AmllTtmlFormatConverterTest {
         // The kind that was spoken for still lists every line.
         assertTrue(
             result.ttml.contains(
-                "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
+                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
                     "<text for=\"L1\">R1</text><text for=\"L2\"> </text>" +
                     "</transliteration></transliterations>",
             ),
@@ -387,7 +387,7 @@ class AmllTtmlFormatConverterTest {
         )
         assertTrue(
             result.ttml.contains(
-                "<transliterations><transliteration xml:lang=\"ko-Latn\">" +
+                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
                     "<text for=\"L1\">ROMA1</text>" +
                     "</transliteration></transliterations>",
             ),

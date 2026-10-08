@@ -46,6 +46,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -91,7 +92,13 @@ fun LiquidBottomTabs(
     panelBlur: androidx.compose.ui.unit.Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     leadingWidth: androidx.compose.ui.unit.Dp = 0f.dp,
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
-    content: @Composable RowScope.() -> Unit
+    // AM++: opt-in content-hugging cells. The caller supplies one intrinsic content width per tab
+    // (its measured label or glyph); null keeps upstream's equal-width tabs for every other caller.
+    tabContentWidths: List<androidx.compose.ui.unit.Dp>? = null,
+    // AM++: per-tab icon-only flags, parallel to tabContentWidths. A flagged tab takes the much
+    // smaller icon padding so a lone glyph keeps a tight capsule around itself.
+    tabIconOnly: List<Boolean>? = null,
+    content: @Composable RowScope.(index: Int, weight: Float) -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
     val selectedTabClick = androidx.compose.runtime.rememberUpdatedState(onSelectedTabClick)
@@ -110,7 +117,11 @@ fun LiquidBottomTabs(
     val animationScope = rememberCoroutineScope()
     val offsetAnimation = remember { Animatable(0f) }
     val squeeze = with(density) { 4f.dp.toPx() }
-    val panelInset = with(density) { 4f.dp.toPx() }
+    val panelInset = with(density) { GlassPolicy.TAB_ROW_INSET_DP.dp.toPx() }
+    // AM++: the fixed per-side padding of a content-hugging cell, in px. Only consulted when the
+    // caller supplies measured content, so the equal-width callers are unaffected.
+    val textPadding = with(density) { GlassPolicy.TABLET_TAB_PADDING_DP.dp.toPx() }
+    val iconPadding = with(density) { GlassPolicy.TABLET_ICON_TAB_PADDING_DP.dp.toPx() }
 
     // AM++: the squeeze nudge is read by both the panel layer and the highlight, so it lives
     // in one place and is evaluated against whichever width is being drawn.
@@ -138,7 +149,18 @@ fun LiquidBottomTabs(
         contentAlignment = Alignment.CenterStart
     ) {
         val leadingPx = with(density) { if (leadingContent == null) 0f else leadingWidth.toPx() }
-        val geometry = dev.amenhancer.glass.GlassTabGeometry(constraints.maxWidth.toFloat(), panelInset, leadingPx, tabsCount)
+        // AM++: the tablet bar opts into cells sized by their own labels; every other caller passes
+        // null and keeps the upstream equal-width geometry byte-for-byte.
+        val measuredContent = tabContentWidths
+            ?.takeIf { it.size == tabsCount }
+            ?.map { with(density) { it.toPx() } }
+            .orEmpty()
+        val geometry = dev.amenhancer.glass.GlassTabGeometry(
+            constraints.maxWidth.toFloat(), panelInset, leadingPx, tabsCount, measuredContent,
+            textPadding = textPadding,
+            iconPadding = iconPadding,
+            iconOnly = tabIconOnly.orEmpty(),
+        )
         val tabWidth = geometry.tabWidth
 
         val panelOffset by remember(density, constraints.maxWidth) {
@@ -169,7 +191,14 @@ fun LiquidBottomTabs(
                 },
                 onDragStopped = {
                     interactiveHighlight.releasePress()
-                    val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+                    // The tab value is the pill centre's position along the piecewise-linear
+                    // centre map, so its nearest integer is already the nearest tab centre; the
+                    // content branch makes that choice explicit instead of assuming equal cells.
+                    val targetIndex = if (liveGeometry.value.uniform) {
+                        targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+                    } else {
+                        liveGeometry.value.snapIndex(targetValue)
+                    }
                     currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
                     animationScope.launch {
@@ -213,10 +242,10 @@ fun LiquidBottomTabs(
         highlightAnchor.pillValue = { dampedDragAnimation.value }
         highlightAnchor.panelWidth = constraints.maxWidth.toFloat()
         highlightAnchor.panelInset = panelInset + leadingPx
-        highlightAnchor.tabWidth = tabWidth
+        highlightAnchor.geometry = geometry
         highlightAnchor.isLtr = isLtr
         freeDragBridge.animation = dampedDragAnimation
-        freeDragBridge.tabWidth = tabWidth
+        freeDragBridge.geometry = geometry
         freeDragBridge.panelWidth = constraints.maxWidth.toFloat()
         freeDragBridge.panelInset = panelInset + leadingPx
         freeDragBridge.panelOffset = panelOffset
@@ -251,9 +280,14 @@ fun LiquidBottomTabs(
                 .then(interactiveHighlight.modifier)
                 .height(panelHeight)
                 .fillMaxWidth()
-                .padding(4f.dp),
+                .padding(GlassPolicy.TAB_ROW_INSET_DP.dp),
             verticalAlignment = Alignment.CenterVertically,
-            content = { leadingContent?.invoke(this); content() }
+            content = {
+                leadingContent?.invoke(this)
+                // AM++: the panel owns the per-tab slot so content-hugging cells can be handed
+                // their own weight; the default mode hands every tab the literal 1f it had before.
+                repeat(tabsCount) { index -> content(index, geometry.cellWeight(index)) }
+            }
         )
 
         CompositionLocalProvider(
@@ -290,22 +324,32 @@ fun LiquidBottomTabs(
                     .then(interactiveHighlight.modifier)
                     .height(panelHeight - 8f.dp)
                     .fillMaxWidth()
-                    .padding(horizontal = 4f.dp)
+                    .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
-                content = { leadingContent?.invoke(this); content() }
+                content = {
+                    leadingContent?.invoke(this)
+                    repeat(tabsCount) { index -> content(index, geometry.cellWeight(index)) }
+                }
             )
         }
 
         Box(
             Modifier
-                .padding(horizontal = 4f.dp)
+                .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                 .graphicsLayer {
-                    translationX =
+                    translationX = if (geometry.uniform) {
+                        // Upstream's equal-width pill: kept verbatim so the phone bar keeps its
+                        // exact position arithmetic.
                         if (leadingPx == 0f) {
                             if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
                             else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
                         } else geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
+                    } else {
+                        // Content cells: the pill rides the same piecewise-linear centre map the
+                        // drag inverse uses, so it stays under the finger and settles on the tab.
+                        geometry.pillTranslation(dampedDragAnimation.value, isLtr) + panelOffset
+                    }
                 }
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
@@ -351,8 +395,26 @@ fun LiquidBottomTabs(
                     }
                 )
                 .height(panelHeight - 8f.dp)
-                .then(if (leadingPx == 0f) Modifier.fillMaxWidth(1f / tabsCount)
-                    else Modifier.width(with(density) { tabWidth.toDp() }))
+                .then(
+                    if (geometry.uniform) {
+                        if (leadingPx == 0f) Modifier.fillMaxWidth(1f / tabsCount)
+                        else Modifier.width(with(density) { tabWidth.toDp() })
+                    } else {
+                        // Content cells change width as the pill crosses cells. Reading the
+                        // animated value in the measure block relayouts the pill without
+                        // recomposing the whole bar on every drag frame.
+                        Modifier.layout { measurable, constraints ->
+                            val pillWidth = liveGeometry.value
+                                .pillWidthAt(dampedDragAnimation.value)
+                                .fastRoundToInt()
+                                .coerceIn(0, constraints.maxWidth)
+                            val placeable = measurable.measure(
+                                constraints.copy(minWidth = pillWidth, maxWidth = pillWidth)
+                            )
+                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                        }
+                    }
+                )
         )
     }
 }
@@ -369,12 +431,16 @@ private class PillCentre {
     var pillValue: () -> Float = { 0f }
     var panelWidth: Float = 0f
     var panelInset: Float = 0f
-    var tabWidth: Float = 0f
+    var geometry: dev.amenhancer.glass.GlassTabGeometry = dev.amenhancer.glass.GlassTabGeometry(0f, 0f, 0f, 0)
     var isLtr: Boolean = true
 
-    /** Mirrors the thumb's own translation: half a cell in from its inset at the start edge. */
+    /** Mirrors the thumb's own translation: its centre under the same cell map the pill uses. */
     fun x(): Float {
-        val fromStart = panelInset + (pillValue() + 0.5f) * tabWidth
+        val fromStart = if (geometry.uniform) {
+            panelInset + (pillValue() + 0.5f) * geometry.tabWidth
+        } else {
+            panelInset + geometry.centreAt(pillValue())
+        }
         return if (isLtr) fromStart else panelWidth - fromStart
     }
 }
@@ -387,7 +453,7 @@ private class PillCentre {
  */
 private class FreeDragBridge {
     var animation: DampedDragAnimation? = null
-    var tabWidth: Float = 0f
+    var geometry: dev.amenhancer.glass.GlassTabGeometry = dev.amenhancer.glass.GlassTabGeometry(0f, 0f, 0f, 0)
     var panelWidth: Float = 0f
     var panelInset: Float = 0f
     var panelOffset: Float = 0f
@@ -513,17 +579,11 @@ private class FreeDragBridge {
         }
     }
 
-    private fun tabIndexAt(x: Float): Int? {
-        if (tabWidth <= 0f) return null
-        val contentX = logicalX(x)
-        if (contentX < 0f || contentX >= tabWidth * tabsCount) return null
-        val visualIndex = (contentX / tabWidth).toInt().fastCoerceIn(0, tabsCount - 1)
-        return visualIndex
-    }
+    private fun tabIndexAt(x: Float): Int? =
+        if (geometry.count != tabsCount) null else geometry.indexAtContent(logicalX(x))
 
     private fun valueAt(x: Float): Float =
-        ((logicalX(x) / tabWidth) - 0.5f)
-            .fastCoerceIn(0f, (tabsCount - 1).toFloat())
+        if (geometry.count != tabsCount) 0f else geometry.valueAtContent(logicalX(x))
 
     private fun logicalX(x: Float): Float =
         if (isLtr) {

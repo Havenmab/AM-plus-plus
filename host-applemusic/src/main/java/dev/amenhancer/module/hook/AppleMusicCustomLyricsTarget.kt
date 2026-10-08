@@ -99,6 +99,30 @@ internal class AppleMusicCustomLyricsTarget(
             }
         }
         val mainHandler = Handler(Looper.getMainLooper())
+        val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
+        // The custom path's half of the runtime's translation/pronunciation
+        // completion. The automatic path stays closed for every manual/mapped
+        // id: when its enrichment returns null it falls through to
+        // `resolverFetch`, which would replace the user's body with a searched
+        // document. This feed therefore calls the same enricher directly, for
+        // the document the custom session is about to display, and keeps only
+        // its native-overlay side effect. The merged document it returns is
+        // discarded, so the custom body always wins and no searched source can
+        // replace it.
+        val customCompletion = autoLyricsRuntime?.let { runtime ->
+            runtime.translationEnricher?.let { enrich ->
+                CustomLyricsCompletionFeed(
+                    enrich = enrich,
+                    executor = runtime.executor,
+                    log = { appleMusicId, line -> translationLog.log(appleMusicId, line) },
+                )
+            }
+        }
+        val readCustomTtml: (CustomLyricsEntry) -> String? = { entry ->
+            fileReader.read(entry)?.also { ttml ->
+                customCompletion?.remember(entry.appleMusicId, entry.sha256, ttml)
+            }
+        }
         lateinit var readyReapply: CustomLyricsReadyReapply
         val configuredManualIds = runCatching {
             config.customLyricsManifest().entries
@@ -111,7 +135,7 @@ internal class AppleMusicCustomLyricsTarget(
                     CustomLyricsEntry::appleMusicId,
                 )
             },
-            readTtml = fileReader::read,
+            readTtml = readCustomTtml,
             parseTtml = parser::parse,
             isAlive = parser::isAlive,
             verifyPtr = parser::isValid,
@@ -131,7 +155,6 @@ internal class AppleMusicCustomLyricsTarget(
             ),
             logger = ModernXposedRuntime::log,
         )
-        val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
@@ -379,6 +402,14 @@ internal class AppleMusicCustomLyricsTarget(
                             param.thisObject?.let { readyReapply.dismiss(it) }
                             if (replacement !== original) {
                                 param.args[0] = parser.unwrap(replacement)
+                            }
+                            // The document about to be shown is the custom one.
+                            // Queue the same lane completion the automatic path
+                            // runs, off the hook thread; the feed dedupes per
+                            // track and document revision and only ever writes
+                            // the native overlay.
+                            if (manualReplacement != null) {
+                                customCompletion?.onDisplayed(adamId)
                             }
                         }
                     }.onFailure { error ->

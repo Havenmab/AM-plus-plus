@@ -37,11 +37,18 @@ class LyricMetadataSearchOrderTest {
     }
 
     @Test
-    fun `a blank field falls back to the displayed value instead of counting as distinct`() {
-        // HLE resolves a blank original field to the current one, so the pass
-        // is only distinct when the non-blank field differs.
-        assertFalse(shouldRetryWithOriginalMetadata("Song", "Artist", "   ", "Artist"))
+    fun `the predicate is HLE's: a difference in either field counts and blanks are not resolved here`() {
+        // HLE applies its blank fallback where the pass metadata is built, not inside this
+        // predicate, so a blank original title still counts as a difference against a
+        // non-blank displayed title.  The consequence is one extra pass whose keyword ends up
+        // equal to the displayed one; the first-pass-miss gate is what keeps that duplicate
+        // off the ordinary path.  "Nothing to retry with" and genuine equality are the only
+        // false cases.
+        assertTrue(shouldRetryWithOriginalMetadata("Song", "Artist", "   ", "Artist"))
         assertTrue(shouldRetryWithOriginalMetadata("Song", "Artist", "", "Other Artist"))
+        assertFalse(shouldRetryWithOriginalMetadata("Song", "Artist", null, null))
+        assertFalse(shouldRetryWithOriginalMetadata("Song", "Artist", "  ", "   "))
+        assertFalse(shouldRetryWithOriginalMetadata("Song", "Artist", "song", "artist"))
     }
 
     @Test

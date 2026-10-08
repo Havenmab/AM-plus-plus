@@ -37,7 +37,7 @@ class LyricMetadataSearchOrderTest {
     }
 
     @Test
-    fun `the predicate is HLE's: a difference in either field counts and blanks are not resolved here`() {
+    fun `the predicate is HLE's - a difference in either field counts and blanks are not resolved here`() {
         // HLE applies its blank fallback where the pass metadata is built, not inside this
         // predicate, so a blank original title still counts as a difference against a
         // non-blank displayed title.  The consequence is one extra pass whose keyword ends up

@@ -121,6 +121,8 @@ class OnlineLyricProviderFactoryTest {
             OnlineLyricProvider(sourceId, onlineLyricProviderFor(sourceId, transport)!!),
         ),
         currentTrack = { details },
+        // Keep the JVM test off the Android-backed ProviderLogger.info sink.
+        visibleLog = {},
     ).autoLyricsSource()
 
     private fun offlineTransport(): LyricHttpTransport = object : LyricHttpTransport {

@@ -21,7 +21,11 @@ import org.junit.Test
  * Pure-JVM coverage for the cross-provider chain: first-passing keeps the old
  * ordered short-circuit, global-best scores every enabled provider and fetches
  * only from the winner, one failing provider never affects the others, and the
- * fan-out is bounded by the search budget. No network: every provider is a fake.
+ * fan-out is bounded by the search budget. The metadata-pass tests pin that the
+ * original-metadata pass only runs after a displayed-metadata miss for a track
+ * whose internal name really differs, that it searches with that internal name,
+ * and that both passes share one bounded per-provider search budget. No
+ * network: every provider is a fake.
  */
 class CompositeOnlineSearchAutoLyricsSourceTest {
 
@@ -921,6 +925,235 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         assertEquals(2, source.searchCount)
     }
 
+    @Test
+    fun `the original metadata pass runs when the first pass misses and the original differs`() {
+        val visible = mutableListOf<String>()
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                // The displayed metadata misses entirely.
+                "Song Artist" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                // The internal name Apple resolved is what the provider indexes.
+                "Original Song Original Artist" to listOf(
+                    song("2", Source.KUWO, title = "Original Song", artist = "Original Artist"),
+                ),
+            ),
+            lyrics = lyrics("original-pass"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            originalTitle = "Original Song",
+            originalArtist = "Original Artist",
+            visibleLog = visible::add,
+        ).fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("original-pass"))
+        assertEquals(listOf("Song Artist", "Original Song Original Artist"), source.keywords)
+        assertEquals(2, source.searchCount)
+        // Both passes are announced: the displayed one first, then the original.
+        assertTrue(
+            visible.any { it.contains("online-lyrics metadata pass id=42") && it.contains("pass=\"当前元数据\"") },
+        )
+        assertTrue(
+            visible.any {
+                it.contains("online-lyrics metadata pass id=42") &&
+                    it.contains("pass=\"Apple 内部原名\"") &&
+                    it.contains("title=\"Original Song\"") &&
+                    it.contains("artist=\"Original Artist\"")
+            },
+        )
+    }
+
+    @Test
+    fun `the original metadata pass also applies to the global best fan out`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Original Song Original Artist" to listOf(
+                    song("2", Source.KUWO, title = "Original Song", artist = "Original Artist"),
+                ),
+            ),
+            lyrics = lyrics("original-pass"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.GLOBAL_BEST,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            originalTitle = "Original Song",
+            originalArtist = "Original Artist",
+        ).fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("original-pass"))
+        assertEquals(listOf("Song Artist", "Original Song Original Artist"), source.keywords)
+        assertEquals(2, source.searchCount)
+    }
+
+    @Test
+    fun `the original metadata pass never runs for a blank or identical original`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+            ),
+            lyrics = lyrics("never"),
+        )
+
+        // No original metadata resolved at all.
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+            ).fetch(TRACK.appleMusicId),
+        )
+        assertEquals(listOf("Song Artist"), source.keywords)
+
+        // A case-insensitively identical original is not a difference either.
+        source.keywords.clear()
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                originalTitle = "song",
+                originalArtist = "ARTIST",
+            ).fetch(TRACK.appleMusicId),
+        )
+        assertEquals(listOf("Song Artist"), source.keywords)
+        assertEquals(2, source.searchCount)
+    }
+
+    @Test
+    fun `a passing first pass never triggers the original metadata pass`() {
+        val visible = mutableListOf<String>()
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(song("1", Source.KUWO)),
+            ),
+            lyrics = lyrics("displayed"),
+        )
+
+        val ttml = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            originalTitle = "Original Song",
+            originalArtist = "Original Artist",
+            visibleLog = visible::add,
+        ).fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("displayed"))
+        assertEquals(listOf("Song Artist"), source.keywords)
+        assertEquals(1, source.searchCount)
+        assertEquals(1, visible.size)
+        assertTrue(visible.single().contains("pass=\"当前元数据\""))
+        assertTrue(
+            "the original pass must not even be announced",
+            visible.none { it.contains("Apple 内部原名") },
+        )
+    }
+
+    @Test
+    fun `the original metadata pass is bounded to one further search per provider`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                // The displayed multi-credit track spends both its attempts.
+                "Song ナナツカゼ" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Song Album" to listOf(
+                    song("2", Source.KUWO, title = "Else", artist = "Nobody", duration = 10_000L),
+                ),
+                // The original pass gets its primary attempt only: the third
+                // search spends the cap, so the original fallback must not run
+                // even though it would have matched.
+                "Original Song 原名" to listOf(
+                    song("3", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Original Song Album" to listOf(
+                    song("4", Source.KUWO, title = "Original Song", artist = "原名", duration = 200_000L),
+                ),
+            ),
+            lyrics = lyrics("capped"),
+        )
+
+        assertNull(
+            composite(
+                LyricSelectionMode.FIRST_PASSING,
+                listOf(OnlineLyricProvider("kuwo", source)),
+                localAlbum = { "Album" },
+                originalTitle = "Original Song",
+                originalArtist = "原名, 别人, 第三人",
+                track = MULTI_TRACK,
+            ).fetch(MULTI_TRACK.appleMusicId),
+        )
+        assertEquals(3, source.searchCount)
+        assertEquals(
+            listOf("Song ナナツカゼ", "Song Album", "Original Song 原名"),
+            source.keywords,
+        )
+    }
+
+    @Test
+    fun `the original metadata pass feeds the translation lane when the first misses`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(
+                    song("1", Source.KUWO, title = "Wrong", artist = "Nobody", duration = 10_000L),
+                ),
+                "Original Song Original Artist" to listOf(
+                    song("2", Source.KUWO, title = "Original Song", artist = "Original Artist"),
+                ),
+            ),
+            lyrics = translatedLyrics("original", "译文"),
+        )
+
+        val candidates = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            originalTitle = "Original Song",
+            originalArtist = "Original Artist",
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        assertEquals(Source.KUWO, candidates.single().source)
+        assertEquals(listOf("Song Artist", "Original Song Original Artist"), source.keywords)
+    }
+
+    @Test
+    fun `a score passing first pass without a translation does not trigger the original pass`() {
+        val source = fakeByKeyword(
+            Source.KUWO,
+            mapOf(
+                "Song Artist" to listOf(song("1", Source.KUWO)),
+                "Original Song Original Artist" to listOf(
+                    song("2", Source.KUWO, title = "Original Song", artist = "Original Artist"),
+                ),
+            ),
+            lyrics = lyrics("untranslated"),
+        )
+
+        val candidates = composite(
+            LyricSelectionMode.FIRST_PASSING,
+            listOf(OnlineLyricProvider("kuwo", source)),
+            originalTitle = "Original Song",
+            originalArtist = "Original Artist",
+        ).fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertTrue(candidates.isEmpty())
+        assertEquals(listOf("Song Artist"), source.keywords)
+        assertEquals(1, source.searchCount)
+    }
+
     private fun chain(
         mode: LyricSelectionMode,
         vararg sources: FakeSearchSource,
@@ -942,22 +1175,41 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         searchBudgetMs = budgetMs,
         diagnostic = diagnostic,
         displayedTtml = displayedTtml,
+        // The default visible sink is ProviderLogger.info, which needs Android;
+        // this pure-JVM suite supplies its own through the composite helper.
+        visibleLog = {},
     )
 
+    /**
+     * [localAlbum] feeds both the scorer's album component and the original
+     * metadata's album, exactly as the production cache read does; the new
+     * [originalTitle]/[originalArtist] parameters only exist so a test can make
+     * Apple resolve a distinct internal name.
+     */
     private fun composite(
         mode: LyricSelectionMode,
         providers: List<OnlineLyricProvider>,
         localAlbum: (Long) -> String? = { null },
+        originalTitle: String? = null,
+        originalArtist: String? = null,
         diagnostic: (String) -> Unit = {},
+        visibleLog: (String) -> Unit = {},
         track: CurrentSongDetails = TRACK,
         displayedTtml: (Long) -> String? = { null },
     ): CompositeOnlineSearchAutoLyricsSource = CompositeOnlineSearchAutoLyricsSource.create(
         mode = mode,
         providers = providers,
         currentTrack = { track },
-        localAlbum = localAlbum,
+        originalMetadata = { appleMusicId ->
+            AppleOriginalMetadata(
+                title = originalTitle,
+                artist = originalArtist,
+                album = localAlbum(appleMusicId),
+            )
+        },
         diagnostic = diagnostic,
         displayedTtml = displayedTtml,
+        visibleLog = visibleLog,
     )
 
     private fun fake(

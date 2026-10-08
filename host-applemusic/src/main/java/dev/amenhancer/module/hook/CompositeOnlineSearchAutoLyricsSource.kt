@@ -19,11 +19,15 @@ import dev.amenhancer.module.lyrics.online.ScoredSong
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.SongSearchResult
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
+import dev.amenhancer.module.lyrics.online.resolveMetadataSearchOrder
+import dev.amenhancer.module.lyrics.online.shouldRetryWithOriginalMetadata
 import dev.amenhancer.module.lyrics.source.AutoLyricsSource
 import dev.amenhancer.module.lyrics.source.LyricHttpTransport
 import dev.amenhancer.module.model.CustomLyricsSources
 import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
+import io.github.proify.lyricon.amprovider.xposed.ProviderLogger
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -61,6 +65,21 @@ const val ONLINE_SEARCH_BUDGET_MS = 5_000L
 private const val MAX_PARALLEL_SEARCHES = 4
 
 /**
+ * How many searches one provider may issue for one track across every metadata
+ * pass. The primary attempt plus its single fallback already cost two (the
+ * previous cap); the original-metadata pass may add exactly one more, so the
+ * extra pass cannot multiply the `invokeAll` budget. Two passes therefore cost
+ * at most three searches per provider, never four.
+ */
+private const val MAX_SEARCHES_PER_PROVIDER = 3
+
+/** HLE's label for the displayed metadata pass. */
+private const val CURRENT_METADATA_LABEL = "当前元数据"
+
+/** HLE's label for Apple's internal original-metadata pass. */
+private const val ORIGINAL_METADATA_LABEL = "Apple 内部原名"
+
+/**
  * The four selectable search providers behind one [AutoLyricsSource].
  *
  * Keeping the providers in one object is what lets the strategy span sources:
@@ -77,6 +96,16 @@ private const val MAX_PARALLEL_SEARCHES = 4
  * candidate with [LyricMatchPolicy], and fetches lyrics only from the single
  * highest-scoring passing candidate's provider. The losing providers are only
  * ever searched, never fetched.
+ *
+ * Every search is ordered over the metadata passes HLE defines: the displayed
+ * metadata first (`当前元数据`), then Apple's internal original metadata
+ * (`Apple 内部原名`) when the cache resolved one that really differs. HLE
+ * always runs both passes; the fork deliberately runs the second only when the
+ * first produced no passing candidate at all, so the extra pass cannot fire on
+ * every track. As in HLE a blank original field falls back to the displayed
+ * value, and the labeled passes share one per-track, per-provider search
+ * budget ([MAX_SEARCHES_PER_PROVIDER]). Every pass is announced on the visible
+ * [visibleLog] channel, never on the budgeted [diagnostic] one.
  *
  * Fail-open is per provider: a throwing or timing-out search contributes no
  * candidate, and a throwing or empty lyric fetch makes the chain try the next
@@ -96,17 +125,17 @@ private const val MAX_PARALLEL_SEARCHES = 4
  * not pass, so first-passing keeps walking providers and global-best keeps only
  * translation-bearing passers. It is fail-open too, returning an empty list.
  *
- * Every candidate is scored with the local album supplied by [localAlbum], so
- * title plus artist plus album can carry the score on their own and the album
- * component is no longer structurally zero. The scorer's own lines — the query
- * and the per-component breakdown of each provider's top candidates — are
+ * Every candidate is scored with the local album supplied by [originalMetadata],
+ * so title plus artist plus album can carry the score on their own and the
+ * album component is no longer structurally zero. The scorer's own lines — the
+ * query and the per-component breakdown of each provider's top candidates — are
  * bounded per track by [TrackScopedDiagnostics].
  */
 class CompositeOnlineSearchAutoLyricsSource private constructor(
     private val mode: LyricSelectionMode,
     private val providers: List<OnlineLyricProvider>,
     private val currentTrack: () -> CurrentSongDetails?,
-    private val localAlbum: (Long) -> String?,
+    private val originalMetadata: (Long) -> AppleOriginalMetadata?,
     private val searchExecutor: ExecutorService,
     private val searchBudgetMs: Long,
     private val diagnostic: (String) -> Unit = {},
@@ -116,6 +145,13 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      * Null/absent means Apple has no document, so the search path stays open.
      */
     private val displayedTtml: (Long) -> String? = { null },
+    /**
+     * The visible info channel the metadata passes are labelled on. It is
+     * deliberately separate from [diagnostic]: the latter is bounded per track
+     * and may drop the pass announcement. Defaults to the host's
+     * [ProviderLogger.info], the same visible channel HLE logs its retry on.
+     */
+    private val visibleLog: (String) -> Unit = ProviderLogger::info,
 ) {
 
     /** The scorer's own lines are bounded per track, like the rest of the chain's. */
@@ -159,9 +195,10 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             )
             return emptyList()
         }
+        val ledger = SearchLedger()
         return when (mode) {
-            LyricSelectionMode.FIRST_PASSING -> firstPassingTranslations(appleMusicId, request)
-            LyricSelectionMode.GLOBAL_BEST -> globalBestTranslations(appleMusicId, request)
+            LyricSelectionMode.FIRST_PASSING -> firstPassingTranslations(appleMusicId, request, ledger)
+            LyricSelectionMode.GLOBAL_BEST -> globalBestTranslations(appleMusicId, request, ledger)
         }
     }
 
@@ -181,17 +218,25 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             return null
         }
         val request = searchRequest(appleMusicId) ?: return null
+        val ledger = SearchLedger()
         return when (mode) {
-            LyricSelectionMode.FIRST_PASSING -> firstPassing(appleMusicId, request)
-            LyricSelectionMode.GLOBAL_BEST -> globalBest(appleMusicId, request)
+            LyricSelectionMode.FIRST_PASSING -> firstPassing(appleMusicId, request, ledger)
+            LyricSelectionMode.GLOBAL_BEST -> globalBest(appleMusicId, request, ledger)
         }
     }
 
     /**
      * Resolves the verified current track into a search request, or null. The
-     * local album is the region/original-metadata album the current track
-     * resolved to, so the album component can actually corroborate a candidate
-     * instead of always contributing zero.
+     * local album and the original title/artist are read from the same Apple
+     * metadata entry, so the album component can corroborate a candidate instead
+     * of always contributing zero and the original-metadata pass searches with
+     * the internal name the displayed one hid.
+     *
+     * The pass order comes from HLE's [resolveMetadataSearchOrder] with
+     * `preferOriginalMetadata = false`: the displayed metadata first, the
+     * distinct original second. A blank original field falls back to the
+     * displayed value (HLE's rule), and the original pass only exists when
+     * [shouldRetryWithOriginalMetadata] says the two really differ.
      */
     private fun searchRequest(appleMusicId: Long): SearchRequest? {
         val track = currentTrack()?.takeIf { it.appleMusicId == appleMusicId } ?: return null
@@ -201,26 +246,82 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         val title = LyricMatchPolicy.stripInvisible(track.title?.trim().orEmpty())
         if (title.isEmpty()) return null
         val artist = LyricMatchPolicy.stripInvisible(track.artist?.trim().orEmpty())
-        val album = LyricMatchPolicy.stripInvisible(
-            runCatching { localAlbum(appleMusicId) }.getOrNull()?.trim().orEmpty(),
+        val apple = runCatching { originalMetadata(appleMusicId) }.getOrNull()
+        val album = LyricMatchPolicy.stripInvisible(apple?.album?.trim().orEmpty())
+        val current = searchMetadata(title, artist, album, CURRENT_METADATA_LABEL)
+        val hasDistinctOriginalMetadata = shouldRetryWithOriginalMetadata(
+            title = title,
+            artist = artist,
+            originalTitle = apple?.title,
+            originalArtist = apple?.artist,
         )
+        // HLE's blank fallback: each blank original field resolves to the
+        // displayed value, so only the field that really differs is replaced.
+        val originalTitle = apple?.title?.takeIf { it.isNotBlank() } ?: title
+        val originalArtist = apple?.artist?.takeIf { it.isNotBlank() } ?: artist
+        val original = if (!hasDistinctOriginalMetadata) {
+            null
+        } else {
+            searchMetadata(
+                title = LyricMatchPolicy.stripInvisible(originalTitle.trim()),
+                artist = LyricMatchPolicy.stripInvisible(originalArtist.trim()),
+                album = album,
+                label = ORIGINAL_METADATA_LABEL,
+            )
+        }
+        val passes = resolveMetadataSearchOrder(
+            preferOriginalMetadata = false,
+            hasDistinctOriginalMetadata = hasDistinctOriginalMetadata,
+        ).map { useOriginal -> if (useOriginal) original!! else current }
+        val request = SearchRequest(
+            passes = passes,
+            durationMs = track.durationMs,
+            cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(album),
+        )
+        scopedDiagnostic.log(
+            appleMusicId,
+            OnlineMatchDiagnostics.queryLine(
+                appleMusicId = appleMusicId,
+                keyword = current.keyword,
+                localTitle = current.title,
+                localArtist = current.artist,
+                localAlbum = album,
+                localDurationMs = track.durationMs,
+                localDurationRaw = track.durationRaw,
+                localDurationUnit = track.durationUnit,
+            ),
+        )
+        return request
+    }
+
+    /**
+     * Builds one metadata pass: the query keyword (title plus the primary
+     * credited artist) and the one bounded fallback, both derived from this
+     * pass' title/artist. A title carrying a feature credit is retried without
+     * it plus the primary artist, because the credited title is itself what
+     * buries the provider's indexed title; otherwise HLE's multi-credit
+     * fallback sends the title plus the original album, or the title alone when
+     * no album resolved.
+     */
+    private fun searchMetadata(
+        title: String,
+        artist: String,
+        album: String,
+        label: String,
+    ): SearchMetadata {
         val localArtists = LyricMatchPolicy.splitArtists(artist)
             .map { LyricMatchPolicy.cleanString(it) }
             .filter(String::isNotEmpty)
         val primaryArtist = LyricMatchPolicy.primaryArtist(artist)
         val creditlessTitle = LyricMatchPolicy.stripTrailingFeatureCredit(title)
         val multiCredit = LyricMatchPolicy.isMultiCreditArtist(localArtists)
-        val request = SearchRequest(
-            // Query with the first credited artist: a long credit list buries
-            // the performer the provider indexes, like HLE's narrow query.
+        return SearchMetadata(
+            label = label,
+            title = title,
+            artist = artist,
             keyword = listOf(title, primaryArtist)
                 .filter(String::isNotEmpty)
                 .joinToString(" "),
-            // One bounded fallback per provider. A title carrying a feature
-            // credit is retried without it plus the primary artist, because the
-            // credited title is itself what buries the provider's indexed
-            // title; otherwise HLE's multi-credit fallback sends the title plus
-            // the original album, or the title alone when no album resolved.
             retry = when {
                 creditlessTitle != null -> Retry(
                     keyword = listOf(creditlessTitle, primaryArtist)
@@ -238,90 +339,112 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 )
                 else -> null
             },
-            durationMs = track.durationMs,
-            localTitle = title,
-            localArtist = artist,
-            localAlbum = album,
             cleanTitle = LyricMatchPolicy.cleanString(title),
             localArtists = localArtists,
             localFeatures = LyricMatchPolicy.featuresOf(title),
-            cleanLocalAlbum = LyricMatchPolicy.normalizeAlbumForComparison(album),
         )
-        scopedDiagnostic.log(
-            appleMusicId,
-            OnlineMatchDiagnostics.queryLine(
-                appleMusicId = appleMusicId,
-                keyword = request.keyword,
-                localTitle = request.localTitle,
-                localArtist = request.localArtist,
-                localAlbum = request.localAlbum,
-                localDurationMs = request.durationMs,
-                localDurationRaw = track.durationRaw,
-                localDurationUnit = track.durationUnit,
-            ),
-        )
-        return request
     }
 
-    /** Ordered walk that skips any provider whose lyrics carry no translation. */
+    /**
+     * Ordered walk that skips any provider whose lyrics carry no translation.
+     * The displayed-metadata pass runs first; the original-metadata pass only
+     * runs when the first found no candidate at or above the score floor.
+     */
     private fun firstPassingTranslations(
         appleMusicId: Long,
         request: SearchRequest,
+        ledger: SearchLedger,
     ): List<OnlineTranslationCandidate> {
-        providers.forEach { provider ->
-            val searched = searchBounded(listOf(provider), request).firstOrNull()
-                ?: ProviderCandidates(provider, emptyList())
-            val selected = LyricMatchPolicy.selectFirstPassing(
-                searched.candidates.map(ScoredCandidate::scoredSong),
-            )
-            diagnosticSearch(appleMusicId, searched, selected != null)
-            if (selected == null) return@forEach
-            val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
-            return listOf(candidate)
+        var firstPassFoundPassing = false
+        request.passes.forEachIndexed { index, metadata ->
+            if (index > 0 && firstPassFoundPassing) return@forEachIndexed
+            logMetadataPass(appleMusicId, metadata)
+            val outcome = firstPassingTranslationsPass(appleMusicId, request, metadata, ledger)
+            if (outcome.candidates.isNotEmpty()) return outcome.candidates
+            if (index == 0) firstPassFoundPassing = outcome.foundPassing
         }
         return emptyList()
     }
 
-    /** Every passing candidate that carries a translation, best score first. */
+    /** One metadata pass of [firstPassingTranslations]. */
+    private fun firstPassingTranslationsPass(
+        appleMusicId: Long,
+        request: SearchRequest,
+        metadata: SearchMetadata,
+        ledger: SearchLedger,
+    ): TranslationPassOutcome {
+        var foundPassing = false
+        providers.forEach { provider ->
+            val searched = searchBounded(listOf(provider), request, metadata, ledger).firstOrNull()
+                ?: ProviderCandidates(provider, emptyList())
+            val selected = LyricMatchPolicy.selectFirstPassing(
+                searched.candidates.map(ScoredCandidate::scoredSong),
+            )
+            diagnosticSearch(appleMusicId, searched, selected != null, metadata)
+            if (selected == null) return@forEach
+            foundPassing = true
+            val candidate = translationCandidate(provider, selected, appleMusicId) ?: return@forEach
+            return TranslationPassOutcome(listOf(candidate), true)
+        }
+        return TranslationPassOutcome(emptyList(), foundPassing)
+    }
+
+    /**
+     * Every passing candidate that carries a translation, best score first. The
+     * original-metadata pass is only reached when the displayed one produced no
+     * score-passing candidate at all.
+     */
     private fun globalBestTranslations(
         appleMusicId: Long,
         request: SearchRequest,
+        ledger: SearchLedger,
     ): List<OnlineTranslationCandidate> {
-        val byProvider = searchBounded(providers, request)
-        byProvider.forEach { searched ->
-            val selected = searched.candidates
-                .filter { it.score >= LyricMatchPolicy.PASS_SCORE }
-                .maxByOrNull(ScoredCandidate::score)
-            diagnosticSearch(appleMusicId, searched, selected != null)
+        request.passes.forEach { metadata ->
+            logMetadataPass(appleMusicId, metadata)
+            val byProvider = searchBounded(providers, request, metadata, ledger)
+            byProvider.forEach { searched ->
+                val selected = searched.candidates
+                    .filter { it.score >= LyricMatchPolicy.PASS_SCORE }
+                    .maxByOrNull(ScoredCandidate::score)
+                diagnosticSearch(appleMusicId, searched, selected != null, metadata)
+            }
+            val passing = byProvider.flatMap { searched ->
+                searched.candidates.map { ProviderCandidate(searched.provider, it) }
+            }
+                .filter { it.candidate.score >= LyricMatchPolicy.PASS_SCORE }
+            // A score-passing pass is a miss only for the translation lane; it
+            // still must not trigger the original-metadata pass.
+            if (passing.isNotEmpty()) {
+                return passing.sortedByDescending { it.candidate.score }
+                    .mapNotNull { entry ->
+                        translationCandidate(entry.provider, entry.candidate.song, appleMusicId)
+                    }
+            }
         }
-        val passing = byProvider.flatMap { searched ->
-            searched.candidates.map { ProviderCandidate(searched.provider, it) }
-        }
-            .filter { it.candidate.score >= LyricMatchPolicy.PASS_SCORE }
-            .sortedByDescending { it.candidate.score }
-        return passing.mapNotNull { entry ->
-            translationCandidate(entry.provider, entry.candidate.song, appleMusicId)
-        }
+        return emptyList()
     }
 
     /**
      * One summary line per source, then the per-component breakdown of its
      * top-scoring candidates, so a below-floor verdict is no longer guesswork.
-     * Both go through [scopedDiagnostic], so the per-track budget still bounds
-     * however long the provider's result list is.
+     * Every line carries the metadata pass it belongs to. All of it goes through
+     * [scopedDiagnostic], so the per-track budget still bounds however long the
+     * provider's result list is.
      */
     private fun diagnosticSearch(
         appleMusicId: Long,
         searched: ProviderCandidates,
         passed: Boolean,
+        metadata: SearchMetadata,
     ) {
         val provider = searched.provider
         val candidates = searched.candidates
-        logRetry(appleMusicId, searched)
+        logRetry(appleMusicId, searched, metadata)
         val best = candidates.maxOfOrNull(ScoredCandidate::score)
         scopedDiagnostic.log(
             appleMusicId,
             "online-translation source id=$appleMusicId source=${provider.sourceId} " +
+                "pass=\"${metadata.label}\" " +
                 "hits=${candidates.size} passing=" +
                 "${candidates.count { it.score >= LyricMatchPolicy.PASS_SCORE }} " +
                 "best=${best ?: "none"} " +
@@ -375,40 +498,98 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         OnlineTranslationCandidate(provider.source.sourceType, lines)
     }.getOrNull()
 
-    /** Ordered walk, short-circuiting on the first provider with usable lyrics. */
-    private fun firstPassing(appleMusicId: Long, request: SearchRequest): String? {
-        providers.forEach { provider ->
-            val searched = searchBounded(listOf(provider), request).firstOrNull()
-                ?: ProviderCandidates(provider, emptyList())
-            logRetry(appleMusicId, searched)
-            val selected = LyricMatchPolicy.selectFirstPassing(
-                searched.candidates.map(ScoredCandidate::scoredSong),
-            ) ?: return@forEach
-            val ttml = render(provider, selected, request.durationMs)
-            if (ttml != null) return ttml
+    /**
+     * Ordered walk, short-circuiting on the first provider with usable lyrics.
+     * The displayed-metadata pass runs first; the original-metadata pass only
+     * runs when the first produced no passing candidate.
+     */
+    private fun firstPassing(
+        appleMusicId: Long,
+        request: SearchRequest,
+        ledger: SearchLedger,
+    ): String? {
+        var firstPassFoundPassing = false
+        request.passes.forEachIndexed { index, metadata ->
+            if (index > 0 && firstPassFoundPassing) return@forEachIndexed
+            logMetadataPass(appleMusicId, metadata)
+            val outcome = firstPassingPass(appleMusicId, request, metadata, ledger)
+            if (outcome.ttml != null) return outcome.ttml
+            if (index == 0) firstPassFoundPassing = outcome.foundPassing
         }
         return null
     }
 
-    /** One bounded fan-out, then the single best candidate across every provider. */
-    private fun globalBest(appleMusicId: Long, request: SearchRequest): String? {
-        val byProvider = searchBounded(providers, request)
-        byProvider.forEach { searched -> logRetry(appleMusicId, searched) }
-        val all = byProvider.flatMap { searched ->
-            searched.candidates.map { ProviderCandidate(searched.provider, it) }
+    /** One metadata pass of [firstPassing]. */
+    private fun firstPassingPass(
+        appleMusicId: Long,
+        request: SearchRequest,
+        metadata: SearchMetadata,
+        ledger: SearchLedger,
+    ): PassOutcome {
+        var foundPassing = false
+        providers.forEach { provider ->
+            val searched = searchBounded(listOf(provider), request, metadata, ledger).firstOrNull()
+                ?: ProviderCandidates(provider, emptyList())
+            logRetry(appleMusicId, searched, metadata)
+            val selected = LyricMatchPolicy.selectFirstPassing(
+                searched.candidates.map(ScoredCandidate::scoredSong),
+            ) ?: return@forEach
+            foundPassing = true
+            val ttml = render(provider, selected, request.durationMs)
+            if (ttml != null) return PassOutcome(ttml, true)
         }
-        val winner = LyricMatchPolicy.selectGlobalBestScored(all) { it.candidate.score }
-            ?: return null
-        return render(winner.provider, winner.candidate.song, request.durationMs)
+        return PassOutcome(null, foundPassing)
+    }
+
+    /**
+     * One bounded fan-out per metadata pass, then the single best candidate
+     * across every provider. A pass with no passing candidate falls through to
+     * the next pass.
+     */
+    private fun globalBest(
+        appleMusicId: Long,
+        request: SearchRequest,
+        ledger: SearchLedger,
+    ): String? {
+        request.passes.forEach { metadata ->
+            logMetadataPass(appleMusicId, metadata)
+            val byProvider = searchBounded(providers, request, metadata, ledger)
+            byProvider.forEach { searched -> logRetry(appleMusicId, searched, metadata) }
+            val all = byProvider.flatMap { searched ->
+                searched.candidates.map { ProviderCandidate(searched.provider, it) }
+            }
+            val winner = LyricMatchPolicy.selectGlobalBestScored(all) { it.candidate.score }
+            if (winner != null) return render(winner.provider, winner.candidate.song, request.durationMs)
+        }
+        return null
+    }
+
+    /**
+     * Announces the original-metadata pass on the visible channel, with HLE's
+     * own label, so the next device log shows which pass was searched. Fail-open:
+     * a broken log sink must never break the search.
+     */
+    private fun logMetadataPass(appleMusicId: Long, metadata: SearchMetadata) {
+        runCatching {
+            visibleLog(
+                "online-lyrics metadata pass id=$appleMusicId " +
+                    "pass=\"${metadata.label}\" " +
+                    "title=\"${metadata.title}\" artist=\"${metadata.artist}\"",
+            )
+        }
     }
 
     /** Reports the one fallback query a provider issued, when it issued one. */
-    private fun logRetry(appleMusicId: Long, searched: ProviderCandidates) {
+    private fun logRetry(
+        appleMusicId: Long,
+        searched: ProviderCandidates,
+        metadata: SearchMetadata,
+    ) {
         val fallback = searched.retriedKeyword ?: return
         scopedDiagnostic.log(
             appleMusicId,
             "online-translation retry id=$appleMusicId source=${searched.provider.sourceId} " +
-                "keyword=\"$fallback\"",
+                "pass=\"${metadata.label}\" keyword=\"$fallback\"",
         )
     }
 
@@ -422,10 +603,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     private fun searchBounded(
         targets: List<OnlineLyricProvider>,
         request: SearchRequest,
+        metadata: SearchMetadata,
+        ledger: SearchLedger,
     ): List<ProviderCandidates> {
         if (targets.isEmpty() || searchBudgetMs <= 0L) return emptyList()
         val tasks = targets.map { provider ->
-            Callable { searchProvider(provider, request) }
+            Callable { searchProvider(provider, request, metadata, ledger) }
         }
         return runCatching {
             searchExecutor.invokeAll(tasks, searchBudgetMs, TimeUnit.MILLISECONDS)
@@ -434,35 +617,43 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }
 
     /**
-     * One provider's scored candidates, with at most one fallback search. The
-     * fallback keeps HLE's bounded shape (`OnlineLyricTargeter.evaluateSource`:
-     * one alternate keyword, then [betterProviderCandidates]) and adds the
-     * feature-credit variant for a title whose credit buries the provider's
-     * indexed name. A track therefore costs at most two searches per provider,
-     * and the whole fan-out stays inside the same `invokeAll` deadline. Any
-     * search failure means "no candidates".
+     * One provider's scored candidates for one metadata pass, with at most one
+     * fallback search. The fallback keeps HLE's bounded shape
+     * (`OnlineLyricTargeter.evaluateSource`: one alternate keyword, then
+     * [betterProviderCandidates]) and adds the feature-credit variant for a
+     * title whose credit buries the provider's indexed name.
+     *
+     * [ledger] caps the provider's total searches for the whole track, so the
+     * original-metadata pass can add at most one more on top of the primary
+     * attempt and its fallback; a spent budget simply contributes no candidates.
+     * Any search failure means "no candidates".
      */
     private fun searchProvider(
         provider: OnlineLyricProvider,
         request: SearchRequest,
+        metadata: SearchMetadata,
+        ledger: SearchLedger,
     ): ProviderCandidates = runCatching {
-        val primary = searchProviderOnce(provider, request, request.keyword)
-        val fallback = retryKeywordFor(request, primary) ?: return@runCatching primary
-        val retry = searchProviderOnce(provider, request, fallback)
+        if (!ledger.tryReserve(provider)) return@runCatching ProviderCandidates(provider, emptyList())
+        val primary = searchProviderOnce(provider, request, metadata, metadata.keyword)
+        val fallback = retryKeywordFor(metadata, primary) ?: return@runCatching primary
+        if (!ledger.tryReserve(provider)) return@runCatching primary
+        val retry = searchProviderOnce(provider, request, metadata, fallback)
         betterProviderCandidates(request, primary, retry).copy(retriedKeyword = fallback)
     }.getOrElse { ProviderCandidates(provider, emptyList()) }
 
-    /** One search request, scored with the same local identity as its sibling. */
+    /** One search request, scored with the same metadata pass' identity. */
     private fun searchProviderOnce(
         provider: OnlineLyricProvider,
         request: SearchRequest,
+        metadata: SearchMetadata,
         keyword: String,
     ): ProviderCandidates = runCatching {
         val songs = provider.source.search(keyword = keyword, durationMs = request.durationMs)
         ProviderCandidates(
             provider = provider,
             candidates = songs.map { song ->
-                val breakdown = scoreBreakdown(song, request)
+                val breakdown = scoreBreakdown(song, request, metadata)
                 ScoredCandidate(song = song, score = breakdown.total, breakdown = breakdown)
             },
         )
@@ -478,16 +669,16 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      * request per provider.
      */
     private fun retryKeywordFor(
-        request: SearchRequest,
+        metadata: SearchMetadata,
         primary: ProviderCandidates,
     ): String? {
-        val retry = request.retry ?: return null
+        val retry = metadata.retry ?: return null
         val best = primary.candidates.maxByOrNull(ScoredCandidate::score)
         val passing = best != null && best.score >= LyricMatchPolicy.PASS_SCORE
         if (passing) return null
         if (!retry.artistMissRequired) return retry.keyword
         val artistMatched = best != null && LyricMatchPolicy.hasCommonArtist(
-            request.localArtists,
+            metadata.localArtists,
             LyricMatchPolicy.splitArtists(best.song.artist).map { LyricMatchPolicy.cleanString(it) },
         )
         return if (!artistMatched) retry.keyword else null
@@ -521,12 +712,16 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         }
     }
 
-    private fun scoreBreakdown(song: SongSearchResult, request: SearchRequest): ScoreBreakdown =
+    private fun scoreBreakdown(
+        song: SongSearchResult,
+        request: SearchRequest,
+        metadata: SearchMetadata,
+    ): ScoreBreakdown =
         LyricMatchPolicy.scoreBreakdown(
             song = song,
-            cleanLocalTitle = request.cleanTitle,
-            localArtists = request.localArtists,
-            localFeatures = request.localFeatures,
+            cleanLocalTitle = metadata.cleanTitle,
+            localArtists = metadata.localArtists,
+            localFeatures = metadata.localFeatures,
             localDurationMs = request.durationMs,
             cleanLocalAlbum = request.cleanLocalAlbum,
         )
@@ -545,17 +740,31 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
     }.getOrNull()
 
     private data class SearchRequest(
-        val keyword: String,
-        /** The one fallback query, or null when this track gets no retry. */
-        val retry: Retry?,
+        /**
+         * The ordered metadata passes from HLE's [resolveMetadataSearchOrder]:
+         * the displayed metadata first, the distinct original one second.
+         */
+        val passes: List<SearchMetadata>,
         val durationMs: Long,
-        val localTitle: String,
-        val localArtist: String,
-        val localAlbum: String,
+        val cleanLocalAlbum: String,
+    )
+
+    /**
+     * One metadata pass: its label, its identity and its own keyword variants.
+     * The scorer compares each candidate against this pass' title/artist, so an
+     * original-name candidate can pass even though the displayed name would not
+     * have matched it.
+     */
+    private data class SearchMetadata(
+        val label: String,
+        val title: String,
+        val artist: String,
+        val keyword: String,
+        /** The one fallback query, or null when this pass gets no retry. */
+        val retry: Retry?,
         val cleanTitle: String,
         val localArtists: List<String>,
         val localFeatures: List<String>,
-        val cleanLocalAlbum: String,
     )
 
     /**
@@ -589,26 +798,55 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         val candidate: ScoredCandidate,
     )
 
+    /** One metadata pass' outcome, with whether it had any passing candidate. */
+    private data class PassOutcome(
+        val ttml: String?,
+        val foundPassing: Boolean,
+    )
+
+    /** One translation pass' outcome, with whether it had any passing candidate. */
+    private data class TranslationPassOutcome(
+        val candidates: List<OnlineTranslationCandidate>,
+        val foundPassing: Boolean,
+    )
+
+    /**
+     * The per-track, per-provider search budget shared by both metadata passes.
+     * The map is concurrent because the global-best fan-out searches providers
+     * in parallel; the passes themselves run one after the other.
+     */
+    private class SearchLedger {
+        private val used = ConcurrentHashMap<String, Int>()
+
+        fun tryReserve(provider: OnlineLyricProvider): Boolean {
+            val searches = used.compute(provider.sourceId) { _, current -> (current ?: 0) + 1 }
+                ?: return false
+            return searches <= MAX_SEARCHES_PER_PROVIDER
+        }
+    }
+
     companion object {
         fun create(
             mode: LyricSelectionMode,
             providers: List<OnlineLyricProvider>,
             currentTrack: () -> CurrentSongDetails?,
-            localAlbum: (Long) -> String? = ::originalAlbumOfCurrentTrack,
+            originalMetadata: (Long) -> AppleOriginalMetadata? = ::originalMetadataOfCurrentTrack,
             searchExecutor: ExecutorService = defaultSearchExecutor(providers.size),
             searchBudgetMs: Long = ONLINE_SEARCH_BUDGET_MS,
             diagnostic: (String) -> Unit = {},
             displayedTtml: (Long) -> String? = { null },
+            visibleLog: (String) -> Unit = ProviderLogger::info,
         ): CompositeOnlineSearchAutoLyricsSource =
             CompositeOnlineSearchAutoLyricsSource(
                 mode = mode,
                 providers = providers,
                 currentTrack = currentTrack,
-                localAlbum = localAlbum,
+                originalMetadata = originalMetadata,
                 searchExecutor = searchExecutor,
                 searchBudgetMs = searchBudgetMs,
                 diagnostic = diagnostic,
                 displayedTtml = displayedTtml,
+                visibleLog = visibleLog,
             )
 
         /** Daemon pool sized to the provider count so a stalled search cannot leak a live thread. */
@@ -629,13 +867,32 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 }
 
 /**
- * The album the region/original-metadata path resolved for [appleMusicId],
- * read through the same cache the metadata override path keeps its original
- * metadata in. A missing entry is simply "no album"; the search never fails
- * because the metadata has not resolved yet.
+ * The Apple-internal (original-region) metadata for one track: the internal
+ * title and artist the original-metadata pass searches with, plus the original
+ * album the scorer already received. All three come from the same
+ * [MediaMetadataCache] entry.
  */
-private fun originalAlbumOfCurrentTrack(appleMusicId: Long): String? = runCatching {
-    MediaMetadataCache.getMetadataById(appleMusicId.toString())?.originalAlbum
+data class AppleOriginalMetadata(
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+)
+
+/**
+ * Apple's internal metadata for [appleMusicId], read through the same cache the
+ * region/original-metadata path keeps its original title, artist and album in.
+ * A missing entry is simply "no distinct original metadata" — the displayed
+ * values fall back for every blank field — so the search never fails because
+ * the region metadata has not resolved yet.
+ */
+private fun originalMetadataOfCurrentTrack(appleMusicId: Long): AppleOriginalMetadata? = runCatching {
+    MediaMetadataCache.getMetadataById(appleMusicId.toString())?.let { metadata ->
+        AppleOriginalMetadata(
+            title = metadata.originalTitle,
+            artist = metadata.originalArtist,
+            album = metadata.originalAlbum,
+        )
+    }
 }.getOrNull()
 
 /**

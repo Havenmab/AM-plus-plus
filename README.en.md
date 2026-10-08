@@ -104,7 +104,7 @@ Prerequisites: Apple Music and an Xposed framework supporting libxposed API 102.
 2. Enable **AM++** in LSPosed or a compatible Xposed manager.
 3. Select only Apple Music (`com.apple.android.music`) in the module scope.
 4. Force stop and reopen Apple Music.
-5. Open Apple Music → Settings → **AM++ Module Settings**. Confirm that the page reports a connection to libxposed API 102 before changing settings.
+5. Open Apple Music → Settings → **AM++ Module Settings**.
 
 ### npatch embedded edition
 

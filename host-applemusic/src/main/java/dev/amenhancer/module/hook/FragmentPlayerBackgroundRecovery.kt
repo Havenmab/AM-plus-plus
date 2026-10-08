@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.ImageView
 import dev.amenhancer.module.ModuleConstants
 import java.lang.reflect.Method
+import java.util.IdentityHashMap
 import java.util.WeakHashMap
 
 /** Native detachment recycles the blur bitmap while leaving shaders bound to that bitmap. */
@@ -19,6 +20,7 @@ internal class FragmentPlayerBackgroundRecovery(
     },
 ) {
     private val pending = WeakHashMap<View, Boolean>()
+    private val layoutRetries = IdentityHashMap<View, LayoutRetry>()
     private var reportedFailure = false
 
     private fun clear(view: View) {
@@ -30,7 +32,12 @@ internal class FragmentPlayerBackgroundRecovery(
     }
 
     private fun restore(view: View, root: View?) {
-        if (!scope.isActive || !view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return
+        if (!scope.isActive || !view.isAttachedToWindow) return
+        if (view.width <= 0 || view.height <= 0) {
+            layoutRetries.getOrPut(view) { LayoutRetry(view) }
+            return
+        }
+        layoutRetries[view]?.close()
         val image = root?.findViewById<ImageView>(root.resources.getIdentifier(
             contract.names.getString("imageId"), "id", ModuleConstants.TARGET_PACKAGE,
         ))
@@ -47,6 +54,42 @@ internal class FragmentPlayerBackgroundRecovery(
         clear(view)
         contract.backgroundArtwork.invoke(view, bitmap)
         pending.remove(view)
+    }
+
+    /** Retry once when the attached background acquires usable layout dimensions. */
+    private inner class LayoutRetry(private val view: View) : View.OnLayoutChangeListener,
+        View.OnAttachStateChangeListener, AutoCloseable {
+        private var closed = false
+
+        init {
+            view.addOnLayoutChangeListener(this)
+            view.addOnAttachStateChangeListener(this)
+        }
+
+        override fun onLayoutChange(
+            view: View, left: Int, top: Int, right: Int, bottom: Int,
+            oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+        ) {
+            if (closed || layoutRetries[view] !== this) return
+            if (!scope.isActive || !view.isAttachedToWindow) {
+                close()
+                return
+            }
+            if (view.width <= 0 || view.height <= 0) return
+            close()
+            safely { restore(view, view.rootView) }
+        }
+
+        override fun onViewAttachedToWindow(view: View) = Unit
+        override fun onViewDetachedFromWindow(view: View) = close()
+
+        override fun close() {
+            if (closed) return
+            closed = true
+            if (layoutRetries[view] === this) layoutRetries.remove(view)
+            view.removeOnLayoutChangeListener(this)
+            view.removeOnAttachStateChangeListener(this)
+        }
     }
 
     private fun safely(action: () -> Unit) {
@@ -68,8 +111,13 @@ internal class FragmentPlayerBackgroundRecovery(
     }
 
     fun install() {
+        scope.onClose {
+            layoutRetries.values.toList().forEach { it.close() }
+            pending.clear()
+        }
         observe(contract.backgroundDetach) { param ->
             val view = param.thisObject as? View ?: return@observe
+            layoutRetries[view]?.close()
             clear(view)
             pending[view] = true
         }
@@ -99,6 +147,5 @@ internal class FragmentPlayerBackgroundRecovery(
                 image.post { safely { restore(view, root) } }
             }
         }
-        scope.onClose { pending.clear() }
     }
 }

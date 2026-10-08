@@ -7,7 +7,9 @@ import android.graphics.BitmapShader
 import android.graphics.Shader
 import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
+import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -28,6 +30,35 @@ class FragmentPlayerBackgroundRecoveryTest {
     private fun bitmap(size: Int = 8) = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     private fun drain() { shadowOf(Looper.getMainLooper()).idle() }
     private fun resume() { f.resume(); drain() }
+    private fun zeroSize() {
+        f.background.layoutParams = f.background.layoutParams.apply { width = 0; height = 0 }
+        f.background.layout(0, 0, 0, 0)
+    }
+    private fun finishLayout() {
+        f.background.layoutParams = f.background.layoutParams.apply { width = 400; height = 400 }
+        f.layout()
+        drain()
+    }
+    private fun waitForForegroundLayout(attach: Boolean): Bitmap {
+        f.background.source = bitmap().apply { recycle() }
+        val foreground = bitmap()
+        f.image.setImageDrawable(BitmapDrawable(f.resources, foreground))
+        f.detachBackground()
+        zeroSize()
+        if (attach) f.attachBackground() else f.resume()
+        drain()
+        assertEquals(0, f.background.restores)
+        assertEquals(1, shadowOf(f.background).onLayoutChangeListeners.size)
+        assertEquals(1, shadowOf(f.background).onAttachStateChangeListeners.size)
+        return foreground
+    }
+    private fun assertNoLayoutRetry() {
+        assertTrue(shadowOf(f.background).onLayoutChangeListeners.isEmpty())
+        assertTrue(shadowOf(f.background).onAttachStateChangeListeners.isEmpty())
+    }
+    private fun lateLayout(listener: View.OnLayoutChangeListener) {
+        listener.onLayoutChange(f.background, 0, 0, 400, 400, 0, 0, 0, 0)
+    }
     private fun dirtyCaches() {
         f.background.derived = bitmap().apply { recycle() }
         val shader = BitmapShader(bitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
@@ -141,13 +172,78 @@ class FragmentPlayerBackgroundRecoveryTest {
     @Test fun zeroSizedBackgroundDefersRecoveryUntilLayout() {
         f.background.source = bitmap()
         f.detachBackground()
-        f.background.layoutParams = f.background.layoutParams.apply { width = 0; height = 0 }
-        f.background.layout(0, 0, 0, 0)
+        zeroSize()
         resume()
         assertEquals(0, f.background.restores)
-        f.background.layoutParams = f.background.layoutParams.apply { width = 400; height = 400 }
-        f.layout()
-        resume()
+        finishLayout()
         assertEquals(1, f.background.restores)
+        assertNoLayoutRetry()
+    }
+
+    @Test fun zeroSizedResumeRestoresForegroundAfterLayoutWithoutAnotherTrigger() {
+        val foreground = waitForForegroundLayout(attach = false)
+        finishLayout()
+        assertSame(foreground, f.background.restored)
+        assertEquals(1, f.background.restores)
+        assertNoLayoutRetry()
+    }
+
+    @Test fun zeroSizedAttachWaitsForBothDimensionsThenRestoresForeground() {
+        val foreground = waitForForegroundLayout(attach = true)
+        f.background.layoutParams = f.background.layoutParams.apply { width = 400 }
+        f.background.layout(0, 0, 400, 0)
+        drain()
+        assertEquals(0, f.background.restores)
+        assertEquals(1, shadowOf(f.background).onLayoutChangeListeners.size)
+        finishLayout()
+        assertSame(foreground, f.background.restored)
+        assertEquals(1, f.background.restores)
+        assertNoLayoutRetry()
+    }
+
+    @Test fun repeatedZeroSizedRequestsShareOneRetryWhichStopsAfterRecovery() {
+        waitForForegroundLayout(attach = true)
+        val listener = shadowOf(f.background).onLayoutChangeListeners.single()
+        repeat(4) { f.attachBackground(); f.resume() }
+        drain()
+        assertEquals(setOf(listener), shadowOf(f.background).onLayoutChangeListeners)
+        assertEquals(1, shadowOf(f.background).onAttachStateChangeListeners.size)
+        finishLayout()
+        assertEquals(1, f.background.restores)
+        assertNoLayoutRetry()
+        dirtyCaches()
+        f.layout(480)
+        lateLayout(listener)
+        drain()
+        assertEquals(1, f.background.restores)
+    }
+
+    @Test fun detachRemovesWaitingRetryAndReattachCanRegisterAFreshOne() {
+        val foreground = waitForForegroundLayout(attach = true)
+        val old = shadowOf(f.background).onLayoutChangeListeners.single()
+        f.root.removeView(f.background)
+        f.detachBackground()
+        assertNoLayoutRetry()
+        f.root.addView(f.background, FrameLayout.LayoutParams(0, 0))
+        f.attachBackground()
+        drain()
+        assertEquals(1, shadowOf(f.background).onLayoutChangeListeners.size)
+        assertFalse(shadowOf(f.background).onLayoutChangeListeners.contains(old))
+        lateLayout(old)
+        assertEquals(0, f.background.restores)
+        finishLayout()
+        assertSame(foreground, f.background.restored)
+        assertEquals(1, f.background.restores)
+        assertNoLayoutRetry()
+    }
+
+    @Test fun scopeClosureRemovesWaitingRetryAndIgnoresCapturedLayoutCallback() {
+        waitForForegroundLayout(attach = false)
+        val listener = shadowOf(f.background).onLayoutChangeListeners.single()
+        f.scope.close()
+        assertNoLayoutRetry()
+        finishLayout()
+        lateLayout(listener)
+        assertEquals(0, f.background.restores)
     }
 }

@@ -248,6 +248,7 @@ private fun productionFeatureInstallationModule(
     // It owns the one lazy remote-file open and Typeface build.
     return FeatureInstallationModule(
         plans = listOf(
+            FeatureInstallationPlan(feature = PlayerRecoveryFeature()),
             FeatureInstallationPlan(
                 feature = DualPaneFeature(),
                 registerResources = { AppleMusicHostFactory.registerDualPaneResources() },

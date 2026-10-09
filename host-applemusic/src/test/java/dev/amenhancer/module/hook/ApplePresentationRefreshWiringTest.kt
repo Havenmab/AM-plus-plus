@@ -37,6 +37,10 @@ class ApplePresentationRefreshWiringTest {
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPresentationRebind.kt",
     )
 
+    private val feed = projectFile(
+        "core/src/main/kotlin/dev/amenhancer/module/hook/CustomLyricsCompletionFeed.kt",
+    )
+
     @Test
     fun `the build seam evaluates HLE's gate from an after hook`() {
         // The gate is ported, not re-implemented on the host.
@@ -127,7 +131,13 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("AppleMusicHookPoint.LYRICS_NATIVE_PRESENTATION"))
         assertTrue(hooks.contains("retryPendingPresentationRefresh()"))
         assertTrue(hooks.contains("pendingPresentationRefresh"))
-        assertTrue(hooks.contains("mainHandler.post { performPresentationRefresh(pending) }"))
+        // The re-dispatch is named for the seam that made it, so the next log can
+        // tell an F2 retry from the build gate and the custom-overlay ask.
+        assertTrue(
+            hooks.contains(
+                "performPresentationRefresh(pending, PresentationRefreshTrigger.F2_RETRY)",
+            ),
+        )
     }
 
     @Test
@@ -154,6 +164,13 @@ class ApplePresentationRefreshWiringTest {
         // `adapter=` proves whether the rebind resolved one, and `state=` proves
         // a `not-bound` abort cleared the state for a later retry.
         assertTrue(hooks.contains("detail=\$detail"))
+        // `trigger=` proves which of the three asks re-presented the page:
+        // `build`, `custom-overlay` (the custom completion's post-overlay ask) or
+        // `f2-retry` (the binding seam re-dispatching a lost ask).
+        assertTrue(hooks.contains("trigger=\$trigger"))
+        assertTrue(hooks.contains("\"build\""))
+        assertTrue(hooks.contains("\"custom-overlay\""))
+        assertTrue(hooks.contains("\"f2-retry\""))
         assertTrue(hooks.contains("adapter=\${adapterName ?: NONE}"))
         assertTrue(hooks.contains("state=\${if (stateCleared) STATE_CLEARED else STATE_LATCHED}"))
         // The overlay revision is one of the anti-thrash state inputs and is
@@ -227,6 +244,88 @@ class ApplePresentationRefreshWiringTest {
                         .LYRICS_RESULT_PRESENTATION,
                 )
                 .isEmpty(),
+        )
+    }
+
+    @Test
+    fun `the build-time supplement skip stays and the custom feed owns its own refresh`() {
+        // The build gate keeps skipping a supplement pointer: Apple's track
+        // refresh makes the lyrics page twitch (HLE). The supplement path's own
+        // refresh is the completion feed's post-overlay ask instead, exactly like
+        // HLE's store update (`AppleSupplementDataReceive` → the presentation
+        // refresh), so the skip is not lifted.
+        assertTrue(hooks.contains("!isModuleSupplementSong(songId)"))
+        assertTrue(hooks.contains("!sourceIsApple -> \"supplement\""))
+        // The hooks expose the cross-layer hook instead of a new global, and the
+        // decision is the store-update rule (a lane exists in the overlay).
+        assertTrue(hooks.contains("fun onCustomOverlayUpdated(songId: Long)"))
+        assertTrue(hooks.contains("requestCustomOverlayPresentationRefresh(songId)"))
+        assertTrue(hooks.contains("PresentationRefreshTrigger.CUSTOM_OVERLAY"))
+        assertTrue(
+            hooks.contains(
+                "NativeLyricModelPolicy.shouldRefreshPresentationAfterCustomOverlay(",
+            ),
+        )
+        assertTrue(
+            hooks.contains("val detail = if (shouldRefresh) \"custom-refresh\" else \"gate\""),
+        )
+        // The feed reports the write; the target forwards it to the delivery it
+        // already owns.
+        assertTrue(feed.contains("private val onOverlayUpdated: (Long) -> Unit = {}"))
+        assertTrue(feed.contains("if (merged != null) {"))
+        assertTrue(feed.contains("runCatching { onOverlayUpdated(appleMusicId) }"))
+        assertTrue(
+            target.contains(
+                "onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },",
+            ),
+        )
+        assertTrue(target.contains("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"))
+    }
+
+    @Test
+    fun `the post-overlay refresh is once per song and overlay revision on the main handler`() {
+        // The dedupe: the live overlay revision is part of the shared recorded
+        // state, and the completion goes through the main handler like every
+        // other refresh.
+        assertTrue(hooks.contains("if (state == lastPresentationRefreshState) return"))
+        assertTrue(hooks.contains("overlayRevision = overlay.revision()"))
+        assertTrue(
+            hooks.contains("mainHandler.post { requestCustomOverlayPresentationRefresh(songId) }"),
+        )
+        // Expected-song checks: the model the completion belongs to here, and the
+        // bound pointer's native id again before the invoke.
+        assertTrue(hooks.contains("if (songId != modelSongId) return"))
+        assertTrue(hooks.contains("nativeSongId(songNative) != state.songId"))
+        // A build arriving after an aborted overlay ask must not drop it before
+        // the F2 binding seam can retry; only the completion's next revision
+        // supersedes it.
+        assertTrue(
+            hooks.contains(
+                "pendingPresentationRefresh?.trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY",
+            ),
+        )
+    }
+
+    @Test
+    fun `the refresh re-runs HLE's full text-hook sequence before the invoke`() {
+        // HLE: `ensureAppleLyricTextHooks(songNative)` then
+        // `applyAppleNativeSupplementSelection(songNative)` before
+        // `method.invoke`. The fork's `ensureNativeModel` is the first half and
+        // used to be missing, so the re-presentation could not pick up a
+        // translation lane on a model that predates the overlay — the reported
+        // "Apple's translation only appears after backgrounding".
+        val perform = hooks
+            .substringAfter("private fun performPresentationRefresh(")
+            .substringBefore("private fun logPresentationRefresh(")
+        assertTrue(perform.contains("ensureNativeModel(songNative, viewModel = null)"))
+        assertTrue(perform.contains("applyAppleNativePronunciationSelection("))
+        assertTrue(
+            perform.indexOf("ensureNativeModel(songNative, viewModel = null)") <
+                perform.indexOf("method.invoke(fragment, pointer)"),
+        )
+        assertTrue(
+            perform.indexOf("applyAppleNativePronunciationSelection(") <
+                perform.indexOf("method.invoke(fragment, pointer)"),
         )
     }
 

@@ -93,8 +93,20 @@ import java.util.concurrent.ConcurrentHashMap
  *    HLE's `R2`/`F2`), so a refresh that ran before the view existed is retried
  *    instead of being swallowed. Only an invoke that returns latches the
  *    anti-thrash state. The `presentation-refresh` line records the decision,
- *    the outcome, the resolved `adapter=` and whether the state was `cleared`
- *    for retry.
+ *    the outcome, the resolved `adapter=`, the `trigger=` and whether the state
+ *    was `cleared` for retry.
+ *  - The build gate deliberately skips a module supplement pointer (HLE: Apple's
+ *    track refresh on a supplement pointer makes the lyrics page twitch). The
+ *    supplement path owns its own refresh instead: HLE's store update
+ *    (`AppleSupplementDataReceive`) calls
+ *    `refreshAppleLyricsSupplementPresentation` on a content change, and on this
+ *    fork [onCustomOverlayUpdated] is that ask — the custom-lyrics completion
+ *    feed reports a successful overlay write, and this installer re-presents on
+ *    the main handler once per (song, overlay revision). The refresh re-runs
+ *    HLE's full pre-presentation sequence (`ensureNativeModel` — the fork's
+ *    `ensureAppleLyricTextHooks` — then the selection) so the re-presentation
+ *    picks up both the online translation and the pronunciation lane, not only
+ *    the lane the build gate happened to catch.
  *
  * Every step fails open: an unresolved profile target, a missing member name, a
  * malformed vector or a throwing getter leaves Apple's own value in place. The
@@ -273,13 +285,31 @@ internal class AppleNativeLyricModelHooks(
     private var pendingPresentationRefresh: PresentationRefreshState? = null
 
     /**
+     * How one presentation-refresh attempt was initiated, printed as the
+     * `trigger=` diagnostic field. [BUILD] is HLE's build-after gate,
+     * [CUSTOM_OVERLAY] is the custom-lyrics completion feed's post-overlay ask —
+     * the fork's replacement for the refresh HLE's own supplement store runs when
+     * its content changes — and [F2_RETRY] is the native-presentation (R2/F2)
+     * seam re-dispatching an accepted refresh whose first attempt could not reach
+     * the page.
+     */
+    private enum class PresentationRefreshTrigger(val token: String) {
+        BUILD("build"),
+        CUSTOM_OVERLAY("custom-overlay"),
+        F2_RETRY("f2-retry"),
+    }
+
+    /**
      * One accepted refresh decision. The whole gate input set is part of the
      * key, so any signal that can change after a build — a new overlay revision,
      * Apple advertising its lane, the supplement pointer resolving to Apple's
      * document, the Mandarin rule — is a new state, while an unchanged re-build
-     * is not.
+     * is not. [trigger] names which of the two triggers decided it, so a custom
+     * overlay write and a build for the same revision are distinct states and
+     * neither can swallow the other's refresh.
      */
     private data class PresentationRefreshState(
+        val trigger: PresentationRefreshTrigger,
         val songId: Long,
         val overlayRevision: Long,
         val sourceIsApple: Boolean,
@@ -441,7 +471,9 @@ internal class AppleNativeLyricModelHooks(
         val pointer = presentationPointerRef?.get() ?: return
         val songNative = pointerGet(pointer) ?: return
         if (nativeSongId(songNative) != pending.songId) return
-        mainHandler.post { performPresentationRefresh(pending) }
+        mainHandler.post {
+            performPresentationRefresh(pending, PresentationRefreshTrigger.F2_RETRY)
+        }
     }
 
     /**
@@ -501,22 +533,8 @@ internal class AppleNativeLyricModelHooks(
         val pronunciationSelected = enabled && !mandarinHidden
         val sourceIsApple = !isModuleSupplementSong(songId)
 
-        val reason = NativeLyricModelPolicy.presentationRefreshReason(
-            sourceIsApple = sourceIsApple,
-            hasValidOfficialPronunciation = officialPronunciation,
-            hasOnlineTranslation = onlineTranslation,
-            hasOnlinePronunciation = onlinePronunciation,
-            pronunciationSelected = pronunciationSelected,
-        )
-        val shouldRefresh = NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
-            sourceIsApple = sourceIsApple,
-            hasValidOfficialPronunciation = officialPronunciation,
-            hasOnlineTranslation = onlineTranslation,
-            hasOnlinePronunciation = onlinePronunciation,
-            pronunciationSelected = pronunciationSelected,
-        )
-
         val state = PresentationRefreshState(
+            trigger = PresentationRefreshTrigger.BUILD,
             songId = songId,
             overlayRevision = overlay.revision(),
             sourceIsApple = sourceIsApple,
@@ -526,6 +544,14 @@ internal class AppleNativeLyricModelHooks(
             onlinePronunciation = onlinePronunciation,
             pronunciationSelected = pronunciationSelected,
         )
+        val reason = refreshReason(state)
+        val shouldRefresh = NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
+            sourceIsApple = sourceIsApple,
+            hasValidOfficialPronunciation = officialPronunciation,
+            hasOnlineTranslation = onlineTranslation,
+            hasOnlinePronunciation = onlinePronunciation,
+            pronunciationSelected = pronunciationSelected,
+        )
         // An unchanged state has already been decided (and, when accepted,
         // refreshed). This is what keeps the re-presentation's own build from
         // looping: the gate holds again but the state matches.
@@ -533,8 +559,17 @@ internal class AppleNativeLyricModelHooks(
         lastPresentationRefreshState = state
         // A different state supersedes any accepted-but-unapplied refresh; the
         // same state may still be pending because its earlier attempt aborted
-        // and is waiting for the binding seam.
-        if (pendingPresentationRefresh != state) pendingPresentationRefresh = null
+        // and is waiting for the binding seam. A pending *custom-overlay* ask is
+        // the exception: a build cannot decide it was stale — the completion's
+        // own next overlay revision does that — and dropping it here would lose
+        // the post-overlay refresh before the native-presentation seam can retry
+        // it (the ordering a first play can produce: overlay ask aborts
+        // `not-bound`, then the build seam runs, then the F2 binding arrives).
+        if (pendingPresentationRefresh != state &&
+            pendingPresentationRefresh?.trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY
+        ) {
+            pendingPresentationRefresh = null
+        }
 
         val detail = when {
             !sourceIsApple -> "supplement"
@@ -552,19 +587,144 @@ internal class AppleNativeLyricModelHooks(
             detail = detail,
             adapterName = null,
             stateCleared = false,
+            trigger = PresentationRefreshTrigger.BUILD.token,
         )
         if (!shouldRefresh) return
 
         pendingPresentationRefresh = state
-        mainHandler.post { performPresentationRefresh(state) }
+        mainHandler.post { performPresentationRefresh(state, PresentationRefreshTrigger.BUILD) }
     }
+
+    /**
+     * The custom-lyrics completion feed's post-overlay trigger.
+     *
+     * HLE's supplement path owns a refresh exactly like this one: its store
+     * update (`AppleSupplementDataReceive`) calls
+     * `refreshAppleLyricsSupplementPresentation` whenever the receipt reports
+     * `displayContentChanged`. The fork's custom-lyrics completion feed writes
+     * the same overlay from `CustomLyricsCompletionFeed` → `runtime.translationEnricher`
+     * → `overlay.update(...)` and, before this trigger, never asked for a
+     * re-presentation: the device log's every custom track logged
+     * `detail=supplement refreshed=false` and the page kept its first render
+     * until the view was re-created.
+     *
+     * The build-time `supplement` skip is deliberately not lifted — HLE explains
+     * Apple's track refresh on a supplement pointer makes the lyrics page twitch
+     * — so this post-overlay ask is the supplement path's own refresh instead.
+     *
+     * Guarantees: posted to the main handler; once per (song, overlay revision)
+     * via the shared [lastPresentationRefreshState] dedupe; the completion must
+     * belong to the model the hooks are installed for (`modelSongId`) and
+     * [performPresentationRefresh] re-checks the bound pointer's native id, which
+     * is HLE's own expected-song gate; and an invoke of our own is ignored through
+     * [presentationInvokeGuard], so the re-presentation cannot re-enter here.
+     */
+    fun onCustomOverlayUpdated(songId: Long) {
+        if (!enabled || nativeNames.isEmpty()) return
+        if (songId <= 0L) return
+        mainHandler.post { requestCustomOverlayPresentationRefresh(songId) }
+    }
+
+    private fun requestCustomOverlayPresentationRefresh(songId: Long) {
+        // The invoke guard is the hard recursion stop for a completion that
+        // arrives while our own re-presentation is running.
+        if (presentationInvokeGuard.get() == true) return
+        // Expected-song check: the overlay write must belong to the song whose
+        // native model the hooks are installed for. The authoritative check is
+        // performed again against the bound pointer before the invoke.
+        if (songId != modelSongId) return
+        val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
+        val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
+        val songNative = songNativeRef?.get()?.takeIf { nativeSongId(it) == songId }
+        val advertised = songNative
+            ?.let { advertisedPronunciationLanguages(songPronunciationLanguages(it)) }
+            .orEmpty()
+        val officialLane = NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
+        val state = PresentationRefreshState(
+            trigger = PresentationRefreshTrigger.CUSTOM_OVERLAY,
+            songId = songId,
+            overlayRevision = overlay.revision(),
+            sourceIsApple = !isModuleSupplementSong(songId),
+            // Diagnostic only on this trigger: the custom decision below is the
+            // overlay, never the build gate's Apple-lane rule. A dead model ref
+            // fails to false and hides nothing.
+            officialPronunciation = songNative != null &&
+                (hasValidOfficialPronunciation(songNative) || officialLane != null),
+            officialLane = officialLane,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = enabled && !mandarinHidden,
+        )
+        // Once per (song, overlay revision): a completion that changed no overlay
+        // content recomputes the same state and is a no-op.
+        if (state == lastPresentationRefreshState) return
+        lastPresentationRefreshState = state
+        if (pendingPresentationRefresh != state) pendingPresentationRefresh = null
+
+        val reason = refreshReason(state)
+        val shouldRefresh = NativeLyricModelPolicy.shouldRefreshPresentationAfterCustomOverlay(
+            hasOnlineTranslation = onlineTranslation,
+            hasOnlinePronunciation = onlinePronunciation,
+        )
+        val detail = if (shouldRefresh) "custom-refresh" else "gate"
+        logPresentationRefresh(
+            songId = songId,
+            reason = reason,
+            hasValidOfficialPronunciation = state.officialPronunciation,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = state.pronunciationSelected,
+            refreshed = false,
+            detail = detail,
+            adapterName = null,
+            stateCleared = false,
+            trigger = PresentationRefreshTrigger.CUSTOM_OVERLAY.token,
+        )
+        if (!shouldRefresh) return
+
+        pendingPresentationRefresh = state
+        mainHandler.post {
+            performPresentationRefresh(state, PresentationRefreshTrigger.CUSTOM_OVERLAY)
+        }
+    }
+
+    /**
+     * The [PresentationRefreshState]'s reason, from the trigger that decided it:
+     * the build gate keeps HLE's `sourceIsApple`/online/official rule, while the
+     * post-overlay trigger uses the store-update rule (a lane exists in the
+     * overlay). One place, so a log can never name a branch the decision did not
+     * take.
+     */
+    private fun refreshReason(state: PresentationRefreshState): String =
+        when (state.trigger) {
+            PresentationRefreshTrigger.CUSTOM_OVERLAY ->
+                NativeLyricModelPolicy.customOverlayRefreshReason(
+                    hasOnlineTranslation = state.onlineTranslation,
+                    hasOnlinePronunciation = state.onlinePronunciation,
+                )
+            PresentationRefreshTrigger.BUILD,
+            PresentationRefreshTrigger.F2_RETRY -> NativeLyricModelPolicy.presentationRefreshReason(
+                sourceIsApple = state.sourceIsApple,
+                hasValidOfficialPronunciation = state.officialPronunciation,
+                hasOnlineTranslation = state.onlineTranslation,
+                hasOnlinePronunciation = state.onlinePronunciation,
+                pronunciationSelected = state.pronunciationSelected,
+            )
+        }
 
     /**
      * The main-handler half of HLE's `refreshAppleLyricsSupplementPresentation`:
      * resolve the bound fragment and pointer, verify the pointer still belongs to
-     * the expected song, re-run the selection so the getters read the settled
-     * model, re-invoke the app's presentation method and then rebind the lyrics
-     * adapter (`refreshAppleLyricsRecyclerView` → `notifyDataSetChanged`).
+     * the expected song, re-run HLE's full pre-presentation sequence
+     * (`ensureAppleLyricTextHooks(songNative)` then
+     * `applyAppleNativeSupplementSelection(songNative)`), re-invoke the app's
+     * presentation method and then rebind the lyrics adapter
+     * (`refreshAppleLyricsRecyclerView` → `notifyDataSetChanged`).
+     *
+     * [trigger] is how *this* attempt was dispatched, not which trigger originally
+     * decided: an accepted custom-overlay refresh that aborted `not-bound` is
+     * re-dispatched here by the native-presentation seam and logs
+     * `trigger=f2-retry`.
      *
      * Only an invoke that actually returned latches the state; every abort clears
      * the dedupe state ([PresentationRefreshOutcome.cleared]) *and* leaves the
@@ -572,19 +732,16 @@ internal class AppleNativeLyricModelHooks(
      * the native-presentation binding seam can ask again. A duplicate queued
      * attempt for an already-latched state is a no-op.
      */
-    private fun performPresentationRefresh(state: PresentationRefreshState) {
+    private fun performPresentationRefresh(
+        state: PresentationRefreshState,
+        trigger: PresentationRefreshTrigger,
+    ) {
         // Only the accepted-and-still-current state may run: a duplicate queued
         // after a successful apply, or a stale attempt superseded by a newer
         // build decision, is a no-op.
         if (pendingPresentationRefresh != state) return
 
-        val reason = NativeLyricModelPolicy.presentationRefreshReason(
-            sourceIsApple = state.sourceIsApple,
-            hasValidOfficialPronunciation = state.officialPronunciation,
-            hasOnlineTranslation = state.onlineTranslation,
-            hasOnlinePronunciation = state.onlinePronunciation,
-            pronunciationSelected = state.pronunciationSelected,
-        )
+        val reason = refreshReason(state)
 
         fun finish(outcome: PresentationRefreshOutcome, adapterName: String?) {
             if (outcome.latches) {
@@ -603,6 +760,7 @@ internal class AppleNativeLyricModelHooks(
                 detail = outcome.token,
                 adapterName = adapterName,
                 stateCleared = outcome.cleared,
+                trigger = trigger.token,
             )
         }
 
@@ -618,9 +776,23 @@ internal class AppleNativeLyricModelHooks(
             return finish(PresentationRefreshOutcome.SONG_CHANGED, adapterName = null)
         }
 
-        // HLE re-runs `applyAppleNativeSupplementSelection` before re-presenting.
-        // Ours is the pronunciation half; the per-line getters already read the
-        // overlay live, so only the language selection can still be settled here.
+        // HLE's refresh re-runs its full pre-presentation sequence before the
+        // invoke: `ensureAppleLyricTextHooks(songNative)` (remember the
+        // advertisement and (re)install every per-line/word/availability hook so
+        // both the online translation and the pronunciation lane are read back
+        // from the settled model) and then
+        // `applyAppleNativeSupplementSelection(songNative)`. The fork's
+        // `ensureNativeModel` is the first half and was missing: without it a
+        // model built before the overlay existed could be re-presented with the
+        // translation getter still reading Apple's empty value, which is why the
+        // user saw Apple's translation only after backgrounding. The explicit
+        // selection call after it keeps HLE's second step visible even though
+        // `ensureNativeModel` already runs the same idempotent selection.
+        runCatching {
+            ensureNativeModel(songNative, viewModel = null)
+        }.onFailure { error ->
+            log("online-translation presentation-refresh ensure failed: ${error.message}")
+        }
         runCatching {
             applyAppleNativePronunciationSelection(songNative, songPronunciationLanguages(songNative))
         }.onFailure { error ->
@@ -662,10 +834,12 @@ internal class AppleNativeLyricModelHooks(
     /**
      * The device-facing proof of the refresh decision, on the same visible
      * channel as `native-write`: the exact gate inputs, the branch that fired,
-     * the resolved adapter and whether the recorded state was cleared for retry.
-     * A `refreshed=true detail=rebound` line on the first play is the evidence
-     * the fix landed; `detail=not-bound state=cleared` is the proof a refresh
-     * that ran before the view existed stayed retryable.
+     * the attempt's `trigger=`, the resolved adapter and whether the recorded
+     * state was cleared for retry. A `refreshed=true detail=rebound` line on the
+     * first play is the evidence the fix landed; `detail=not-bound state=cleared`
+     * is the proof a refresh that ran before the view existed stayed retryable;
+     * and `detail=custom-refresh trigger=custom-overlay` is the proof the
+     * custom-lyrics completion feed's post-overlay ask reached the page.
      */
     private fun logPresentationRefresh(
         songId: Long,
@@ -678,6 +852,7 @@ internal class AppleNativeLyricModelHooks(
         detail: String,
         adapterName: String?,
         stateCleared: Boolean,
+        trigger: String,
     ) {
         log(
             "online-translation presentation-refresh id=$songId reason=$reason " +
@@ -686,7 +861,7 @@ internal class AppleNativeLyricModelHooks(
                 "onlinePronunciation=$onlinePronunciation " +
                 "pronunciationSelected=$pronunciationSelected " +
                 "presentationMethod=${presentationMethod != null} " +
-                "refreshed=$refreshed detail=$detail " +
+                "refreshed=$refreshed detail=$detail trigger=$trigger " +
                 "adapter=${adapterName ?: NONE} " +
                 "state=${if (stateCleared) STATE_CLEARED else STATE_LATCHED}",
         )

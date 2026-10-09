@@ -100,6 +100,13 @@ internal class AppleMusicCustomLyricsTarget(
         }
         val mainHandler = Handler(Looper.getMainLooper())
         val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
+        // The post-overlay presentation refresh the custom completion asks for:
+        // HLE's own supplement store refreshes on its content change
+        // (`AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`),
+        // and the feed's overlay write is the fork's equivalent. Wired below to
+        // the native lyric delivery this target already owns — no new global — and
+        // left a no-op until then, so an early completion fails open.
+        var onCustomOverlayUpdated: (Long) -> Unit = {}
         // The custom path's half of the runtime's translation/pronunciation
         // completion. The automatic path stays closed for every manual/mapped
         // id: when its enrichment returns null it falls through to
@@ -115,6 +122,7 @@ internal class AppleMusicCustomLyricsTarget(
                     enrich = enrich,
                     executor = runtime.executor,
                     log = { appleMusicId, line -> translationLog.log(appleMusicId, line) },
+                    onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },
                 )
             }
         }
@@ -252,7 +260,8 @@ internal class AppleMusicCustomLyricsTarget(
                         // HLE skips the refresh on a supplement pointer because
                         // the supplement path has its own refresh. A *ready*
                         // module replacement is the fork's counterpart: the
-                        // displayed document is ours, so `readyReapply` owns the
+                        // displayed document is ours, so `readyReapply` and the
+                        // completion feed's post-overlay trigger own the
                         // re-presentation. A merely in-flight fetch still shows
                         // Apple's document, so it must not suppress the refresh.
                         isModuleSupplementSong = { appleMusicId ->
@@ -261,6 +270,13 @@ internal class AppleMusicCustomLyricsTarget(
                     )
                 }
             }
+        // The custom feed's post-overlay refresh now reaches the native
+        // delivery. This is the fork's counterpart of HLE's supplement store
+        // refresh; the dedupe (once per song and overlay revision), the
+        // main-handler post and the latch-and-retry state all live in the hooks.
+        onCustomOverlayUpdated = { appleMusicId ->
+            nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
+        }
         runCatching { nativeLyricDelivery?.install() }
             .onFailure { error ->
                 ModernXposedRuntime.log("native lyric model hooks failed: $error")

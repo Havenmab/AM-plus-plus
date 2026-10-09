@@ -72,6 +72,34 @@ class CustomLyricsCompletionWiringTest {
         assertFalse(feed.contains("onReplacementPublished"))
     }
 
+    @Test
+    fun `a successful completion asks the native delivery for a post-overlay refresh`() {
+        val feed = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/hook/CustomLyricsCompletionFeed.kt",
+        )
+        // HLE's supplement path refreshes from its own store update
+        // (`AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`).
+        // The fork's equivalent is a per-instance callback handed to the feed and
+        // forwarded to the native lyric delivery — never a global — so the overlay
+        // write is what requests the re-presentation.
+        assertTrue(target.contains("var onCustomOverlayUpdated: (Long) -> Unit = {}"))
+        assertTrue(
+            target.contains(
+                "onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },",
+            ),
+        )
+        assertTrue(target.contains("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"))
+        // The forward is wired after the delivery exists, so an early completion
+        // fails open on the default instead of touching an unassigned reference.
+        assertTrue(
+            target.indexOf("val customCompletion") <
+                target.indexOf("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"),
+        )
+        // The callback is a feed parameter with a default, so every caller that
+        // does not want it stays a no-op.
+        assertTrue(feed.contains("private val onOverlayUpdated: (Long) -> Unit = {}"))
+    }
+
     private fun projectFile(relativePath: String): String = sequenceOf(
         File(relativePath),
         File("../$relativePath"),

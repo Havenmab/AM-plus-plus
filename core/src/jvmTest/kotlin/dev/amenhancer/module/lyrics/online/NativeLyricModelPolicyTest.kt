@@ -452,4 +452,74 @@ class NativeLyricModelPolicyTest {
             }
         }
     }
+
+    private fun customRefresh(
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+    ) = NativeLyricModelPolicy.shouldRefreshPresentationAfterCustomOverlay(
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+    )
+
+    private fun customRefreshReason(
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+    ) = NativeLyricModelPolicy.customOverlayRefreshReason(
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+    )
+
+    /**
+     * HLE's supplement store update (`AppleSupplementDataReceive`) refreshes on
+     * `displayContentChanged` alone; the fork's custom overlay write is the same
+     * signal, so the post-overlay trigger must accept whenever a lane exists —
+     * including on the supplement pointer the build gate deliberately skips.
+     */
+    @Test
+    fun `the custom overlay trigger accepts any lane despite the supplement skip`() {
+        assertFalse(customRefresh())
+        assertTrue(customRefresh(onlineTranslation = true))
+        assertTrue(customRefresh(onlinePronunciation = true))
+        assertTrue(customRefresh(onlineTranslation = true, onlinePronunciation = true))
+        // The build gate denies exactly this state (`sourceIsApple=false`); the
+        // post-overlay trigger is the refresh the supplement path owns instead.
+        assertFalse(
+            NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
+                sourceIsApple = false,
+                hasValidOfficialPronunciation = false,
+                hasOnlineTranslation = true,
+                hasOnlinePronunciation = true,
+                pronunciationSelected = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `the custom overlay reason names the lane branch and never disagrees`() {
+        assertEquals(NativeLyricModelPolicy.REFRESH_REASON_NONE, customRefreshReason())
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_OVERLAY,
+            customRefreshReason(onlineTranslation = true),
+        )
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_OVERLAY,
+            customRefreshReason(onlinePronunciation = true),
+        )
+        listOf(true, false).forEach { translation ->
+            listOf(true, false).forEach { pronunciation ->
+                val reason = customRefreshReason(
+                    onlineTranslation = translation,
+                    onlinePronunciation = pronunciation,
+                )
+                assertEquals(
+                    "translation=$translation pronunciation=$pronunciation",
+                    customRefresh(
+                        onlineTranslation = translation,
+                        onlinePronunciation = pronunciation,
+                    ),
+                    reason != NativeLyricModelPolicy.REFRESH_REASON_NONE,
+                )
+            }
+        }
+    }
 }

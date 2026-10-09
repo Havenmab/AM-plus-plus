@@ -178,6 +178,18 @@ object NativeLyricModelPolicy {
     const val REFRESH_REASON_NONE = "none"
 
     /**
+     * The reason of the fork's second, post-overlay refresh trigger: the custom
+     * lyric-model overlay was just written for the current track. HLE's own
+     * supplement path refreshes on exactly this signal — `AppleSupplementDataReceive`
+     * calls `refreshAppleLyricsSupplementPresentation` whenever the store receipt
+     * reports `displayContentChanged` — because a completion that arrives after
+     * the first presentation would otherwise never be re-presented. The custom
+     * document is the module's own, so the build gate's `sourceIsApple` rule
+     * (which deliberately skips a supplement pointer) does not apply here.
+     */
+    const val REFRESH_REASON_CUSTOM_OVERLAY = "custom-overlay"
+
+    /**
      * HLE's `ApplePronunciationPolicy.shouldRefreshPresentationAfterBuild`,
      * ported verbatim.
      *
@@ -221,6 +233,41 @@ object NativeLyricModelPolicy {
         hasOnlineTranslation || hasOnlinePronunciation -> REFRESH_REASON_ONLINE_LANE
         pronunciationSelected && hasValidOfficialPronunciation -> REFRESH_REASON_OFFICIAL_LANE
         else -> REFRESH_REASON_NONE
+    }
+
+    /**
+     * HLE's `AppleSupplementDataReceive` store-update decision, reduced to the
+     * fork's overlay: after a custom document's lane completion wrote the
+     * native overlay, re-present whenever there is a lane to show. HLE gates its
+     * refresh on `displayContentChanged`, not on the build gate's
+     * `sourceIsApple` rule, because a supplement pointer deliberately never
+     * refreshes from the build seam (Apple's track refresh makes the page
+     * twitch). This is the post-overlay half that then owns the re-presentation.
+     *
+     * The content-change half is the overlay revision the host state carries:
+     * an unchanged completion produces an unchanged state and is a no-op, so the
+     * function only has to answer "is there anything to re-present".
+     */
+    fun shouldRefreshPresentationAfterCustomOverlay(
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+    ): Boolean = hasOnlineTranslation || hasOnlinePronunciation
+
+    /**
+     * The [shouldRefreshPresentationAfterCustomOverlay] branch that fired, as a
+     * stable log token: [REFRESH_REASON_CUSTOM_OVERLAY] when the overlay has a
+     * lane, else [REFRESH_REASON_NONE]. The same inputs produce the same
+     * decision, so `reason=` and `detail=` can never disagree.
+     */
+    fun customOverlayRefreshReason(
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+    ): String {
+        val refresh = shouldRefreshPresentationAfterCustomOverlay(
+            hasOnlineTranslation = hasOnlineTranslation,
+            hasOnlinePronunciation = hasOnlinePronunciation,
+        )
+        return if (refresh) REFRESH_REASON_CUSTOM_OVERLAY else REFRESH_REASON_NONE
     }
 
     /**

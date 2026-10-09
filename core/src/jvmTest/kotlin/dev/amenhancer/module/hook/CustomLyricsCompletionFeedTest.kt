@@ -202,14 +202,59 @@ class CustomLyricsCompletionFeedTest {
         assertSame(pointer, session.readyReplacementFor(42L))
     }
 
+    @Test
+    fun `a successful completion asks for the post-overlay refresh once`() {
+        val requested = mutableListOf<Long>()
+        val feed = newFeed(onOverlayUpdated = { id -> requested += id }) { _, _ -> "merged" }
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+        feed.onDisplayed(42L)
+
+        // Once per (track, revision), like the enricher pass itself: this is the
+        // host's post-overlay refresh ask, not a per-presentation callback.
+        assertEquals(listOf(42L), requested)
+    }
+
+    @Test
+    fun `a completion that wrote no overlay never asks for a refresh`() {
+        var requested = 0
+        val feed = newFeed(onOverlayUpdated = { requested += 1 }) { _, _ -> null }
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+
+        // The enricher returned no merged document, so no overlay write happened
+        // and there is nothing to re-present.
+        assertEquals(0, requested)
+    }
+
+    @Test
+    fun `a throwing refresh callback fails open`() {
+        val lines = mutableListOf<String>()
+        val feed = newFeed(
+            log = { _, line -> lines += line },
+            onOverlayUpdated = { error("host exploded") },
+        ) { _, _ -> "merged" }
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+
+        // The completion still reports its inject line; the host callback is a
+        // best-effort side channel that must never fail the enrichment.
+        assertTrue(lines.any { it.contains("published=true") })
+    }
+
     private fun newFeed(
         executor: Executor = Executor { command -> command.run() },
         log: (Long, String) -> Unit = { _, _ -> },
+        onOverlayUpdated: (Long) -> Unit = {},
         enrich: (Long, String) -> String?,
     ): CustomLyricsCompletionFeed = CustomLyricsCompletionFeed(
         enrich = enrich,
         executor = executor,
         log = log,
+        onOverlayUpdated = onOverlayUpdated,
     )
 
     private fun entry(id: Long, sha256: String = REVISION) = CustomLyricsEntry(

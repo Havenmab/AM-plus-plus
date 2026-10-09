@@ -46,11 +46,25 @@ import java.util.concurrent.RejectedExecutionException
  * Every path fails open: a blank id, a missing remembered document, a rejecting
  * executor or a throwing enricher leaves the custom document displayed exactly as
  * it was.
+ *
+ * [onOverlayUpdated] is the other half of a successful completion: the overlay
+ * now holds the merged lanes, so the host asks for the presentation refresh that
+ * re-reads them (HLE's supplement path does the same from its store update,
+ * `AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`).
+ * It is a plain per-instance callback, never a global, wired by the host to the
+ * native lyric delivery it already owns; its default makes the feed a no-op for
+ * every caller that does not need it, and a throwing callback fails open.
  */
 class CustomLyricsCompletionFeed(
     private val enrich: (Long, String) -> String?,
     private val executor: Executor,
     private val log: (Long, String) -> Unit = { _, _ -> },
+    /**
+     * Invoked once per successful completion, after the enricher wrote the
+     * native overlay for the track. The host re-checks the overlay revision, so a
+     * completion that changed nothing is a no-op there.
+     */
+    private val onOverlayUpdated: (Long) -> Unit = {},
     private val maxTracks: Int = MAX_TRACKS,
 ) {
     private data class Document(val revision: String, val ttml: String)
@@ -135,6 +149,11 @@ class CustomLyricsCompletionFeed(
         // `publish` and the per-lane `translationSource`/`pronunciationSource`
         // line come from the enricher itself; this is the inject counterpart.
         log(appleMusicId, injectLine(appleMusicId, published = merged != null))
+        // Only a successful enrichment wrote the overlay. The refresh request is
+        // fail-open: a host callback that throws never fails the completion.
+        if (merged != null) {
+            runCatching { onOverlayUpdated(appleMusicId) }
+        }
     }
 
     private fun injectLine(appleMusicId: Long, published: Boolean): String =

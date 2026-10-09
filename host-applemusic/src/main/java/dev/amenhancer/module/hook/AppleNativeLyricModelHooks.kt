@@ -54,6 +54,16 @@ import java.util.concurrent.ConcurrentHashMap
  *    `languages=ja-Latn officialPronunciation=false` becoming `und-Latn`).
  *    The HLE probe is still evaluated, per call as HLE does, for the availability
  *    override and the diagnostic.
+ *  - The selection is deferrable and self-correcting. An empty/absent
+ *    `getPronunciationLanguages` vector at our call site means "Apple has not
+ *    answered yet", not "Apple has none": `setPronunciation` is then left alone
+ *    instead of being handed the third-party tag, which would displace the
+ *    Apple lane that arrives later (or select nothing and never retry). As soon
+ *    as Apple advertises its own lane — observed by a hook on the song's
+ *    `getPronunciationLanguages`, and re-checked from the pointer seam, the
+ *    availability overrides and the pronunciation line getter — the selection
+ *    runs again and Apple's lane wins. The `native-write` line carries
+ *    `appleLanguagesKnown=` and `deferred=` so the next device log proves it.
  *
  * Every step fails open: an unresolved profile target, a missing member name, a
  * malformed vector or a throwing getter leaves Apple's own value in place. The
@@ -93,6 +103,31 @@ internal class AppleNativeLyricModelHooks(
 
     @Volatile
     private var mandarinHidden: Boolean = false
+
+    /** The song object the last successful `setPronunciation` was applied to. */
+    @Volatile
+    private var selectedPronunciationSong: java.lang.ref.WeakReference<Any>? = null
+
+    @Volatile
+    private var selectedPronunciationLanguage: String? = null
+
+    /**
+     * True while the pronunciation selection is waiting for Apple to advertise
+     * its own lane. The line getter reads it to retry the decision on the next
+     * render instead of trusting the build-time deferral forever.
+     */
+    @Volatile
+    private var pronunciationSelectionDeferred: Boolean = false
+
+    /** The song whose model the current hooks were installed for. */
+    @Volatile
+    private var songNativeRef: java.lang.ref.WeakReference<Any>? = null
+
+    /** Guards our own `getPronunciationLanguages` reads from the query hook. */
+    private val pronunciationQueryGuard = ThreadLocal<Boolean>()
+
+    /** Guards `setPronunciation` re-entry through the availability override. */
+    private val pronunciationSelectionGuard = ThreadLocal<Boolean>()
 
     fun install() {
         if (!enabled) {
@@ -154,7 +189,16 @@ internal class AppleNativeLyricModelHooks(
 
     private fun ensureNativeModel(songNative: Any, viewModel: Any?) {
         val songId = nativeSongId(songNative)
+        if (songId != modelSongId) {
+            // A new track: never let the previous song's lane, selection or
+            // deferral leak into this one.
+            applePronunciationLanguages = emptyList()
+            selectedPronunciationSong = null
+            selectedPronunciationLanguage = null
+            pronunciationSelectionDeferred = false
+        }
         modelSongId = songId
+        songNativeRef = java.lang.ref.WeakReference(songNative)
         if (viewModel != null) {
             systemLyricsLanguage = call(
                 viewModel,
@@ -162,10 +206,10 @@ internal class AppleNativeLyricModelHooks(
             ) as? String
         }
         val languages = songPronunciationLanguages(songNative)
-        applePronunciationLanguages = languages
         mandarinHidden = isMandarinHidden(languages)
 
         installSongAvailabilityHooks(songNative.javaClass)
+        installPronunciationLanguageQueryHook(songNative.javaClass)
         val lines = nativeLines(songNative)
         // HLE-compatible per-call probe as the build-time reading, for the
         // diagnostic and for the "did Apple populate the lines yet" signal. It is
@@ -174,12 +218,13 @@ internal class AppleNativeLyricModelHooks(
         // lane behind it.
         val officialAtBuild = hasValidOfficialPronunciation(songNative)
         lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
-        val selectedLanguage = applyAppleNativePronunciationSelection(songNative, languages)
+        val selection = applyAppleNativePronunciationSelection(songNative, languages)
         reportNativeWrite(
             lines = lines,
             officialAtBuild = officialAtBuild,
             officialNow = hasValidOfficialPronunciation(songNative),
-            selectedLanguage = selectedLanguage,
+            languages = languages,
+            selection = selection,
         )
     }
 
@@ -209,11 +254,71 @@ internal class AppleNativeLyricModelHooks(
 
     /** Apple's advertised pronunciation languages; updates the cache when present. */
     private fun songPronunciationLanguages(songNative: Any?): List<String> {
-        val languages = vectorStrings(
-            call(songNative, AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD),
-        )
+        // Read under the guard: this is our own call, so the query hook must not
+        // re-enter the selection from under us (we run it explicitly after).
+        val languages = withPronunciationQueryGuard {
+            vectorStrings(
+                call(
+                    songNative,
+                    AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD,
+                ),
+            )
+        }
         if (languages.isNotEmpty()) applePronunciationLanguages = languages
         return languages
+    }
+
+    /**
+     * Apple's advertisement of its own pronunciation lane is itself the signal
+     * that a deferral can end: when the app asks `getPronunciationLanguages` and
+     * gets a non-empty vector, the selection runs again so Apple's own lane wins
+     * over the third-party tag, exactly as HLE's per-call selection would.
+     */
+    private fun installPronunciationLanguageQueryHook(clazz: Class<*>) {
+        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD]
+            ?: return
+        val method = AppleReflection.findMethodOrNull(clazz, name, parameterCount = 0) ?: return
+        if (!installed.add("query:${method.declaringClass.name}#${method.name}")) return
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                if (pronunciationQueryGuard.get() == true) return
+                val song = param.thisObject ?: return
+                runCatching {
+                    val languages = vectorStrings(param.result)
+                    if (languages.isEmpty()) return@runCatching
+                    // A preloaded next track may be queried on the same class:
+                    // never let its lane or selection leak into the current model.
+                    val songId = nativeSongId(song)
+                    if (songId > 0L && songId != modelSongId) return@runCatching
+                    applePronunciationLanguages = languages
+                    applyAppleNativePronunciationSelection(song, languages)
+                }.onFailure { error ->
+                    log(
+                        "online-translation native-write language re-select failed: " +
+                            "${error.message}",
+                    )
+                }
+            }
+        }, scope)
+    }
+
+    /**
+     * Re-runs a deferred selection once a later entry point sees Apple's lane.
+     * Called from the availability overrides, the pronunciation line getter and
+     * the preferred-language request so the build-time decision can never be
+     * final by itself.
+     */
+    private fun maybeRefreshDeferredPronunciationSelection() {
+        if (!pronunciationSelectionDeferred) return
+        val song = songNativeRef?.get() ?: return
+        runCatching {
+            val languages = songPronunciationLanguages(song)
+            if (languages.isNotEmpty()) {
+                applyAppleNativePronunciationSelection(song, languages)
+            }
+        }.onFailure { error ->
+            log("online-translation native-write deferred re-select failed: ${error.message}")
+        }
     }
 
     private fun isMandarinHidden(languages: List<String>): Boolean =
@@ -242,17 +347,26 @@ internal class AppleNativeLyricModelHooks(
         ).forEach { member ->
             installBooleanAvailability(clazz, member) { song, original ->
                 // Per call, exactly as HLE re-runs `hasValidOfficialRomanization`
-                // from this override. Apple's advertised Latin lane is itself
-                // proof of an official pronunciation, so availability never
-                // withdraws Apple's own value while the per-line probe is still
-                // empty.
+                // from this override.
                 val languages = songPronunciationLanguages(song)
+                // This override is a later entry point: re-run a deferred
+                // selection so a lane that arrived after the build seam is
+                // selected here rather than trusting the stale decision.
+                if (languages.isNotEmpty()) {
+                    applyAppleNativePronunciationSelection(song, languages)
+                }
+                // Apple's advertised Latin lane is itself proof of an official
+                // pronunciation, so availability never withdraws Apple's own
+                // value while the per-line probe is still empty. Keep the last
+                // non-empty advertisement so a transient empty read cannot
+                // withdraw it either.
+                val advertised = languages.ifEmpty { applePronunciationLanguages }
                 NativeLyricModelPolicy.hasPronunciationAvailability(
                     original = original,
                     enabled = enabled,
                     hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
                     hasValidOfficialPronunciation = hasValidOfficialPronunciation(song) ||
-                        NativeLyricModelPolicy.officialPronunciationLanguage(languages) != null,
+                        NativeLyricModelPolicy.officialPronunciationLanguage(advertised) != null,
                     mandarinHidden = isMandarinHidden(languages),
                 )
             }
@@ -260,27 +374,59 @@ internal class AppleNativeLyricModelHooks(
     }
 
     /**
-     * HLE's `applyAppleNativePronunciationSelection`: hand the app's own setter
-     * Apple's official Latin language when the song advertises one, otherwise the
-     * third-party fallback. Apple's own lane always wins, so the third-party
-     * language can never displace it. Skipped entirely while the Mandarin rule
-     * hides the song. Returns the language that was selected, for the diagnostic.
+     * HLE's `applyAppleNativePronunciationSelection`, made deferrable: hand the
+     * app's own setter Apple's official Latin language when the song advertises
+     * one, the third-party fallback when Apple advertises a list without a lane of
+     * its own, and nothing at all while Apple's answer is still unknown (an
+     * empty/absent `getPronunciationLanguages`). Leaving `setPronunciation` alone
+     * is what stops the third-party tag from displacing Apple's later-arriving
+     * lane. Every later entry point calls this again, so the deferral ends as soon
+     * as Apple advertises. Skipped entirely while the Mandarin rule hides the
+     * song. Returns the plan, for the diagnostic.
      */
     private fun applyAppleNativePronunciationSelection(
         songNative: Any,
         languages: List<String>,
-    ): String? {
-        if (mandarinHidden) return null
-        val language = NativeLyricModelPolicy.selectPronunciationLanguage(
+    ): NativeLyricModelPolicy.PronunciationSelectionPlan {
+        if (mandarinHidden) {
+            pronunciationSelectionDeferred = false
+            return NativeLyricModelPolicy.PronunciationSelectionPlan(
+                language = null,
+                deferred = false,
+                appleLanguagesKnown = languages.isNotEmpty(),
+            )
+        }
+        val plan = NativeLyricModelPolicy.planPronunciationSelection(
             appleLanguages = languages,
             thirdPartyFallbackLanguage = fallbackLanguage(languages),
-        ) ?: return null
-        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SET_PRONUNCIATION_METHOD] ?: return null
-        runCatching { AppleReflection.call(songNative, name, language) }
-            .onFailure { error ->
-                log("online-translation native-write selectPronunciation failed: ${error.message}")
-            }
-        return language
+        )
+        pronunciationSelectionDeferred = plan.deferred
+        val language = plan.language ?: return plan
+        if (
+            language == selectedPronunciationLanguage &&
+            selectedPronunciationSong?.get() === songNative
+        ) {
+            return plan
+        }
+        if (pronunciationSelectionGuard.get() == true) return plan
+        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SET_PRONUNCIATION_METHOD]
+            ?: return plan
+        // setPronunciation re-enters through the availability override; the guard
+        // keeps that from recursing back into this method.
+        pronunciationSelectionGuard.set(true)
+        try {
+            runCatching { AppleReflection.call(songNative, name, language) }
+                .onSuccess {
+                    selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
+                    selectedPronunciationLanguage = language
+                }
+                .onFailure { error ->
+                    log("online-translation native-write selectPronunciation failed: ${error.message}")
+                }
+        } finally {
+            pronunciationSelectionGuard.remove()
+        }
+        return plan
     }
 
     private fun installLineTextHooks(clazz: Class<*>) {
@@ -297,6 +443,9 @@ internal class AppleNativeLyricModelHooks(
             if (mandarinHidden) {
                 ""
             } else {
+                // The line getter is a later entry point: retry a deferred
+                // selection here so it cannot stay deferred for the whole track.
+                maybeRefreshDeferredPronunciationSelection()
                 val text = rawLineText(line)
                 RomanizationPolicy.sanitize(text, original) ?: onlinePronunciation(line, text)
             }
@@ -368,6 +517,10 @@ internal class AppleNativeLyricModelHooks(
             ModernXposedRuntime.hookMethod(constructor, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     runCatching {
+                        // The preferred-language request is built once the app has
+                        // resolved its own language lists: another chance to end a
+                        // deferral before the request is assembled.
+                        maybeRefreshDeferredPronunciationSelection()
                         (param.args.getOrNull(translationIndex) as? Array<*>)?.let { values ->
                             param.args[translationIndex] = expandAppleLyricsTranslationLanguages(
                                 values.filterIsInstance<String>(),
@@ -452,28 +605,34 @@ internal class AppleNativeLyricModelHooks(
      * `officialPronunciation` is the per-call reading that now drives the
      * decision; `officialAtBuild` is the old build-time reading, kept so a log
      * can show the two diverging; `officialLanguage` is Apple's advertised own
-     * lane and `selectedLanguage` what `setPronunciation` was handed.
+     * lane, `selectedLanguage` what `setPronunciation` was handed,
+     * `appleLanguagesKnown` whether Apple's language vector was populated at this
+     * call and `deferred` whether the pass deliberately declined to select while
+     * Apple had not answered.
      */
     private fun reportNativeWrite(
         lines: List<Any>,
         officialAtBuild: Boolean,
         officialNow: Boolean,
-        selectedLanguage: String?,
+        languages: List<String>,
+        selection: NativeLyricModelPolicy.PronunciationSelectionPlan,
     ) {
         val songId = modelSongId
         val translationLines = lines.count { onlineTranslation(it) != null }
         val pronunciationLines = lines.count { onlinePronunciation(it, rawLineText(it)) != null }
-        val officialLanguage = NativeLyricModelPolicy.officialPronunciationLanguage(applePronunciationLanguages)
+        val officialLanguage = NativeLyricModelPolicy.officialPronunciationLanguage(languages)
         diagnostic.log(
             songId,
             "online-translation native-write id=$songId " +
                 "translationLines=$translationLines " +
                 "pronunciationLines=$pronunciationLines " +
-                "languages=${applePronunciationLanguages.joinToString(",")} " +
+                "languages=${languages.joinToString(",")} " +
                 "officialPronunciation=$officialNow " +
                 "officialAtBuild=$officialAtBuild " +
                 "officialLanguage=${officialLanguage ?: NONE} " +
-                "selectedLanguage=${selectedLanguage ?: NONE} " +
+                "selectedLanguage=${selection.language ?: NONE} " +
+                "appleLanguagesKnown=${selection.appleLanguagesKnown} " +
+                "deferred=${selection.deferred} " +
                 "mandarinHidden=$mandarinHidden",
         )
     }
@@ -558,6 +717,16 @@ internal class AppleNativeLyricModelHooks(
             block()
         } finally {
             if (previous == null) rawRead.remove() else rawRead.set(previous)
+        }
+    }
+
+    private fun <T> withPronunciationQueryGuard(block: () -> T): T {
+        val previous = pronunciationQueryGuard.get()
+        pronunciationQueryGuard.set(true)
+        return try {
+            block()
+        } finally {
+            if (previous == null) pronunciationQueryGuard.remove() else pronunciationQueryGuard.set(previous)
         }
     }
 

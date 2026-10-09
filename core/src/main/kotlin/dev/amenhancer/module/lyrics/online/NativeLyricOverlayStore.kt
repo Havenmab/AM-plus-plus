@@ -244,6 +244,50 @@ object NativeLyricModelPolicy {
         thirdPartyFallbackLanguage: String?,
     ): String? = officialPronunciationLanguage(appleLanguages) ?: thirdPartyFallbackLanguage
 
+    /**
+     * One planned `applyAppleNativePronunciationSelection` pass: the language to
+     * hand the song's `setPronunciation` (null = leave Apple's selection alone),
+     * whether the pass deferred because Apple's answer is not known yet, and
+     * whether Apple's answer was known at this call site.
+     *
+     * [deferred] is the timing state PR #9 could not express: at the build/pointer
+     * seam Apple's `getPronunciationLanguages` is often still empty because the
+     * model has not been populated yet, and an empty vector means "not known yet",
+     * not "Apple has none". In that state the third-party tag must not be handed
+     * to `setPronunciation` — doing so displaces the Apple lane that arrives
+     * later, or does nothing and is never retried. The decision is re-evaluated
+     * at the later entry points (the pronunciation-language query, availability
+     * and line getters), so once the vector is non-empty Apple's own lane wins.
+     */
+    data class PronunciationSelectionPlan(
+        val language: String?,
+        val deferred: Boolean,
+        val appleLanguagesKnown: Boolean,
+    )
+
+    /**
+     * Plans the native pronunciation selection, deferring while Apple's answer is
+     * unknown. An empty/absent language vector defers (and selects nothing); a
+     * non-empty vector concludes exactly as [selectPronunciationLanguage] does,
+     * with Apple's advertised lane beating the third-party tag.
+     */
+    fun planPronunciationSelection(
+        appleLanguages: List<String>,
+        thirdPartyFallbackLanguage: String?,
+    ): PronunciationSelectionPlan {
+        val known = appleLanguages.isNotEmpty()
+        val language = if (known) {
+            selectPronunciationLanguage(appleLanguages, thirdPartyFallbackLanguage)
+        } else {
+            null
+        }
+        return PronunciationSelectionPlan(
+            language = language,
+            deferred = language == null && !known,
+            appleLanguagesKnown = known,
+        )
+    }
+
     /** HLE's `hasTranslation` / `setTranslation` availability resolution. */
     fun hasTranslationAvailability(
         original: Boolean,

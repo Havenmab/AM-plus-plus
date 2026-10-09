@@ -164,6 +164,9 @@ class ApplePresentationRefreshWiringTest {
         // `adapter=` proves whether the rebind resolved one, and `state=` proves
         // a `not-bound` abort cleared the state for a later retry.
         assertTrue(hooks.contains("detail=\$detail"))
+        // `reload=` proves whether the app's own `loadLyrics` was re-invoked
+        // (the fresh-model path a foreground uses) and why it was skipped.
+        assertTrue(hooks.contains("reload=\$reload"))
         // `trigger=` proves which of the three asks re-presented the page:
         // `build`, `custom-overlay` (the custom completion's post-overlay ask) or
         // `f2-retry` (the binding seam re-dispatching a lost ask).

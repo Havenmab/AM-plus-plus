@@ -353,7 +353,7 @@ internal class AppleNativeLyricModelHooks(
                 // selection so a lane that arrived after the build seam is
                 // selected here rather than trusting the stale decision.
                 if (languages.isNotEmpty()) {
-                    applyAppleNativePronunciationSelection(song, languages)
+                    song?.let { applyAppleNativePronunciationSelection(it, languages) }
                 }
                 // Apple's advertised Latin lane is itself proof of an official
                 // pronunciation, so availability never withdraws Apple's own

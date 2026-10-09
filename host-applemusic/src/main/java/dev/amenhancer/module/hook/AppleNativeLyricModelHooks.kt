@@ -108,6 +108,18 @@ import java.util.concurrent.ConcurrentHashMap
  *    `ensureAppleLyricTextHooks` — then the selection) so the re-presentation
  *    picks up both the online translation and the pronunciation lane, not only
  *    the lane the build gate happened to catch.
+ *  - A late-lane ask is the third trigger: Apple's own pronunciation lane often
+ *    becomes available *after* the build (`native-write … officialAtBuild=false`
+ *    then `true`, while the gate's own line already said `rebound`). A song with
+ *    Apple's lyrics and no online source has no overlay write, so nothing asked
+ *    again and the romanization only appeared after backgrounding. The
+ *    `getPronunciationLanguages` query hook and the availability override (both
+ *    the app's own reads, after the build) call [onPronunciationLaneReady], which
+ *    dedupes on the (song, lane, per-line probe) edge and requests the same
+ *    guarded refresh, tagged `trigger=lane-ready`. A lane-ready that coincides
+ *    with a build for the same lane state is a no-op
+ *    (`PresentationRefreshState.sameLaneRefresh`); the build gate never consumes
+ *    the edge because it only reads [pronunciationLaneRevision].
  *  - A latched refresh also reproduces the mechanism a background→foreground
  *    cycle uses: the app's own `PlayerLyricsViewModel#loadLyrics` is re-invoked
  *    with the exact (view model, PlaybackItem) pair Apple itself passed
@@ -117,10 +129,10 @@ import java.util.concurrent.ConcurrentHashMap
  *    builds a fresh model, which is what actually made the lane appear. The
  *    reload is attempted only for Apple's own document (`sourceIsApple`) — on a
  *    module supplement pointer HLE deliberately lets the supplement path own its
- *    re-presentation — and is bounded to once per (song, overlay revision) by
- *    `lastReloadKey`, so our own reload can never loop back through the build
- *    gate. `reload=` on the `presentation-refresh` line records the decision and
- *    the outcome.
+ *    re-presentation — and is bounded to once per (song, overlay revision, lane
+ *    revision) by `lastReloadKey`, so our own reload can never loop back through
+ *    the build gate. `reload=` on the `presentation-refresh` line records the
+ *    decision and the outcome.
  *  - `render-probe` lines prove the app re-read the overrides after a refresh
  *    attempt: the line getter, the word getter and the app's word-render adapter
  *    report a deduped, per-track-bounded `online-translation render-probe
@@ -233,6 +245,30 @@ internal class AppleNativeLyricModelHooks(
      */
     @Volatile
     private var pronunciationSelectionOpen: Boolean = false
+
+    /**
+     * The lane-ready edge, part of every [PresentationRefreshState]: bumped once
+     * per (song, Apple lane) by [onPronunciationLaneReady] from a seam that
+     * runs *after* Apple advertises its lane — its own `getPronunciationLanguages`
+     * read or an availability query. The build gate reads the current value but
+     * never bumps it, so the gate cannot consume the edge: a gate that ran before
+     * the advertisement records the old revision and the later lane-ready ask is
+     * a new state, while a lane-ready coinciding with a gate that already saw the
+     * same lane state is suppressed by
+     * [PresentationRefreshState.sameLaneRefresh]. Reset with the rest of the
+     * per-song state on a track change.
+     */
+    @Volatile
+    private var pronunciationLaneRevision: Long = 0L
+
+    /**
+     * The (song, Apple lane) the last lane-ready edge was counted for.
+     * [pronunciationLaneRevision] is only bumped when this changes, so the app's
+     * repeated `getPronunciationLanguages` reads during one bind can never
+     * request a refresh per read (the anti-thrash half of the lane trigger).
+     */
+    @Volatile
+    private var laneReadyKey: String? = null
 
     /** The song whose model the current hooks were installed for. */
     @Volatile
@@ -347,13 +383,16 @@ internal class AppleNativeLyricModelHooks(
      * `trigger=` diagnostic field. [BUILD] is HLE's build-after gate,
      * [CUSTOM_OVERLAY] is the custom-lyrics completion feed's post-overlay ask —
      * the fork's replacement for the refresh HLE's own supplement store runs when
-     * its content changes — and [F2_RETRY] is the native-presentation (R2/F2)
+     * its content changes — [LANE_READY] is the late pronunciation lane becoming
+     * available *after* the build (the reported "Apple's own romanization only
+     * after backgrounding"), and [F2_RETRY] is the native-presentation (R2/F2)
      * seam re-dispatching an accepted refresh whose first attempt could not reach
      * the page.
      */
     private enum class PresentationRefreshTrigger(val token: String) {
         BUILD("build"),
         CUSTOM_OVERLAY("custom-overlay"),
+        LANE_READY("lane-ready"),
         F2_RETRY("f2-retry"),
     }
 
@@ -362,9 +401,18 @@ internal class AppleNativeLyricModelHooks(
      * key, so any signal that can change after a build — a new overlay revision,
      * Apple advertising its lane, the supplement pointer resolving to Apple's
      * document, the Mandarin rule — is a new state, while an unchanged re-build
-     * is not. [trigger] names which of the two triggers decided it, so a custom
+     * is not. [trigger] names which of the triggers decided it, so a custom
      * overlay write and a build for the same revision are distinct states and
      * neither can swallow the other's refresh.
+     *
+     * [laneRevision] is the lane-ready edge: it is bumped once per (song, lane)
+     * by [onPronunciationLaneReady] from a seam that runs *after* Apple
+     * advertises its lane (the `getPronunciationLanguages` query hook or the
+     * availability override). The build gate reads it but never bumps it, so a
+     * gate that ran before the advertisement carries the old revision and the
+     * later lane-ready ask is a different state, while a lane-ready that
+     * coincides with a gate that already saw the same lane is the same state and
+     * is a no-op (`sameLaneRefresh`).
      */
     private data class PresentationRefreshState(
         val trigger: PresentationRefreshTrigger,
@@ -376,16 +424,38 @@ internal class AppleNativeLyricModelHooks(
         val onlineTranslation: Boolean,
         val onlinePronunciation: Boolean,
         val pronunciationSelected: Boolean,
-    )
+        val laneRevision: Long,
+    ) {
+        /**
+         * Equality of everything the *lane-ready* trigger dedupes on, i.e. the
+         * whole state minus the trigger. Two asks with the same lane state must
+         * not refresh twice even when one is the build gate and the other the
+         * late lane-ready edge; the trigger stays part of full equality so the
+         * custom-overlay ask is never swallowed by a build for the same
+         * revision.
+         */
+        fun sameLaneRefresh(other: PresentationRefreshState): Boolean =
+            copy(trigger = other.trigger) == other
+    }
 
     /**
-     * The reload's hard dedupe: one app `loadLyrics` per (song, overlay revision).
-     * The overlay revision is the only content revision that can make a *new* lane
-     * appear, so a reload for an unchanged revision could not change the outcome
-     * and is exactly what would loop — our own reload triggers a build, and the
-     * build would otherwise ask for a reload again.
+     * The reload's hard dedupe: one app `loadLyrics` per
+     * (song, overlay revision, lane revision).
+     *
+     * The two content revisions that can make a *new* lane appear are the overlay
+     * write and the late lane-ready edge, so a reload for an unchanged pair could
+     * not change the outcome and is exactly what would loop — our own reload
+     * triggers a build, and the build would otherwise ask for a reload again.
+     * [laneRevision] is included because the lane-ready ask must be able to
+     * rebuild the model *after* the build gate already reloaded the same overlay
+     * revision; it is bumped only on a real lane edge, so the bound is a bounded
+     * number of reloads per track, not a loop.
      */
-    private data class ReloadKey(val songId: Long, val overlayRevision: Long)
+    private data class ReloadKey(
+        val songId: Long,
+        val overlayRevision: Long,
+        val laneRevision: Long,
+    )
 
     fun install() {
         if (!enabled) {
@@ -646,6 +716,10 @@ internal class AppleNativeLyricModelHooks(
             onlineTranslation = onlineTranslation,
             onlinePronunciation = onlinePronunciation,
             pronunciationSelected = pronunciationSelected,
+            // Read, never bumped: the gate must not consume the lane-ready edge.
+            // If Apple already advertised before this build, the revision matches
+            // the later lane-ready ask and `sameLaneRefresh` suppresses it.
+            laneRevision = pronunciationLaneRevision,
         )
         val reason = refreshReason(state)
         val shouldRefresh = NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
@@ -658,7 +732,19 @@ internal class AppleNativeLyricModelHooks(
         // An unchanged state has already been decided (and, when accepted,
         // refreshed). This is what keeps the re-presentation's own build from
         // looping: the gate holds again but the state matches.
-        if (state == lastPresentationRefreshState) return
+        val lastState = lastPresentationRefreshState
+        if (state == lastState) return
+        // The lane-ready reload builds synchronously inside the attempt that
+        // latched it, so the gate runs again with the same (bumped) lane revision
+        // and could ask for a second refresh of the state that was just applied.
+        // Only a preceding *lane-ready* for this exact lane state is suppressed —
+        // a preceding custom-overlay stays a distinct state, as before.
+        if (lastState != null &&
+            lastState.trigger == PresentationRefreshTrigger.LANE_READY &&
+            state.sameLaneRefresh(lastState)
+        ) {
+            return
+        }
         lastPresentationRefreshState = state
         // A different state supersedes any accepted-but-unapplied refresh; the
         // same state may still be pending because its earlier attempt aborted
@@ -758,6 +844,7 @@ internal class AppleNativeLyricModelHooks(
             onlineTranslation = onlineTranslation,
             onlinePronunciation = onlinePronunciation,
             pronunciationSelected = enabled && !mandarinHidden,
+            laneRevision = pronunciationLaneRevision,
         )
         // Once per (song, overlay revision): a completion that changed no overlay
         // content recomputes the same state and is a no-op.
@@ -794,6 +881,124 @@ internal class AppleNativeLyricModelHooks(
     }
 
     /**
+     * The late-lane trigger: Apple's own pronunciation lane became available
+     * *after* the model build.
+     *
+     * The build gate (HLE's `shouldRefreshPresentationAfterBuild`) runs at the
+     * same instant as the build. The device log's
+     * `presentation-refresh … detail=rebound trigger=build` at `.208/.241` sits
+     * beside `native-write … officialAtBuild=false` at `.198`: the model exists
+     * before the per-line lane is populated, and nothing asks again. A song with
+     * an online source is rescued by the completion feed's overlay write seconds
+     * later, but a song with Apple's own lyrics and no source has no overlay
+     * write at all, so its only remaining trigger is a background→foreground
+     * cycle that re-creates the page — the user's report.
+     *
+     * This is called from the two seams that run *after* the lane exists and on
+     * the app's own read, never ours:
+     *  - the `getPronunciationLanguages` query hook, when Apple itself asks and
+     *    gets a non-empty vector (the advertisement *is* the lane), and
+     *  - the `hasPronunciation`/`setPronunciation` availability override, which
+     *    already evaluates the per-line probe on every call, so the
+     *    `officialAtBuild=false → true` transition is caught even when the
+     *    advertised language never changed.
+     *
+     * Exactly the custom-overlay ask's guarantees, plus the lane edge:
+     *  - main-handler posted, so it lands after Apple's current presentation;
+     *  - once per (song, lane, probe) edge — the edge key is
+     *    [NativeLyricModelPolicy.pronunciationLaneReadyKey] — via the shared
+     *    [lastPresentationRefreshState], compared with
+     *    [PresentationRefreshState.sameLaneRefresh] so a lane-ready that
+     *    coincides with a gate for the *same* lane state does not refresh twice,
+     *    while a gate that ran before the lane appeared carries the old
+     *    [pronunciationLaneRevision] and cannot swallow the later ask;
+     *  - expected-song checked here and again against the bound pointer in
+     *    [performPresentationRefresh];
+     *  - our own invoke is ignored through [presentationInvokeGuard], and the
+     *    reload it performs is bounded by [ReloadKey] (which includes
+     *    [pronunciationLaneRevision]), so the re-presentation's build cannot
+     *    re-enter this trigger and our own reload cannot loop;
+     *  - Apple's own document only: a supplement pointer's lanes are its
+     *    overlay's job and the custom-overlay trigger owns that
+     *    re-presentation, so the build gate's `sourceIsApple` rule is kept.
+     */
+    private fun onPronunciationLaneReady(
+        songNative: Any?,
+        officialLane: String?,
+        officialProbe: Boolean,
+    ) {
+        if (!enabled || nativeNames.isEmpty()) return
+        if (presentationInvokeGuard.get() == true) return
+        if (songNative == null) return
+        val songId = nativeSongId(songNative)
+        if (songId <= 0L || !isCurrentSong(songNative)) return
+        if (isModuleSupplementSong(songId)) return
+        if (!officialProbe && officialLane == null) return
+        val key = NativeLyricModelPolicy.pronunciationLaneReadyKey(
+            songId = songId,
+            officialLane = officialLane,
+            hasValidOfficialPronunciation = officialProbe,
+        )
+        // The anti-thrash half: the app reads `getPronunciationLanguages` and
+        // the per-line availability many times during one bind; only a *new*
+        // (lane, probe) edge bumps the revision and asks for a refresh.
+        if (key == laneReadyKey) return
+        laneReadyKey = key
+        pronunciationLaneRevision += 1
+
+        val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
+        val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
+        val state = PresentationRefreshState(
+            trigger = PresentationRefreshTrigger.LANE_READY,
+            songId = songId,
+            overlayRevision = overlay.revision(),
+            sourceIsApple = true,
+            officialPronunciation = officialProbe || officialLane != null,
+            officialLane = officialLane,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = enabled && !mandarinHidden,
+            laneRevision = pronunciationLaneRevision,
+        )
+        // The lane state, not the trigger, is the dedupe key for this ask: a
+        // build that already refreshed this exact lane state must not be
+        // repeated. `laneRevision` makes a later appearance a different state.
+        val last = lastPresentationRefreshState
+        if (last != null && state.sameLaneRefresh(last)) return
+        lastPresentationRefreshState = state
+        // A newer lane state supersedes an accepted-but-unapplied ask; a pending
+        // custom-overlay ask is preserved for its own next revision, exactly as
+        // the build gate preserves it.
+        if (pendingPresentationRefresh?.trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY) {
+            pendingPresentationRefresh = null
+        }
+
+        val reason = refreshReason(state)
+        logPresentationRefresh(
+            songId = songId,
+            reason = reason,
+            hasValidOfficialPronunciation = state.officialPronunciation,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = state.pronunciationSelected,
+            refreshed = false,
+            detail = DETAIL_LANE_READY,
+            adapterName = null,
+            stateCleared = false,
+            // The latched attempt re-invokes the app's own `loadLyrics`, the
+            // fresh-model path a background→foreground cycle uses; `laneRevision`
+            // is part of the reload key, so it is exactly once per lane edge even
+            // when the build gate already reloaded for the same overlay revision.
+            reload = reloadIntent(state, shouldRefresh = true),
+            trigger = PresentationRefreshTrigger.LANE_READY.token,
+        )
+        pendingPresentationRefresh = state
+        mainHandler.post {
+            performPresentationRefresh(state, PresentationRefreshTrigger.LANE_READY)
+        }
+    }
+
+    /**
      * The [PresentationRefreshState]'s reason, from the trigger that decided it:
      * the build gate keeps HLE's `sourceIsApple`/online/official rule, while the
      * post-overlay trigger uses the store-update rule (a lane exists in the
@@ -808,6 +1013,7 @@ internal class AppleNativeLyricModelHooks(
                     hasOnlinePronunciation = state.onlinePronunciation,
                 )
             PresentationRefreshTrigger.BUILD,
+            PresentationRefreshTrigger.LANE_READY,
             PresentationRefreshTrigger.F2_RETRY -> NativeLyricModelPolicy.presentationRefreshReason(
                 sourceIsApple = state.sourceIsApple,
                 hasValidOfficialPronunciation = state.officialPronunciation,
@@ -1010,8 +1216,11 @@ internal class AppleNativeLyricModelHooks(
     ): String = when {
         !state.sourceIsApple -> RELOAD_SKIPPED_SUPPLEMENT
         !shouldRefresh -> RELOAD_SKIPPED_GATE
-        lastReloadKey == ReloadKey(state.songId, state.overlayRevision) ->
-            RELOAD_SKIPPED_SAME_REVISION
+        lastReloadKey == ReloadKey(
+            state.songId,
+            state.overlayRevision,
+            state.laneRevision,
+        ) -> RELOAD_SKIPPED_SAME_REVISION
         else -> RELOAD_REQUESTED
     }
 
@@ -1034,15 +1243,15 @@ internal class AppleNativeLyricModelHooks(
      *
      * Runs on the main handler after the presentation invoke has returned (so
      * [presentationInvokeGuard] is clear), checks the expected song against the
-     * remembered item, is bounded to once per (song, overlay revision) by
-     * [lastReloadKey], and is fully fail-open. The key is recorded before the
-     * invoke, so a synchronous build from our own load can never ask for a second
-     * reload.
+     * remembered item, is bounded to once per (song, overlay revision, lane
+     * revision) by [lastReloadKey], and is fully fail-open. The key is recorded
+     * before the invoke, so a synchronous build from our own load can never ask
+     * for a second reload.
      */
     private fun reloadLyricsForRefresh(state: PresentationRefreshState): String {
         if (!state.sourceIsApple) return RELOAD_SKIPPED_SUPPLEMENT
         if (presentationInvokeGuard.get() == true) return RELOAD_SKIPPED_INVOKE_GUARD
-        val key = ReloadKey(state.songId, state.overlayRevision)
+        val key = ReloadKey(state.songId, state.overlayRevision, state.laneRevision)
         if (lastReloadKey == key) return RELOAD_SKIPPED_SAME_REVISION
         val method = lyricsLoadMethod ?: return RELOAD_SKIPPED_NO_METHOD
         val viewModel = loadViewModelRef?.get() ?: return RELOAD_SKIPPED_NO_VIEW_MODEL
@@ -1114,6 +1323,11 @@ internal class AppleNativeLyricModelHooks(
             selectedPronunciationSong = null
             selectedPronunciationLanguage = null
             pronunciationSelectionOpen = false
+            // The lane-ready edge is per song: the new track's own advertisement
+            // must be able to request its own refresh, and must not inherit the
+            // previous track's revision.
+            pronunciationLaneRevision = 0L
+            laneReadyKey = null
         }
         modelSongId = songId
         songNativeRef = java.lang.ref.WeakReference(songNative)
@@ -1217,8 +1431,18 @@ internal class AppleNativeLyricModelHooks(
                     // never let its lane or selection leak into the current model.
                     val songId = nativeSongId(song)
                     if (songId > 0L && songId != modelSongId) return@runCatching
+                    val language = NativeLyricModelPolicy.officialPronunciationLanguage(languages)
                     applePronunciationLanguages = languages
                     applyAppleNativePronunciationSelection(song, languages)
+                    // The app's own read of the advertisement is the lane-ready
+                    // edge: this seam runs after the build, so a lane Apple only
+                    // advertised later is exactly what nothing used to re-ask
+                    // for. The query guard above keeps our own reads out.
+                    onPronunciationLaneReady(
+                        songNative = song,
+                        officialLane = language,
+                        officialProbe = language != null,
+                    )
                 }.onFailure { error ->
                     log(
                         "online-translation native-write language re-select failed: " +
@@ -1314,12 +1538,27 @@ internal class AppleNativeLyricModelHooks(
                 // non-empty advertisement so a transient empty read cannot
                 // withdraw it either.
                 val advertised = advertisedPronunciationLanguages(languages)
+                val officialLane =
+                    NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
+                val officialProbe = hasValidOfficialPronunciation(song)
+                // The app's own availability query is the second lane-ready seam:
+                // it runs after the build and re-evaluates the per-line probe, so
+                // the `officialAtBuild=false → true` transition is caught even if
+                // the advertised language never changed. Our own selection's
+                // `setPronunciation` re-enters here; the selection guard keeps it
+                // from counting the edge before the build gate has run.
+                if (pronunciationSelectionGuard.get() != true) {
+                    onPronunciationLaneReady(
+                        songNative = song,
+                        officialLane = officialLane,
+                        officialProbe = officialProbe,
+                    )
+                }
                 NativeLyricModelPolicy.hasPronunciationAvailability(
                     original = original,
                     enabled = enabled,
                     hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
-                    hasValidOfficialPronunciation = hasValidOfficialPronunciation(song) ||
-                        NativeLyricModelPolicy.officialPronunciationLanguage(advertised) != null,
+                    hasValidOfficialPronunciation = officialProbe || officialLane != null,
                     mandarinHidden = isMandarinHidden(languages),
                 )
             }
@@ -2318,6 +2557,15 @@ internal class AppleNativeLyricModelHooks(
         /** `state=` tokens: whether the dedupe state was cleared for a retry. */
         const val STATE_CLEARED = "cleared"
         const val STATE_LATCHED = "latched"
+
+        /**
+         * The `detail=` token of the lane-ready decision line. The attempt line
+         * keeps the outcome token (`rebound`/`not-bound`/…), so the pair
+         * `detail=lane-ready trigger=lane-ready` proves the late-lane ask
+         * reached the page and answers the two known triggers (`build`,
+         * `custom-overlay`).
+         */
+        const val DETAIL_LANE_READY = "lane-ready"
 
         /**
          * `result=` tokens on a `render-probe` line: what the app's own read was

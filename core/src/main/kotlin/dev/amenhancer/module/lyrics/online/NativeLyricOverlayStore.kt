@@ -327,6 +327,26 @@ object NativeLyricModelPolicy {
     }
 
     /**
+     * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.
+     * The late-lane trigger fires when this key *changes*, so:
+     *
+     *  - Apple advertising a lane the build had not seen is a new edge;
+     *  - a lane whose per-line text only populated after the build
+     *    (`officialAtBuild=false` then `true`, the reported device sequence) is a
+     *    new edge even though the advertised language is unchanged;
+     *  - the app's repeated `getPronunciationLanguages` reads of one settled lane
+     *    produce the same key and are suppressed, which is the anti-thrash half.
+     *
+     * Kept pure so the edge rule is covered by JVM tests; the host resolves the
+     * values and stores the key per track.
+     */
+    fun pronunciationLaneReadyKey(
+        songId: Long,
+        officialLane: String?,
+        hasValidOfficialPronunciation: Boolean,
+    ): String = "$songId:${officialLane.orEmpty()}:$hasValidOfficialPronunciation"
+
+    /**
      * Apple's own pronunciation language, from the song's advertised
      * `getPronunciationLanguages` vector, or null when Apple offers none.
      */

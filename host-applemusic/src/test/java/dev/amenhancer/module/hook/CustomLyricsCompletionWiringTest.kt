@@ -53,11 +53,14 @@ class CustomLyricsCompletionWiringTest {
         assertFalse(wiring.contains("resolverFetch"))
         assertFalse(wiring.contains("resolver::fetch"))
         assertFalse(wiring.contains("AutoLyricsCandidate"))
-        assertFalse(wiring.contains("publish"))
+        // The merged document is forwarded to the custom session only; it never
+        // reaches the automatic publisher or the resolver replacement path.
+        assertFalse(wiring.contains("AutoLyricsPublisher"))
+        assertFalse(wiring.contains("publishResult"))
     }
 
     @Test
-    fun `the core feed only ever writes the overlay side effect`() {
+    fun `the core feed forwards the merged document without parsing it itself`() {
         val feed = projectFile(
             "core/src/main/kotlin/dev/amenhancer/module/hook/CustomLyricsCompletionFeed.kt",
         )
@@ -65,11 +68,44 @@ class CustomLyricsCompletionWiringTest {
         assertTrue(feed.contains("online-translation capture id="))
         assertTrue(feed.contains("online-translation inject id="))
         assertTrue(feed.contains("documents[appleMusicId] = Document(revision, ttml)"))
-        // The merged document is deliberately dropped: it must never be handed
-        // back to the session or parsed again.
+        // The enriched document is handed to the host callback (which re-checks
+        // the body before publishing it) and never parsed, bound or installed by
+        // the feed itself.
+        assertTrue(feed.contains("private val onMergedDocument: (Long, String, String) -> Unit"))
+        assertTrue(feed.contains("onMergedDocument(appleMusicId, document.ttml, merged)"))
         assertFalse(feed.contains("parseTtml"))
         assertFalse(feed.contains("bindAdamId"))
         assertFalse(feed.contains("onReplacementPublished"))
+    }
+
+    @Test
+    fun `the merged document becomes the session's preferred pointer before the refresh`() {
+        // The custom path's half of the face-2 fix: the host hands the merged
+        // document to the custom session, which re-parses it as the preferred
+        // replacement pointer (body-checked and revision-keyed). The post-overlay
+        // refresh then installs it, exactly as the automatic path publishes its
+        // merged candidate.
+        assertTrue(target.contains("var publishMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> }"))
+        assertTrue(
+            target.contains("onMergedDocument = { appleMusicId, raw, merged ->"),
+        )
+        assertTrue(target.contains("publishMergedDocument(appleMusicId, raw, merged)"))
+        // Wired after the session exists, so an early completion fails open.
+        assertTrue(
+            target.indexOf("val customCompletion") <
+                target.indexOf("session.publishMerged(appleMusicId, rawTtml, mergedTtml)"),
+        )
+        assertTrue(target.contains("online-translation merged-publish id="))
+        val session = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/hook/CustomLyricsReplacementSession.kt",
+        )
+        assertTrue(session.contains("fun publishMerged(appleMusicId: Long, rawTtml: String, mergedTtml: String): Boolean"))
+        assertTrue(session.contains("mergedCustomBodyPreserved(rawTtml, mergedTtml)"))
+        assertTrue(session.contains("CustomLyricsFilePolicy.sha256(mergedTtml.toByteArray(Charsets.UTF_8))"))
+        // The merged pointer wins over the raw one but is never allowed to hide
+        // it: a dead/absent merged pointer still falls back to the raw cache.
+        assertTrue(session.contains("mergedReplacementFor(appleMusicId)?.let { return it }"))
+        assertTrue(session.contains("private val mergedPointers"))
     }
 
     @Test

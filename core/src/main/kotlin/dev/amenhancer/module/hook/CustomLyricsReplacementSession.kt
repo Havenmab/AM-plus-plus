@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.LinkedHashMap
 import java.util.concurrent.Executor
@@ -30,6 +31,13 @@ fun interface CustomLyricsIndexProvider {
  * Every successful prepare publishes its Apple Music ID through
  * [onReplacementPublished] on the preparing thread; callers hop to the main
  * thread when a UI re-entry is needed.
+ *
+ * [publishMerged] is the one addition to the raw-body flow: the completion
+ * feed's enriched document (the user's body plus the merged lanes) becomes the
+ * track's preferred pointer once its body has been proven unchanged, so the
+ * next I2 installs a model that carries the lanes instead of only the overlay
+ * side effect. It runs on the preparing thread too and never touches the hook
+ * path beyond the bounded [readyReplacementFor] lookup.
  */
 class CustomLyricsReplacementSession(
     private val index: CustomLyricsIndexProvider,
@@ -50,6 +58,13 @@ class CustomLyricsReplacementSession(
     )
 
     /**
+     * One track's enriched replacement: the merged content's digest and the
+     * native pointer parsed from it. Published by [publishMerged] once the
+     * completion feed has the enricher's merged document.
+     */
+    private data class MergedPointer(val revision: String, val pointer: Any)
+
+    /**
      * Bounded, access-order pointer cache whose capacity is independent of
      * the mapping count; entries that fall out are re-prepared on demand.
      */
@@ -57,6 +72,23 @@ class CustomLyricsReplacementSession(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CacheKey, Any>?): Boolean =
             size > CACHE_CAPACITY
     }
+
+    /**
+     * The enriched pointers, preferred over the raw [cache] by
+     * [readyReplacementFor]. Kept separate from [cache] so a later raw
+     * `prepare` (a cold recovery) can never overwrite an already-published
+     * merged pointer, and so the same capacity/eviction bound applies without
+     * changing the raw cache's keying. Guarded by [mergedLock] because
+     * [publishMerged] runs on the prepare executor and [readyReplacementFor]
+     * runs on the I2/main thread.
+     */
+    private val mergedLock = Any()
+    private val mergedPointers =
+        object : LinkedHashMap<Long, MergedPointer>(CACHE_CAPACITY, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<Long, MergedPointer>?,
+            ): Boolean = size > CACHE_CAPACITY
+        }
     @Volatile
     private var entriesById: Map<Long, CustomLyricsEntry> = emptyMap()
     private val lock = Any()
@@ -100,12 +132,90 @@ class CustomLyricsReplacementSession(
         if (appleMusicId <= 0L) return null
         val entry = entriesById[appleMusicId]
             ?: return null
+        // The enriched pointer wins over the raw one: it is the user's own body
+        // with the merged lanes injected, so a fresh bind reads them through the
+        // native getters instead of the lifeless body. A body that no longer
+        // verifies falls back to the raw pointer below, so the custom document is
+        // never lost.
+        mergedReplacementFor(appleMusicId)?.let { return it }
         val key = CacheKey(entry.appleMusicId, entry.fileId, entry.sha256)
         synchronized(cache) {
             cache[key]?.let { cached ->
                 if (runCatching { isAlive(cached) }.getOrDefault(false)) return cached
                 cache.remove(key)
             }
+        }
+        return null
+    }
+
+    /**
+     * Publishes the *enriched* document for [appleMusicId] as this track's
+     * preferred replacement pointer.
+     *
+     * All of this existed for the automatic path already: when enrichment
+     * returns a merged document, [AutoLyricsReplacementSession] parses it and
+     * publishes it as the replacement Apple installs — and that is the path
+     * device-confirmed to make a late lane visible for Apple's own lyrics. The
+     * custom feed dropped the merged document instead, so a custom track's model
+     * was built from the raw body and its overlay lanes only reached the screen
+     * after the page was re-created (the user's "switch to the background and
+     * back"). Publishing here makes the custom path do the same thing.
+     *
+     * Safety: [rawTtml] is the document the user's mapping actually carries and
+     * [mergedTtml] is what the enricher returned for it. The two are only allowed
+     * to differ in the head lanes — [mergedCustomBodyPreserved] checks that the
+     * `<body>` is byte-identical — so a searched or otherwise unexpected
+     * document can never replace the user's body through this seam. Everything
+     * else is fail-open and leaves the raw pointer in place.
+     *
+     * Idempotent per (track, merged content): the merged body is hashed with the
+     * same SHA-256 the mapping uses ([CustomLyricsFilePolicy.sha256]) and a
+     * repeat completion for the same digest returns false without re-parsing, so
+     * a duplicated presentation can neither twitch the page nor loop. The parse
+     * goes through this session's own [parseTtml] (already module-initiated, so
+     * the parse seam never records our document as Apple's) and the Adam ID is
+     * bound exactly as [prepare] does. Returns true when a new merged pointer
+     * became the track's ready replacement.
+     */
+    fun publishMerged(appleMusicId: Long, rawTtml: String, mergedTtml: String): Boolean {
+        if (appleMusicId <= 0L || mergedTtml.isBlank()) return false
+        if (!mergedCustomBodyPreserved(rawTtml, mergedTtml)) {
+            logger("custom lyrics merged document changed the body for $appleMusicId; kept raw")
+            return false
+        }
+        val revision = runCatching {
+            CustomLyricsFilePolicy.sha256(mergedTtml.toByteArray(Charsets.UTF_8))
+        }.getOrNull() ?: return false
+        synchronized(mergedLock) {
+            if (mergedPointers[appleMusicId]?.revision == revision) return false
+        }
+        val pointer = runCatching { parseTtml(mergedTtml) }.getOrNull() ?: return false
+        if (!isPrepared(pointer, appleMusicId) &&
+            !runCatching { bindAdamId(pointer, appleMusicId) }.getOrDefault(false)
+        ) {
+            logger("custom lyrics merged pointer binding failed for $appleMusicId")
+            return false
+        }
+        if (!isPrepared(pointer, appleMusicId)) {
+            logger("custom lyrics merged pointer was unusable for $appleMusicId")
+            return false
+        }
+        synchronized(mergedLock) {
+            mergedPointers[appleMusicId] = MergedPointer(revision, pointer)
+        }
+        return true
+    }
+
+    /**
+     * The ready merged pointer for [appleMusicId], or null when there is none or
+     * it is no longer usable. A dead pointer is dropped so the raw cache answers
+     * instead of retaining a stale native address.
+     */
+    private fun mergedReplacementFor(appleMusicId: Long): Any? {
+        val merged = synchronized(mergedLock) { mergedPointers[appleMusicId] } ?: return null
+        if (runCatching { isAlive(merged.pointer) }.getOrDefault(false)) return merged.pointer
+        synchronized(mergedLock) {
+            if (mergedPointers[appleMusicId] === merged) mergedPointers.remove(appleMusicId)
         }
         return null
     }
@@ -232,3 +342,26 @@ class CustomLyricsReplacementSession(
         const val CACHE_CAPACITY = 32
     }
 }
+
+/**
+ * The one invariant the enriched custom document must never break: the enricher
+ * may add translation/pronunciation lanes to the head, but the user's body must
+ * survive byte for byte.
+ *
+ * [OnlineTranslationEnrichment] delegates to [AppleLyricTtmlLaneInjector], which
+ * only edits `<iTunesMetadata>`/`<metadata>` lane blocks in the head, so the
+ * `<body>` is expected to be identical. The check is deliberately textual and
+ * conservative: a document whose body cannot be located on either side fails
+ * closed, and [CustomLyricsReplacementSession.publishMerged] then keeps the raw
+ * pointer, so the custom lyrics are never replaced by something else.
+ */
+internal fun mergedCustomBodyPreserved(rawTtml: String, mergedTtml: String): Boolean {
+    val rawBody = customDocumentBody(rawTtml) ?: return false
+    val mergedBody = customDocumentBody(mergedTtml) ?: return false
+    return rawBody == mergedBody
+}
+
+private val CUSTOM_DOCUMENT_BODY = Regex("""(?is)<body\b[^>]*>.*</body\s*>""")
+
+private fun customDocumentBody(ttml: String): String? =
+    CUSTOM_DOCUMENT_BODY.find(ttml)?.value

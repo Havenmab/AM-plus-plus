@@ -2,6 +2,7 @@ package dev.amenhancer.module.lyrics.online
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -521,5 +522,30 @@ class NativeLyricModelPolicyTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun `the lane-ready edge is the song, the Apple lane and the per-line probe`() {
+        fun key(lane: String?, probe: Boolean, songId: Long = 42L) =
+            NativeLyricModelPolicy.pronunciationLaneReadyKey(
+                songId = songId,
+                officialLane = lane,
+                hasValidOfficialPronunciation = probe,
+            )
+
+        // Apple advertising a lane the build never saw is a new edge.
+        assertNotEquals(key(null, false), key("ja-Latn", false))
+        // So is the lane whose per-line text only populated after the build: the
+        // reported `officialAtBuild=false` then `true` sequence.
+        assertNotEquals(key("ja-Latn", false), key("ja-Latn", true))
+        // A different song is always a different edge.
+        assertNotEquals(key("ja-Latn", true), key("ja-Latn", true, songId = 43L))
+        // Repeated reads of one settled lane are the same key: the anti-thrash
+        // half that keeps a per-bind availability query from re-asking.
+        assertEquals(key("ja-Latn", true), key("ja-Latn", true))
+        assertEquals(key(null, false), key(null, false))
+        // A lane-less song with no probe never produces a ready key that looks
+        // like a lane: the host additionally requires probe || lane != null.
+        assertNotEquals(key(null, true), key("", false))
     }
 }

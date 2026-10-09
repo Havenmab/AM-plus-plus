@@ -187,6 +187,7 @@ class ApplePresentationRefreshWiringTest {
         // re-enters the build, the gate holds again, and the recorded state
         // makes the second pass a no-op instead of looping.
         assertTrue(hooks.contains("private data class PresentationRefreshState("))
+        assertTrue(hooks.contains("if (state == lastState) return"))
         assertTrue(hooks.contains("if (state == lastPresentationRefreshState) return"))
         assertTrue(hooks.contains("lastPresentationRefreshState = state"))
         assertTrue(hooks.contains("overlayRevision"))
@@ -330,6 +331,72 @@ class ApplePresentationRefreshWiringTest {
             perform.indexOf("applyAppleNativePronunciationSelection(") <
                 perform.indexOf("method.invoke(fragment, pointer)"),
         )
+    }
+
+    @Test
+    fun `the late pronunciation lane requests the same refresh with its own trigger`() {
+        // The reported bug: Apple's own lane became available after the build,
+        // and a song with no online source has no overlay write to trigger the
+        // custom-overlay refresh, so the romanization waited for backgrounding.
+        assertTrue(hooks.contains("PresentationRefreshTrigger.LANE_READY"))
+        assertTrue(hooks.contains("\"lane-ready\""))
+        // The two seams that fire after the lane exists and on the app's own
+        // read: the advertisement query hook and the availability override.
+        assertTrue(hooks.contains("private fun installPronunciationLanguageQueryHook("))
+        assertTrue(hooks.contains("private fun installSongAvailabilityHooks("))
+        assertTrue(hooks.contains("private fun onPronunciationLaneReady("))
+        val queryHook = hooks
+            .substringAfter("private fun installPronunciationLanguageQueryHook(")
+            .substringBefore("private fun refreshPronunciationSelectionIfOpen(")
+        assertTrue(queryHook.contains("onPronunciationLaneReady("))
+        val availability = hooks
+            .substringAfter("private fun installSongAvailabilityHooks(")
+            .substringBefore("private fun applyAppleNativePronunciationSelection(")
+        assertTrue(availability.contains("onPronunciationLaneReady("))
+        // The app's own read is the edge; our own selection's setPronunciation
+        // re-enters the override and must not count it before the build gate.
+        assertTrue(availability.contains("if (pronunciationSelectionGuard.get() != true)"))
+        // The lane edge is the (song, lane, per-line probe) triple, so a lane
+        // whose text only populated after the build is a new edge while repeated
+        // reads of one settled lane are not.
+        assertTrue(hooks.contains("NativeLyricModelPolicy.pronunciationLaneReadyKey("))
+        assertTrue(hooks.contains("if (key == laneReadyKey) return"))
+        assertTrue(hooks.contains("laneReadyKey = key"))
+        assertTrue(hooks.contains("pronunciationLaneRevision += 1"))
+        // A coincident build for the same lane state must not refresh twice.
+        assertTrue(hooks.contains("state.sameLaneRefresh(last)"))
+        assertTrue(hooks.contains("fun sameLaneRefresh(other: PresentationRefreshState): Boolean"))
+        // The lane-ready reload builds synchronously inside its own attempt, so
+        // the gate that follows must not re-ask for the state it just applied —
+        // but only a preceding *lane-ready* is suppressed, never a custom-overlay.
+        assertTrue(hooks.contains("lastState.trigger == PresentationRefreshTrigger.LANE_READY"))
+        assertTrue(hooks.contains("state.sameLaneRefresh(lastState)"))
+        // Diagnostics: the decision line names the trigger and the detail.
+        assertTrue(hooks.contains("const val DETAIL_LANE_READY = \"lane-ready\""))
+        assertTrue(hooks.contains("detail = DETAIL_LANE_READY"))
+        assertTrue(
+            hooks.contains(
+                "performPresentationRefresh(state, PresentationRefreshTrigger.LANE_READY)",
+            ),
+        )
+    }
+
+    @Test
+    fun `the lane revision is per song and resets on a track change`() {
+        assertTrue(hooks.contains("private var pronunciationLaneRevision: Long = 0L"))
+        assertTrue(hooks.contains("private var laneReadyKey: String? = null"))
+        val newTrack = hooks
+            .substringAfter("if (songId != modelSongId) {")
+            .substringBefore("modelSongId = songId")
+        assertTrue(newTrack.contains("pronunciationLaneRevision = 0L"))
+        assertTrue(newTrack.contains("laneReadyKey = null"))
+        // Only Apple's own document: a supplement pointer's lanes are its
+        // overlay's job and the custom-overlay trigger owns that re-presentation.
+        val laneReady = hooks
+            .substringAfter("private fun onPronunciationLaneReady(")
+            .substringBefore("private fun refreshReason(")
+        assertTrue(laneReady.contains("if (isModuleSupplementSong(songId)) return"))
+        assertTrue(laneReady.contains("if (presentationInvokeGuard.get() == true) return"))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

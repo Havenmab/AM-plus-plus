@@ -8,8 +8,9 @@ import org.junit.Test
  * Pins the fresh-model half of the presentation refresh: the fork re-invokes
  * Apple's own `PlayerLyricsViewModel#loadLyrics` with the exact (view model,
  * PlaybackItem) pair Apple itself passed (HLE's `AppleLyricsPlaybackBinding`),
- * bounded to once per (song, overlay revision), and instruments the native
- * getters so the next exported log proves whether the app re-rendered.
+ * bounded to once per (song, overlay revision, lane revision), and instruments
+ * the native getters so the next exported log proves whether the app
+ * re-rendered.
  *
  * The hook itself is reflection over the real Apple Music process and cannot run
  * on the JVM, so these are source/profile pins: they fail if the reload wiring,
@@ -56,18 +57,22 @@ class AppleLyricsReloadWiringTest {
     }
 
     @Test
-    fun `the reload is bounded to one per song and overlay revision`() {
+    fun `the reload is bounded to one per song, overlay revision and lane revision`() {
         // The hard anti-loop stop: a reload never advances the overlay revision
         // and the key is recorded before the invoke, so a re-entrant build from
-        // our own load can never ask for a second reload.
-        assertTrue(hooks.contains("private data class ReloadKey(val songId: Long, val overlayRevision: Long)"))
+        // our own load can never ask for a second reload. The lane revision is in
+        // the key so the late lane-ready ask can rebuild the model even when the
+        // build gate already reloaded the same overlay revision; it only advances
+        // on a real lane edge, so the bound stays finite.
+        assertTrue(hooks.contains("private data class ReloadKey("))
+        assertTrue(hooks.contains("val laneRevision: Long,"))
         assertTrue(hooks.contains("private var lastReloadKey: ReloadKey?"))
         assertTrue(hooks.contains("if (lastReloadKey == key) return RELOAD_SKIPPED_SAME_REVISION"))
         assertTrue(hooks.contains("lastReloadKey = key"))
         assertTrue(
             hooks.indexOf("lastReloadKey = key") < hooks.indexOf("method.invoke(viewModel, item)"),
         )
-        assertTrue(hooks.contains("ReloadKey(state.songId, state.overlayRevision)"))
+        assertTrue(hooks.contains("ReloadKey(state.songId, state.overlayRevision, state.laneRevision)"))
     }
 
     @Test

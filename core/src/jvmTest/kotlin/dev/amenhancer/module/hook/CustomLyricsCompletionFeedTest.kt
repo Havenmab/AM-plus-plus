@@ -26,11 +26,14 @@ import org.junit.Test
 class CustomLyricsCompletionFeedTest {
 
     @Test
-    fun `the enricher receives the custom body and its merged result is discarded`() {
+    fun `the enricher receives the custom body and its merged result is forwarded, not re-enriched`() {
         val seen = mutableListOf<String>()
-        val feed = newFeed { _, ttml ->
+        val forwarded = mutableListOf<Pair<String, String>>()
+        val feed = newFeed(
+            onMergedDocument = { _, raw, merged -> forwarded += raw to merged },
+        ) { _, ttml ->
             seen += ttml
-            SEARCHED_DOCUMENT
+            MERGED_DOCUMENT
         }
         feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
 
@@ -38,9 +41,10 @@ class CustomLyricsCompletionFeedTest {
         feed.onDisplayed(42L)
 
         // One lane pass per (track, revision); the enricher only ever sees the
-        // custom body, and the searched body it returns is dropped, not stored
-        // or re-enriched.
+        // custom body, and its merged result is forwarded exactly once together
+        // with the raw body so the session can re-check it before publishing.
         assertEquals(listOf(CUSTOM_DOCUMENT), seen)
+        assertEquals(listOf(CUSTOM_DOCUMENT to MERGED_DOCUMENT), forwarded)
     }
 
     @Test
@@ -181,7 +185,10 @@ class CustomLyricsCompletionFeedTest {
             executor = queued,
             logger = {},
         )
-        feed = newFeed(executor = queued) { _, ttml ->
+        feed = newFeed(
+            executor = queued,
+            onMergedDocument = { id, raw, merged -> session.publishMerged(id, raw, merged) },
+        ) { _, ttml ->
             enriched += ttml
             SEARCHED_DOCUMENT
         }
@@ -195,11 +202,60 @@ class CustomLyricsCompletionFeedTest {
         feed.onDisplayed(42L)
         queued.runAll()
 
-        // The searched document never reached the parser and the ready pointer is
-        // still the one built from the user's own body: the custom lyrics win.
+        // The searched document never replaced the user's body: the session's
+        // body-preservation check rejected it, so it never reached the parser and
+        // the ready pointer is still the one built from the custom document.
         assertEquals(listOf(CUSTOM_DOCUMENT), enriched)
         assertEquals(listOf(CUSTOM_DOCUMENT), parsed)
         assertSame(pointer, session.readyReplacementFor(42L))
+    }
+
+    @Test
+    fun `a head-only merged document is forwarded before the post-overlay refresh`() {
+        val order = mutableListOf<String>()
+        val queued = QueuedExecutor()
+        val mergedPointer = Pointer()
+        var parses = 0
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider {
+                CustomLyricsManifest(listOf(entry(42L))).entries
+                    .associateBy(CustomLyricsEntry::appleMusicId)
+            },
+            readTtml = { CUSTOM_DOCUMENT },
+            // No raw prepare runs in this test: the first and only parse is the
+            // merged document the completion publishes.
+            parseTtml = { parses += 1; mergedPointer },
+            isAlive = { it is Pointer },
+            verifyPtr = { it is Pointer },
+            readAdamId = { (it as Pointer).adamId },
+            bindAdamId = { value, id -> (value as Pointer).adamId = id; true },
+            executor = queued,
+            logger = {},
+        )
+        val feed = newFeed(
+            executor = queued,
+            onOverlayUpdated = { order += "overlay" },
+            onMergedDocument = { id, raw, merged ->
+                order += "merged"
+                // The session must already hold the enriched pointer when the
+                // post-overlay refresh re-invokes I2; that is the ordering the
+                // callback order guarantees.
+                assertTrue(session.publishMerged(id, raw, merged))
+                assertSame(mergedPointer, session.readyReplacementFor(id))
+            },
+        ) { _, _ -> MERGED_DOCUMENT }
+        session.start()
+        queued.runAll()
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+        queued.runAll()
+
+        // Merged publish first, refresh second: the refresh installs whichever
+        // pointer the session already holds.
+        assertEquals(listOf("merged", "overlay"), order)
+        assertEquals(1, parses)
+        assertSame(mergedPointer, session.readyReplacementFor(42L))
     }
 
     @Test
@@ -249,12 +305,14 @@ class CustomLyricsCompletionFeedTest {
         executor: Executor = Executor { command -> command.run() },
         log: (Long, String) -> Unit = { _, _ -> },
         onOverlayUpdated: (Long) -> Unit = {},
+        onMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> },
         enrich: (Long, String) -> String?,
     ): CustomLyricsCompletionFeed = CustomLyricsCompletionFeed(
         enrich = enrich,
         executor = executor,
         log = log,
         onOverlayUpdated = onOverlayUpdated,
+        onMergedDocument = onMergedDocument,
     )
 
     private fun entry(id: Long, sha256: String = REVISION) = CustomLyricsEntry(
@@ -304,6 +362,16 @@ class CustomLyricsCompletionFeedTest {
                 "<p begin=\"1.000\" end=\"2.000\">" +
                 "<span begin=\"1.000\" end=\"2.000\">空</span>" +
                 "</p></div></body></tt>"
+
+        /**
+         * What the enricher returns for [CUSTOM_DOCUMENT]: a lane added to the
+         * head, the body byte-identical. Only this shape is allowed to become the
+         * replacement pointer.
+         */
+        val MERGED_DOCUMENT: String = CUSTOM_DOCUMENT.replace(
+            "<head></head>",
+            "<head><translations><text xml:lang=\"zh\">译文</text></translations></head>",
+        )
 
         const val SEARCHED_DOCUMENT =
             "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"ja\"><body><div>" +

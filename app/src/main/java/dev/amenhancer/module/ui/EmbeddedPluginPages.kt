@@ -18,7 +18,7 @@ internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
     val manager = plugins ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE), Toast.LENGTH_LONG).show()
     val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(activity, 12), 0, dp(activity, 12), 0) }
     val scroll = ScrollView(activity).apply { addView(content) }
-    val dialog = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.PLUGINS)).setView(scroll)
+    val dialog = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.PLUGINS)).setView(scroll)
         .setPositiveButton(localizedText(ModuleText.IMPORT_ZIP), null).setNegativeButton(localizedText(ModuleText.CLOSE), null).create()
     pluginDialogs += WeakReference(dialog)
     val refreshing = AtomicBoolean()
@@ -66,14 +66,15 @@ internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
                                         localizedText(if (it.blocking) ModuleText.CONFLICT_BLOCKING else ModuleText.CONFLICT_WARNING),
                                         it.reason, it.target, it.owners.joinToString(" / "))
                                 }
-                                val info = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.CONFLICT_DETAILS)).setMessage(details).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
+                                val info = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.CONFLICT_DETAILS)).setMessage(details).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
                                 pluginDialogs += WeakReference(info); info.show()
                             })
                             if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "") { openPluginSettings(activity, manifest.id) })
                             addView(Button(activity).apply {
+                                bindEmbeddedButtonTheme(activity)
                                 text = localizedText(ModuleText.DELETE)
                                 setOnClickListener {
-                                    val confirm = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
+                                    val confirm = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
                                         .setMessage(localizedText(ModuleText.PLUGIN_DELETE_NOTICE))
                                         .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ -> action { manager.store.delete(manifest.id) } }.setNegativeButton(localizedText(ModuleText.CANCEL), null).create()
                                     pluginDialogs += WeakReference(confirm); confirm.show()
@@ -118,7 +119,7 @@ internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
                     }
                     val old = oldResult.getOrNull()
                     val committed = AtomicBoolean()
-                    val dialog = AlertDialog.Builder(current).setTitle(if (old == null) localizedText(ModuleText.IMPORT_PLUGIN) else localizedText(ModuleText.REPLACE_PLUGIN))
+                    val dialog = embeddedDialogBuilder(current).setTitle(if (old == null) localizedText(ModuleText.IMPORT_PLUGIN) else localizedText(ModuleText.REPLACE_PLUGIN))
                         .setMessage(localizedText(ModuleText.PLUGIN_AUTHOR_DETAILS, prepared.manifest.name, prepared.manifest.author) +
                             (old?.let { "${it.manifest.versionName} → " } ?: "") + prepared.manifest.versionName +
                             "\n${prepared.manifest.description}\n" + if (old == null) localizedText(ModuleText.PLUGIN_IMPORTED_DISABLED) else localizedText(ModuleText.PLUGIN_REPLACEMENT_NOTICE))
@@ -139,9 +140,10 @@ internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
 }
 
 internal fun EmbeddedSettingsHost.openPluginSettings(activity: Activity, id: String) {
-    val session = plugins?.openSettings(id, activity) ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_NO_SETTINGS), Toast.LENGTH_SHORT).show()
+    val session = plugins?.openSettings(id, embeddedThemedContext(activity)) ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_NO_SETTINGS), Toast.LENGTH_SHORT).show()
     try {
-        val dialog = AlertDialog.Builder(activity).setTitle(localizedText(ModuleText.PLUGIN_SETTINGS)).setView(session.view).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
+        excludeEmbeddedTheme(session.view)
+        val dialog = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.PLUGIN_SETTINGS)).setView(session.view).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
         dialog.setOnDismissListener { session.close() }
         pluginDialogs += WeakReference(dialog); dialog.show()
     } catch (error: Throwable) {

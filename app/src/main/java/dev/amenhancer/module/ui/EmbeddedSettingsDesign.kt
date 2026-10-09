@@ -25,29 +25,6 @@ internal data class EmbeddedLyricsEditorAction(
     val onClick: () -> Unit,
 )
 
-/**
- * Embedded settings use the same warm AM++ accent family as the standalone
- * settings screen.  Keep these values in one place so host/system accent
- * colours (notably Apple Music's blue) cannot leak into the injected UI.
- */
-internal object EmbeddedSettingsPalette {
-    val pageBackground: Int = Color.parseColor("#FBFAFB")
-    val softBackground: Int = Color.parseColor("#FBF4F6")
-    val softSurface: Int = Color.parseColor("#FAF3F5")
-    val primary: Int = Color.parseColor("#EE3B4F")
-    val primaryPressed: Int = Color.parseColor("#F65A6B")
-    val accent: Int = Color.parseColor("#A6537C")
-    val accentPressed: Int = Color.parseColor("#9D466E")
-
-    val onSurface: Int = Color.rgb(48, 35, 42)
-    val onSurfaceVariant: Int = Color.rgb(112, 89, 101)
-    val outline: Int = Color.rgb(238, 233, 234)
-    val disabledSurface: Int = Color.rgb(244, 237, 240)
-    val disabledText: Int = Color.rgb(158, 140, 149)
-    val divider: Int = Color.rgb(238, 233, 234)
-    val switchTrackOn: Int = Color.parseColor("#F497A1")
-    val switchTrackOff: Int = Color.parseColor("#D5D5D5")
-}
 
 /**
  * Code-owned rendition of the actual AM++ application icon (`ic_module.xml`).
@@ -189,7 +166,13 @@ internal class EmbeddedAmppBrandDrawable : android.graphics.drawable.Drawable() 
 }
 
 /** Compact red music mark used by the current-song row in the reference UI. */
-internal class EmbeddedMusicStatusDrawable : android.graphics.drawable.Drawable() {
+internal class EmbeddedMusicStatusDrawable : android.graphics.drawable.Drawable(), EmbeddedPaletteDrawable {
+    private var colors = EmbeddedSettingsPalette.Light
+
+    override fun applyPalette(colors: EmbeddedSettingsColors) {
+        this.colors = colors
+        invalidateSelf()
+    }
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val noteStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -205,13 +188,13 @@ internal class EmbeddedMusicStatusDrawable : android.graphics.drawable.Drawable(
         val size = minOf(box.width(), box.height()).toFloat()
         val outer = RectF(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat())
         val radius = size * 0.18f
-        backgroundPaint.color = EmbeddedSettingsPalette.primary
+        backgroundPaint.color = colors.primary
         backgroundPaint.alpha = alphaValue
         canvas.drawRoundRect(outer, radius, radius, backgroundPaint)
-        noteStroke.color = Color.WHITE
+        noteStroke.color = colors.onPrimary
         noteStroke.alpha = alphaValue
         noteStroke.strokeWidth = size * 0.085f
-        noteFill.color = Color.WHITE
+        noteFill.color = colors.onPrimary
         noteFill.alpha = alphaValue
         val stemX = outer.left + size * 0.59f
         canvas.drawLine(stemX, outer.top + size * 0.22f, stemX, outer.top + size * 0.67f, noteStroke)
@@ -263,7 +246,13 @@ internal class EmbeddedGlyphDrawable(
     private val kind: EmbeddedGlyphKind,
     private val tint: Int,
     private val strokeWidthFraction: Float = 0.08f,
-) : android.graphics.drawable.Drawable() {
+) : android.graphics.drawable.Drawable(), EmbeddedPaletteDrawable {
+    private var colors = EmbeddedSettingsPalette.Light
+
+    override fun applyPalette(colors: EmbeddedSettingsColors) {
+        this.colors = colors
+        invalidateSelf()
+    }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -282,9 +271,9 @@ internal class EmbeddedGlyphDrawable(
         val top = box.top + (box.height() - size) / 2f
         val cx = left + size / 2f
         val cy = top + size / 2f
-        fill.color = tint
+        fill.color = colors.iconColor(tint)
         fill.alpha = alphaValue
-        stroke.color = tint
+        stroke.color = colors.iconColor(tint)
         stroke.alpha = alphaValue
         stroke.strokeWidth = size * strokeWidthFraction
         when (kind) {
@@ -677,13 +666,17 @@ internal class EmbeddedGlyphDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-internal class EmbeddedArrowFallbackDrawable : android.graphics.drawable.Drawable() {
+internal class EmbeddedArrowFallbackDrawable : android.graphics.drawable.Drawable(), EmbeddedPaletteDrawable {
+    override fun applyPalette(colors: EmbeddedSettingsColors) {
+        paint.color = colors.primary
+        invalidateSelf()
+    }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.SQUARE
         strokeJoin = Paint.Join.MITER
         strokeWidth = 4f
-        color = EmbeddedSettingsPalette.primary
+        color = EmbeddedSettingsPalette.Light.primary
     }
 
     override fun draw(canvas: Canvas) {

@@ -3,7 +3,6 @@ package dev.amenhancer.module.ui
 import dev.amenhancer.module.i18n.ModuleText
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.widget.TextView
@@ -17,11 +16,11 @@ internal fun EmbeddedSettingsHost.updateEmbeddedLyrics(activity: Activity) {
         val progress = TextView(activity).apply {
             text = localizedText(ModuleText.CHECKING_LYRICS)
             textSize = 15f
-            setTextColor(EmbeddedSettingsPalette.onSurface)
+            setEmbeddedTextColor(activity) { colors -> colors.onSurface }
             setSingleLine(false)
             setPadding(dp(activity, 24), dp(activity, 8), dp(activity, 24), dp(activity, 8))
         }
-        val dialog = AlertDialog.Builder(activity)
+        val dialog = embeddedDialogBuilder(activity)
             .setTitle(localizedText(ModuleText.LYRICS_UPDATE))
             .setView(progress)
             .setNegativeButton(localizedText(ModuleText.CANCEL)) { _, _ -> cancelled.set(true) }
@@ -158,7 +157,7 @@ internal fun EmbeddedSettingsHost.handleSafSelection(operation: EmbeddedSafOpera
 
 
 internal fun EmbeddedSettingsHost.confirmEmbeddedRestore(activity: Activity, uri: Uri) {
-        AlertDialog.Builder(activity)
+        embeddedDialogBuilder(activity)
             .setTitle(localizedText(ModuleText.RESTORE_LYRICS_BACKUP))
             .setMessage(localizedText(ModuleText.RESTORE_CONFLICT_NOTICE))
             .setNegativeButton(localizedText(ModuleText.CANCEL), null)

@@ -2,7 +2,9 @@ package dev.amenhancer.module.hook
 
 import android.os.Handler
 import android.os.Looper
+import dev.amenhancer.module.lyrics.online.ApplePronunciationPolicy
 import dev.amenhancer.module.lyrics.online.ApplePronunciationVisibilityPolicy
+import dev.amenhancer.module.lyrics.online.ApplePronunciationWordTrack
 import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
@@ -16,6 +18,9 @@ import io.github.proify.lyricon.amprovider.xposed.AppleReflection
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsPronunciationLanguages
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsTranslationLanguages
 import java.lang.reflect.Method
+import java.util.ArrayDeque
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -116,6 +121,40 @@ internal class AppleNativeLyricModelHooks(
     private val diagnostic = TrackScopedDiagnostics(log, MAX_DIAGNOSTIC_LINES)
     private val installed = ConcurrentHashMap.newKeySet<String>()
     private val rawRead = ThreadLocal<Boolean>()
+
+    /**
+     * One-shot pronunciation plan per Apple word vector identity (HLE's
+     * `AppleLyricsPronunciationState.pendingRenderPlans`). Registered by the
+     * `getPronunciationWords` override and consumed once by the app's word-render
+     * adapter, so the main line's own render pass can never see the romanization.
+     */
+    private val pendingPronunciationRenderPlans =
+        Collections.synchronizedMap(IdentityHashMap<Any, PronunciationRenderPlan>())
+
+    /**
+     * The render-scope stack (HLE's `wordRenderContexts`): pushed while the
+     * adapter lays out a pronunciation vector, popped afterwards. Only reads made
+     * inside that scope are rewritten by the word-text hook.
+     */
+    private val pronunciationWordRenderContexts = ThreadLocal<ArrayDeque<PronunciationWordRenderContext>>()
+
+    /** De-duplicates the `pronunciation-words` diagnostic per build and getter. */
+    private val wordDiagnosticKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** True once at least one `LyricsWordVector -> ArrayMap` adapter method is hooked. */
+    @Volatile
+    private var wordRenderAdapterAvailable: Boolean = false
+
+    /** HLE's `ApplePronunciationRenderPlan`: the line text to distribute. */
+    private data class PronunciationRenderPlan(val pronunciation: String)
+
+    /** HLE's `ApplePronunciationWordKey`: the native word's stable fields. */
+    private data class PronunciationWordKey(val wordId: Int, val begin: Int, val end: Int)
+
+    /** HLE's `ApplePronunciationWordRenderContext`: per-word display text. */
+    private data class PronunciationWordRenderContext(
+        val displayTextByWord: Map<PronunciationWordKey, String>,
+    )
 
     /** The exact profile's member-name dictionary; empty means "not pinned here". */
     private val nativeNames: Map<AppleMusicRuntimeMember, String> =
@@ -519,6 +558,7 @@ internal class AppleNativeLyricModelHooks(
         // lane behind it.
         val officialAtBuild = hasValidOfficialPronunciation(songNative)
         lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
+        installPronunciationWordHooks(lines)
         val selection = applyAppleNativePronunciationSelection(songNative, languages)
         reportNativeWrite(
             lines = lines,
@@ -790,6 +830,545 @@ internal class AppleNativeLyricModelHooks(
                 RomanizationPolicy.sanitize(text, original) ?: onlinePronunciation(line, text)
             }
         }
+    }
+
+    /**
+     * HLE's word-level pronunciation delivery (`hookApplePronunciationWordsGetter`
+     * plus `hookApplePronunciationWordRendering`).
+     *
+     * Apple renders most lyrics word by word (`itunes:timing="Word"`), so the
+     * line-level `getHtmlPronunciationLineText` the earlier PRs override is never
+     * consumed for those songs: the app asks each line for
+     * `getPronunciationWords()` and lays out one view per returned `LyricsWord`.
+     * The device log shows the language selected and Apple's line text read while
+     * nothing is romanized, which is exactly that gap.
+     *
+     * The port mirrors HLE exactly:
+     *
+     *  - `getPronunciationWords()` / `getPronunciationBackgroundWords(boolean)`
+     *    return Apple's own vector when its words are valid **and** timed like the
+     *    main line (OFFICIAL — Apple's own data first), otherwise Apple's *main*
+     *    word vector plus a one-shot render plan (MAIN_LINE_TIMING), otherwise
+     *    HLE's empty container (HIDDEN, the Mandarin rule).
+     *  - The plan is consumed by the app's own word-render adapter
+     *    (`LYRICS_WORD_RENDER_ADAPTER`: the methods taking a `LyricsWordVector` and
+     *    returning `android.util.ArrayMap`); while it runs, each native main word's
+     *    `getHtmlLineText` is replaced by its
+     *    [ApplePronunciationPolicy.displaySegments] slice, so the romanization
+     *    reuses the main word's parent line, word id and timeline.
+     *  - The line-level background-vocals pronunciation is Apple's own text,
+     *    sanitized, with no online fallback — exactly HLE's
+     *    `LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD` branch.
+     *
+     * No native `LyricsWord` is ever synthesized: the adapter dereferences
+     * `word.getLyricsLine().get().getLineId()` (verified against the 6.5.3 dex),
+     * so a parentless word would break Apple's own rendering — which is why HLE
+     * reuses the main vector. Every step fails open: a missing member, a malformed
+     * vector or a throwing getter leaves Apple's value untouched, and when no
+     * render adapter is resolvable MAIN_LINE_TIMING degrades to HLE's
+     * `emptyApplePronunciationWords(...)` rather than returning the main vector,
+     * so the main text can never be rendered as romanization.
+     */
+    private fun installPronunciationWordHooks(lines: List<Any>) {
+        // One-shot plans never outlive a model build; a plan registered for a
+        // vector the adapter did not consume is dropped here.
+        synchronized(pendingPronunciationRenderPlans) { pendingPronunciationRenderPlans.clear() }
+        wordDiagnosticKeys.clear()
+        lines.map { it.javaClass }.distinct().forEach { clazz ->
+            installLineGetter(
+                clazz = clazz,
+                member = AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD,
+            ) { line, original ->
+                if (mandarinHidden) {
+                    ""
+                } else {
+                    ApplePronunciationPolicy.nonNullDisplayText(
+                        RomanizationPolicy.sanitize(
+                            originalText = rawText(
+                                line,
+                                AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD,
+                            ),
+                            pronunciation = original,
+                        ),
+                    )
+                }
+            }
+            installPronunciationWordsGetter(
+                clazz = clazz,
+                member = AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD,
+                parameterCount = 0,
+                originalTextMember = AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD,
+                pronunciationTextMember =
+                    AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD,
+                mainWordsMember = AppleMusicRuntimeMember.LYRICS_NATIVE_WORDS_METHOD,
+                onlineFallback = true,
+            )
+            installPronunciationWordsGetter(
+                clazz = clazz,
+                member = AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD,
+                parameterCount = 1,
+                originalTextMember = AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD,
+                pronunciationTextMember =
+                    AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD,
+                mainWordsMember = AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_WORDS_METHOD,
+                onlineFallback = false,
+            )
+        }
+        installPronunciationWordTextHooks(lines)
+        installPronunciationWordRenderHooks()
+    }
+
+    /**
+     * HLE installs the word-text hook once per word class
+     * (`hookAppleLyricTextGetter(wordClass, getHtmlLineText)`). Outside a
+     * pronunciation render scope it is a transparent pass-through, so the main
+     * line is untouched.
+     */
+    private fun installPronunciationWordTextHooks(lines: List<Any>) {
+        val words = buildList {
+            lines.forEach { line ->
+                addAll(vectorItems(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_WORDS_METHOD)))
+                val background = call(
+                    line,
+                    AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_WORDS_METHOD,
+                    false,
+                ) ?: call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_WORDS_METHOD)
+                addAll(vectorItems(background))
+            }
+        }
+        words.map { it.javaClass }.distinct().forEach { wordClass ->
+            val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD]
+                ?: return@forEach
+            val method = AppleReflection.findMethodOrNull(wordClass, name, parameterCount = 0)
+                ?: return@forEach
+            if (method.returnType != String::class.java) return@forEach
+            if (!installed.add("${method.declaringClass.name}#${method.name}")) return@forEach
+            ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    if (rawRead.get() == true) return
+                    runCatching {
+                        val replacement = pronunciationWordRenderText(param.thisObject)
+                            ?: return@runCatching
+                        param.result = replacement
+                    }
+                }
+            }, scope)
+        }
+    }
+
+    /**
+     * HLE's `hookApplePronunciationWordsGetter`: one result override per getter.
+     * The raw-read guard keeps our own probes (word text, begins, vector text)
+     * from being answered by the hook we install here.
+     */
+    private fun installPronunciationWordsGetter(
+        clazz: Class<*>,
+        member: AppleMusicRuntimeMember,
+        parameterCount: Int,
+        originalTextMember: AppleMusicRuntimeMember,
+        pronunciationTextMember: AppleMusicRuntimeMember,
+        mainWordsMember: AppleMusicRuntimeMember,
+        onlineFallback: Boolean,
+    ) {
+        val name = nativeNames[member] ?: return
+        val method = AppleReflection.findMethodOrNull(clazz, name, parameterCount = parameterCount)
+            ?: return
+        if (!installed.add("${method.declaringClass.name}#${method.name}/${method.parameterCount}")) {
+            return
+        }
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                if (rawRead.get() == true) return
+                val line = param.thisObject ?: return
+                runCatching {
+                    val resolved = resolvePronunciationWords(
+                        line = line,
+                        original = param.result,
+                        args = param.args,
+                        originalTextMember = originalTextMember,
+                        pronunciationTextMember = pronunciationTextMember,
+                        mainWordsMember = mainWordsMember,
+                        onlineFallback = onlineFallback,
+                        getterName = name,
+                        parameterCount = parameterCount,
+                    )
+                    if (resolved != null) param.result = resolved
+                }
+            }
+        }, scope)
+    }
+
+    /**
+     * HLE's `hookApplePronunciationWordsGetter` body, in HLE's order: official
+     * text and word compatibility first, then the `wordTrack` decision, then the
+     * resolved vector. `mainTimingPronunciation` deliberately prefers Apple's own
+     * line text when Apple has one but its word vector cannot be aligned to the
+     * main line — that is HLE's `officialPronunciation` branch, not the online
+     * one.
+     */
+    private fun resolvePronunciationWords(
+        line: Any,
+        original: Any?,
+        args: Array<Any?>,
+        originalTextMember: AppleMusicRuntimeMember,
+        pronunciationTextMember: AppleMusicRuntimeMember,
+        mainWordsMember: AppleMusicRuntimeMember,
+        onlineFallback: Boolean,
+        getterName: String,
+        parameterCount: Int,
+    ): Any? {
+        if (mandarinHidden) {
+            return emptyPronunciationWords(original, null) ?: original
+        }
+        val originalText = rawText(line, originalTextMember)
+        val officialPronunciation = RomanizationPolicy.sanitize(
+            originalText = originalText,
+            pronunciation = rawText(line, pronunciationTextMember),
+        )
+        val onlinePronunciationText = if (onlineFallback) {
+            onlinePronunciation(line, originalText)
+        } else {
+            null
+        }
+        val hasValidOfficialWords = officialPronunciation != null &&
+            RomanizationPolicy.sanitize(
+                originalText = originalText,
+                pronunciation = rawWordVectorText(original),
+            ) != null
+        val mainWords = nativeNames[mainWordsMember]?.let { name ->
+            runCatching { AppleReflection.call(line, name, *args) }.getOrNull()
+        }
+        val hasCompatibleOfficialWords = hasValidOfficialWords &&
+            ApplePronunciationPolicy.hasCompatibleOfficialWordTiming(
+                mainWordBegins = renderableWordBegins(mainWords),
+                pronunciationWordBegins = renderableWordBegins(original),
+            )
+        val mainTimingPronunciation = when {
+            officialPronunciation != null && !hasCompatibleOfficialWords -> officialPronunciation
+            else -> onlinePronunciationText
+        }
+        val track = ApplePronunciationPolicy.wordTrack(
+            hasValidOfficialPronunciation = hasCompatibleOfficialWords,
+            hasOnlinePronunciation = mainTimingPronunciation != null,
+        )
+        val vector = mainWords?.takeIf { vectorSize(it) > 0 }
+        val pronunciation = mainTimingPronunciation
+        val canRegisterRenderPlan =
+            track == ApplePronunciationWordTrack.MAIN_LINE_TIMING &&
+                vector != null &&
+                pronunciation != null &&
+                wordRenderAdapterAvailable
+        val resolved: Any? = when (track) {
+            ApplePronunciationWordTrack.OFFICIAL -> original
+            ApplePronunciationWordTrack.MAIN_LINE_TIMING -> {
+                // The explicit null checks (not `canRegisterRenderPlan`) are what
+                // let the compiler smart-cast the two arguments.
+                if (vector != null && pronunciation != null && canRegisterRenderPlan) {
+                    registerPronunciationRenderPlan(vector, pronunciation)
+                    vector
+                } else {
+                    emptyPronunciationWords(original, mainWords) ?: original
+                }
+            }
+            ApplePronunciationWordTrack.HIDDEN -> emptyPronunciationWords(original, null) ?: original
+        }
+        reportPronunciationWords(
+            line = line,
+            getterName = getterName,
+            parameterCount = parameterCount,
+            track = track,
+            resolved = resolved,
+            renderPlanRegistered = canRegisterRenderPlan,
+        )
+        return resolved
+    }
+
+    /**
+     * HLE's `hookApplePronunciationWordRendering` install step: scan each
+     * resolved adapter class and its superclasses for
+     * `(LyricsWordVector, ...) -> android.util.ArrayMap` and hook them scoped.
+     * The class/vector names come from the profile, never from a guessed
+     * signature.
+     */
+    private fun installPronunciationWordRenderHooks() {
+        val vectorClassName =
+            nativeNames[AppleMusicRuntimeMember.LYRICS_WORD_VECTOR_CLASS_NAME]
+                ?: runCatching {
+                    resolver.resolveClass(AppleMusicHookPoint.LYRICS_WORD_VECTOR_CLASS).clazz.name
+                }.getOrNull()
+                ?: return
+        val adapterClasses = runCatching {
+            resolver.resolveClasses(AppleMusicHookPoint.LYRICS_WORD_RENDER_ADAPTER)
+        }.getOrDefault(emptyList())
+        if (adapterClasses.isEmpty()) {
+            log(
+                "online-translation pronunciation-words render-adapter unavailable: " +
+                    "${resolver.version.displayName} pins no LYRICS_WORD_RENDER_ADAPTER",
+            )
+            return
+        }
+        var installedAny = false
+        adapterClasses.forEach { adapter ->
+            generateSequence(adapter.clazz) { it.superclass }
+                .flatMap { it.declaredMethods.asSequence() }
+                .filter { method ->
+                    !method.isBridge &&
+                        method.parameterTypes.firstOrNull()?.name == vectorClassName &&
+                        method.returnType.name == ARRAY_MAP_CLASS
+                }
+                .distinctBy { method ->
+                    method.name to method.parameterTypes.joinToString { it.name }
+                }
+                .forEach { method ->
+                    if (installPronunciationWordRenderHook(method)) installedAny = true
+                }
+        }
+        wordRenderAdapterAvailable = installedAny
+        if (!installedAny) {
+            log(
+                "online-translation pronunciation-words render-adapter found but no " +
+                    "LyricsWordVector -> ArrayMap method on " +
+                    adapterClasses.joinToString { it.clazz.name },
+            )
+        }
+    }
+
+    /**
+     * HLE's `installScopedHook` over one adapter method: `enter` consumes the
+     * one-shot plan and pushes the render context, `exit` pops it. `ModernMethodHook`
+     * has no exit callback, but `afterHookedMethod` always runs after the body
+     * (including on a thrown body), so it is the `finally` half here.
+     */
+    private fun installPronunciationWordRenderHook(method: Method): Boolean {
+        if (!installed.add("render#${method.declaringClass.name}#${method.name}/${method.parameterCount}")) {
+            return true
+        }
+        runCatching { method.isAccessible = true }
+        val pushed = ThreadLocal<Boolean>()
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                if (rawRead.get() == true) return
+                runCatching {
+                    val vector = param.args.firstOrNull() ?: return@runCatching
+                    val plan = consumePronunciationRenderPlan(vector) ?: return@runCatching
+                    val context = buildPronunciationWordRenderContext(vector, plan)
+                        ?: return@runCatching
+                    pushPronunciationWordRenderContext(context)
+                    pushed.set(true)
+                }
+            }
+
+            override fun afterHookedMethod(param: MethodHookParam) {
+                if (pushed.get() != true) return
+                pushed.remove()
+                popPronunciationWordRenderContext()
+            }
+        }, scope)
+        log(
+            "online-translation pronunciation-words render hook installed: " +
+                "${method.declaringClass.name}#${method.name}/${method.parameterCount}",
+        )
+        return true
+    }
+
+    /**
+     * HLE's `buildApplePronunciationWordRenderContext`: align the line's
+     * pronunciation to the native main words and key each slice by the word's
+     * stable identity. `lastVisibleSegment` keeps the trailing separator off the
+     * final visible word, exactly as HLE does.
+     */
+    private fun buildPronunciationWordRenderContext(
+        vector: Any,
+        plan: PronunciationRenderPlan,
+    ): PronunciationWordRenderContext? {
+        val wordIdName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_WORD_ID_METHOD]
+            ?: return null
+        val beginName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD]
+            ?: return null
+        val endName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD]
+            ?: return null
+        val words = vectorItems(vector)
+        val contentWords = words.filterNot { word ->
+            (call(word, AppleMusicRuntimeMember.LYRICS_NATIVE_WHITESPACE_METHOD) as? Boolean) == true
+        }
+        val mainWordTexts = withRawRead {
+            contentWords.map { word ->
+                rawText(word, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD).orEmpty()
+            }
+        }
+        val segments = ApplePronunciationPolicy.displaySegments(
+            pronunciation = plan.pronunciation,
+            mainWordTexts = mainWordTexts,
+        )
+        if (segments.isEmpty()) return null
+        val lastVisibleSegment = segments.indexOfLast(String::isNotEmpty)
+        val displayTextByWord = LinkedHashMap<PronunciationWordKey, String>(words.size)
+        words.forEach { word ->
+            pronunciationWordKey(word, wordIdName, beginName, endName)?.let { key ->
+                displayTextByWord[key] = ""
+            }
+        }
+        contentWords.forEachIndexed { index, word ->
+            val key = pronunciationWordKey(word, wordIdName, beginName, endName)
+                ?: return@forEachIndexed
+            val segment = segments.getOrNull(index) ?: return@forEachIndexed
+            displayTextByWord[key] = when {
+                segment.isEmpty() -> ""
+                index < lastVisibleSegment -> "$segment "
+                else -> segment
+            }
+        }
+        return PronunciationWordRenderContext(displayTextByWord)
+    }
+
+    /** HLE's `ApplePronunciationWordRenderContext.displayText`, keyed by identity. */
+    private fun pronunciationWordRenderText(word: Any?): String? {
+        val context = currentPronunciationWordRenderContext() ?: return null
+        val key = pronunciationWordKey(word) ?: return null
+        return context.displayTextByWord[key]
+    }
+
+    /** HLE's `applePronunciationWordKey`. */
+    private fun pronunciationWordKey(word: Any?): PronunciationWordKey? {
+        val wordIdName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_WORD_ID_METHOD]
+            ?: return null
+        val beginName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD]
+            ?: return null
+        val endName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD]
+            ?: return null
+        return pronunciationWordKey(word, wordIdName, beginName, endName)
+    }
+
+    private fun pronunciationWordKey(
+        word: Any?,
+        wordIdName: String,
+        beginName: String,
+        endName: String,
+    ): PronunciationWordKey? {
+        if (word == null) return null
+        return runCatching {
+            PronunciationWordKey(
+                wordId = (AppleReflection.call(word, wordIdName) as Number).toInt(),
+                begin = (AppleReflection.call(word, beginName) as Number).toInt(),
+                end = (AppleReflection.call(word, endName) as Number).toInt(),
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * HLE's `emptyApplePronunciationWords`: only ever a container, never a
+     * `LyricsWord`. `originalVector?.javaClass ?: mainWords?.javaClass` preserves
+     * the exact native vector type; the no-arg constructor exists on
+     * `LyricsWordVector` (verified against the 6.5.3 dex).
+     */
+    private fun emptyPronunciationWords(originalVector: Any?, mainWords: Any?): Any? {
+        val vectorClass = originalVector?.javaClass ?: mainWords?.javaClass ?: return null
+        return runCatching { AppleReflection.newInstance(vectorClass) }.getOrNull()
+    }
+
+    /**
+     * The visible-channel proof that the app asks for word-level pronunciation
+     * and what we answer:
+     * `online-translation pronunciation-words id=… getter=… track=… words=N line=…`.
+     * Emitted on the raw logger (not the budgeted `native-write` diagnostic) and
+     * de-duplicated per build/getter, so the next device log always carries it.
+     */
+    private fun reportPronunciationWords(
+        line: Any,
+        getterName: String,
+        parameterCount: Int,
+        track: ApplePronunciationWordTrack,
+        resolved: Any?,
+        renderPlanRegistered: Boolean,
+    ) {
+        val songId = modelSongId
+        val key = "$songId:$getterName/$parameterCount:${track.name}:$renderPlanRegistered"
+        if (!wordDiagnosticKeys.add(key)) return
+        runCatching {
+            val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
+            log(
+                "online-translation pronunciation-words id=$songId " +
+                    "getter=$getterName/$parameterCount track=${track.name} " +
+                    "words=${vectorSize(resolved)} line=${begin ?: NONE} " +
+                    "renderPlan=$renderPlanRegistered " +
+                    "renderAdapter=$wordRenderAdapterAvailable",
+            )
+        }
+    }
+
+    /**
+     * The native main-word vector is read raw (HLE's `nativeRawWordVectorText`):
+     * our own word-text hook must not answer with a render-scope slice while we
+     * are deciding the track.
+     */
+    private fun rawWordVectorText(vector: Any?): String? = withRawRead {
+        vectorItems(vector)
+            .joinToString(separator = "") { word ->
+                rawText(word, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD).orEmpty()
+            }
+            .trim()
+            .takeIf(String::isNotEmpty)
+    }
+
+    /** HLE's `nativeRenderableWordBegins`: non-whitespace words with a real begin. */
+    private fun renderableWordBegins(vector: Any?): List<Int> = withRawRead {
+        vectorItems(vector).mapNotNull { word ->
+            val isWhitespace =
+                (call(word, AppleMusicRuntimeMember.LYRICS_NATIVE_WHITESPACE_METHOD) as? Boolean) == true
+            val text = rawText(word, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD)
+                ?.trim()
+                .orEmpty()
+            val begin = (call(word, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD) as? Number)
+                ?.toInt()
+            begin?.takeIf { !isWhitespace && text.isNotEmpty() && it >= 0 }
+        }
+    }
+
+    private fun vectorItems(vector: Any?, limit: Int = MAX_WORDS): List<Any> {
+        if (vector == null) return emptyList()
+        return buildList {
+            repeat(vectorSize(vector).coerceIn(0, limit)) { index ->
+                val item = vectorItem(vector, index)
+                if (item != null) add(item)
+            }
+        }
+    }
+
+    private fun rawText(receiver: Any?, member: AppleMusicRuntimeMember): String? = withRawRead {
+        call(receiver, member) as? String
+    }
+
+    /** HLE's `registerApplePronunciationRenderPlan`; bounded, one-shot per vector. */
+    private fun registerPronunciationRenderPlan(vector: Any, pronunciation: String) {
+        synchronized(pendingPronunciationRenderPlans) {
+            if (pendingPronunciationRenderPlans.size >= MAX_PRONUNCIATION_RENDER_PLANS) {
+                pendingPronunciationRenderPlans.clear()
+            }
+            pendingPronunciationRenderPlans[vector] = PronunciationRenderPlan(pronunciation)
+        }
+    }
+
+    /** HLE's `consumeApplePronunciationRenderPlan`: identity lookup, removed at once. */
+    private fun consumePronunciationRenderPlan(vector: Any): PronunciationRenderPlan? =
+        synchronized(pendingPronunciationRenderPlans) {
+            pendingPronunciationRenderPlans.remove(vector)
+        }
+
+    private fun currentPronunciationWordRenderContext(): PronunciationWordRenderContext? =
+        pronunciationWordRenderContexts.get()?.peekLast()
+
+    private fun pushPronunciationWordRenderContext(context: PronunciationWordRenderContext) {
+        val stack = pronunciationWordRenderContexts.get()
+            ?: ArrayDeque<PronunciationWordRenderContext>().also {
+                pronunciationWordRenderContexts.set(it)
+            }
+        stack.addLast(context)
+    }
+
+    private fun popPronunciationWordRenderContext() {
+        val stack = pronunciationWordRenderContexts.get() ?: return
+        if (stack.isNotEmpty()) stack.removeLast()
+        if (stack.isEmpty()) pronunciationWordRenderContexts.remove()
     }
 
     /**
@@ -1079,7 +1658,16 @@ internal class AppleNativeLyricModelHooks(
         const val MAX_LINES_PER_SECTION = 64
         const val MAX_LANGUAGES = 32
 
-        /** Placeholder for a diagnostic field with no language to report. */
+        /** HLE's `nativeVectorItems(..., limit = 256)` for word vectors. */
+        const val MAX_WORDS = 256
+
+        /** HLE's `AppleLyricsPronunciationState.MAX_RENDER_PLANS`. */
+        const val MAX_PRONUNCIATION_RENDER_PLANS = 256
+
+        /** HLE's `hookApplePronunciationWordRendering` return-type filter. */
+        const val ARRAY_MAP_CLASS = "android.util.ArrayMap"
+
+        /** Placeholder for a diagnostic field with no language/line to report. */
         const val NONE = "none"
 
         /**

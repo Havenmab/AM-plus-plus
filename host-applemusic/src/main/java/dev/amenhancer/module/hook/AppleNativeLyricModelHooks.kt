@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import android.os.Handler
+import android.os.Looper
 import dev.amenhancer.module.lyrics.online.ApplePronunciationVisibilityPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
@@ -13,6 +15,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleMusicRuntimeMember
 import io.github.proify.lyricon.amprovider.xposed.AppleReflection
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsPronunciationLanguages
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsTranslationLanguages
+import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -68,6 +71,17 @@ import java.util.concurrent.ConcurrentHashMap
  *    advertises it and third-party-only songs still get the fallback selected.
  *    The `native-write` line carries `appleLanguagesKnown=`, `selection=` and
  *    `reason=` so the next device log proves what was chosen and why.
+ *  - HLE's `shouldRefreshPresentationAfterBuild` is evaluated from an `after`
+ *    hook on the same build seam. On 1606 the model is often built before Apple
+ *    advertises its pronunciation lane and before the online overlay is
+ *    published; nothing re-reads the model afterwards, so the page keeps its
+ *    first render until it is re-created. When the gate accepts, the app's own
+ *    result-presentation method (`AppleMusicSymbols.LyricsInstallMethod` — the
+ *    profile's `lyrics-install-method` contract, `PlayerLyricsViewFragment#w2`
+ *    on 1606, exactly HLE's `LYRICS_RESULT_PRESENTATION`) is re-invoked on the
+ *    main handler for the bound fragment and pointer, so the adapter rebinds
+ *    against the updated model. The `presentation-refresh` line records the
+ *    decision and the outcome.
  *
  * Every step fails open: an unresolved profile target, a missing member name, a
  * malformed vector or a throwing getter leaves Apple's own value in place. The
@@ -83,6 +97,21 @@ internal class AppleNativeLyricModelHooks(
     private val genreFor: (Long) -> String?,
     private val scope: HookRegistrationScope? = null,
     private val log: (String) -> Unit = { ModernXposedRuntime.log(it) },
+    /**
+     * The app's lyric-result presentation method, resolved from
+     * `AppleMusicSymbols.LyricsInstallMethod` (the 1606 profile pins it to
+     * `PlayerLyricsViewFragment#w2(SongInfo$SongInfoPtr)`). Invoked with the
+     * bound fragment and pointer to force the adapter to rebind after the model
+     * changes. Null leaves the refresh a no-op.
+     */
+    private val presentationMethod: Method? = null,
+    /**
+     * True when the current song's displayed lyrics are the module's own
+     * supplement document. That path has its own re-presentation, and HLE
+     * explains Apple's R2 track refresh makes the lyrics page twitch, so the
+     * build gate must not request a second refresh for it.
+     */
+    private val isModuleSupplementSong: (Long) -> Boolean = { false },
 ) {
     private val diagnostic = TrackScopedDiagnostics(log, MAX_DIAGNOSTIC_LINES)
     private val installed = ConcurrentHashMap.newKeySet<String>()
@@ -137,6 +166,52 @@ internal class AppleNativeLyricModelHooks(
     /** Guards `setPronunciation` re-entry through the availability override. */
     private val pronunciationSelectionGuard = ThreadLocal<Boolean>()
 
+    /** Main-thread posting for the presentation refresh, exactly as HLE does. */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** The fragment of the last lyric-result presentation, or null before it. */
+    @Volatile
+    private var presentationFragmentRef: java.lang.ref.WeakReference<Any>? = null
+
+    /** The `SongInfoPtr` of the last lyric-result presentation. */
+    @Volatile
+    private var presentationPointerRef: java.lang.ref.WeakReference<Any>? = null
+
+    /**
+     * Guards our own `presentationMethod.invoke` so the presentation hook does
+     * not treat the refresh as a fresh Apple presentation (which would re-arm
+     * the binding and could re-enter the refresh).
+     */
+    private val presentationInvokeGuard = ThreadLocal<Boolean>()
+
+    /**
+     * The last (song, overlay revision, official lane) the build gate decided.
+     * A repeated build with the same state is never refreshed twice, which is
+     * what stops the refresh from looping through our own build hook: the
+     * re-presentation rebuilds the model, the gate holds again, and the recorded
+     * state makes the second pass a no-op.
+     */
+    @Volatile
+    private var lastPresentationRefreshState: PresentationRefreshState? = null
+
+    /**
+     * One accepted refresh decision. The whole gate input set is part of the
+     * key, so any signal that can change after a build — a new overlay revision,
+     * Apple advertising its lane, the supplement pointer resolving to Apple's
+     * document, the Mandarin rule — is a new state, while an unchanged re-build
+     * is not.
+     */
+    private data class PresentationRefreshState(
+        val songId: Long,
+        val overlayRevision: Long,
+        val sourceIsApple: Boolean,
+        val officialPronunciation: Boolean,
+        val officialLane: String?,
+        val onlineTranslation: Boolean,
+        val onlinePronunciation: Boolean,
+        val pronunciationSelected: Boolean,
+    )
+
     fun install() {
         if (!enabled) {
             log("online-translation native-write skipped: translation/pronunciation is off")
@@ -176,7 +251,38 @@ internal class AppleNativeLyricModelHooks(
                     log("online-translation native-write ensure failed: ${error.message}")
                 }
             }
+
+            /**
+             * HLE evaluates its presentation-refresh gate from the build seam's
+             * `after`: the model now exists, so a lane that arrived late can be
+             * made visible by re-presenting. `ensureNativeModel` already ran in
+             * `before`, so this only reads the settled state.
+             */
+            override fun afterHookedMethod(param: MethodHookParam) {
+                runCatching {
+                    val pointer = param.args.getOrNull(0) ?: return@runCatching
+                    val songNative = pointerGet(pointer) ?: return@runCatching
+                    requestPresentationRefreshAfterBuild(songNative)
+                }.onFailure { error ->
+                    log("online-translation presentation-refresh failed: ${error.message}")
+                }
+            }
         }, scope)
+    }
+
+    /**
+     * Records the fragment and pointer Apple is presenting. HLE keeps the same
+     * binding from its result-presentation hook and only re-invokes the
+     * presentation while both are bound; the refresh is a no-op when the lyrics
+     * view is absent. Our own refresh's invoke is ignored, so the binding always
+     * belongs to Apple's presentation.
+     */
+    fun onLyricsPresentation(fragment: Any?, pointer: Any?) {
+        if (!enabled || nativeNames.isEmpty()) return
+        if (fragment == null || pointer == null) return
+        if (presentationInvokeGuard.get() == true) return
+        presentationFragmentRef = java.lang.ref.WeakReference(fragment)
+        presentationPointerRef = java.lang.ref.WeakReference(pointer)
     }
 
     /**
@@ -193,6 +299,193 @@ internal class AppleNativeLyricModelHooks(
         }.onFailure { error ->
             log("online-translation native-write pointer ensure failed: ${error.message}")
         }
+    }
+
+    /**
+     * HLE's build-after decision: evaluate
+     * `NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild` for the model
+     * that was just built and, when it accepts, re-present on the main handler.
+     *
+     * The inputs are the fork's truthful signals:
+     *  - `sourceIsApple` is false for the module's own supplement document, which
+     *    re-presents itself;
+     *  - an online lane is the overlay published for this track, gated by the
+     *    same `enabled` switch the availability overrides use;
+     *  - the official pronunciation is the per-call line probe *or* a lane Apple
+     *    itself advertises, exactly as the availability override resolves it (on
+     *    1606 the probe is empty until a language was selected);
+     *  - `pronunciationSelected` is the fork's translation/pronunciation switch
+     *    with the Mandarin rule, the closest mapping to HLE's pronunciation
+     *    preference;
+     *  - a state already refreshed is skipped, which is the anti-thrash guard;
+     *    the invoke guard additionally keeps the build our own re-presentation
+     *    triggers from re-entering the gate (and the state dedupe covers a build
+     *    dispatched to another thread).
+     */
+    private fun requestPresentationRefreshAfterBuild(songNative: Any) {
+        // Never evaluate the gate from the build our own re-presentation
+        // triggers: the invoke guard is the hard recursion stop, and the state
+        // dedupe below covers a build that is dispatched to another thread.
+        if (presentationInvokeGuard.get() == true) return
+        val songId = nativeSongId(songNative)
+        if (songId <= 0L) return
+
+        val advertised = advertisedPronunciationLanguages(songPronunciationLanguages(songNative))
+        val officialLane = NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
+        val officialPronunciation =
+            hasValidOfficialPronunciation(songNative) || officialLane != null
+        val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
+        val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
+        val pronunciationSelected = enabled && !mandarinHidden
+        val sourceIsApple = !isModuleSupplementSong(songId)
+
+        val reason = NativeLyricModelPolicy.presentationRefreshReason(
+            sourceIsApple = sourceIsApple,
+            hasValidOfficialPronunciation = officialPronunciation,
+            hasOnlineTranslation = onlineTranslation,
+            hasOnlinePronunciation = onlinePronunciation,
+            pronunciationSelected = pronunciationSelected,
+        )
+        val shouldRefresh = NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
+            sourceIsApple = sourceIsApple,
+            hasValidOfficialPronunciation = officialPronunciation,
+            hasOnlineTranslation = onlineTranslation,
+            hasOnlinePronunciation = onlinePronunciation,
+            pronunciationSelected = pronunciationSelected,
+        )
+
+        val state = PresentationRefreshState(
+            songId = songId,
+            overlayRevision = overlay.revision(),
+            sourceIsApple = sourceIsApple,
+            officialPronunciation = officialPronunciation,
+            officialLane = officialLane,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = pronunciationSelected,
+        )
+        // An unchanged state has already been decided (and, when accepted,
+        // refreshed). This is what keeps the re-presentation's own build from
+        // looping: the gate holds again but the state matches.
+        if (state == lastPresentationRefreshState) return
+        lastPresentationRefreshState = state
+
+        val detail = when {
+            !sourceIsApple -> "supplement"
+            !shouldRefresh -> "gate"
+            else -> "requested"
+        }
+        logPresentationRefresh(
+            songId = songId,
+            reason = reason,
+            hasValidOfficialPronunciation = officialPronunciation,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = pronunciationSelected,
+            refreshed = false,
+            detail = detail,
+        )
+        if (!shouldRefresh) return
+
+        mainHandler.post {
+            performPresentationRefresh(
+                state = state,
+                reason = reason,
+                hasValidOfficialPronunciation = officialPronunciation,
+                onlineTranslation = onlineTranslation,
+                onlinePronunciation = onlinePronunciation,
+                pronunciationSelected = pronunciationSelected,
+            )
+        }
+    }
+
+    /**
+     * The main-handler half of HLE's `refreshAppleLyricsSupplementPresentation`:
+     * resolve the bound fragment and pointer, verify the pointer still belongs to
+     * the expected song, re-run the selection so the getters read the settled
+     * model, and re-invoke the app's presentation method. Every early return
+     * clears the recorded state so a later binding can retry.
+     */
+    private fun performPresentationRefresh(
+        state: PresentationRefreshState,
+        reason: String,
+        hasValidOfficialPronunciation: Boolean,
+        onlineTranslation: Boolean,
+        onlinePronunciation: Boolean,
+        pronunciationSelected: Boolean,
+    ) {
+        fun finish(refreshed: Boolean, detail: String) {
+            if (!refreshed && lastPresentationRefreshState == state) {
+                lastPresentationRefreshState = null
+            }
+            logPresentationRefresh(
+                songId = state.songId,
+                reason = reason,
+                hasValidOfficialPronunciation = hasValidOfficialPronunciation,
+                onlineTranslation = onlineTranslation,
+                onlinePronunciation = onlinePronunciation,
+                pronunciationSelected = pronunciationSelected,
+                refreshed = refreshed,
+                detail = detail,
+            )
+        }
+
+        val method = presentationMethod ?: return finish(false, "no-presentation-method")
+        val fragment = presentationFragmentRef?.get() ?: return finish(false, "not-bound")
+        val pointer = presentationPointerRef?.get() ?: return finish(false, "not-bound")
+        val songNative = pointerGet(pointer) ?: return finish(false, "pointer-dead")
+        if (nativeSongId(songNative) != state.songId) return finish(false, "song-changed")
+
+        // HLE re-runs `applyAppleNativeSupplementSelection` before re-presenting.
+        // Ours is the pronunciation half; the per-line getters already read the
+        // overlay live, so only the language selection can still be settled here.
+        runCatching {
+            applyAppleNativePronunciationSelection(songNative, songPronunciationLanguages(songNative))
+        }.onFailure { error ->
+            log("online-translation presentation-refresh selection failed: ${error.message}")
+        }
+
+        val outcome = runCatching {
+            presentationInvokeGuard.set(true)
+            try {
+                method.invoke(fragment, pointer)
+            } finally {
+                presentationInvokeGuard.remove()
+            }
+        }
+        outcome
+            .onSuccess { finish(true, "invoked") }
+            .onFailure { error ->
+                log("online-translation presentation-refresh invoke failed: ${error.message}")
+                finish(false, "invoke-failed")
+            }
+    }
+
+    /**
+     * The device-facing proof of the refresh decision, on the same visible
+     * channel as `native-write`: the exact gate inputs, the branch that fired and
+     * whether the re-presentation actually ran. A `refreshed=true` line on the
+     * first play is the evidence the fix landed.
+     */
+    private fun logPresentationRefresh(
+        songId: Long,
+        reason: String,
+        hasValidOfficialPronunciation: Boolean,
+        onlineTranslation: Boolean,
+        onlinePronunciation: Boolean,
+        pronunciationSelected: Boolean,
+        refreshed: Boolean,
+        detail: String,
+    ) {
+        log(
+            "online-translation presentation-refresh id=$songId reason=$reason " +
+                "officialPronunciation=$hasValidOfficialPronunciation " +
+                "onlineTranslation=$onlineTranslation " +
+                "onlinePronunciation=$onlinePronunciation " +
+                "pronunciationSelected=$pronunciationSelected " +
+                "presentationMethod=${presentationMethod != null} " +
+                "refreshed=$refreshed detail=$detail",
+        )
     }
 
     private fun ensureNativeModel(songNative: Any, viewModel: Any?) {

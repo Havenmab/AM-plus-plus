@@ -168,6 +168,62 @@ object NativeLyricModelPolicy {
     const val REASON_MANDARIN_HIDDEN = "mandarin-hidden"
 
     /**
+     * Why a completed Apple lyric model requests a presentation refresh, for the
+     * device log. Mirrors the branch order of
+     * [shouldRefreshPresentationAfterBuild], so the emitted `reason=` and the
+     * decision can never disagree.
+     */
+    const val REFRESH_REASON_ONLINE_LANE = "online-lane"
+    const val REFRESH_REASON_OFFICIAL_LANE = "official-lane"
+    const val REFRESH_REASON_NONE = "none"
+
+    /**
+     * HLE's `ApplePronunciationPolicy.shouldRefreshPresentationAfterBuild`,
+     * ported verbatim.
+     *
+     * Apple's own data is the primary source, but it can become available after
+     * the first lyrics-page presentation: on 1606 `getPronunciationLanguages` is
+     * still empty at the build seam and nothing re-runs afterwards, so the page
+     * keeps Apple's first (lane-less) render until it is re-created. Once the
+     * model exists, a completed build must therefore re-present the lyrics when
+     * there is something new to show: an online translation/pronunciation lane,
+     * or an official pronunciation the user asked for.
+     *
+     * The function is the pure half; the host resolves the app's members and the
+     * overlay and calls in here, so the truth table is covered by JVM tests.
+     */
+    fun shouldRefreshPresentationAfterBuild(
+        sourceIsApple: Boolean,
+        hasValidOfficialPronunciation: Boolean,
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+        pronunciationSelected: Boolean,
+    ): Boolean {
+        if (!sourceIsApple) return false
+        if (hasOnlineTranslation || hasOnlinePronunciation) return true
+        return pronunciationSelected && hasValidOfficialPronunciation
+    }
+
+    /**
+     * The [shouldRefreshPresentationAfterBuild] branch that fired, as a stable
+     * log token: [REFRESH_REASON_ONLINE_LANE], [REFRESH_REASON_OFFICIAL_LANE] or
+     * [REFRESH_REASON_NONE]. The same inputs produce the same decision, so the
+     * diagnostic names the reason HLE's gate accepted.
+     */
+    fun presentationRefreshReason(
+        sourceIsApple: Boolean,
+        hasValidOfficialPronunciation: Boolean,
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+        pronunciationSelected: Boolean,
+    ): String = when {
+        !sourceIsApple -> REFRESH_REASON_NONE
+        hasOnlineTranslation || hasOnlinePronunciation -> REFRESH_REASON_ONLINE_LANE
+        pronunciationSelected && hasValidOfficialPronunciation -> REFRESH_REASON_OFFICIAL_LANE
+        else -> REFRESH_REASON_NONE
+    }
+
+    /**
      * HLE's `thirdPartyPronunciationFallbackLanguage`: the language to advertise
      * for a third-party pronunciation. Null when the Mandarin rule hides it,
      * when the feature is off, or when there is no online pronunciation at all;

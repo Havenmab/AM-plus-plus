@@ -242,6 +242,22 @@ internal class AppleMusicCustomLyricsTarget(
                         hideMandarinPinyin = runtime.hideMandarinPinyin,
                         genreFor = runtime.genreFor,
                         scope = registration,
+                        // The app's result-presentation method. On 1606 the
+                        // profile's `lyrics-install-method` contract pins it to
+                        // PlayerLyricsViewFragment#w2(SongInfoPtr), which is
+                        // exactly HLE's LYRICS_RESULT_PRESENTATION. Re-invoking
+                        // it is the fork's refresh primitive; a null leaves the
+                        // refresh a no-op.
+                        presentationMethod = installMethod,
+                        // HLE skips the refresh on a supplement pointer because
+                        // the supplement path has its own refresh. A *ready*
+                        // module replacement is the fork's counterpart: the
+                        // displayed document is ours, so `readyReapply` owns the
+                        // re-presentation. A merely in-flight fetch still shows
+                        // Apple's document, so it must not suppress the refresh.
+                        isModuleSupplementSong = { appleMusicId ->
+                            readyReplacementFor(appleMusicId) != null
+                        },
                     )
                 }
             }
@@ -328,6 +344,12 @@ internal class AppleMusicCustomLyricsTarget(
                         // the build seam is not guaranteed to carry the pointer
                         // on every build.
                         nativeLyricDelivery?.onLyricsPointer(original)
+                        // Remember the fragment+pointer the app is presenting:
+                        // the build gate re-invokes this same presentation to
+                        // make a late lane visible. Our own refresh's invoke is
+                        // ignored inside (a re-entry guard), so the binding
+                        // always belongs to Apple's presentation.
+                        nativeLyricDelivery?.onLyricsPresentation(param.thisObject, original)
                         // The displayed Apple document was captured at parse
                         // time before its Adam ID was bound. This is the first
                         // seam that knows the track identity, so bind the

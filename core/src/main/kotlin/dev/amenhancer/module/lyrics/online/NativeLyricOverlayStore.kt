@@ -160,6 +160,13 @@ object NativeLyricModelPolicy {
     /** HLE's third-party pronunciation tag when the system language is not Latin. */
     const val THIRD_PARTY_PRONUNCIATION_LANGUAGE = "und-Latn"
 
+    /** Why a [PronunciationSelectionPlan] chose the language it did, for the log. */
+    const val REASON_APPLE_LANE = "apple-lane"
+    const val REASON_APPLE_NO_OWN_LANE = "apple-no-own-lane"
+    const val REASON_APPLE_UNANSWERED = "apple-unanswered"
+    const val REASON_NO_FALLBACK = "no-fallback"
+    const val REASON_MANDARIN_HIDDEN = "mandarin-hidden"
+
     /**
      * HLE's `thirdPartyPronunciationFallbackLanguage`: the language to advertise
      * for a third-party pronunciation. Null when the Mandarin rule hides it,
@@ -245,48 +252,101 @@ object NativeLyricModelPolicy {
     ): String? = officialPronunciationLanguage(appleLanguages) ?: thirdPartyFallbackLanguage
 
     /**
+     * Apple's best-known advertisement of its own pronunciation lanes: the live
+     * vector when it is non-empty, otherwise the last non-empty one. A transient
+     * empty read means "Apple has not answered on this call", not "Apple has no
+     * lane", so it must never withdraw a lane Apple already advertised nor hand
+     * the third-party tag over it (the invariant the device log's
+     * `languages=ko-Latn` → `languages=` → `und-Latn` sequence broke).
+     */
+    fun advertisedPronunciationLanguages(
+        live: List<String>,
+        remembered: List<String>,
+    ): List<String> = live.ifEmpty { remembered }
+
+    /**
      * One planned `applyAppleNativePronunciationSelection` pass: the language to
-     * hand the song's `setPronunciation` (null = leave Apple's selection alone),
-     * whether the pass deferred because Apple's answer is not known yet, and
-     * whether Apple's answer was known at this call site.
+     * hand the song's `setPronunciation` (null = nothing to select), which lane
+     * that language belongs to, why this branch was taken, and whether Apple's
+     * advertisement was known at this call site.
      *
-     * [deferred] is the timing state PR #9 could not express: at the build/pointer
-     * seam Apple's `getPronunciationLanguages` is often still empty because the
-     * model has not been populated yet, and an empty vector means "not known yet",
-     * not "Apple has none". In that state the third-party tag must not be handed
-     * to `setPronunciation` — doing so displaces the Apple lane that arrives
-     * later, or does nothing and is never retried. The decision is re-evaluated
-     * at the later entry points (the pronunciation-language query, availability
-     * and line getters), so once the vector is non-empty Apple's own lane wins.
+     * [reason] is the honest replacement for the old `deferred=` flag: it says
+     * *what* was chosen and *why*, so a device log can tell "Apple had not
+     * answered, so the fallback is standing in" ([REASON_APPLE_UNANSWERED]) from
+     * "Apple answered without a lane of its own" ([REASON_APPLE_NO_OWN_LANE]) or
+     * "nothing legitimate to select" ([REASON_NO_FALLBACK]).
      */
     data class PronunciationSelectionPlan(
         val language: String?,
-        val deferred: Boolean,
+        val selection: PronunciationSelection,
+        val reason: String,
         val appleLanguagesKnown: Boolean,
     )
 
+    /** Which lane a [PronunciationSelectionPlan] chose, printed in the log. */
+    enum class PronunciationSelection(val token: String) {
+        APPLE("apple"),
+        THIRD_PARTY("third-party"),
+        NONE("none"),
+    }
+
     /**
-     * Plans the native pronunciation selection, deferring while Apple's answer is
-     * unknown. An empty/absent language vector defers (and selects nothing); a
-     * non-empty vector concludes exactly as [selectPronunciationLanguage] does,
-     * with Apple's advertised lane beating the third-party tag.
+     * Plans one `applyAppleNativePronunciationSelection` pass, mirroring HLE:
+     *
+     * ```
+     * officialLanguages.firstOrNull()?.takeIf { hasValidOfficialRomanization(songNative) }
+     *     ?: thirdPartyPronunciationFallbackLanguage() ?: return
+     * ```
+     *
+     * Apple's advertised Latin lane wins ([PronunciationSelection.APPLE]). With
+     * no lane of its own — a non-empty vector without one, or an empty vector
+     * because Apple has not answered yet — the legitimate third-party fallback is
+     * selected ([PronunciationSelection.THIRD_PARTY]). Only when there is no lane
+     * and no fallback is nothing handed to `setPronunciation`
+     * ([PronunciationSelection.NONE]).
+     *
+     * An empty Apple vector therefore is not "select nothing": it selects the
+     * fallback, exactly as HLE's `?: thirdPartyPronunciationFallbackLanguage()`
+     * does, which is what lets a third-party-only song render again. Because the
+     * selection is re-run at every later entry point, Apple's own lane replaces
+     * that fallback as soon as Apple advertises it.
      */
     fun planPronunciationSelection(
         appleLanguages: List<String>,
         thirdPartyFallbackLanguage: String?,
     ): PronunciationSelectionPlan {
         val known = appleLanguages.isNotEmpty()
-        val language = if (known) {
-            selectPronunciationLanguage(appleLanguages, thirdPartyFallbackLanguage)
-        } else {
-            null
+        // The selection itself is HLE's `appleLane ?: fallback ?: nothing`, shared
+        // with [selectPronunciationLanguage] so there is one rule, not two.
+        val appleLane = officialPronunciationLanguage(appleLanguages)
+        val language = selectPronunciationLanguage(appleLanguages, thirdPartyFallbackLanguage)
+        val selection = when {
+            appleLane != null -> PronunciationSelection.APPLE
+            language != null -> PronunciationSelection.THIRD_PARTY
+            else -> PronunciationSelection.NONE
+        }
+        val reason = when (selection) {
+            PronunciationSelection.APPLE -> REASON_APPLE_LANE
+            PronunciationSelection.THIRD_PARTY ->
+                if (known) REASON_APPLE_NO_OWN_LANE else REASON_APPLE_UNANSWERED
+            PronunciationSelection.NONE -> REASON_NO_FALLBACK
         }
         return PronunciationSelectionPlan(
             language = language,
-            deferred = language == null && !known,
+            selection = selection,
+            reason = reason,
             appleLanguagesKnown = known,
         )
     }
+
+    /** The plan while the Mandarin rule hides the song: nothing is handed over. */
+    fun hiddenPronunciationSelection(appleLanguagesKnown: Boolean): PronunciationSelectionPlan =
+        PronunciationSelectionPlan(
+            language = null,
+            selection = PronunciationSelection.NONE,
+            reason = REASON_MANDARIN_HIDDEN,
+            appleLanguagesKnown = appleLanguagesKnown,
+        )
 
     /** HLE's `hasTranslation` / `setTranslation` availability resolution. */
     fun hasTranslationAvailability(

@@ -1312,7 +1312,40 @@
         "resolutionPolicy": "exact-required"
       }
     ],
-    "LYRICS_WORD_RENDER_ADAPTER": [],
+    "LYRICS_WORD_RENDER_ADAPTER": [
+      {
+        "parameterTypeNames": null,
+        "isStatic": null,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": null,
+        "returnTypeName": null,
+        "allowFirstMatch": false,
+        "methodName": null,
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.player.C",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_WORD_RENDER_ADAPTER",
+        "resolutionPolicy": "exact-required"
+      },
+      {
+        "parameterTypeNames": null,
+        "isStatic": null,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": null,
+        "returnTypeName": null,
+        "allowFirstMatch": false,
+        "methodName": null,
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.player.A",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_WORD_RENDER_ADAPTER",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "ARTIST_SURFACE_CLASSES": [
       {
         "parameterTypeNames": null,
@@ -2434,7 +2467,24 @@
     "LYRICS_COOKIE_JAR": [],
     "DEBUG_ATMOS_SV_AUDIO_STREAM_CHANGED": [],
     "APPLE_TEXT_STYLE_UTILS": [],
-    "LYRICS_WORD_VECTOR_CLASS": [],
+    "LYRICS_WORD_VECTOR_CLASS": [
+      {
+        "parameterTypeNames": null,
+        "isStatic": null,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": null,
+        "returnTypeName": null,
+        "allowFirstMatch": false,
+        "methodName": null,
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.ttml.javanative.model.LyricsWordVector",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_WORD_VECTOR_CLASS",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "IN_APP_CONTAINER_ALBUM_CLASS": [
       {
         "parameterTypeNames": null,

@@ -75,7 +75,56 @@ class AppleMusic700NativeLyricsProfileTest {
         assertEquals("getLines", member(AppleMusicRuntimeMember.LYRICS_NATIVE_SECTION_LINES_METHOD))
         assertEquals("getBegin", member(AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
         assertEquals("getEnd", member(AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD))
+        // The word-level getters the line-level PRs never referenced. Apple
+        // renders most lyrics per word, so these are the delivery surface.
+        assertEquals(
+            "getPronunciationWords",
+            member(AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD),
+        )
+        assertEquals(
+            "getPronunciationBackgroundWords",
+            member(AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD),
+        )
+        assertEquals(
+            "getHtmlPronunciationBackgroundVocalsLineText",
+            member(AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD),
+        )
+        assertEquals("getWords", member(AppleMusicRuntimeMember.LYRICS_NATIVE_WORDS_METHOD))
+        assertEquals(
+            "getBackgroundWords",
+            member(AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_WORDS_METHOD),
+        )
+        assertEquals(
+            "com.apple.android.music.ttml.javanative.model.LyricsWordVector",
+            member(AppleMusicRuntimeMember.LYRICS_WORD_VECTOR_CLASS_NAME),
+        )
         assertEquals(39, load.runtimeMemberNames.size)
+    }
+
+    @Test
+    fun `1606 pins the word render adapter and the native vector class`() {
+        val adapters = AppleMusicHookProfiles.exactTargets(
+            version,
+            AppleMusicHookPoint.LYRICS_WORD_RENDER_ADAPTER,
+        )
+        assertTrue(adapters.isNotEmpty())
+        // HLE's 1607 profile overrides the adapter to player.C; its 1606 profile
+        // inherits player.A from the 6.5.x line. Both are pinned so the adapter
+        // resolves on whichever beta is installed; the render scan itself
+        // requires a LyricsWordVector -> ArrayMap method, so a class that is not
+        // the adapter is never hooked.
+        assertEquals(
+            setOf("com.apple.android.music.player.C", "com.apple.android.music.player.A"),
+            adapters.map { it.className }.toSet(),
+        )
+        assertTrue(adapters.none { it.allowFirstMatch })
+
+        val vector = target(AppleMusicHookPoint.LYRICS_WORD_VECTOR_CLASS)
+        assertEquals(
+            "com.apple.android.music.ttml.javanative.model.LyricsWordVector",
+            vector.className,
+        )
+        assertNull(vector.methodName)
     }
 
     @Test
@@ -111,6 +160,8 @@ class AppleMusic700NativeLyricsProfileTest {
             AppleMusicHookPoint.LYRICS_VIEW_MODEL_BUILD,
             AppleMusicHookPoint.LYRICS_PREFERRED_LANGUAGES_REQUEST,
             AppleMusicHookPoint.LYRICS_OFFICIAL_PRONUNCIATION_MATCH,
+            AppleMusicHookPoint.LYRICS_WORD_RENDER_ADAPTER,
+            AppleMusicHookPoint.LYRICS_WORD_VECTOR_CLASS,
         ).forEach { point ->
             assertEquals(
                 AppleMusicHookProfiles.exactTargets(version, point),
@@ -241,6 +292,32 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(
             hooks.contains("installPronunciationLanguageQueryHook(songNative.javaClass)"),
         )
+    }
+
+    @Test
+    fun `the native delivery wires HLE's word track instead of only the line getter`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // HLE's three word-level surfaces, none of which the line-level PRs used.
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
+        // The HLE policy decides the track and aligns the romanization.
+        assertTrue(hooks.contains("ApplePronunciationPolicy.wordTrack("))
+        assertTrue(hooks.contains("ApplePronunciationPolicy.displaySegments("))
+        // The render plan is consumed by the app's own word-render adapter, and
+        // the vector type comes from the profile, never a guessed signature.
+        assertTrue(hooks.contains("LYRICS_WORD_RENDER_ADAPTER"))
+        assertTrue(hooks.contains("LYRICS_WORD_VECTOR_CLASS_NAME"))
+        assertTrue(hooks.contains("emptyPronunciationWords("))
+        // No synthesized native word: the adapter dereferences the parent line.
+        assertFalse(hooks.contains("LyricsWordPtr"))
+        assertFalse(hooks.contains("pushBack("))
+        // The next device log must prove the app asks for word-level data.
+        assertTrue(hooks.contains("online-translation pronunciation-words"))
+        assertTrue(hooks.contains("track=\${track.name}"))
+        assertTrue(hooks.contains("words=\${vectorSize(resolved)}"))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

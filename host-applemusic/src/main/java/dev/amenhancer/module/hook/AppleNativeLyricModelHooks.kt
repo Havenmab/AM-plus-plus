@@ -6,6 +6,7 @@ import dev.amenhancer.module.lyrics.online.ApplePronunciationVisibilityPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
+import dev.amenhancer.module.lyrics.online.PresentationRefreshOutcome
 import dev.amenhancer.module.lyrics.online.RomanizationPolicy
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
@@ -79,9 +80,16 @@ import java.util.concurrent.ConcurrentHashMap
  *    result-presentation method (`AppleMusicSymbols.LyricsInstallMethod` — the
  *    profile's `lyrics-install-method` contract, `PlayerLyricsViewFragment#w2`
  *    on 1606, exactly HLE's `LYRICS_RESULT_PRESENTATION`) is re-invoked on the
- *    main handler for the bound fragment and pointer, so the adapter rebinds
- *    against the updated model. The `presentation-refresh` line records the
- *    decision and the outcome.
+ *    main handler for the bound fragment and pointer. That only re-runs the
+ *    presentation: because the lyrics adapter reads the pronunciation flags once
+ *    at bind, the refresh then mirrors HLE's `refreshAppleLyricsRecyclerView`
+ *    and notifies the adapter (`AppleLyricsPresentationRebind`). Fragments are
+ *    also bound from the native-presentation seam (`LYRICS_NATIVE_PRESENTATION`,
+ *    HLE's `R2`/`F2`), so a refresh that ran before the view existed is retried
+ *    instead of being swallowed. Only an invoke that returns latches the
+ *    anti-thrash state. The `presentation-refresh` line records the decision,
+ *    the outcome, the resolved `adapter=` and whether the state was `cleared`
+ *    for retry.
  *
  * Every step fails open: an unresolved profile target, a missing member name, a
  * malformed vector or a throwing getter leaves Apple's own value in place. The
@@ -185,6 +193,26 @@ internal class AppleNativeLyricModelHooks(
     private val presentationInvokeGuard = ThreadLocal<Boolean>()
 
     /**
+     * HLE's `refreshAppleLyricsRecyclerView` tail: after our own re-presentation
+     * returns, the lyrics adapter is rebound so the flags it read once at bind
+     * reflect the updated model. The RecyclerView accessor is the profile-pinned
+     * `LYRICS_UI_ON_CREATE_VIEW#LYRICS_UI_RECYCLER_VIEW_METHOD` when the profile
+     * carries one, else the fork's own verified `getRecyclerView`
+     * (`LyricsTypefaceSession`/`TabletLyricTypography`); the obfuscated notify
+     * and item-count members come from the profile's `LYRICS_RECYCLER_ADAPTER`
+     * point. Every step is fail-open.
+     */
+    private val presentationRebind = AppleLyricsPresentationRebind(
+        recyclerMethodNames = lyricsRecyclerMethodNames(),
+        adapterItemCountMemberNames = lyricsAdapterMemberNames(
+            AppleMusicRuntimeMember.LYRICS_ADAPTER_ITEM_COUNT_METHOD,
+        ),
+        adapterNotifyMemberNames = lyricsAdapterMemberNames(
+            AppleMusicRuntimeMember.LYRICS_ADAPTER_NOTIFY_DATA_CHANGED_METHOD,
+        ),
+    )
+
+    /**
      * The last (song, overlay revision, official lane) the build gate decided.
      * A repeated build with the same state is never refreshed twice, which is
      * what stops the refresh from looping through our own build hook: the
@@ -193,6 +221,17 @@ internal class AppleNativeLyricModelHooks(
      */
     @Volatile
     private var lastPresentationRefreshState: PresentationRefreshState? = null
+
+    /**
+     * An accepted refresh whose main-handler attempt has not re-invoked the
+     * app's presentation yet, or aborted before it could (`not-bound`,
+     * `pointer-dead`, `song-changed`, `invoke-failed`). The native-presentation
+     * binding seam re-dispatches it once the fragment and pointer exist, which
+     * is how HLE's R2/F2 seam makes the refresh succeed on the first play. Only
+     * a successful invoke ([PresentationRefreshOutcome.latches]) clears it.
+     */
+    @Volatile
+    private var pendingPresentationRefresh: PresentationRefreshState? = null
 
     /**
      * One accepted refresh decision. The whole gate input set is part of the
@@ -225,8 +264,69 @@ internal class AppleNativeLyricModelHooks(
             return
         }
         installNativeModelSeam()
+        installNativePresentationSeam()
         installPreferredLanguageExpansion()
         installPronunciationLanguageMatch()
+    }
+
+    /**
+     * The lyrics RecyclerView accessors tried in order: the profile's own
+     * `LYRICS_UI_ON_CREATE_VIEW#LYRICS_UI_RECYCLER_VIEW_METHOD` when it carries
+     * one, then the fork's verified `getRecyclerView` (the same accessor
+     * `LyricsTypefaceSession`, `TabletLyricTypography` and HLE's 1606 inherited
+     * target use). The 1606 profile leaves `LYRICS_UI_ON_CREATE_VIEW` empty, so
+     * the fallback is what runs there; no signature is invented.
+     */
+    private fun lyricsRecyclerMethodNames(): List<String> = buildList {
+        AppleMusicHookProfiles
+            .exactTargets(resolver.version, AppleMusicHookPoint.LYRICS_UI_ON_CREATE_VIEW)
+            .forEach { target ->
+                target.runtimeMemberNames[AppleMusicRuntimeMember.LYRICS_UI_RECYCLER_VIEW_METHOD]
+                    ?.let { name -> add(name) }
+            }
+        add(FALLBACK_RECYCLER_VIEW_METHOD)
+    }.distinct()
+
+    /** The `LYRICS_RECYCLER_ADAPTER` members of [member], in profile order. */
+    private fun lyricsAdapterMemberNames(member: AppleMusicRuntimeMember): List<String> =
+        AppleMusicHookProfiles
+            .exactTargets(resolver.version, AppleMusicHookPoint.LYRICS_RECYCLER_ADAPTER)
+            .mapNotNull { target -> target.runtimeMemberNames[member] }
+            .distinct()
+
+    /**
+     * HLE's `LYRICS_NATIVE_PRESENTATION` binding seam — `R2` on 6.5.x, `F2` on
+     * the 1606 profile. HLE remembers the fragment and pointer here because the
+     * view-model build can finish before the lyrics view exists; the fork bound
+     * only from the install method (`w2`), so a refresh that ran first aborted
+     * `not-bound` and nothing re-asked once the view arrived. That is the
+     * "romanization only after backgrounding" stall. Fail-open: an unresolved
+     * point or a throwing capture never affects Apple's presentation.
+     */
+    private fun installNativePresentationSeam() {
+        val method = runCatching {
+            resolver.resolveMethod(AppleMusicHookPoint.LYRICS_NATIVE_PRESENTATION).method
+        }.getOrNull() ?: run {
+            log(
+                "online-translation presentation-refresh native seam unavailable on " +
+                    resolver.version.displayName,
+            )
+            return
+        }
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                runCatching {
+                    val fragment = param.thisObject ?: return@runCatching
+                    val pointer = param.args.getOrNull(0) ?: return@runCatching
+                    // Install the per-line/availability hooks for the pointer that
+                    // is about to be shown, exactly as HLE's F2/R2 `before` does.
+                    onLyricsPointer(pointer)
+                    onLyricsPresentation(fragment, pointer)
+                }.onFailure { error ->
+                    log("online-translation presentation-refresh native seam failed: ${error.message}")
+                }
+            }
+        }, scope)
     }
 
     /**
@@ -283,6 +383,26 @@ internal class AppleNativeLyricModelHooks(
         if (presentationInvokeGuard.get() == true) return
         presentationFragmentRef = java.lang.ref.WeakReference(fragment)
         presentationPointerRef = java.lang.ref.WeakReference(pointer)
+        retryPendingPresentationRefresh()
+    }
+
+    /**
+     * Re-dispatches an accepted refresh that has not re-invoked Apple's
+     * presentation yet, from a later binding seam (HLE's R2/F2). The first
+     * main-handler attempt can run before Apple has presented the lyrics view;
+     * it aborts `not-bound` and clears the dedupe state, and without this seam
+     * nothing asks again until the page is re-created. The run is posted so it
+     * lands after Apple's current presentation, guarded against our own invoke,
+     * and idempotent in [performPresentationRefresh], so repeated seam events
+     * cannot double-refresh a latched state.
+     */
+    private fun retryPendingPresentationRefresh() {
+        if (presentationInvokeGuard.get() == true) return
+        val pending = pendingPresentationRefresh ?: return
+        val pointer = presentationPointerRef?.get() ?: return
+        val songNative = pointerGet(pointer) ?: return
+        if (nativeSongId(songNative) != pending.songId) return
+        mainHandler.post { performPresentationRefresh(pending) }
     }
 
     /**
@@ -320,7 +440,10 @@ internal class AppleNativeLyricModelHooks(
      *  - a state already refreshed is skipped, which is the anti-thrash guard;
      *    the invoke guard additionally keeps the build our own re-presentation
      *    triggers from re-entering the gate (and the state dedupe covers a build
-     *    dispatched to another thread).
+     *    dispatched to another thread);
+     *  - an accepted refresh is remembered in [pendingPresentationRefresh] until
+     *    it actually re-invokes the presentation, so the native-presentation
+     *    binding seam can run it once the lyrics view exists.
      */
     private fun requestPresentationRefreshAfterBuild(songNative: Any) {
         // Never evaluate the gate from the build our own re-presentation
@@ -369,6 +492,10 @@ internal class AppleNativeLyricModelHooks(
         // looping: the gate holds again but the state matches.
         if (state == lastPresentationRefreshState) return
         lastPresentationRefreshState = state
+        // A different state supersedes any accepted-but-unapplied refresh; the
+        // same state may still be pending because its earlier attempt aborted
+        // and is waiting for the binding seam.
+        if (pendingPresentationRefresh != state) pendingPresentationRefresh = null
 
         val detail = when {
             !sourceIsApple -> "supplement"
@@ -384,57 +511,73 @@ internal class AppleNativeLyricModelHooks(
             pronunciationSelected = pronunciationSelected,
             refreshed = false,
             detail = detail,
+            adapterName = null,
+            stateCleared = false,
         )
         if (!shouldRefresh) return
 
-        mainHandler.post {
-            performPresentationRefresh(
-                state = state,
-                reason = reason,
-                hasValidOfficialPronunciation = officialPronunciation,
-                onlineTranslation = onlineTranslation,
-                onlinePronunciation = onlinePronunciation,
-                pronunciationSelected = pronunciationSelected,
-            )
-        }
+        pendingPresentationRefresh = state
+        mainHandler.post { performPresentationRefresh(state) }
     }
 
     /**
      * The main-handler half of HLE's `refreshAppleLyricsSupplementPresentation`:
      * resolve the bound fragment and pointer, verify the pointer still belongs to
      * the expected song, re-run the selection so the getters read the settled
-     * model, and re-invoke the app's presentation method. Every early return
-     * clears the recorded state so a later binding can retry.
+     * model, re-invoke the app's presentation method and then rebind the lyrics
+     * adapter (`refreshAppleLyricsRecyclerView` → `notifyDataSetChanged`).
+     *
+     * Only an invoke that actually returned latches the state; every abort clears
+     * the dedupe state ([PresentationRefreshOutcome.cleared]) *and* leaves the
+     * state pending in [pendingPresentationRefresh], so either a later build or
+     * the native-presentation binding seam can ask again. A duplicate queued
+     * attempt for an already-latched state is a no-op.
      */
-    private fun performPresentationRefresh(
-        state: PresentationRefreshState,
-        reason: String,
-        hasValidOfficialPronunciation: Boolean,
-        onlineTranslation: Boolean,
-        onlinePronunciation: Boolean,
-        pronunciationSelected: Boolean,
-    ) {
-        fun finish(refreshed: Boolean, detail: String) {
-            if (!refreshed && lastPresentationRefreshState == state) {
+    private fun performPresentationRefresh(state: PresentationRefreshState) {
+        // Only the accepted-and-still-current state may run: a duplicate queued
+        // after a successful apply, or a stale attempt superseded by a newer
+        // build decision, is a no-op.
+        if (pendingPresentationRefresh != state) return
+
+        val reason = NativeLyricModelPolicy.presentationRefreshReason(
+            sourceIsApple = state.sourceIsApple,
+            hasValidOfficialPronunciation = state.officialPronunciation,
+            hasOnlineTranslation = state.onlineTranslation,
+            hasOnlinePronunciation = state.onlinePronunciation,
+            pronunciationSelected = state.pronunciationSelected,
+        )
+
+        fun finish(outcome: PresentationRefreshOutcome, adapterName: String?) {
+            if (outcome.latches) {
+                if (pendingPresentationRefresh == state) pendingPresentationRefresh = null
+            } else if (lastPresentationRefreshState == state) {
                 lastPresentationRefreshState = null
             }
             logPresentationRefresh(
                 songId = state.songId,
                 reason = reason,
-                hasValidOfficialPronunciation = hasValidOfficialPronunciation,
-                onlineTranslation = onlineTranslation,
-                onlinePronunciation = onlinePronunciation,
-                pronunciationSelected = pronunciationSelected,
-                refreshed = refreshed,
-                detail = detail,
+                hasValidOfficialPronunciation = state.officialPronunciation,
+                onlineTranslation = state.onlineTranslation,
+                onlinePronunciation = state.onlinePronunciation,
+                pronunciationSelected = state.pronunciationSelected,
+                refreshed = outcome.latches,
+                detail = outcome.token,
+                adapterName = adapterName,
+                stateCleared = outcome.cleared,
             )
         }
 
-        val method = presentationMethod ?: return finish(false, "no-presentation-method")
-        val fragment = presentationFragmentRef?.get() ?: return finish(false, "not-bound")
-        val pointer = presentationPointerRef?.get() ?: return finish(false, "not-bound")
-        val songNative = pointerGet(pointer) ?: return finish(false, "pointer-dead")
-        if (nativeSongId(songNative) != state.songId) return finish(false, "song-changed")
+        val method = presentationMethod
+            ?: return finish(PresentationRefreshOutcome.NO_PRESENTATION_METHOD, adapterName = null)
+        val fragment = presentationFragmentRef?.get()
+            ?: return finish(PresentationRefreshOutcome.NOT_BOUND, adapterName = null)
+        val pointer = presentationPointerRef?.get()
+            ?: return finish(PresentationRefreshOutcome.NOT_BOUND, adapterName = null)
+        val songNative = pointerGet(pointer)
+            ?: return finish(PresentationRefreshOutcome.POINTER_DEAD, adapterName = null)
+        if (nativeSongId(songNative) != state.songId) {
+            return finish(PresentationRefreshOutcome.SONG_CHANGED, adapterName = null)
+        }
 
         // HLE re-runs `applyAppleNativeSupplementSelection` before re-presenting.
         // Ours is the pronunciation half; the per-line getters already read the
@@ -445,7 +588,7 @@ internal class AppleNativeLyricModelHooks(
             log("online-translation presentation-refresh selection failed: ${error.message}")
         }
 
-        val outcome = runCatching {
+        val invoke = runCatching {
             presentationInvokeGuard.set(true)
             try {
                 method.invoke(fragment, pointer)
@@ -453,19 +596,37 @@ internal class AppleNativeLyricModelHooks(
                 presentationInvokeGuard.remove()
             }
         }
-        outcome
-            .onSuccess { finish(true, "invoked") }
-            .onFailure { error ->
-                log("online-translation presentation-refresh invoke failed: ${error.message}")
-                finish(false, "invoke-failed")
+        invoke.onFailure { error ->
+            log("online-translation presentation-refresh invoke failed: ${error.message}")
+            finish(PresentationRefreshOutcome.INVOKE_FAILED, adapterName = null)
+        }
+        if (invoke.isFailure) return
+
+        // HLE only rebinds after a successful re-presentation, and only on the
+        // next frame while the layout manager is busy. A missing view/adapter
+        // keeps the invoke latched but is reported as `adapter-unavailable`.
+        val rebound = runCatching { presentationRebind.rebind(fragment) }
+            .getOrElse { error ->
+                log("online-translation presentation-refresh rebind failed: ${error.message}")
+                AppleLyricsPresentationRebind.Result(didNotify = false, adapterName = null)
             }
+        finish(
+            outcome = if (rebound.didNotify) {
+                PresentationRefreshOutcome.REBOUND
+            } else {
+                PresentationRefreshOutcome.ADAPTER_UNAVAILABLE
+            },
+            adapterName = rebound.adapterName,
+        )
     }
 
     /**
      * The device-facing proof of the refresh decision, on the same visible
-     * channel as `native-write`: the exact gate inputs, the branch that fired and
-     * whether the re-presentation actually ran. A `refreshed=true` line on the
-     * first play is the evidence the fix landed.
+     * channel as `native-write`: the exact gate inputs, the branch that fired,
+     * the resolved adapter and whether the recorded state was cleared for retry.
+     * A `refreshed=true detail=rebound` line on the first play is the evidence
+     * the fix landed; `detail=not-bound state=cleared` is the proof a refresh
+     * that ran before the view existed stayed retryable.
      */
     private fun logPresentationRefresh(
         songId: Long,
@@ -476,6 +637,8 @@ internal class AppleNativeLyricModelHooks(
         pronunciationSelected: Boolean,
         refreshed: Boolean,
         detail: String,
+        adapterName: String?,
+        stateCleared: Boolean,
     ) {
         log(
             "online-translation presentation-refresh id=$songId reason=$reason " +
@@ -484,7 +647,9 @@ internal class AppleNativeLyricModelHooks(
                 "onlinePronunciation=$onlinePronunciation " +
                 "pronunciationSelected=$pronunciationSelected " +
                 "presentationMethod=${presentationMethod != null} " +
-                "refreshed=$refreshed detail=$detail",
+                "refreshed=$refreshed detail=$detail " +
+                "adapter=${adapterName ?: NONE} " +
+                "state=${if (stateCleared) STATE_CLEARED else STATE_LATCHED}",
         )
     }
 
@@ -1081,6 +1246,19 @@ internal class AppleNativeLyricModelHooks(
 
         /** Placeholder for a diagnostic field with no language to report. */
         const val NONE = "none"
+
+        /**
+         * The fork's verified lyrics-RecyclerView accessor, used when the
+         * profile pins no `LYRICS_UI_ON_CREATE_VIEW#LYRICS_UI_RECYCLER_VIEW_METHOD`
+         * (the 1606 profile leaves that point empty). `LyricsTypefaceSession`,
+         * `TabletLyricTypography` and HLE's inherited 6.5.x target all resolve
+         * the same name.
+         */
+        const val FALLBACK_RECYCLER_VIEW_METHOD = "getRecyclerView"
+
+        /** `state=` tokens: whether the dedupe state was cleared for a retry. */
+        const val STATE_CLEARED = "cleared"
+        const val STATE_LATCHED = "latched"
 
         /**
          * HLE emits one full native-model line per build, but the shared

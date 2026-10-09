@@ -432,3 +432,37 @@ object NativeLyricModelPolicy {
         ?.trim()
         ?.takeIf { it.isNotEmpty() && RomanizationPolicy.isLatinLanguageTag(it) }
 }
+
+/**
+ * The terminal outcome of one main-thread presentation-refresh attempt.
+ *
+ * HLE's `refreshAppleLyricsSupplementPresentation` ends by re-invoking Apple's
+ * own result presentation and then rebinding the lyrics adapter
+ * (`refreshAppleLyricsRecyclerView` → `appleRecyclerNotifyDataSetChanged`); the
+ * host prints which step the attempt reached in `detail=`.
+ *
+ * Only an attempt whose invoke actually returned may latch the gate dedupe
+ * state. Every abort — a missing presentation method, an unbound
+ * fragment/pointer, a dead pointer, a song that changed under us, or a throwing
+ * invoke — clears the recorded state so a later build seam or the native
+ * presentation binding seam can ask again (`cleared`). [REBOUND] is a latched
+ * invoke whose adapter was also notified; [ADAPTER_UNAVAILABLE] latched the
+ * invoke but could not resolve or notify the lyrics adapter, which is the
+ * remaining device-only uncertainty.
+ *
+ * The tokens are the `detail=` values the device log prints, so this enum is
+ * the single place the retry rule and the diagnostics can drift apart.
+ */
+enum class PresentationRefreshOutcome(val token: String, val latches: Boolean) {
+    REBOUND("rebound", true),
+    ADAPTER_UNAVAILABLE("adapter-unavailable", true),
+    NO_PRESENTATION_METHOD("no-presentation-method", false),
+    NOT_BOUND("not-bound", false),
+    POINTER_DEAD("pointer-dead", false),
+    SONG_CHANGED("song-changed", false),
+    INVOKE_FAILED("invoke-failed", false),
+    ;
+
+    /** True when the recorded dedupe state must be cleared so a later attempt can retry. */
+    val cleared: Boolean get() = !latches
+}

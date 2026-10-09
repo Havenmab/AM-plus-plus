@@ -33,6 +33,10 @@ class ApplePresentationRefreshWiringTest {
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
     )
 
+    private val rebind = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPresentationRebind.kt",
+    )
+
     @Test
     fun `the build seam evaluates HLE's gate from an after hook`() {
         // The gate is ported, not re-implemented on the host.
@@ -73,13 +77,69 @@ class ApplePresentationRefreshWiringTest {
     @Test
     fun `the refresh is safe when the lyrics view is absent`() {
         // HLE returns early when no fragment/pointer is bound; so do we, and the
-        // decision stays retryable.
+        // decision stays retryable. The outcomes (and their latch rule) live in
+        // core so a JVM test can pin the retry semantics.
         assertTrue(hooks.contains("presentationFragmentRef?.get()"))
         assertTrue(hooks.contains("presentationPointerRef?.get()"))
-        assertTrue(hooks.contains("\"not-bound\""))
-        assertTrue(hooks.contains("\"no-presentation-method\""))
-        assertTrue(hooks.contains("\"pointer-dead\""))
-        assertTrue(hooks.contains("\"song-changed\""))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.NOT_BOUND"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.NO_PRESENTATION_METHOD"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.POINTER_DEAD"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.SONG_CHANGED"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.INVOKE_FAILED"))
+    }
+
+    @Test
+    fun `a successful invoke rebinds the lyrics adapter`() {
+        // HLE: `method.invoke(...).onSuccess { refreshAppleLyricsRecyclerView(...) }`.
+        // The adapter reads the pronunciation flags once at bind, so the rebind is
+        // what makes a late lane visible.
+        assertTrue(hooks.contains("private val presentationRebind = AppleLyricsPresentationRebind("))
+        assertTrue(hooks.contains("presentationRebind.rebind(fragment)"))
+        assertTrue(hooks.contains("AppleMusicHookPoint.LYRICS_RECYCLER_ADAPTER"))
+        assertTrue(
+            hooks.contains("AppleMusicRuntimeMember.LYRICS_ADAPTER_NOTIFY_DATA_CHANGED_METHOD"),
+        )
+        assertTrue(
+            hooks.contains("AppleMusicRuntimeMember.LYRICS_ADAPTER_ITEM_COUNT_METHOD"),
+        )
+        // The RecyclerView accessor is reused, not invented: the profile member
+        // first, then the fork's own verified `getRecyclerView`.
+        assertTrue(hooks.contains("LYRICS_UI_RECYCLER_VIEW_METHOD"))
+        assertTrue(hooks.contains("FALLBACK_RECYCLER_VIEW_METHOD"))
+        assertTrue(hooks.contains("\"getRecyclerView\""))
+        // The rebind mirrors HLE's `resolveAppleLyricsRecyclerView` →
+        // `appleRecyclerNotifyDataSetChanged`: validate the view by class name,
+        // take `getAdapter()`, wait out `isComputingLayout` and notify.
+        assertTrue(rebind.contains("androidx.recyclerview.widget.RecyclerView"))
+        assertTrue(rebind.contains("getAdapter"))
+        assertTrue(rebind.contains("notifyDataSetChanged"))
+        assertTrue(rebind.contains("isComputingLayout"))
+        assertTrue(rebind.contains("postOnAnimation"))
+        assertTrue(rebind.contains("AppleReflection.findMethodOrNull"))
+    }
+
+    @Test
+    fun `the native presentation seam binds and retries a lost refresh`() {
+        // HLE's R2/F2 seam is the second binding point: the fork only bound from
+        // the install method, so a refresh that ran before the view existed
+        // aborted `not-bound` and never asked again.
+        assertTrue(hooks.contains("installNativePresentationSeam()"))
+        assertTrue(hooks.contains("AppleMusicHookPoint.LYRICS_NATIVE_PRESENTATION"))
+        assertTrue(hooks.contains("retryPendingPresentationRefresh()"))
+        assertTrue(hooks.contains("pendingPresentationRefresh"))
+        assertTrue(hooks.contains("mainHandler.post { performPresentationRefresh(pending) }"))
+    }
+
+    @Test
+    fun `only a successful invoke latches the dedupe state`() {
+        // The audit bug: the state was recorded before the main-handler post and
+        // an abort could swallow every later retry. The latch is now driven by the
+        // outcome's `latches` flag, and an abort clears the state for retry.
+        assertTrue(hooks.contains("outcome.latches"))
+        assertTrue(hooks.contains("outcome.cleared"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.REBOUND"))
+        assertTrue(hooks.contains("PresentationRefreshOutcome.ADAPTER_UNAVAILABLE"))
+        assertTrue(hooks.contains("lastPresentationRefreshState = null"))
     }
 
     @Test
@@ -91,6 +151,11 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("onlinePronunciation=\$onlinePronunciation"))
         assertTrue(hooks.contains("pronunciationSelected=\$pronunciationSelected"))
         assertTrue(hooks.contains("refreshed=\$refreshed"))
+        // `adapter=` proves whether the rebind resolved one, and `state=` proves
+        // a `not-bound` abort cleared the state for a later retry.
+        assertTrue(hooks.contains("detail=\$detail"))
+        assertTrue(hooks.contains("adapter=\${adapterName ?: NONE}"))
+        assertTrue(hooks.contains("state=\${if (stateCleared) STATE_CLEARED else STATE_LATCHED}"))
         // The overlay revision is one of the anti-thrash state inputs and is
         // therefore visible through `reason=`/`detail=` decisions.
         assertTrue(hooks.contains("overlay.revision()"))

@@ -52,7 +52,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         )
         val sourceLabel = TextView(activity).apply {
             textSize = embeddedTextSize(activity, 14f, 13f)
-            setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+            setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
             setSingleLine(false)
             setPadding(0, dp(activity, 8), 0, dp(activity, 8))
         }
@@ -165,7 +165,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             addView(TextView(activity).apply {
                 text = if (group == null) localizedText(ModuleText.NEW_LYRICS) else localizedText(ModuleText.EDIT_LYRICS)
                 textSize = embeddedTextSize(activity, 19f, 18f)
-                setTextColor(EmbeddedSettingsPalette.onSurface)
+                setEmbeddedTextColor(activity) { colors -> colors.onSurface }
                 setTypeface(typeface, if (isEmbeddedPhone(activity)) Typeface.BOLD else Typeface.NORMAL)
                 gravity = Gravity.CENTER_VERTICAL
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -179,7 +179,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         fun editorAction(label: String, onClick: () -> Unit): TextView = TextView(activity).apply {
             text = label
             textSize = embeddedTextSize(activity, 16f, 14f)
-            setTextColor(EmbeddedSettingsPalette.primary)
+            setEmbeddedTextColor(activity) { colors -> colors.primary }
             gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
@@ -202,9 +202,11 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         val editorRoot = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             minimumHeight = embeddedLyricsEditorDialogHeight(activity)
-            background = GradientDrawable().apply {
-                setColor(EmbeddedSettingsPalette.pageBackground)
-                cornerRadius = embeddedCardCornerRadius(activity)
+            bindEmbeddedTheme(activity) { colors ->
+                background = GradientDrawable().apply {
+                    setColor(colors.pageBackground)
+                    cornerRadius = embeddedCardCornerRadius(activity)
+                }
             }
             clipToOutline = true
             addView(titleBar, LinearLayout.LayoutParams(
@@ -221,7 +223,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                 dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
             ))
         }
-        dialog = AlertDialog.Builder(activity)
+        dialog = embeddedDialogBuilder(activity, customPanel = true)
             .setView(editorRoot)
             .create()
         dialog.setOnDismissListener {

@@ -19,6 +19,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleMusicRuntimeMember
 import io.github.proify.lyricon.amprovider.xposed.AppleReflection
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsPronunciationLanguages
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsTranslationLanguages
+import io.github.proify.lyricon.amprovider.xposed.selectAppleLyricsTranslationLanguage
 import java.lang.reflect.Method
 import java.util.ArrayDeque
 import java.util.Collections
@@ -215,6 +216,16 @@ internal class AppleNativeLyricModelHooks(
             ?.runtimeMemberNames
             .orEmpty()
 
+    /** 1606 has no verified Apple preference target; keep that uncertainty explicit. */
+    private val pronunciationPreferenceAvailable =
+        AppleMusicHookProfiles.exactTargets(
+            resolver.version,
+            AppleMusicHookPoint.LYRICS_PRONUNCIATION_PREFERENCE,
+        ).isNotEmpty()
+
+    private val lineSongIds =
+        Collections.synchronizedMap(IdentityHashMap<Any, Long>())
+
     @Volatile
     private var modelSongId: Long = 0L
 
@@ -227,12 +238,18 @@ internal class AppleNativeLyricModelHooks(
     @Volatile
     private var mandarinHidden: Boolean = false
 
-    /** The song object the last successful `setPronunciation` was applied to. */
+    /** The song object the last successful native lane selections were applied to. */
     @Volatile
     private var selectedPronunciationSong: java.lang.ref.WeakReference<Any>? = null
 
     @Volatile
     private var selectedPronunciationLanguage: String? = null
+
+    @Volatile
+    private var selectedTranslationSong: java.lang.ref.WeakReference<Any>? = null
+
+    @Volatile
+    private var selectedTranslationLanguage: String? = null
 
     /**
      * True while the current song's pronunciation selection could still change:
@@ -329,6 +346,10 @@ internal class AppleNativeLyricModelHooks(
     @Volatile
     private var lastReloadKey: ReloadKey? = null
 
+    /** A load was invoked and the fresh model must trigger the pending presentation. */
+    @Volatile
+    private var reloadAwaitingPresentation: ReloadKey? = null
+
     /**
      * The visible-channel proof that the app re-read our overrides after a
      * refresh attempt (`online-translation render-probe …`). Armed on the main
@@ -364,6 +385,9 @@ internal class AppleNativeLyricModelHooks(
      * re-presentation rebuilds the model, the gate holds again, and the recorded
      * state makes the second pass a no-op.
      */
+    /** Adapter rows can appear after the presentation callback; retry a few frames. */
+    private var adapterRetryAttempts = 0
+
     @Volatile
     private var lastPresentationRefreshState: PresentationRefreshState? = null
 
@@ -703,7 +727,8 @@ internal class AppleNativeLyricModelHooks(
             hasValidOfficialPronunciation(songNative) || officialLane != null
         val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
         val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
-        val pronunciationSelected = enabled && !mandarinHidden
+        val pronunciationSelected = pronunciationPreferenceAvailable &&
+            enabled && !mandarinHidden
         val sourceIsApple = !isModuleSupplementSong(songId)
 
         val state = PresentationRefreshState(
@@ -729,6 +754,21 @@ internal class AppleNativeLyricModelHooks(
             hasOnlinePronunciation = onlinePronunciation,
             pronunciationSelected = pronunciationSelected,
         )
+        // A build caused by our own reload is the completion barrier for that
+        // reload. It must be allowed through even though its state equals the
+        // original refresh request; otherwise the fresh model would never be
+        // presented and only the old pointer would be rebound.
+        val reloadKey = ReloadKey(
+            songId = state.songId,
+            overlayRevision = state.overlayRevision,
+            laneRevision = state.laneRevision,
+        )
+        if (reloadAwaitingPresentation == reloadKey) {
+            reloadAwaitingPresentation = null
+            if (lastPresentationRefreshState == state) {
+                lastPresentationRefreshState = null
+            }
+        }
         // An unchanged state has already been decided (and, when accepted,
         // refreshed). This is what keeps the re-presentation's own build from
         // looping: the gate holds again but the state matches.
@@ -782,6 +822,7 @@ internal class AppleNativeLyricModelHooks(
         if (!shouldRefresh) return
 
         pendingPresentationRefresh = state
+        adapterRetryAttempts = 0
         mainHandler.post { performPresentationRefresh(state, PresentationRefreshTrigger.BUILD) }
     }
 
@@ -875,6 +916,7 @@ internal class AppleNativeLyricModelHooks(
         if (!shouldRefresh) return
 
         pendingPresentationRefresh = state
+        adapterRetryAttempts = 0
         mainHandler.post {
             performPresentationRefresh(state, PresentationRefreshTrigger.CUSTOM_OVERLAY)
         }
@@ -993,6 +1035,7 @@ internal class AppleNativeLyricModelHooks(
             trigger = PresentationRefreshTrigger.LANE_READY.token,
         )
         pendingPresentationRefresh = state
+        adapterRetryAttempts = 0
         mainHandler.post {
             performPresentationRefresh(state, PresentationRefreshTrigger.LANE_READY)
         }
@@ -1085,6 +1128,21 @@ internal class AppleNativeLyricModelHooks(
                 reload = reload,
                 trigger = trigger.token,
             )
+            if (outcome == PresentationRefreshOutcome.ADAPTER_UNAVAILABLE) {
+                if (adapterRetryAttempts < MAX_ADAPTER_RETRY_ATTEMPTS) {
+                    adapterRetryAttempts += 1
+                    mainHandler.postDelayed(
+                        {
+                            if (pendingPresentationRefresh == state) {
+                                performPresentationRefresh(state, trigger)
+                            }
+                        },
+                        ADAPTER_RETRY_DELAY_MS,
+                    )
+                }
+            } else if (outcome == PresentationRefreshOutcome.REBOUND) {
+                adapterRetryAttempts = 0
+            }
         }
 
         val method = presentationMethod
@@ -1117,6 +1175,7 @@ internal class AppleNativeLyricModelHooks(
             log("online-translation presentation-refresh ensure failed: ${error.message}")
         }
         runCatching {
+            applyAppleNativeTranslationSelection(songNative)
             applyAppleNativePronunciationSelection(songNative, songPronunciationLanguages(songNative))
         }.onFailure { error ->
             log("online-translation presentation-refresh selection failed: ${error.message}")
@@ -1261,11 +1320,13 @@ internal class AppleNativeLyricModelHooks(
             return RELOAD_SKIPPED_STALE_ITEM
         }
         lastReloadKey = key
+        reloadAwaitingPresentation = key
         return runCatching {
             method.invoke(viewModel, item)
         }.fold(
             onSuccess = { RELOAD_INVOKED },
             onFailure = { error ->
+                reloadAwaitingPresentation = null
                 log("online-translation presentation-refresh reload failed: ${error.message}")
                 RELOAD_FAILED
             },
@@ -1316,12 +1377,19 @@ internal class AppleNativeLyricModelHooks(
 
     private fun ensureNativeModel(songNative: Any, viewModel: Any?) {
         val songId = nativeSongId(songNative)
-        if (songId != modelSongId) {
-            // A new track: never let the previous song's lane, selection or
-            // open selection leak into this one.
+        val modelChanged = songId != modelSongId
+        if (modelChanged) {
+            // A new track: never let the previous song's lane, selection,
+            // fallback language, or one-shot word render plan leak into this one.
             applePronunciationLanguages = emptyList()
             selectedPronunciationSong = null
             selectedPronunciationLanguage = null
+            selectedTranslationSong = null
+            selectedTranslationLanguage = null
+            systemLyricsLanguage = null
+            synchronized(pendingPronunciationRenderPlans) {
+                pendingPronunciationRenderPlans.clear()
+            }
             pronunciationSelectionOpen = false
             // The lane-ready edge is per song: the new track's own advertisement
             // must be able to request its own refresh, and must not inherit the
@@ -1331,9 +1399,10 @@ internal class AppleNativeLyricModelHooks(
         }
         modelSongId = songId
         songNativeRef = java.lang.ref.WeakReference(songNative)
-        if (viewModel != null) {
+        val languageViewModel = viewModel ?: loadViewModelRef?.get()
+        if (languageViewModel != null) {
             systemLyricsLanguage = call(
-                viewModel,
+                languageViewModel,
                 AppleMusicRuntimeMember.LYRICS_VIEW_MODEL_CURRENT_LANGUAGE_METHOD,
             ) as? String
         }
@@ -1343,6 +1412,8 @@ internal class AppleNativeLyricModelHooks(
         installSongAvailabilityHooks(songNative.javaClass)
         installPronunciationLanguageQueryHook(songNative.javaClass)
         val lines = nativeLines(songNative)
+        if (modelChanged) lineSongIds.clear()
+        lines.forEach { line -> lineSongIds[line] = songId }
         // HLE-compatible per-call probe as the build-time reading, for the
         // diagnostic and for the "did Apple populate the lines yet" signal. It is
         // not the decision input: on 1606 it is false until a language is
@@ -1350,7 +1421,8 @@ internal class AppleNativeLyricModelHooks(
         // lane behind it.
         val officialAtBuild = hasValidOfficialPronunciation(songNative)
         lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
-        installPronunciationWordHooks(lines)
+        installPronunciationWordHooks(lines, clearPendingPlans = modelChanged)
+        applyAppleNativeTranslationSelection(songNative)
         val selection = applyAppleNativePronunciationSelection(songNative, languages)
         reportNativeWrite(
             lines = lines,
@@ -1359,6 +1431,37 @@ internal class AppleNativeLyricModelHooks(
             languages = languages,
             selection = selection,
         )
+    }
+
+    /**
+     * HLE's native translation selection: choose Apple's language matching the
+     * ViewModel system language before the first model/presentation read. The
+     * setter is optional on older profiles and a false Boolean is not latched.
+     */
+    private fun applyAppleNativeTranslationSelection(songNative: Any) {
+        val systemLanguage = systemLyricsLanguage?.takeIf(String::isNotBlank) ?: return
+        val languages = vectorStrings(
+            call(songNative, AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_TRANSLATION_LANGUAGES_METHOD),
+        )
+        val language = selectAppleLyricsTranslationLanguage(
+            systemLanguage = systemLanguage,
+            availableLanguages = languages,
+        ) ?: systemLanguage
+        if (
+            language == selectedTranslationLanguage &&
+            selectedTranslationSong?.get() === songNative
+        ) return
+        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SET_TRANSLATION_METHOD]
+            ?: return
+        val result = runCatching {
+            AppleReflection.call(songNative, name, language)
+        }.onFailure { error ->
+            log("online-translation native-write selectTranslation failed: ${error.message}")
+        }.getOrNull()
+        if (result !is Boolean || result) {
+            selectedTranslationSong = java.lang.ref.WeakReference(songNative)
+            selectedTranslationLanguage = language
+        }
     }
 
     /**
@@ -1511,11 +1614,14 @@ internal class AppleNativeLyricModelHooks(
             AppleMusicRuntimeMember.LYRICS_NATIVE_SET_TRANSLATION_METHOD,
             AppleMusicRuntimeMember.LYRICS_NATIVE_HAS_TRANSLATION_METHOD,
         ).forEach { member ->
-            installBooleanAvailability(clazz, member) { _, original ->
+            installBooleanAvailability(clazz, member) { song, original ->
                 NativeLyricModelPolicy.hasTranslationAvailability(
                     original = original,
                     enabled = enabled,
-                    hasOnlineTranslation = enabled && overlay.hasTranslation(currentSongId()),
+                    hasOnlineTranslation = enabled && overlay.hasTranslation(
+                        nativeSongId(song).takeIf { it > 0L }?.toString()
+                            ?: currentSongId(),
+                    ),
                 )
             }
         }
@@ -1557,7 +1663,10 @@ internal class AppleNativeLyricModelHooks(
                 NativeLyricModelPolicy.hasPronunciationAvailability(
                     original = original,
                     enabled = enabled,
-                    hasOnlinePronunciation = enabled && overlay.hasPronunciation(currentSongId()),
+                    hasOnlinePronunciation = enabled && overlay.hasPronunciation(
+                        nativeSongId(song).takeIf { it > 0L }?.toString()
+                            ?: currentSongId(),
+                    ),
                     hasValidOfficialPronunciation = officialProbe || officialLane != null,
                     mandarinHidden = isMandarinHidden(languages),
                 )
@@ -1593,10 +1702,11 @@ internal class AppleNativeLyricModelHooks(
             appleLanguages = advertised,
             thirdPartyFallbackLanguage = fallbackLanguage(advertised),
         )
-        // Only Apple's own lane is final; otherwise a later entry point must be
-        // free to select the fallback or let Apple supersede it.
-        pronunciationSelectionOpen =
-            plan.selection != NativeLyricModelPolicy.PronunciationSelection.APPLE
+        // Only a successful Apple setter call may close the selection. A false
+        // Boolean means Apple rejected the request and a later app read must
+        // retry it.
+        val appleLane = plan.selection == NativeLyricModelPolicy.PronunciationSelection.APPLE
+        pronunciationSelectionOpen = !appleLane
         val language = plan.language ?: return plan
         if (
             language == selectedPronunciationLanguage &&
@@ -1611,14 +1721,19 @@ internal class AppleNativeLyricModelHooks(
         // keeps that from recursing back into this method.
         pronunciationSelectionGuard.set(true)
         try {
-            runCatching { AppleReflection.call(songNative, name, language) }
-                .onSuccess {
-                    selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
-                    selectedPronunciationLanguage = language
-                }
+            val result = runCatching { AppleReflection.call(songNative, name, language) }
                 .onFailure { error ->
                     log("online-translation native-write selectPronunciation failed: ${error.message}")
                 }
+            val accepted = result.isSuccess &&
+                (result.getOrNull() !is Boolean || result.getOrNull() == true)
+            if (accepted) {
+                selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
+                selectedPronunciationLanguage = language
+                if (appleLane) pronunciationSelectionOpen = false
+            } else {
+                pronunciationSelectionOpen = true
+            }
         } finally {
             pronunciationSelectionGuard.remove()
         }
@@ -1728,10 +1843,18 @@ internal class AppleNativeLyricModelHooks(
      * `emptyApplePronunciationWords(...)` rather than returning the main vector,
      * so the main text can never be rendered as romanization.
      */
-    private fun installPronunciationWordHooks(lines: List<Any>) {
-        // One-shot plans never outlive a model build; a plan registered for a
-        // vector the adapter did not consume is dropped here.
-        synchronized(pendingPronunciationRenderPlans) { pendingPronunciationRenderPlans.clear() }
+    private fun installPronunciationWordHooks(
+        lines: List<Any>,
+        clearPendingPlans: Boolean,
+    ) {
+        // Plans belong to a model generation. Re-entering ensureNativeModel for
+        // the same model (w2/F2 after build) must not erase a plan waiting for
+        // Apple's adapter; only a track/model change may clear it.
+        if (clearPendingPlans) {
+            synchronized(pendingPronunciationRenderPlans) {
+                pendingPronunciationRenderPlans.clear()
+            }
+        }
         wordDiagnosticKeys.clear()
         lines.map { it.javaClass }.distinct().forEach { clazz ->
             installLineGetter(
@@ -1979,8 +2102,7 @@ internal class AppleNativeLyricModelHooks(
             generateSequence(adapter.clazz) { it.superclass }
                 .flatMap { it.declaredMethods.asSequence() }
                 .filter { method ->
-                    !method.isBridge &&
-                        method.parameterTypes.firstOrNull()?.name == vectorClassName &&
+                    method.parameterTypes.firstOrNull()?.name == vectorClassName &&
                         method.returnType.name == ARRAY_MAP_CLASS
                 }
                 .distinctBy { method ->
@@ -2378,11 +2500,14 @@ internal class AppleNativeLyricModelHooks(
             genre = genreFor(modelSongId).orEmpty().takeIf(String::isNotBlank),
         )
 
+    private fun lineSongId(line: Any): String? =
+        lineSongIds[line]?.takeIf { it > 0L }?.toString() ?: currentSongId()
+
     private fun onlineTranslation(line: Any): String? {
         if (!enabled) return null
         val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD)) ?: return null
         val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD)) ?: return null
-        return overlay.translation(currentSongId(), begin, end, rawLineText(line))
+        return overlay.translation(lineSongId(line), begin, end, rawLineText(line))
     }
 
     private fun onlinePronunciation(line: Any, text: String?): String? {
@@ -2391,7 +2516,7 @@ internal class AppleNativeLyricModelHooks(
         val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD)) ?: return null
         return RomanizationPolicy.sanitize(
             originalText = text,
-            pronunciation = overlay.pronunciation(currentSongId(), begin, end, text),
+            pronunciation = overlay.pronunciation(lineSongId(line), begin, end, text),
         )
     }
 
@@ -2538,6 +2663,8 @@ internal class AppleNativeLyricModelHooks(
 
         /** HLE's `AppleLyricsPronunciationState.MAX_RENDER_PLANS`. */
         const val MAX_PRONUNCIATION_RENDER_PLANS = 256
+        const val MAX_ADAPTER_RETRY_ATTEMPTS = 4
+        const val ADAPTER_RETRY_DELAY_MS = 32L
 
         /** HLE's `hookApplePronunciationWordRendering` return-type filter. */
         const val ARRAY_MAP_CLASS = "android.util.ArrayMap"

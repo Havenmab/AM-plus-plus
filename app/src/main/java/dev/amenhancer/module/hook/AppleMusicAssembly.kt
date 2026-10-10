@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 import android.app.Application
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
@@ -17,6 +18,7 @@ internal fun assembleAppleMusicTarget(
     // displayed document back from it to enforce the timed-Apple-lyrics rule,
     // and the custom-lyrics target records into the same instance.
     val timingObservations = TtmlTimingObservationRegistry()
+    val nativeLyricOverlay = NativeLyricOverlayStore()
     val automatic = if (settings.customLyricsEnabled && settings.automaticLyricsEnabled) {
         val suppressed = runCatching { config.customLyricsManifest().entries
             .filterNot { it.enabled }.mapTo(mutableSetOf(), CustomLyricsEntry::appleMusicId)
@@ -40,6 +42,7 @@ internal fun assembleAppleMusicTarget(
             currentTrack = { currentSong.current()?.details },
             logger = ModernXposedRuntime::log,
             displayedTtml = timingObservations::rawTtmlOfAppleMusicId,
+            nativeLyricOverlay = nativeLyricOverlay,
         )
     } else null
     return AppleMusicHostFactory.appleMusic(
@@ -50,5 +53,6 @@ internal fun assembleAppleMusicTarget(
         currentSong,
         automatic,
         timingObservations,
+        nativeLyricOverlay,
     )
 }

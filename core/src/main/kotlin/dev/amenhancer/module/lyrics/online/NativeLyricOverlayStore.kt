@@ -522,7 +522,9 @@ object NativeLyricModelPolicy {
  */
 enum class PresentationRefreshOutcome(val token: String, val latches: Boolean) {
     REBOUND("rebound", true),
-    ADAPTER_UNAVAILABLE("adapter-unavailable", true),
+    // The presentation invoke succeeded, but the RecyclerView may still be
+    // empty while LiveData/layout work catches up. Keep the ticket retryable.
+    ADAPTER_UNAVAILABLE("adapter-unavailable", false),
     NO_PRESENTATION_METHOD("no-presentation-method", false),
     NOT_BOUND("not-bound", false),
     POINTER_DEAD("pointer-dead", false),

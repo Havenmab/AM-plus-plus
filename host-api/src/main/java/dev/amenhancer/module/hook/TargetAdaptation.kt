@@ -22,6 +22,10 @@ data class TargetAdaptation(
     val customLyrics: CustomLyricsTarget = CustomLyricsTarget {
         TargetCapabilityInstall.Degraded("Custom lyrics target was not configured")
     },
+    val nativeLyrics: NativeLyricsTarget = object : NativeLyricsTarget {
+        override fun install(): TargetCapabilityInstall =
+            TargetCapabilityInstall.Degraded("Native lyrics target was not configured")
+    },
     val currentSongIdentity: CurrentSongIdentityTarget = CurrentSongIdentityTarget {
         TargetCapabilityInstall.Degraded("Current song identity target was not configured")
     },
@@ -60,6 +64,14 @@ fun interface LyricsTypefaceTarget {
 
 fun interface CustomLyricsTarget {
     fun install(): TargetCapabilityInstall
+}
+
+interface NativeLyricsTarget {
+    fun install(): TargetCapabilityInstall
+    fun onLyricsPointer(pointer: Any?) = Unit
+    fun onLyricsPresentation(fragment: Any?, pointer: Any?) = Unit
+    fun onCustomOverlayUpdated(songId: Long) = Unit
+    fun setModuleSupplementSongResolver(resolver: (Long) -> Boolean) = Unit
 }
 
 fun interface CurrentSongIdentityTarget {

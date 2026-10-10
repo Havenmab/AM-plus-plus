@@ -7,7 +7,6 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
-import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -25,11 +24,10 @@ internal class AppleMusicCustomLyricsTarget(
      */
     private val timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
     /**
-     * Exact-profile resolver for HLE's native lyric-model delivery. Present only
-     * for builds whose profile pins the native member dictionary; a null value
-     * or an unresolved target leaves the document lane exactly as it was.
+     * Shared native lane target. It owns Apple model hooks; this target only
+     * forwards custom document and presentation events that it observes.
      */
-    private val hookResolver: AppleMusicHookResolver? = null,
+    private val nativeLyricDelivery: NativeLyricsTarget? = null,
 ) : CustomLyricsTarget {
     private var installedResult: TargetCapabilityInstall? = null
     private val registration = HookRegistrationScope()
@@ -260,53 +258,15 @@ internal class AppleMusicCustomLyricsTarget(
         val isTracking: (Long) -> Boolean = { appleMusicId ->
             session.isTracking(appleMusicId) || autoSession?.isTracking(appleMusicId) == true
         }
-        // HLE's model-level delivery. The document lane alone does not make
-        // Apple render an injected transliteration track on 1606, so the online
-        // lanes are also written into the app's own lyric model (availability,
-        // line text and language lists). Off unless the translation toggle
-        // produced an enricher; every target resolution fails open.
-        val nativeLyricDelivery = autoLyricsRuntime
-            ?.takeIf { it.translationEnricher != null }
-            ?.let { runtime ->
-                hookResolver?.let { resolver ->
-                    AppleNativeLyricModelHooks(
-                        resolver = resolver,
-                        overlay = runtime.nativeLyricOverlay,
-                        enabled = true,
-                        hideMandarinPinyin = runtime.hideMandarinPinyin,
-                        genreFor = runtime.genreFor,
-                        scope = registration,
-                        // The app's result-presentation method. On 1606 the
-                        // profile's `lyrics-install-method` contract pins it to
-                        // PlayerLyricsViewFragment#w2(SongInfoPtr), which is
-                        // exactly HLE's LYRICS_RESULT_PRESENTATION. Re-invoking
-                        // it is the fork's refresh primitive; a null leaves the
-                        // refresh a no-op.
-                        presentationMethod = installMethod,
-                        // HLE skips the refresh on a supplement pointer because
-                        // the supplement path has its own refresh. A *ready*
-                        // module replacement is the fork's counterpart: the
-                        // displayed document is ours, so `readyReapply` and the
-                        // completion feed's post-overlay trigger own the
-                        // re-presentation. A merely in-flight fetch still shows
-                        // Apple's document, so it must not suppress the refresh.
-                        isModuleSupplementSong = { appleMusicId ->
-                            readyReplacementFor(appleMusicId) != null
-                        },
-                    )
-                }
-            }
-        // The custom feed's post-overlay refresh now reaches the native
-        // delivery. This is the fork's counterpart of HLE's supplement store
-        // refresh; the dedupe (once per song and overlay revision), the
-        // main-handler post and the latch-and-retry state all live in the hooks.
+        // The native lane hooks are installed by NativeLyricsFeature. This
+        // custom-lyrics capability only forwards its document/pointer events to
+        // that shared delivery instance.
+        nativeLyricDelivery?.setModuleSupplementSongResolver { appleMusicId ->
+            readyReplacementFor(appleMusicId) != null
+        }
         onCustomOverlayUpdated = { appleMusicId ->
             nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
         }
-        runCatching { nativeLyricDelivery?.install() }
-            .onFailure { error ->
-                ModernXposedRuntime.log("native lyric model hooks failed: $error")
-            }
         val fragmentUsable = fragmentIsAddedPredicate(installMethod.declaringClass)
         readyReapply = CustomLyricsReadyReapply(
             installMethod = installMethod,

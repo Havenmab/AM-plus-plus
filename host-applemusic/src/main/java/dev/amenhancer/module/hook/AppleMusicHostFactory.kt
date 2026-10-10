@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
 
@@ -55,6 +56,7 @@ object AppleMusicHostFactory {
         currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache(),
         autoLyricsRuntime: AutoLyricsRuntime? = null,
         timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
+        nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
     ): TargetAdaptation {
         val build = targetBuild(application)
         val profile = checkNotNull(dev.amenhancer.host.applemusic.AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
@@ -72,6 +74,22 @@ object AppleMusicHostFactory {
         val nativeLyricResolver = AppleMusicHookResolver(
             version = AppleMusicVersion(build.versionName, build.versionCode),
             classLoader = classLoader,
+        )
+        val nativePresentationMethod = runCatching {
+            resolver.resolve(AppleMusicSymbols.LyricsInstallMethod).valueOrNull()
+        }.getOrNull()
+        val nativeLyricsTarget = AppleMusicNativeLyricsTarget(
+            resolver = nativeLyricResolver,
+            overlay = nativeLyricOverlay,
+            currentSong = currentSong,
+            hideMandarinPinyin = settings.onlineLyricsHideMandarinPinyinEnabled,
+            genreFor = { appleMusicId ->
+                runCatching {
+                    io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
+                        .getMetadataById(appleMusicId.toString())?.genre
+                }.getOrNull()
+            },
+            presentationMethod = nativePresentationMethod,
         )
         return TargetAdaptation(
             identity = build.displayName,
@@ -96,13 +114,14 @@ object AppleMusicHostFactory {
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,
             ),
+            nativeLyrics = nativeLyricsTarget,
             customLyrics = AppleMusicCustomLyricsTarget(
                 config = config,
                 symbols = resolver,
                 currentSong = currentSong,
                 autoLyricsRuntime = autoLyricsRuntime,
                 timingObservations = timingObservations,
-                hookResolver = nativeLyricResolver,
+                nativeLyricDelivery = nativeLyricsTarget,
             ),
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,

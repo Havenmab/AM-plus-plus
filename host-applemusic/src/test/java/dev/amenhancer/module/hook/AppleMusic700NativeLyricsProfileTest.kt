@@ -8,6 +8,7 @@ import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsPronunciation
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsTranslationLanguages
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -177,6 +178,23 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(runtime.contains("val nativeLyricOverlay = NativeLyricOverlayStore()"))
         assertTrue(runtime.contains("nativeLyricOverlay = nativeLyricOverlay"))
         assertTrue(runtime.contains("overlay?.update("))
+    }
+
+    @Test
+    fun `the language selection never gates Apple's own lane behind the build-time probe`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // Apple's advertised lane wins; the third-party fallback only fills a gap.
+        assertTrue(hooks.contains("NativeLyricModelPolicy.selectPronunciationLanguage("))
+        // The HLE per-line probe is kept, but only for availability/diagnostics.
+        assertTrue(hooks.contains("private fun hasValidOfficialPronunciation("))
+        // The stale shape that displaced Apple: firstOrNull()?.takeIf { cached }.
+        assertFalse(hooks.contains("takeIf { hasValidOfficialPronunciation }"))
+        // The device log must be able to prove the decision.
+        assertTrue(hooks.contains("officialAtBuild="))
+        assertTrue(hooks.contains("officialLanguage="))
+        assertTrue(hooks.contains("selectedLanguage="))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

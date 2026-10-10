@@ -203,6 +203,47 @@ object NativeLyricModelPolicy {
         ?: appleLanguages.firstNotNullOfOrNull { it.latinLanguageOrNull() }
         ?: onlineFallbackLanguage.latinLanguageOrNull()
 
+    /**
+     * True when [language] is a pronunciation lane Apple itself advertises: a
+     * Latin tag that is not the third-party placeholder. The document lane writes
+     * [THIRD_PARTY_PRONUNCIATION_LANGUAGE] for its own transliteration track, so
+     * counting that exact tag as Apple's would misreport the third-party lane as
+     * the platform's own.
+     */
+    fun isOfficialPronunciationLanguage(language: String?): Boolean {
+        val normalized = language?.trim()?.takeIf(String::isNotEmpty) ?: return false
+        if (normalized.equals(THIRD_PARTY_PRONUNCIATION_LANGUAGE, ignoreCase = true)) return false
+        return RomanizationPolicy.isLatinLanguageTag(normalized)
+    }
+
+    /**
+     * Apple's own pronunciation language, from the song's advertised
+     * `getPronunciationLanguages` vector, or null when Apple offers none.
+     */
+    fun officialPronunciationLanguage(appleLanguages: List<String>): String? =
+        appleLanguages.firstOrNull(::isOfficialPronunciationLanguage)
+
+    /**
+     * The language HLE's `applyAppleNativePronunciationSelection` hands to the
+     * song's `setPronunciation`.
+     *
+     * HLE gates Apple's own language behind `hasValidOfficialRomanization`, a
+     * per-line read of `getHtmlPronunciationLineText`. On 1606 that getter is
+     * empty until a pronunciation language has already been selected, so a strict
+     * mirror always took the third-party branch and overwrote Apple's own lane:
+     * the device log shows `languages=ja-Latn officialPronunciation=false`
+     * turning into `languages=und-Latn` after the fallback was selected. Apple's
+     * advertised Latin lane therefore wins whenever there is one — selecting it
+     * is the only way the per-line probe can ever become valid — and the
+     * third-party fallback is used only when Apple offers no lane of its own. The
+     * line getter still fills an individual line Apple leaves empty, so a
+     * selected-but-partially-empty official track never leaves a gap.
+     */
+    fun selectPronunciationLanguage(
+        appleLanguages: List<String>,
+        thirdPartyFallbackLanguage: String?,
+    ): String? = officialPronunciationLanguage(appleLanguages) ?: thirdPartyFallbackLanguage
+
     /** HLE's `hasTranslation` / `setTranslation` availability resolution. */
     fun hasTranslationAvailability(
         original: Boolean,

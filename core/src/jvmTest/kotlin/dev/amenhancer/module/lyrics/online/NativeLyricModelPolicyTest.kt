@@ -137,50 +137,112 @@ class NativeLyricModelPolicyTest {
         )
 
     /**
-     * The timing bug this change fixes: at the build/pointer seam Apple's
-     * `getPronunciationLanguages` is still empty, and an empty vector means
-     * "Apple has not answered yet". Handing the third-party tag to
-     * `setPronunciation` then either displaces Apple's later-arriving lane
-     * (device log: id=1485394766 turns `languages=` into
-     * `selectedLanguage=und-Latn`) or selects nothing and is never asked again
-     * (id=1639023912's first call).
+     * The regression this change fixes. An empty Apple vector means "Apple has
+     * not advertised a lane", not "select nothing": HLE falls through to
+     * `thirdPartyPronunciationFallbackLanguage()`. The device log shows the
+     * third-party lane was published while the write selected nothing — e.g.
+     * id=1531673145 `publish … pronunciationSource=QM pronunciationLines=24`
+     * beside `native-write … languages= … selectedLanguage=none deferred=true`.
      */
     @Test
-    fun `an empty language list defers instead of handing over the third-party tag`() {
-        val deferred = plan(emptyList(), "und-Latn")
-        assertNull(deferred.language)
-        assertTrue(deferred.deferred)
-        assertFalse(deferred.appleLanguagesKnown)
+    fun `an empty language list still selects the third-party fallback as HLE does`() {
+        val unanswered = plan(emptyList(), "und-Latn")
+        assertEquals("und-Latn", unanswered.language)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.THIRD_PARTY, unanswered.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_APPLE_UNANSWERED, unanswered.reason)
+        assertFalse(unanswered.appleLanguagesKnown)
+        // A Latin system tag is used verbatim, exactly as the fallback does.
+        assertEquals("ja-Latn", plan(emptyList(), "ja-Latn").language)
     }
 
     /**
-     * Self-correction: once the re-evaluation points observe Apple advertising
-     * its lane, the plan selects it and stops deferring.
+     * Self-correction: the re-evaluation points hand the plan Apple's advertised
+     * lane, so it supersedes a third-party tag that was standing in.
      */
     @Test
-    fun `once Apple advertises the plan selects its lane and stops deferring`() {
+    fun `Apple's advertised lane wins and supersedes a standing fallback`() {
         val advertised = plan(listOf("ja-Latn"), "und-Latn")
         assertEquals("ja-Latn", advertised.language)
-        assertFalse(advertised.deferred)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.APPLE, advertised.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_APPLE_LANE, advertised.reason)
         assertTrue(advertised.appleLanguagesKnown)
         // The lane that arrives second is the one that wins, per the log.
         val korean = plan(listOf("ko-Latn"), "und-Latn")
         assertEquals("ko-Latn", korean.language)
-        assertFalse(korean.deferred)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.APPLE, korean.selection)
     }
 
     @Test
-    fun `a known list without a lane of its own may still use the third-party tag`() {
+    fun `Apple answering without a lane of its own still takes the third-party tag`() {
         val answered = plan(listOf("ja"), "und-Latn")
         assertEquals("und-Latn", answered.language)
-        assertFalse(answered.deferred)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.THIRD_PARTY, answered.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_APPLE_NO_OWN_LANE, answered.reason)
         assertTrue(answered.appleLanguagesKnown)
-        // Apple answered but there is nothing third-party to add: known, not
-        // deferred, and nothing is handed to setPronunciation.
-        val nothing = plan(listOf("und-Latn"), null)
-        assertNull(nothing.language)
-        assertFalse(nothing.deferred)
-        assertTrue(nothing.appleLanguagesKnown)
+    }
+
+    @Test
+    fun `nothing is selected only when there is no lane and no legitimate fallback`() {
+        val unknown = plan(emptyList(), null)
+        assertNull(unknown.language)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.NONE, unknown.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_NO_FALLBACK, unknown.reason)
+        assertFalse(unknown.appleLanguagesKnown)
+        // Apple answered but there is nothing third-party to add.
+        val answered = plan(listOf("und-Latn"), null)
+        assertNull(answered.language)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.NONE, answered.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_NO_FALLBACK, answered.reason)
+        assertTrue(answered.appleLanguagesKnown)
+    }
+
+    @Test
+    fun `the Mandarin rule hides the lane and selects nothing`() {
+        val hidden = NativeLyricModelPolicy.hiddenPronunciationSelection(appleLanguagesKnown = true)
+        assertNull(hidden.language)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.NONE, hidden.selection)
+        assertEquals(NativeLyricModelPolicy.REASON_MANDARIN_HIDDEN, hidden.reason)
+        assertTrue(hidden.appleLanguagesKnown)
+    }
+
+    /**
+     * A transient empty read must not withdraw a lane Apple already advertised
+     * (#9's invariant): the selection plans against the last non-empty
+     * advertisement, so the tag can never take over a lane Apple was seen to
+     * offer.
+     */
+    @Test
+    fun `a transient empty read keeps the last non-empty Apple advertisement`() {
+        assertEquals(
+            listOf("ja-Latn"),
+            NativeLyricModelPolicy.advertisedPronunciationLanguages(
+                live = emptyList(),
+                remembered = listOf("ja-Latn"),
+            ),
+        )
+        assertEquals(
+            listOf("ko-Latn"),
+            NativeLyricModelPolicy.advertisedPronunciationLanguages(
+                live = listOf("ko-Latn"),
+                remembered = listOf("ja-Latn"),
+            ),
+        )
+        assertEquals(
+            emptyList<String>(),
+            NativeLyricModelPolicy.advertisedPronunciationLanguages(
+                live = emptyList(),
+                remembered = emptyList(),
+            ),
+        )
+        // With the remembered lane the plan stays on Apple's lane even though the
+        // live read was empty.
+        val remembered = NativeLyricModelPolicy.advertisedPronunciationLanguages(
+            live = emptyList(),
+            remembered = listOf("ja-Latn"),
+        )
+        val resolved = plan(remembered, "und-Latn")
+        assertEquals("ja-Latn", resolved.language)
+        assertEquals(NativeLyricModelPolicy.PronunciationSelection.APPLE, resolved.selection)
     }
 
     @Test

@@ -185,22 +185,43 @@ class AppleMusic700NativeLyricsProfileTest {
         val hooks = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
-        // Apple's advertised lane wins; the planner defers while the vector is
-        // empty instead of handing the third-party tag over.
+        // Apple's advertised lane wins; an empty vector is not special-cased
+        // away from the third-party fallback, which the planner still resolves.
         assertTrue(hooks.contains("NativeLyricModelPolicy.planPronunciationSelection("))
-        // The host must not run the un-deferrable primitive directly: an empty
-        // vector would then take the third-party tag.
+        // The host must not run the un-guarded primitive directly.
         assertFalse(hooks.contains("NativeLyricModelPolicy.selectPronunciationLanguage("))
         // The HLE per-line probe is kept, but only for availability/diagnostics.
         assertTrue(hooks.contains("private fun hasValidOfficialPronunciation("))
         // The stale shape that displaced Apple: firstOrNull()?.takeIf { cached }.
         assertFalse(hooks.contains("takeIf { hasValidOfficialPronunciation }"))
-        // The device log must be able to prove the decision and the deferral.
+        // The device log must be able to prove the decision.
         assertTrue(hooks.contains("officialAtBuild="))
         assertTrue(hooks.contains("officialLanguage="))
         assertTrue(hooks.contains("selectedLanguage="))
         assertTrue(hooks.contains("appleLanguagesKnown="))
-        assertTrue(hooks.contains("deferred="))
+    }
+
+    @Test
+    fun `an empty Apple vector selects the third-party fallback instead of nothing`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The regression: the planner must be handed the legitimate fallback so a
+        // third-party-only song still gets a language selected, exactly as HLE's
+        // `?: thirdPartyPronunciationFallbackLanguage()` does.
+        assertTrue(hooks.contains("NativeLyricModelPolicy.planPronunciationSelection("))
+        assertTrue(hooks.contains("thirdPartyFallbackLanguage = fallbackLanguage("))
+        // The last non-empty advertisement is kept, so a transient empty read
+        // cannot hand the tag over an Apple lane already seen (PR #9).
+        assertTrue(hooks.contains("NativeLyricModelPolicy.advertisedPronunciationLanguages("))
+        // The old flag implied "nothing selected" and is gone. (The KDoc still
+        // quotes the old log line, so match the emitted field literal, not the
+        // bare token.)
+        assertFalse(hooks.contains("pronunciationSelectionDeferred"))
+        assertFalse(hooks.contains("\"deferred="))
+        // The diagnostic names the branch honestly instead of implying a stall.
+        assertTrue(hooks.contains("selection=\${selection.selection.token}"))
+        assertTrue(hooks.contains("reason=\${selection.reason}"))
     }
 
     @Test
@@ -213,8 +234,8 @@ class AppleMusic700NativeLyricsProfileTest {
         // request must re-run the decision instead of trusting the build pass.
         assertTrue(hooks.contains("LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD"))
         assertTrue(hooks.contains("installPronunciationLanguageQueryHook"))
-        assertTrue(hooks.contains("maybeRefreshDeferredPronunciationSelection()"))
-        assertTrue(hooks.contains("pronunciationSelectionDeferred"))
+        assertTrue(hooks.contains("refreshPronunciationSelectionIfOpen("))
+        assertTrue(hooks.contains("pronunciationSelectionOpen"))
         // The query hook is installed per song class alongside the availability
         // hooks, so an advertisement that arrives late is observed.
         assertTrue(

@@ -130,6 +130,59 @@ class NativeLyricModelPolicyTest {
         assertNull(trackLanguage(emptyList(), null))
     }
 
+    private fun plan(apple: List<String>, fallback: String?) =
+        NativeLyricModelPolicy.planPronunciationSelection(
+            appleLanguages = apple,
+            thirdPartyFallbackLanguage = fallback,
+        )
+
+    /**
+     * The timing bug this change fixes: at the build/pointer seam Apple's
+     * `getPronunciationLanguages` is still empty, and an empty vector means
+     * "Apple has not answered yet". Handing the third-party tag to
+     * `setPronunciation` then either displaces Apple's later-arriving lane
+     * (device log: id=1485394766 turns `languages=` into
+     * `selectedLanguage=und-Latn`) or selects nothing and is never asked again
+     * (id=1639023912's first call).
+     */
+    @Test
+    fun `an empty language list defers instead of handing over the third-party tag`() {
+        val deferred = plan(emptyList(), "und-Latn")
+        assertNull(deferred.language)
+        assertTrue(deferred.deferred)
+        assertFalse(deferred.appleLanguagesKnown)
+    }
+
+    /**
+     * Self-correction: once the re-evaluation points observe Apple advertising
+     * its lane, the plan selects it and stops deferring.
+     */
+    @Test
+    fun `once Apple advertises the plan selects its lane and stops deferring`() {
+        val advertised = plan(listOf("ja-Latn"), "und-Latn")
+        assertEquals("ja-Latn", advertised.language)
+        assertFalse(advertised.deferred)
+        assertTrue(advertised.appleLanguagesKnown)
+        // The lane that arrives second is the one that wins, per the log.
+        val korean = plan(listOf("ko-Latn"), "und-Latn")
+        assertEquals("ko-Latn", korean.language)
+        assertFalse(korean.deferred)
+    }
+
+    @Test
+    fun `a known list without a lane of its own may still use the third-party tag`() {
+        val answered = plan(listOf("ja"), "und-Latn")
+        assertEquals("und-Latn", answered.language)
+        assertFalse(answered.deferred)
+        assertTrue(answered.appleLanguagesKnown)
+        // Apple answered but there is nothing third-party to add: known, not
+        // deferred, and nothing is handed to setPronunciation.
+        val nothing = plan(listOf("und-Latn"), null)
+        assertNull(nothing.language)
+        assertFalse(nothing.deferred)
+        assertTrue(nothing.appleLanguagesKnown)
+    }
+
     @Test
     fun `Apple's advertised lane keeps pronunciation available without the online lane`() {
         fun available(systemMatch: Boolean, languages: List<String>) =

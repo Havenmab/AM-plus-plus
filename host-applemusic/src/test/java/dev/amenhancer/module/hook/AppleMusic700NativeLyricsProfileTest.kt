@@ -185,16 +185,41 @@ class AppleMusic700NativeLyricsProfileTest {
         val hooks = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
-        // Apple's advertised lane wins; the third-party fallback only fills a gap.
-        assertTrue(hooks.contains("NativeLyricModelPolicy.selectPronunciationLanguage("))
+        // Apple's advertised lane wins; the planner defers while the vector is
+        // empty instead of handing the third-party tag over.
+        assertTrue(hooks.contains("NativeLyricModelPolicy.planPronunciationSelection("))
+        // The host must not run the un-deferrable primitive directly: an empty
+        // vector would then take the third-party tag.
+        assertFalse(hooks.contains("NativeLyricModelPolicy.selectPronunciationLanguage("))
         // The HLE per-line probe is kept, but only for availability/diagnostics.
         assertTrue(hooks.contains("private fun hasValidOfficialPronunciation("))
         // The stale shape that displaced Apple: firstOrNull()?.takeIf { cached }.
         assertFalse(hooks.contains("takeIf { hasValidOfficialPronunciation }"))
-        // The device log must be able to prove the decision.
+        // The device log must be able to prove the decision and the deferral.
         assertTrue(hooks.contains("officialAtBuild="))
         assertTrue(hooks.contains("officialLanguage="))
         assertTrue(hooks.contains("selectedLanguage="))
+        assertTrue(hooks.contains("appleLanguagesKnown="))
+        assertTrue(hooks.contains("deferred="))
+    }
+
+    @Test
+    fun `the selection re-evaluates when Apple advertises its pronunciation lane`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // Re-evaluation points: the song's own language query, the availability
+        // overrides, the pronunciation line getter and the preferred-language
+        // request must re-run the decision instead of trusting the build pass.
+        assertTrue(hooks.contains("LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD"))
+        assertTrue(hooks.contains("installPronunciationLanguageQueryHook"))
+        assertTrue(hooks.contains("maybeRefreshDeferredPronunciationSelection()"))
+        assertTrue(hooks.contains("pronunciationSelectionDeferred"))
+        // The query hook is installed per song class alongside the availability
+        // hooks, so an advertisement that arrives late is observed.
+        assertTrue(
+            hooks.contains("installPronunciationLanguageQueryHook(songNative.javaClass)"),
+        )
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

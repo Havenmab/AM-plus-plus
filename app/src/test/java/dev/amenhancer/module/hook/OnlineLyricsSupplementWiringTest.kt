@@ -103,8 +103,15 @@ class OnlineLyricsSupplementWiringTest {
         assertTrue(runtime.contains("trailing = onlineSources"))
         assertTrue(runtime.contains("val enricher = chain.composite"))
         assertTrue(runtime.contains(".takeIf { onlineLyricsTranslationEnabled }"))
-        assertTrue(runtime.contains("pronunciationRequested = true"))
-        assertTrue(runtime.contains("hideMandarinPronunciation = hideMandarinPronunciation"))
+        // The enricher requests the translation lane only: the third-party
+        // pronunciation lane was removed.
+        assertTrue(runtime.contains("translationRequested = true"))
+        assertTrue(runtime.contains("applePronunciationOnly=true"))
+        // The enrichment carries the translation lane only, so the Mandarin rule
+        // no longer travels with it; it stays on the native lane, which still
+        // receives it (and gate the Apple-only pronunciation there).
+        assertFalse(runtime.contains("hideMandarinPronunciation = hideMandarinPronunciation"))
+        assertTrue(runtime.contains("hideMandarinPinyin = hideMandarinPronunciation"))
         assertTrue(runtime.contains("translationEnricher = enricher"))
         assertTrue(runtime.contains("online-translation runtime supplement="))
     }

@@ -117,6 +117,15 @@ internal class EmbeddedConfigurationSession(
         indexRepository.state(storage.values())
 
     /**
+     * Removes the published custom-lyrics index pointer and the legacy manifest
+     * key. The 「清空自定义歌词」 action calls this before it retires the
+     * now-unreferenced files, so a reset index can never be re-materialized from
+     * a stale pointer or a leftover legacy value.
+     */
+    internal fun resetCustomLyricsIndex(): Boolean = writable &&
+        storage.removeValues(ModuleSettingsSchema.customLyricsIndexKeys, synchronous = true)
+
+    /**
      * Compare-and-swap variant used by the lyrics updater. A background source
      * scan must never publish over an edit made after its baseline snapshot.
      */

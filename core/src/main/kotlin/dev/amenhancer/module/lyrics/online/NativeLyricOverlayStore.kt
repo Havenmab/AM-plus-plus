@@ -1,27 +1,22 @@
 package dev.amenhancer.module.lyrics.online
 
 /**
- * Timing-keyed overlay of the online translation/pronunciation lanes for the
- * current track. This is the fork's port of HLE's
- * `AppleNativeOnlineTranslationStore`, reduced to the subset the native
- * lyric-model delivery reads.
+ * Timing-keyed overlay of the online **translation** lane for the current track.
+ * This is the fork's port of HLE's `AppleNativeOnlineTranslationStore`, reduced
+ * to the subset the native lyric-model delivery reads.
  *
- * HLE does not deliver pronunciation by editing TTML: it writes the online
- * lanes into Apple's own lyric model and advertises the languages. The
- * document lane in this fork already injects a `<transliterations>` head track,
- * but Apple Music 7.0.0-beta (1606) does not render it (device-confirmed:
- * `pronunciationLines=34` and `published=true`, yet the screen shows no
- * romanization). The native-model hooks therefore ask this store for the line
- * content keyed by the line's timing, exactly as HLE does through
- * `AppleNativeOnlineTranslationStore.translation/pronunciation`.
+ * Only the translation half survives the Apple-only pronunciation policy: the
+ * third-party romanization lane has been removed from the product, so a
+ * provider's pronunciation column is never stored here and can never reach the
+ * app's own lyric model. Apple's own pronunciation is delivered by the native
+ * hooks straight from Apple's lyric model.
  *
  * One overlay is held at a time (the current track); every lookup is gated on
  * the caller's song id, so a stale track can never leak into the next one.
- * Content is sanitized on write: a pronunciation is only stored when
- * [RomanizationPolicy.sanitize] accepts it against Apple's own line text, and a
- * translation only when [OnlineTranslationContentPolicy] considers it real.
- * Fails open everywhere — a missing overlay, a blank id or a timing miss all
- * return null, so the caller keeps Apple's own value.
+ * Content is sanitized on write: a translation is only stored when
+ * [OnlineTranslationContentPolicy] considers it real. Fails open everywhere — a
+ * missing overlay, a blank id or a timing miss all return null, so the caller
+ * keeps Apple's own value.
  */
 class NativeLyricOverlayStore {
 
@@ -29,8 +24,8 @@ class NativeLyricOverlayStore {
 
     private data class LineKey(val timing: TimingKey, val text: String)
 
-    /** The lanes stored for one line; either side may be absent. */
-    data class Content(val translation: String?, val pronunciation: String?)
+    /** The translation lane stored for one line. */
+    data class Content(val translation: String?)
 
     private data class Entry(val text: String, val content: Content)
 
@@ -39,9 +34,7 @@ class NativeLyricOverlayStore {
         val exactContent: Map<LineKey, Content>,
         val contentByTiming: Map<TimingKey, List<Entry>>,
         val hasTranslation: Boolean,
-        val hasPronunciation: Boolean,
         val translationSource: String?,
-        val pronunciationSource: String?,
     )
 
     @Volatile
@@ -52,24 +45,23 @@ class NativeLyricOverlayStore {
 
     /**
      * Replaces the overlay with [lines] for [songId]. Returns true when the
-     * stored content changed. A blank id or a body with no lane at all is
+     * stored content changed. A blank id or a body with no translation lane is
      * rejected and leaves the previous overlay in place, mirroring HLE's
-     * "Apple source first, online only when it has something" rule.
+     * "Apple source first, online only when it has something" rule. A provider's
+     * `roma` column is deliberately ignored: only Apple delivers pronunciation.
      */
     @Synchronized
     fun update(
         songId: String?,
         lines: List<NativeLyricLine>,
         translationSource: String? = null,
-        pronunciationSource: String? = null,
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
         val entries = lines.mapNotNull { line ->
             val content = Content(
                 translation = OnlineTranslationContentPolicy.sanitize(line.translation),
-                pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
             )
-            if (content.translation == null && content.pronunciation == null) {
+            if (content.translation == null) {
                 return@mapNotNull null
             }
             LineKey(TimingKey(line.begin, line.end), normalizeText(line.text)) to content
@@ -83,9 +75,7 @@ class NativeLyricOverlayStore {
                 valueTransform = { Entry(it.first.text, it.second) },
             ),
             hasTranslation = entries.any { it.second.translation != null },
-            hasPronunciation = entries.any { it.second.pronunciation != null },
             translationSource = translationSource,
-            pronunciationSource = pronunciationSource,
         )
         if (overlay == next) return false
         overlay = next
@@ -112,21 +102,11 @@ class NativeLyricOverlayStore {
         !songId.isNullOrBlank() &&
             overlay?.let { it.songId == songId && it.hasTranslation } == true
 
-    fun hasPronunciation(songId: String?): Boolean =
-        !songId.isNullOrBlank() &&
-            overlay?.let { it.songId == songId && it.hasPronunciation } == true
-
     fun translationSource(songId: String?): String? =
         overlay?.takeIf { it.songId == songId && it.hasTranslation }?.translationSource
 
-    fun pronunciationSource(songId: String?): String? =
-        overlay?.takeIf { it.songId == songId && it.hasPronunciation }?.pronunciationSource
-
     fun translation(songId: String?, begin: Long, end: Long, text: String?): String? =
         content(songId, begin, end, text)?.translation
-
-    fun pronunciation(songId: String?, begin: Long, end: Long, text: String?): String? =
-        content(songId, begin, end, text)?.pronunciation
 
     private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? {
         val current = overlay ?: return null
@@ -148,8 +128,13 @@ class NativeLyricOverlayStore {
 }
 
 /**
- * Pure decisions of HLE's native-model pronunciation delivery, kept free of
+ * Pure decisions of the native-model pronunciation delivery, kept free of
  * Android and reflection so the device-facing rule is covered by JVM tests.
+ *
+ * Under the Apple-only policy, pronunciation is Apple's own data: the selection
+ * policy advertises only a language Apple itself lists, and the availability
+ * resolution never adds a third-party lane. The translation lane and the
+ * presentation-refresh machinery are unchanged.
  *
  * These are the non-reflection halves of `AppleSupplementTextHooks` /
  * `ApplePronunciationPolicy`; the host hooks only resolve the app's members and
@@ -157,14 +142,15 @@ class NativeLyricOverlayStore {
  */
 object NativeLyricModelPolicy {
 
-    /** HLE's third-party pronunciation tag when the system language is not Latin. */
-    const val THIRD_PARTY_PRONUNCIATION_LANGUAGE = "und-Latn"
-
-    /** Why a [PronunciationSelectionPlan] chose the language it did, for the log. */
+    /**
+     * Why a [PronunciationSelectionPlan] chose the language it did, for the log.
+     * The third-party fallback branch is gone: with no Apple lane there is simply
+     * nothing to select, and the selection stays open so a later advertisement is
+     * still picked up.
+     */
     const val REASON_APPLE_LANE = "apple-lane"
     const val REASON_APPLE_NO_OWN_LANE = "apple-no-own-lane"
     const val REASON_APPLE_UNANSWERED = "apple-unanswered"
-    const val REASON_NO_FALLBACK = "no-fallback"
     const val REASON_MANDARIN_HIDDEN = "mandarin-hidden"
 
     /**
@@ -198,8 +184,10 @@ object NativeLyricModelPolicy {
      * still empty at the build seam and nothing re-runs afterwards, so the page
      * keeps Apple's first (lane-less) render until it is re-created. Once the
      * model exists, a completed build must therefore re-present the lyrics when
-     * there is something new to show: an online translation/pronunciation lane,
-     * or an official pronunciation the user asked for.
+     * there is something new to show: an online translation lane, or an official
+     * pronunciation the user asked for. [hasOnlinePronunciation] is retained as
+     * HLE's rule but is now always false — the fork's pronunciation lane is
+     * Apple-only, so the host has no online romanization to report.
      *
      * The function is the pure half; the host resolves the app's members and the
      * overlay and calls in here, so the truth table is covered by JVM tests.
@@ -271,60 +259,24 @@ object NativeLyricModelPolicy {
     }
 
     /**
-     * HLE's `thirdPartyPronunciationFallbackLanguage`: the language to advertise
-     * for a third-party pronunciation. Null when the Mandarin rule hides it,
-     * when the feature is off, or when there is no online pronunciation at all;
-     * otherwise the system lyrics language when it is already a Latin script
-     * tag, else the script-neutral [THIRD_PARTY_PRONUNCIATION_LANGUAGE].
-     */
-    fun thirdPartyPronunciationFallbackLanguage(
-        systemLanguage: String?,
-        enabled: Boolean,
-        hasOnlinePronunciation: Boolean,
-        hideMandarinPinyin: Boolean,
-        pronunciationLanguages: Collection<String> = listOfNotNull(systemLanguage),
-        genre: String? = null,
-    ): String? {
-        if (
-            ApplePronunciationVisibilityPolicy.shouldHide(
-                genre = genre,
-                pronunciationLanguages = pronunciationLanguages,
-                hideMandarinPinyin = hideMandarinPinyin,
-            )
-        ) {
-            return null
-        }
-        if (!enabled) return null
-        if (!hasOnlinePronunciation) return null
-        return systemLanguage.latinLanguageOrNull() ?: THIRD_PARTY_PRONUNCIATION_LANGUAGE
-    }
-
-    /**
      * HLE's `ApplePronunciationPolicy.selectLanguage`: keep the system match
-     * when it is a Latin tag, else the first Apple language that is, else the
-     * online fallback when it is Latin. Everything else is null, so Apple's own
-     * match survives untouched.
+     * when it is a Latin tag, else the first Apple language that is. Everything
+     * else is null, so Apple's own match survives untouched and no third-party
+     * language is ever substituted.
      */
     fun selectLanguage(
         systemMatch: String?,
         appleLanguages: List<String>,
-        onlineFallbackLanguage: String?,
     ): String? = systemMatch.latinLanguageOrNull()
         ?: appleLanguages.firstNotNullOfOrNull { it.latinLanguageOrNull() }
-        ?: onlineFallbackLanguage.latinLanguageOrNull()
 
     /**
-     * True when [language] is a pronunciation lane Apple itself advertises: a
-     * Latin tag that is not the third-party placeholder. The document lane writes
-     * [THIRD_PARTY_PRONUNCIATION_LANGUAGE] for its own transliteration track, so
-     * counting that exact tag as Apple's would misreport the third-party lane as
-     * the platform's own.
+     * True when [language] is a pronunciation lane Apple itself advertises, i.e.
+     * a Latin script tag. The Apple-only policy has no placeholder language to
+     * exclude any more.
      */
-    fun isOfficialPronunciationLanguage(language: String?): Boolean {
-        val normalized = language?.trim()?.takeIf(String::isNotEmpty) ?: return false
-        if (normalized.equals(THIRD_PARTY_PRONUNCIATION_LANGUAGE, ignoreCase = true)) return false
-        return RomanizationPolicy.isLatinLanguageTag(normalized)
-    }
+    fun isOfficialPronunciationLanguage(language: String?): Boolean =
+        RomanizationPolicy.isLatinLanguageTag(language)
 
     /**
      * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.
@@ -353,13 +305,12 @@ object NativeLyricModelPolicy {
      * The word track is decided per `getPronunciationWords()` call, and the app
      * caches the vector it gets back when the row binds. On a word-timing song
      * Apple can populate its pronunciation vector *after* the first bind, so the
-     * first decision renders our online lane on the main word timing and nothing
-     * re-asks. This key is deliberately **per song, not per line**: a whole song's
-     * worth of word getters runs during one bind, and a per-line edge would
-     * request a refresh for every line (thrash). One edge per song means at most
-     * one extra re-presentation per track, and the host records the key before
-     * asking, so the refresh's own rebuild cannot bump it again. Pure, so the
-     * anti-loop bound is JVM-tested.
+     * first answer is `HIDDEN` and nothing re-asks. This key is deliberately
+     * **per song, not per line**: a whole song's worth of word getters runs
+     * during one bind, and a per-line edge would request a refresh for every line
+     * (thrash). One edge per song means at most one extra re-presentation per
+     * track, and the host records the key before asking, so the refresh's own
+     * rebuild cannot bump it again. Pure, so the anti-loop bound is JVM-tested.
      */
     fun pronunciationWordReadyKey(songId: Long): String = "$songId:words"
 
@@ -371,33 +322,24 @@ object NativeLyricModelPolicy {
         appleLanguages.firstOrNull(::isOfficialPronunciationLanguage)
 
     /**
-     * The language HLE's `applyAppleNativePronunciationSelection` hands to the
-     * song's `setPronunciation`.
-     *
-     * HLE gates Apple's own language behind `hasValidOfficialRomanization`, a
-     * per-line read of `getHtmlPronunciationLineText`. On 1606 that getter is
-     * empty until a pronunciation language has already been selected, so a strict
-     * mirror always took the third-party branch and overwrote Apple's own lane:
-     * the device log shows `languages=ja-Latn officialPronunciation=false`
-     * turning into `languages=und-Latn` after the fallback was selected. Apple's
-     * advertised Latin lane therefore wins whenever there is one — selecting it
-     * is the only way the per-line probe can ever become valid — and the
-     * third-party fallback is used only when Apple offers no lane of its own. The
+     * The language `applyAppleNativePronunciationSelection` hands to the song's
+     * `setPronunciation`: Apple's own advertised Latin lane, or null when Apple
+     * offers none. The third-party fallback is gone, so nothing else is ever
+     * selected. Apple's advertised Latin lane wins whenever there is one —
+     * selecting it is the only way the per-line probe can ever become valid. The
      * line getter still fills an individual line Apple leaves empty, so a
      * selected-but-partially-empty official track never leaves a gap.
      */
-    fun selectPronunciationLanguage(
-        appleLanguages: List<String>,
-        thirdPartyFallbackLanguage: String?,
-    ): String? = officialPronunciationLanguage(appleLanguages) ?: thirdPartyFallbackLanguage
+    fun selectPronunciationLanguage(appleLanguages: List<String>): String? =
+        officialPronunciationLanguage(appleLanguages)
 
     /**
      * Apple's best-known advertisement of its own pronunciation lanes: the live
      * vector when it is non-empty, otherwise the last non-empty one. A transient
      * empty read means "Apple has not answered on this call", not "Apple has no
-     * lane", so it must never withdraw a lane Apple already advertised nor hand
-     * the third-party tag over it (the invariant the device log's
-     * `languages=ko-Latn` → `languages=` → `und-Latn` sequence broke).
+     * lane", so it must never withdraw a lane Apple already advertised (the
+     * invariant the device log's `languages=ko-Latn` → `languages=` sequence
+     * broke).
      */
     fun advertisedPronunciationLanguages(
         live: List<String>,
@@ -412,9 +354,9 @@ object NativeLyricModelPolicy {
      *
      * [reason] is the honest replacement for the old `deferred=` flag: it says
      * *what* was chosen and *why*, so a device log can tell "Apple had not
-     * answered, so the fallback is standing in" ([REASON_APPLE_UNANSWERED]) from
-     * "Apple answered without a lane of its own" ([REASON_APPLE_NO_OWN_LANE]) or
-     * "nothing legitimate to select" ([REASON_NO_FALLBACK]).
+     * answered yet" ([REASON_APPLE_UNANSWERED]) from "Apple answered without a
+     * lane of its own" ([REASON_APPLE_NO_OWN_LANE]). There is no third-party
+     * branch any more.
      */
     data class PronunciationSelectionPlan(
         val language: String?,
@@ -425,54 +367,43 @@ object NativeLyricModelPolicy {
 
     /** Which lane a [PronunciationSelectionPlan] chose, printed in the log. */
     enum class PronunciationSelection(val token: String) {
+        /** Apple's own advertised Latin lane. */
         APPLE("apple"),
-        THIRD_PARTY("third-party"),
+
+        /** Nothing to select: Apple offers no Latin lane (yet). */
         NONE("none"),
     }
 
     /**
-     * Plans one `applyAppleNativePronunciationSelection` pass, mirroring HLE:
+     * Plans one `applyAppleNativePronunciationSelection` pass, Apple-only:
      *
      * ```
-     * officialLanguages.firstOrNull()?.takeIf { hasValidOfficialRomanization(songNative) }
-     *     ?: thirdPartyPronunciationFallbackLanguage() ?: return
+     * officialLanguages.firstOrNull()?.takeIf { isOfficialPronunciationLanguage(it) }
      * ```
      *
-     * Apple's advertised Latin lane wins ([PronunciationSelection.APPLE]). With
-     * no lane of its own — a non-empty vector without one, or an empty vector
-     * because Apple has not answered yet — the legitimate third-party fallback is
-     * selected ([PronunciationSelection.THIRD_PARTY]). Only when there is no lane
-     * and no fallback is nothing handed to `setPronunciation`
-     * ([PronunciationSelection.NONE]).
-     *
-     * An empty Apple vector therefore is not "select nothing": it selects the
-     * fallback, exactly as HLE's `?: thirdPartyPronunciationFallbackLanguage()`
-     * does, which is what lets a third-party-only song render again. Because the
-     * selection is re-run at every later entry point, Apple's own lane replaces
-     * that fallback as soon as Apple advertises it.
+     * Apple's advertised Latin lane wins ([PronunciationSelection.APPLE]); with
+     * no such lane — a non-empty vector without one, or an empty vector because
+     * Apple has not answered yet — nothing is handed to `setPronunciation`
+     * ([PronunciationSelection.NONE]). The selection is re-run at every later
+     * entry point, so Apple's own lane is picked up the moment it appears.
      */
     fun planPronunciationSelection(
         appleLanguages: List<String>,
-        thirdPartyFallbackLanguage: String?,
     ): PronunciationSelectionPlan {
         val known = appleLanguages.isNotEmpty()
-        // The selection itself is HLE's `appleLane ?: fallback ?: nothing`, shared
-        // with [selectPronunciationLanguage] so there is one rule, not two.
         val appleLane = officialPronunciationLanguage(appleLanguages)
-        val language = selectPronunciationLanguage(appleLanguages, thirdPartyFallbackLanguage)
-        val selection = when {
-            appleLane != null -> PronunciationSelection.APPLE
-            language != null -> PronunciationSelection.THIRD_PARTY
-            else -> PronunciationSelection.NONE
+        val selection = if (appleLane != null) {
+            PronunciationSelection.APPLE
+        } else {
+            PronunciationSelection.NONE
         }
-        val reason = when (selection) {
-            PronunciationSelection.APPLE -> REASON_APPLE_LANE
-            PronunciationSelection.THIRD_PARTY ->
-                if (known) REASON_APPLE_NO_OWN_LANE else REASON_APPLE_UNANSWERED
-            PronunciationSelection.NONE -> REASON_NO_FALLBACK
+        val reason = when {
+            appleLane != null -> REASON_APPLE_LANE
+            known -> REASON_APPLE_NO_OWN_LANE
+            else -> REASON_APPLE_UNANSWERED
         }
         return PronunciationSelectionPlan(
-            language = language,
+            language = appleLane,
             selection = selection,
             reason = reason,
             appleLanguagesKnown = known,
@@ -496,20 +427,18 @@ object NativeLyricModelPolicy {
     ): Boolean = original || (enabled && hasOnlineTranslation)
 
     /**
-     * HLE's `hasPronunciation` / `setPronunciation` availability resolution: a
-     * Mandarin song is hidden outright, otherwise the online romanization is
-     * advertised and Apple's own valid romanization is never withdrawn.
+     * HLE's `hasPronunciation` / `setPronunciation` availability resolution,
+     * Apple-only: a Mandarin song is hidden outright, otherwise Apple's own
+     * valid romanization is advertised. The module's online pronunciation lane
+     * no longer exists, so there is no third-party term to add.
      */
     fun hasPronunciationAvailability(
         original: Boolean,
-        enabled: Boolean,
-        hasOnlinePronunciation: Boolean,
         hasValidOfficialPronunciation: Boolean,
         mandarinHidden: Boolean,
     ): Boolean {
         if (mandarinHidden) return false
-        return (enabled && hasOnlinePronunciation) ||
-            (original && hasValidOfficialPronunciation)
+        return original && hasValidOfficialPronunciation
     }
 
     private fun String?.latinLanguageOrNull(): String? = this

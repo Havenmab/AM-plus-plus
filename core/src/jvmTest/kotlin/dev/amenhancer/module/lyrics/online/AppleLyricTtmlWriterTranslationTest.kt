@@ -48,7 +48,7 @@ class AppleLyricTtmlWriterTranslationTest {
     }
 
     @Test
-    fun `translation and romanization lanes are emitted as head tracks with contiguous keys`() {
+    fun `the translation lane is emitted and romanization is never published`() {
         val lines = listOf(
             AppleTtmlLine(
                 begin = 0L,
@@ -77,12 +77,12 @@ class AppleLyricTtmlWriterTranslationTest {
                     "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">" +
                     "<text for=\"L1\">你好</text><text for=\"L2\"> </text>" +
                     "</translation></translations>" +
-                    "<transliterations><transliteration xml:lang=\"und-Latn\">" +
-                    "<text for=\"L1\">ni hao</text><text for=\"L2\"> </text>" +
-                    "</transliteration></transliterations>" +
                     "</iTunesMetadata>",
             ),
         )
+        // The Apple-only policy never publishes a provider romanization.
+        assertFalse(ttml.contains("<transliterations>"))
+        assertFalse(ttml.contains("ni hao"))
         // Still a Word-timed document with its body spans intact.
         assertTrue(ttml.contains("itunes:timing=\"Word\""))
         assertTrue(ttml.contains("<span begin=\"0.000\" end=\"0.500\">hel</span>"))
@@ -177,7 +177,7 @@ class AppleLyricTtmlWriterTranslationTest {
     }
 
     @Test
-    fun `from a provider result carries the extracted translation and romanization lanes`() {
+    fun `from a provider result drops the extracted romanization column`() {
         val result = LyricsResult(
             tags = emptyMap(),
             original = listOf(
@@ -209,6 +209,7 @@ class AppleLyricTtmlWriterTranslationTest {
         )
 
         assertTrue(ttml.contains("<text for=\"L1\">你好</text>"))
-        assertTrue(ttml.contains("<text for=\"L1\">ni hao</text>"))
+        assertFalse(ttml.contains("<transliterations>"))
+        assertFalse(ttml.contains("ni hao"))
     }
 }

@@ -10,8 +10,13 @@ import org.junit.Test
 /**
  * Pure-JVM end-to-end coverage for the enrichment decision and merge over
  * fixtures: Apple's own translation lane wins, an untranslated foreign document
- * gets the online lane with its word timing intact, a fully-Chinese song is not
- * touched, and every failure mode returns null rather than a document.
+ * gets the online translation lane with its word timing intact, a fully-Chinese
+ * song is not touched, and every failure mode returns null rather than a
+ * document.
+ *
+ * The pronunciation half is gone: a provider's romanization column is read past,
+ * no `<transliterations>` track is ever injected, and a pronunciation-only
+ * candidate has nothing to contribute.
  */
 class OnlineTranslationEnrichmentTest {
 
@@ -141,78 +146,56 @@ class OnlineTranslationEnrichmentTest {
     }
 
     @Test
-    fun `an Apple translated document still receives the online pronunciation lane`() {
-        val outcome = OnlineTranslationEnrichment.enrich(
-            ttml = JAPANESE_TRANSLATED_DOCUMENT,
-            candidates = listOf(pronunciationOnlyCandidate()),
-            pronunciationRequested = true,
-        )
-
-        assertNotNull("Apple's translation blocked the pronunciation pass", outcome)
-        val ttml = outcome!!.ttml
-        // Apple's own translation lane survives; only a transliterations lane is added.
-        assertTrue(ttml.contains(">你的名字<"))
-        assertTrue(ttml.contains(">谢谢<"))
-        assertTrue(
-            ttml.contains(
-                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
-                    "<text for=\"L1\">Kimi no na wa</text>",
-            ),
-        )
-        assertEquals("apple", outcome.translationSource)
-        assertEquals("NE", outcome.pronunciationSource)
-        assertEquals(2, outcome.pronunciationLines)
-        assertEquals(bodyOf(JAPANESE_TRANSLATED_DOCUMENT), bodyOf(ttml))
-    }
-
-    @Test
-    fun `pronunciation is not requested by default`() {
+    fun `a pronunciation-only candidate never publishes`() {
+        // Apple's own translation is already there and the provider adds only a
+        // romanization, which the Apple-only policy never publishes.
         assertNull(
             OnlineTranslationEnrichment.enrich(
                 ttml = JAPANESE_TRANSLATED_DOCUMENT,
                 candidates = listOf(pronunciationOnlyCandidate()),
             ),
         )
+        assertNull(
+            OnlineTranslationEnrichment.enrich(
+                ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
+                candidates = listOf(pronunciationOnlyCandidate()),
+            ),
+        )
     }
 
     @Test
-    fun `a fully chinese song receives only the pronunciation lane`() {
-        val outcome = OnlineTranslationEnrichment.enrich(
-            ttml = CHINESE_ROMANIZABLE_DOCUMENT,
-            candidates = listOf(
-                OnlineTranslationCandidate(
-                    source = Source.QM,
-                    lines = listOf(
-                        OnlineTranslationLine(
-                            startTimeMs = 1_000L,
-                            content = "感谢你曾来过",
-                            translation = "Thanks for coming",
-                            romanization = "gan xie ni ceng lai guo",
-                        ),
-                        OnlineTranslationLine(
-                            startTimeMs = 2_000L,
-                            content = "我早已明白了",
-                            translation = "I understood long ago",
-                            romanization = "wo zao yi ming bai le",
+    fun `a fully chinese song never receives a transliteration lane`() {
+        // Even a provider romanization of fully-Chinese lyrics is dropped: the
+        // translation half will not fire for a fully-Chinese song and the
+        // pronunciation half does not exist.
+        assertNull(
+            OnlineTranslationEnrichment.enrich(
+                ttml = CHINESE_ROMANIZABLE_DOCUMENT,
+                candidates = listOf(
+                    OnlineTranslationCandidate(
+                        source = Source.QM,
+                        lines = listOf(
+                            OnlineTranslationLine(
+                                startTimeMs = 1_000L,
+                                content = "感谢你曾来过",
+                                translation = "Thanks for coming",
+                                romanization = "gan xie ni ceng lai guo",
+                            ),
+                            OnlineTranslationLine(
+                                startTimeMs = 2_000L,
+                                content = "我早已明白了",
+                                translation = "I understood long ago",
+                                romanization = "wo zao yi ming bai le",
+                            ),
                         ),
                     ),
                 ),
             ),
-            pronunciationRequested = true,
         )
-
-        assertNotNull("a fully-Chinese song must still take pronunciation", outcome)
-        val ttml = outcome!!.ttml
-        assertTrue(ttml.contains("<transliterations>"))
-        assertFalse("a fully-Chinese song must not take a translation lane", ttml.contains("<translations>"))
-        assertTrue(ttml.contains(">gan xie ni ceng lai guo<"))
-        assertEquals("none", outcome.translationSource)
-        assertEquals("QM", outcome.pronunciationSource)
-        assertEquals(2, outcome.pronunciationLines)
     }
 
     @Test
-    fun `an English line never receives an English pronunciation`() {
+    fun `an English line's provider romanization is dropped`() {
         val outcome = OnlineTranslationEnrichment.enrich(
             ttml = UNTRANSLATED_DOCUMENT,
             candidates = listOf(
@@ -234,12 +217,11 @@ class OnlineTranslationEnrichmentTest {
                     ),
                 ),
             ),
-            pronunciationRequested = true,
         )
 
         assertNotNull(outcome)
         assertFalse(
-            "a Latin-only Apple line must not get a transliterations entry",
+            "no transliterations track may be injected",
             outcome!!.ttml.contains("<transliterations>"),
         )
         assertEquals("NE", outcome.translationSource)
@@ -248,80 +230,30 @@ class OnlineTranslationEnrichmentTest {
     }
 
     @Test
-    fun `the Mandarin hide switch suppresses only the pronunciation lane`() {
-        val candidate = OnlineTranslationCandidate(
-            source = Source.NE,
-            lines = listOf(
-                OnlineTranslationLine(
-                    startTimeMs = 1_000L,
-                    content = "君の名は",
-                    translation = "你的名字",
-                    romanization = "Kimi no na wa",
-                ),
-                OnlineTranslationLine(
-                    startTimeMs = 2_500L,
-                    content = "ありがとう",
-                    translation = "谢谢",
-                    romanization = "Arigatou",
+    fun `an Apple transliterations lane is preserved untouched`() {
+        val outcome = OnlineTranslationEnrichment.enrich(
+            ttml = JAPANESE_ROMANIZED_DOCUMENT,
+            candidates = listOf(
+                OnlineTranslationCandidate(
+                    source = Source.NE,
+                    lines = listOf(
+                        OnlineTranslationLine(1_000L, "君の名は", translation = "你的名字"),
+                        OnlineTranslationLine(2_500L, "ありがとう", translation = "谢谢"),
+                    ),
                 ),
             ),
         )
 
-        val hidden = OnlineTranslationEnrichment.enrich(
-            ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-            candidates = listOf(candidate),
-            pronunciationRequested = true,
-            hideMandarinPronunciation = true,
-            genre = "Mandopop",
-        )
-        assertNotNull("translation must still publish on a hidden Mandarin song", hidden)
-        assertTrue(hidden!!.ttml.contains("<translations>"))
-        assertFalse(hidden.ttml.contains("<transliterations>"))
-        assertEquals("NE", hidden.translationSource)
-        assertEquals("none", hidden.pronunciationSource)
-
-        val cantonese = OnlineTranslationEnrichment.enrich(
-            ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-            candidates = listOf(candidate),
-            pronunciationRequested = true,
-            hideMandarinPronunciation = true,
-            genre = "Cantopop",
-        )
-        assertNotNull(cantonese)
-        assertTrue(cantonese!!.ttml.contains("<transliterations>"))
-        assertEquals("NE", cantonese.pronunciationSource)
-
-        val switchOff = OnlineTranslationEnrichment.enrich(
-            ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-            candidates = listOf(candidate),
-            pronunciationRequested = true,
-            hideMandarinPronunciation = false,
-            genre = "Mandopop",
-        )
-        assertNotNull(switchOff)
-        assertTrue(switchOff!!.ttml.contains("<transliterations>"))
+        assertNotNull(outcome)
+        val ttml = outcome!!.ttml
+        assertEquals(transliterationsOf(JAPANESE_ROMANIZED_DOCUMENT), transliterationsOf(ttml))
+        assertTrue(ttml.contains("<translations>"))
+        assertEquals("apple", outcome.pronunciationSource)
+        assertEquals(2, outcome.pronunciationLines)
     }
 
     @Test
-    fun `a pronunciation-only candidate is accepted only when pronunciation is requested`() {
-        assertNull(
-            OnlineTranslationEnrichment.enrich(
-                ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-                candidates = listOf(pronunciationOnlyCandidate()),
-                pronunciationRequested = false,
-            ),
-        )
-        assertNotNull(
-            OnlineTranslationEnrichment.enrich(
-                ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-                candidates = listOf(pronunciationOnlyCandidate()),
-                pronunciationRequested = true,
-            ),
-        )
-    }
-
-    @Test
-    fun `the merged lanes are exposed per line for the native-model overlay`() {
+    fun `the translation lane is exposed per line for the native-model overlay`() {
         val translated = OnlineTranslationEnrichment.enrich(
             ttml = UNTRANSLATED_DOCUMENT,
             candidates = listOf(thirdParty()),
@@ -333,17 +265,38 @@ class OnlineTranslationEnrichmentTest {
         assertEquals("第二行", translated.lines[1].translation)
         assertEquals(1_000L, translated.lines[0].begin)
         assertEquals(2_500L, translated.lines[0].end)
+    }
 
-        val romanized = OnlineTranslationEnrichment.enrich(
+    @Test
+    fun `a provider pronunciation is never exposed to the overlay`() {
+        val merged = OnlineTranslationEnrichment.enrich(
             ttml = JAPANESE_UNTRANSLATED_DOCUMENT,
-            candidates = listOf(pronunciationOnlyCandidate()),
-            pronunciationRequested = true,
-            durationMs = 5_000L,
+            candidates = listOf(
+                OnlineTranslationCandidate(
+                    source = Source.NE,
+                    lines = listOf(
+                        OnlineTranslationLine(
+                            startTimeMs = 1_000L,
+                            content = "君の名は",
+                            translation = "你的名字",
+                            romanization = "Kimi no na wa",
+                        ),
+                        OnlineTranslationLine(
+                            startTimeMs = 2_500L,
+                            content = "ありがとう",
+                            translation = "谢谢",
+                            romanization = "Arigatou",
+                        ),
+                    ),
+                ),
+            ),
         )!!
 
-        assertEquals("Kimi no na wa", romanized.lines.mapNotNull { it.roma }.firstOrNull())
-        assertEquals(2, romanized.lines.count { !it.roma.isNullOrBlank() })
-        assertNull(romanized.lines[0].translation)
+        assertEquals("你的名字", merged.lines[0].translation)
+        assertTrue(
+            "the overlay must never carry a provider romanization",
+            merged.lines.none { !it.roma.isNullOrBlank() },
+        )
     }
 
     private fun thirdParty() = OnlineTranslationCandidate(
@@ -370,11 +323,11 @@ class OnlineTranslationEnrichmentTest {
         ),
     )
 
-    private fun bodyOf(ttml: String): String {
-        val start = ttml.indexOf("<body")
-        val end = ttml.indexOf("</body>")
-        require(start >= 0 && end > start) { "no body in document" }
-        return ttml.substring(start, end + "</body>".length)
+    private fun transliterationsOf(ttml: String): String {
+        val start = ttml.indexOf("<transliterations>")
+        val end = ttml.indexOf("</transliterations>")
+        require(start >= 0 && end > start) { "no transliterations in document" }
+        return ttml.substring(start, end + "</transliterations>".length)
     }
 
     private companion object {
@@ -419,7 +372,7 @@ class OnlineTranslationEnrichmentTest {
                 "<p begin=\"2.000\" end=\"3.000\" itunes:key=\"L2\">我早已明白了</p>" +
                 "</div></body></tt>"
 
-        /** Non-Latin Apple lyrics, so `RomanizationPolicy` can accept a pronunciation. */
+        /** Non-Latin Apple lyrics, so a pronunciation could have been accepted. */
         const val JAPANESE_BODY =
             "<body dur=\"0:05.000\"><div begin=\"0.000\" end=\"5.000\">" +
                 "<p begin=\"1.000\" end=\"2.500\" ttm:agent=\"v1\" itunes:key=\"L1\">" +
@@ -433,6 +386,10 @@ class OnlineTranslationEnrichmentTest {
             "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">" +
                 "<text for=\"L1\">你的名字</text><text for=\"L2\">谢谢</text>" +
                 "</translation></translations>"
+        const val JAPANESE_TRANSLITERATIONS =
+            "<transliterations><transliteration xml:lang=\"und-Latn\">" +
+                "<text for=\"L1\">Kimi no na wa</text><text for=\"L2\">Arigatou</text>" +
+                "</transliteration></transliterations>"
 
         val JAPANESE_UNTRANSLATED_DOCUMENT = HEAD +
             "<head><metadata><iTunesMetadata " +
@@ -443,5 +400,11 @@ class OnlineTranslationEnrichmentTest {
             "<head><metadata><iTunesMetadata " +
             "xmlns=\"http://music.apple.com/lyric-ttml-internal\">" +
             JAPANESE_TRANSLATIONS + "</iTunesMetadata></metadata></head>" + JAPANESE_BODY
+
+        /** Apple's own transliterations lane, which the merge must preserve. */
+        val JAPANESE_ROMANIZED_DOCUMENT = HEAD +
+            "<head><metadata><iTunesMetadata " +
+            "xmlns=\"http://music.apple.com/lyric-ttml-internal\">" +
+            JAPANESE_TRANSLITERATIONS + "</iTunesMetadata></metadata></head>" + JAPANESE_BODY
     }
 }

@@ -4,6 +4,7 @@ import dev.amenhancer.module.font.FontFilePolicy
 import dev.amenhancer.module.font.FontImportResult
 import dev.amenhancer.module.lyrics.CustomLyricsBackupEncodeResult
 import dev.amenhancer.module.lyrics.CustomLyricsBatchSaveResult
+import dev.amenhancer.module.lyrics.CustomLyricsClearResult
 import dev.amenhancer.module.lyrics.CustomLyricsMultiIdDraft
 import dev.amenhancer.module.lyrics.CustomLyricsOnlineImportResult
 import dev.amenhancer.module.lyrics.CustomLyricsRestoreResult
@@ -243,6 +244,55 @@ class EmbeddedContentManagerTest {
         assertEquals("Current", target.listLyrics().single().displayName)
     }
 
+    @Test
+    fun `clear all lyrics deletes every entry file and the index file and resets the pointer`() {
+        val storage = MemoryStorage()
+        val manager = EmbeddedContentManager(
+            session = EmbeddedConfigurationSession(storage),
+            fileIdFactory = sequenceFileIds("lyrics_clear"),
+        )
+        manager.addLyrics(701L, "One", ttml("one"))
+        manager.addLyrics(702L, "Two", ttml("two"))
+        val pointerFileId = storage.storedValues["custom_lyrics_index_file_id"] as String
+        val entryFileIds = manager.listLyrics().map(CustomLyricsEntry::fileId)
+        assertEquals(listOf("lyrics_clear_1", "lyrics_clear_2"), entryFileIds)
+        assertTrue(storage.files.keys.containsAll(entryFileIds + pointerFileId))
+        storage.events.clear()
+
+        val result = manager.clearAllLyrics()
+
+        assertEquals(CustomLyricsClearResult.Cleared(removedEntries = 2, removedFiles = 3), result)
+        assertTrue(manager.listLyrics().isEmpty())
+        assertTrue(storage.files.keys.none { it.startsWith("lyrics_clear_") })
+        assertFalse(storage.files.containsKey(pointerFileId))
+        // The published pointer and the legacy manifest key are gone, so the
+        // cleared index can never be re-materialized.
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_index_file_id"))
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_index_generation"))
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_index_sha256"))
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_index_size_bytes"))
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_manifest"))
+        // The reset is published before any file is retired.
+        val reset = storage.events.indexOfFirst { it.startsWith("remove:") }
+        val firstDelete = storage.events.indexOfFirst { it.startsWith("delete:") }
+        assertTrue("reset=$reset firstDelete=$firstDelete", reset in 0 until firstDelete)
+    }
+
+    @Test
+    fun `an empty store still resets a stale index pointer`() {
+        val storage = MemoryStorage()
+        val manager = EmbeddedContentManager(session = EmbeddedConfigurationSession(storage))
+        manager.addLyrics(801L, "One", ttml("one"))
+        manager.deleteLyrics(801L)
+        val stalePointer = storage.storedValues["custom_lyrics_index_file_id"] as String
+
+        val result = manager.clearAllLyrics()
+
+        assertEquals(CustomLyricsClearResult.Cleared(removedEntries = 0, removedFiles = 1), result)
+        assertFalse(storage.files.containsKey(stalePointer))
+        assertFalse(storage.storedValues.containsKey("custom_lyrics_index_file_id"))
+    }
+
     private fun validFontBytes(marker: Int): ByteArray = byteArrayOf(0, 1, 0, 0, marker.toByte())
 
     private fun ttml(text: String): String =
@@ -283,6 +333,12 @@ class EmbeddedContentManagerTest {
         override fun writeFile(name: String, bytes: ByteArray): Boolean {
             events += "write:$name"
             files[name] = bytes.copyOf()
+            return true
+        }
+
+        override fun removeValues(keys: Set<String>, synchronous: Boolean): Boolean {
+            events += "remove:${keys.sorted().joinToString(",")}"
+            keys.forEach(storedValues::remove)
             return true
         }
 

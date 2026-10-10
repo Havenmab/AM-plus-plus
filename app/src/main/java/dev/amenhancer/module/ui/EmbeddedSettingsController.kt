@@ -36,6 +36,8 @@ internal interface EmbeddedSettingsController {
         EmbeddedActionResult.Failed("歌词管理不可用")
     fun deleteLyrics(appleMusicIds: List<Long>): EmbeddedActionResult =
         EmbeddedActionResult.Failed("歌词管理不可用")
+    /** Deletes every custom-lyrics entry and its stored file. */
+    fun clearLyrics(): EmbeddedActionResult = EmbeddedActionResult.Failed("歌词管理不可用")
     fun importFont(uri: Uri): EmbeddedActionResult = EmbeddedActionResult.Failed("字体导入不可用")
     fun clearFont(): EmbeddedActionResult = EmbeddedActionResult.Failed("字体管理不可用")
     fun importTtml(

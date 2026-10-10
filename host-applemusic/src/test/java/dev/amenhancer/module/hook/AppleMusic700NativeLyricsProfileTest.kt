@@ -309,24 +309,31 @@ class AppleMusic700NativeLyricsProfileTest {
     }
 
     @Test
-    fun `an empty Apple vector selects the third-party fallback instead of nothing`() {
+    fun `an empty Apple vector selects nothing and the late-lane trigger stays armed`() {
         val hooks = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
-        // The regression: the planner must be handed the legitimate fallback so a
-        // third-party-only song still gets a language selected, exactly as HLE's
-        // `?: thirdPartyPronunciationFallbackLanguage()` does.
+        // Apple-only: the planner is handed Apple's advertised languages and
+        // nothing else. The third-party fallback language is gone.
         assertTrue(hooks.contains("NativeLyricModelPolicy.planPronunciationSelection("))
-        assertTrue(hooks.contains("thirdPartyFallbackLanguage = fallbackLanguage("))
+        assertTrue(hooks.contains("appleLanguages = advertised,"))
+        assertFalse(hooks.contains("thirdPartyFallbackLanguage"))
+        assertFalse(hooks.contains("fallbackLanguage("))
+        assertFalse(hooks.contains("THIRD_PARTY"))
         // The last non-empty advertisement is kept, so a transient empty read
-        // cannot hand the tag over an Apple lane already seen (PR #9).
+        // cannot withdraw an Apple lane already seen (PR #9).
         assertTrue(hooks.contains("NativeLyricModelPolicy.advertisedPronunciationLanguages("))
+        // Nothing selected yet leaves the selection open, so every later entry
+        // point re-runs it and picks Apple's lane up when it appears.
+        assertTrue(hooks.contains("pronunciationSelectionOpen"))
+        assertTrue(hooks.contains("refreshPronunciationSelectionIfOpen("))
         // The old flag implied "nothing selected" and is gone. (The KDoc still
         // quotes the old log line, so match the emitted field literal, not the
         // bare token.)
         assertFalse(hooks.contains("pronunciationSelectionDeferred"))
         assertFalse(hooks.contains("\"deferred="))
-        // The diagnostic names the branch honestly instead of implying a stall.
+        // The diagnostic names the Apple-only branch honestly instead of
+        // implying a stall.
         assertTrue(hooks.contains("selection=\${selection.selection.token}"))
         assertTrue(hooks.contains("reason=\${selection.reason}"))
     }
@@ -384,20 +391,23 @@ class AppleMusic700NativeLyricsProfileTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
         // Task-4 diagnostics: the next log must carry the decision inputs, not
-        // only the winning track.
+        // only the winning track. `mainTiming` is gone with the third-party text
+        // lane it described.
         assertTrue(hooks.contains("officialWords=\$officialWords"))
         assertTrue(hooks.contains("compat=\$officialWordsCompatible"))
-        assertTrue(hooks.contains("mainTiming=\${mainTimingSource.token}"))
+        assertFalse(hooks.contains("mainTiming=\${mainTimingSource.token}"))
+        assertFalse(hooks.contains("ApplePronunciationTextSource"))
         assertTrue(hooks.contains("selected=\${track.name}"))
 
         // Late-word self-correction, mirroring the lane-ready trigger: the first
-        // OFFICIAL answer after our lane had to stand in for a line asks for one
-        // guarded refresh.
+        // OFFICIAL answer after a line had answered HIDDEN asks for one guarded
+        // refresh.
         assertTrue(hooks.contains("PresentationRefreshTrigger.WORD_READY"))
         assertTrue(hooks.contains("\"word-ready\""))
         assertTrue(hooks.contains("private fun onPronunciationWordReady("))
         assertTrue(hooks.contains("announceWordReadyIfAppleWordsArrived("))
         assertTrue(hooks.contains("NativeLyricModelPolicy.pronunciationWordReadyKey("))
+        assertTrue(hooks.contains("wordDecisionSawHidden"))
         // The hard anti-loop bound: the per-song key is recorded *before* the ask.
         assertTrue(hooks.contains("if (key == wordReadyKey) return"))
         assertTrue(hooks.contains("wordReadyKey = key"))

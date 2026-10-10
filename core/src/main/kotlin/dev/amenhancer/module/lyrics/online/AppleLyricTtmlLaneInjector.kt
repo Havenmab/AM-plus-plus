@@ -1,8 +1,8 @@
 package dev.amenhancer.module.lyrics.online
 
 /**
- * Injects the enrichment lanes into Apple's own TTML head without touching the
- * document body.
+ * Injects the translation enrichment lane into Apple's own TTML head without
+ * touching the document body.
  *
  * The translation pass used to rebuild the whole document through
  * [AppleLyricTtmlReader] and [AppleLyricTtmlWriter]; that round trip dropped the
@@ -13,14 +13,14 @@ package dev.amenhancer.module.lyrics.online
  *
  * An existing `translations` block is rewritten in place (its lines are carried
  * through the merge, so Apple's own entries survive); when the rebuilt track is
- * empty the original block is kept verbatim. Otherwise the new tracks are
- * inserted before `</iTunesMetadata>` (converting a self-closing element), or
- * inside `<metadata>` when Apple's document carries no `iTunesMetadata` at all.
- * A `transliterations` block the document already has is never touched; one is
- * only added when the document has none and a merged line carries a sanitized
- * romanization. Either lane may be the only one written — a document whose
- * translation is Apple's own but whose pronunciation is missing gets just the
- * `transliterations` track.
+ * empty the original block is kept verbatim. Otherwise the new track is inserted
+ * before `</iTunesMetadata>` (converting a self-closing element), or inside
+ * `<metadata>` when Apple's document carries no `iTunesMetadata` at all.
+ *
+ * A `transliterations` block is **never** written: the third-party romanization
+ * lane has been removed from the product, and a block Apple's own document
+ * already carries is preserved untouched because the edit is confined to the
+ * `translations` range.
  *
  * Lane keys mirror [AppleLyricTtmlReader]: each `<p>`'s `itunes:key`, or its
  * document position `L<n>` when Apple omitted it. Returns null — leaving the
@@ -33,8 +33,6 @@ object AppleLyricTtmlLaneInjector {
 
     private val translationsBlock =
         Regex("""(?is)<translations\b[^>]*>.*?</translations\s*>""")
-    private val transliterationsBlock =
-        Regex("""(?is)<transliterations\b[^>]*>.*?</transliterations\s*>""")
     /** Matches [AppleLyricTtmlReader]'s paragraph rule so the keys line up 1:1. */
     private val paragraph = Regex("""(?is)<p\b([^>]*)>(.*?)</p\s*>""")
     private val keyAttribute =
@@ -45,27 +43,22 @@ object AppleLyricTtmlLaneInjector {
     private val metadataClose = Regex("""(?is)</metadata\s*>""")
 
     /**
-     * The original [ttml] with the lanes built from [lines] injected, or null
-     * when no lane can be placed.
+     * The original [ttml] with the translation lane built from [lines] injected,
+     * or null when no lane can be placed. An existing `transliterations` block is
+     * copied through untouched.
      */
     fun inject(ttml: String, lines: List<AppleTtmlLine>): String? = runCatching {
         val keys = documentKeys(ttml)
         val translations = AppleLyricTtmlWriter.translationsTrack(lines, keys)
-        val transliterations = if (transliterationsBlock.containsMatchIn(ttml)) {
-            null
-        } else {
-            AppleLyricTtmlWriter.transliterationsTrack(lines, keys)
-        }
         val existing = translationsBlock.find(ttml)
         if (existing != null) {
             // Apple's own block is rebuilt from the merged lines, which carry its
             // entries; if nothing was built, keep the block exactly as it was
             // rather than deleting it.
-            val replacement = (translations ?: existing.value) + (transliterations ?: "")
-            return ttml.replaceRange(existing.range, replacement)
+            return ttml.replaceRange(existing.range, translations ?: existing.value)
         }
-        if (translations == null && transliterations == null) return null
-        placeInsideMetadata(ttml, (translations ?: "") + (transliterations ?: ""))
+        if (translations == null) return null
+        placeInsideMetadata(ttml, translations)
     }.getOrNull()
 
     private fun placeInsideMetadata(ttml: String, lanes: String): String? {

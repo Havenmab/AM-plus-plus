@@ -3,6 +3,7 @@ package dev.amenhancer.module.lyrics.online
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -132,8 +133,9 @@ class AppleLyricTtmlLaneInjectorTest {
 
     @Test
     fun `a Latin-only Apple line gets no transliterations lane`() {
-        // `RomanizationPolicy` refuses a Latin "romanization" of Latin lyrics, so
-        // the provider's pronunciation column never reaches an English line.
+        // `RomanizationPolicy` refuses a Latin "romanization" of Latin lyrics, and
+        // the Apple-only policy ignores the provider's pronunciation column
+        // outright, so no transliterations lane is ever injected.
         val outcome = OnlineTranslationEnrichment.enrich(
             ttml = APPLE_WORD_DOCUMENT,
             candidates = listOf(
@@ -155,7 +157,6 @@ class AppleLyricTtmlLaneInjectorTest {
                     ),
                 ),
             ),
-            pronunciationRequested = true,
             durationMs = 10_000L,
         )
 
@@ -166,7 +167,7 @@ class AppleLyricTtmlLaneInjectorTest {
     }
 
     @Test
-    fun `romanization the winner supplies opens a transliterations lane`() {
+    fun `romanization the winner supplies never opens a transliterations lane`() {
         val candidate = OnlineTranslationCandidate(
             source = Source.NE,
             lines = listOf(
@@ -188,26 +189,23 @@ class AppleLyricTtmlLaneInjectorTest {
         val outcome = OnlineTranslationEnrichment.enrich(
             ttml = JAPANESE_APPLE_DOCUMENT,
             candidates = listOf(candidate),
-            pronunciationRequested = true,
             durationMs = 10_000L,
         )
 
         assertNotNull(outcome)
         val ttml = outcome!!.ttml
-        assertTrue(
-            ttml.contains(
-                "<transliterations><transliteration xml:lang=\"und-Latn\">" +
-                    "<text for=\"L1\">Kimi no na wa</text>" +
-                    "<text for=\"L2\">Arigatou</text>",
-            ),
-        )
+        assertFalse(ttml.contains("<transliterations>"))
+        assertTrue(ttml.contains("<translations>"))
+        assertFalse(ttml.contains("Kimi no na wa"))
         assertEquals(bodyOf(JAPANESE_APPLE_DOCUMENT), bodyOf(ttml))
-        assertEquals("NE", outcome.pronunciationSource)
-        assertEquals(2, outcome.pronunciationLines)
+        assertEquals("none", outcome.pronunciationSource)
+        assertEquals(0, outcome.pronunciationLines)
     }
 
     @Test
-    fun `a pronunciation only pass opens a transliterations lane without a translations lane`() {
+    fun `a pronunciation-only pass publishes nothing`() {
+        // The provider supplied only a romanization; under the Apple-only policy
+        // there is no lane to add, so the document is left untouched.
         val outcome = OnlineTranslationEnrichment.enrich(
             ttml = JAPANESE_APPLE_DOCUMENT,
             candidates = listOf(
@@ -227,16 +225,10 @@ class AppleLyricTtmlLaneInjectorTest {
                     ),
                 ),
             ),
-            pronunciationRequested = true,
             durationMs = 10_000L,
         )
 
-        assertNotNull("a pronunciation-only pass must publish", outcome)
-        val ttml = outcome!!.ttml
-        assertFalse(ttml.contains("<translations>"))
-        assertTrue(ttml.contains("<transliterations>"))
-        assertTrue(ttml.contains(">Kimi no na wa<"))
-        assertEquals(bodyOf(JAPANESE_APPLE_DOCUMENT), bodyOf(ttml))
+        assertNull("a pronunciation-only pass must not publish", outcome)
     }
 
     private fun translationCandidate() = OnlineTranslationCandidate(

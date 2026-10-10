@@ -882,8 +882,50 @@
         "resolutionPolicy": "exact-required"
       }
     ],
-    "APPLE_SHARED_PREFERENCES_CLASS": [],
-    "LYRICS_PRONUNCIATION_PREFERENCE": [],
+    "APPLE_SHARED_PREFERENCES_CLASS": [
+      {
+        "parameterTypeNames": null,
+        "isStatic": null,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": null,
+        "returnTypeName": null,
+        "allowFirstMatch": false,
+        "methodName": null,
+        "requiredInvokedMethodDescriptors": [],
+        "className": "ja.i0",
+        "runtimeMemberNames": {
+          "LYRICS_PREFERENCES_TRANSLATION_GETTER": "g",
+          "LYRICS_PREFERENCES_PRONUNCIATION_CACHE_FIELD": "s",
+          "LYRICS_PREFERENCES_PRONUNCIATION_KEY_FIELD": "k",
+          "LYRICS_PREFERENCES_STORE_GETTER": "h",
+          "LYRICS_PREFERENCES_STORE_READ_METHOD": "d"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "APPLE_SHARED_PREFERENCES_CLASS",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
+    "LYRICS_PRONUNCIATION_PREFERENCE": [
+      {
+        "parameterTypeNames": [
+          "boolean"
+        ],
+        "isStatic": true,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "m",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "ja.i0",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_PRONUNCIATION_PREFERENCE",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "LISTEN_NOW_MEDIA_ENTITY": [
       {
         "parameterTypeNames": null,
@@ -1313,22 +1355,6 @@
       }
     ],
     "LYRICS_WORD_RENDER_ADAPTER": [
-      {
-        "parameterTypeNames": null,
-        "isStatic": null,
-        "includeSynthetic": false,
-        "requiredInvokedMethodNames": [],
-        "parameterCount": null,
-        "returnTypeName": null,
-        "allowFirstMatch": false,
-        "methodName": null,
-        "requiredInvokedMethodDescriptors": [],
-        "className": "com.apple.android.music.player.C",
-        "runtimeMemberNames": {},
-        "requiredCallerMethodNames": [],
-        "contractId": "LYRICS_WORD_RENDER_ADAPTER",
-        "resolutionPolicy": "exact-required"
-      },
       {
         "parameterTypeNames": null,
         "isStatic": null,
@@ -1776,7 +1802,24 @@
       }
     ],
     "LOCAL_MEDIA_PLAYER_AUDIO_VARIANT_CHANGED": [],
-    "LYRICS_UI_ON_DESTROY_VIEW": [],
+    "LYRICS_UI_ON_DESTROY_VIEW": [
+      {
+        "parameterTypeNames": [],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 0,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "onDestroyView",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_UI_ON_DESTROY_VIEW",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "CONTENT_ITEM_METADATA_CLASSES": [
       {
         "parameterTypeNames": null,
@@ -2232,7 +2275,34 @@
       }
     ],
     "DEBUG_ATMOS_MEDIA_CODEC_PERIOD_ID": [],
-    "LYRICS_UI_ON_CREATE_VIEW": [],
+    "LYRICS_UI_ON_CREATE_VIEW": [
+      {
+        "parameterTypeNames": [
+          "android.view.LayoutInflater",
+          "android.view.ViewGroup",
+          "android.os.Bundle"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 3,
+        "returnTypeName": "android.view.View",
+        "allowFirstMatch": false,
+        "methodName": "onCreateView",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "runtimeMemberNames": {
+          "LYRICS_UI_RECYCLER_VIEW_METHOD": "getRecyclerView",
+          "LYRICS_UI_BINDING_FIELD": "n0",
+          "LYRICS_UI_BINDING_RECYCLER_FIELD": "f0",
+          "LYRICS_UI_ADAPTER_FIELD": "p0",
+          "LYRICS_UI_VIEW_MODEL_FIELD": "o1"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_UI_ON_CREATE_VIEW",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "COMPOSE_TEXT_LAYOUT": [],
     "IN_APP_ACTION_SHEET_BINDING": [
       {

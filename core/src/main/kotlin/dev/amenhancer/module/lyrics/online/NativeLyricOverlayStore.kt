@@ -347,6 +347,23 @@ object NativeLyricModelPolicy {
     ): String = "$songId:${officialLane.orEmpty()}:$hasValidOfficialPronunciation"
 
     /**
+     * The word-ready edge key: the late-word-vector counterpart of
+     * [pronunciationLaneReadyKey].
+     *
+     * The word track is decided per `getPronunciationWords()` call, and the app
+     * caches the vector it gets back when the row binds. On a word-timing song
+     * Apple can populate its pronunciation vector *after* the first bind, so the
+     * first decision renders our online lane on the main word timing and nothing
+     * re-asks. This key is deliberately **per song, not per line**: a whole song's
+     * worth of word getters runs during one bind, and a per-line edge would
+     * request a refresh for every line (thrash). One edge per song means at most
+     * one extra re-presentation per track, and the host records the key before
+     * asking, so the refresh's own rebuild cannot bump it again. Pure, so the
+     * anti-loop bound is JVM-tested.
+     */
+    fun pronunciationWordReadyKey(songId: Long): String = "$songId:words"
+
+    /**
      * Apple's own pronunciation language, from the song's advertised
      * `getPronunciationLanguages` vector, or null when Apple offers none.
      */

@@ -50,6 +50,73 @@ object ApplePronunciationPolicy {
     }
 
     /**
+     * HLE's per-line word decision, with the fork's Apple-first correction.
+     *
+     * HLE decides `OFFICIAL` from
+     * `hasValidOfficialWords = officialLineText != null && officialWordVectorText != null`
+     * (`AppleLyricsSupplementPronunciationSupport.kt:258-262`), so a line whose
+     * line-level `getHtmlPronunciationLineText` is empty is *never* rendered with
+     * Apple's own word vector — even when that vector carries Apple's
+     * romanization. On a word-timing song Apple frequently leaves the line text
+     * empty and puts the pronunciation on the words, which is exactly the device
+     * log's `getPronunciationWords … track=MAIN_LINE_TIMING` beside
+     * `getHtmlPronunciationLineText … official=false online=true`: our online
+     * lane displaced Apple's own words.
+     *
+     * The planner therefore treats Apple's own word vector as a first-class
+     * Apple source:
+     *
+     *  - aligned Apple words (`officialWordVectorText != null` and
+     *    [hasCompatibleOfficialWordTiming]) always win → `OFFICIAL`, whether or
+     *    not the line text is present. That is HLE's condition *loosened* in
+     *    Apple's favour, never in ours.
+     *  - otherwise Apple's line text is preferred over ours on the main timing
+     *    (HLE's `mainTimingPronunciation`), then Apple's unaligned word text,
+     *    and only then the online value. Our lane can only fill what Apple
+     *    leaves empty.
+     *
+     * `pronunciation` is the text a `MAIN_LINE_TIMING` render plan must
+     * distribute; it is null for `OFFICIAL` (the native vector itself is
+     * returned) and for `HIDDEN`.
+     */
+    fun planPronunciationWords(
+        officialLineText: String?,
+        officialWordVectorText: String?,
+        onlineText: String?,
+        officialWordsCompatible: Boolean,
+    ): ApplePronunciationWordPlan {
+        // Apple's own word vector, aligned to the main line, is Apple data: it
+        // wins even when Apple left the line-level text empty.
+        val alignedAppleWords = officialWordVectorText != null && officialWordsCompatible
+        val appleText = officialLineText ?: officialWordVectorText
+        val track = wordTrack(
+            hasValidOfficialPronunciation = alignedAppleWords,
+            hasOnlinePronunciation = appleText != null || onlineText != null,
+        )
+        if (track == ApplePronunciationWordTrack.OFFICIAL) {
+            return ApplePronunciationWordPlan(
+                track = ApplePronunciationWordTrack.OFFICIAL,
+                pronunciation = null,
+                source = ApplePronunciationTextSource.APPLE,
+            )
+        }
+        val text = appleText ?: onlineText
+        return ApplePronunciationWordPlan(
+            track = if (text == null) {
+                ApplePronunciationWordTrack.HIDDEN
+            } else {
+                ApplePronunciationWordTrack.MAIN_LINE_TIMING
+            },
+            pronunciation = if (text == null) null else text,
+            source = when {
+                appleText != null -> ApplePronunciationTextSource.APPLE
+                text != null -> ApplePronunciationTextSource.ONLINE
+                else -> ApplePronunciationTextSource.NONE
+            },
+        )
+    }
+
+    /**
      * Apple Music 6.5.0 uses the pronunciation word begin as an exact lookup key
      * while composing the two-line karaoke layout. A valid official text/vector
      * is therefore not enough: every visible main-line word must have a matching
@@ -137,3 +204,26 @@ enum class ApplePronunciationWordTrack {
     MAIN_LINE_TIMING,
     HIDDEN,
 }
+
+/**
+ * Which lane supplied the text a `MAIN_LINE_TIMING` render plan distributes.
+ * Printed as `mainTiming=` in the `pronunciation-words` diagnostic:
+ * `apple` is Apple's own line text or unaligned word text, `online` is ours,
+ * `none` means neither lane had anything for the line.
+ */
+enum class ApplePronunciationTextSource(val token: String) {
+    APPLE("apple"),
+    ONLINE("online"),
+    NONE("none"),
+}
+
+/**
+ * One [ApplePronunciationPolicy.planPronunciationWords] result: the HLE word
+ * track, the text to distribute when the track is `MAIN_LINE_TIMING`, and which
+ * lane that text came from. Pure, so the Apple-first rule is JVM-tested.
+ */
+data class ApplePronunciationWordPlan(
+    val track: ApplePronunciationWordTrack,
+    val pronunciation: String?,
+    val source: ApplePronunciationTextSource,
+)

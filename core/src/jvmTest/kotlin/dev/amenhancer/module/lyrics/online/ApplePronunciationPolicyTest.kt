@@ -17,6 +17,82 @@ import org.junit.Test
 class ApplePronunciationPolicyTest {
 
     @Test
+    fun `an aligned Apple word vector wins even when the line text is empty`() {
+        // The remaining defect: HLE only reached OFFICIAL from
+        // `officialLineText != null && officialWordVectorText != null`, so a
+        // word-timing line whose line text Apple left empty rendered our online
+        // lane. Apple's own words must win.
+        val official = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = null,
+            officialWordVectorText = "gu b bai sen gen",
+            onlineText = "gubbai sengen",
+            officialWordsCompatible = true,
+        )
+        assertEquals(ApplePronunciationWordTrack.OFFICIAL, official.track)
+        assertEquals(null, official.pronunciation)
+        assertEquals(ApplePronunciationTextSource.APPLE, official.source)
+
+        // HLE's exact condition (line text *and* word text, aligned) is unchanged.
+        assertEquals(
+            ApplePronunciationWordTrack.OFFICIAL,
+            ApplePronunciationPolicy.planPronunciationWords(
+                officialLineText = "gu b bai sen gen",
+                officialWordVectorText = "gu b bai sen gen",
+                onlineText = null,
+                officialWordsCompatible = true,
+            ).track,
+        )
+    }
+
+    @Test
+    fun `our lane only fills what Apple leaves empty`() {
+        // Apple's line text is preferred over ours on the main timing, exactly as
+        // HLE's `mainTimingPronunciation` branch does.
+        val appleLine = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = "gu b bai",
+            officialWordVectorText = null,
+            onlineText = "gubbai",
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.MAIN_LINE_TIMING, appleLine.track)
+        assertEquals("gu b bai", appleLine.pronunciation)
+        assertEquals(ApplePronunciationTextSource.APPLE, appleLine.source)
+
+        // An unaligned Apple word vector is still Apple data: it is sliced onto
+        // the main words instead of being replaced by the online lane.
+        val appleWords = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = null,
+            officialWordVectorText = "gu b bai",
+            onlineText = "gubbai",
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.MAIN_LINE_TIMING, appleWords.track)
+        assertEquals("gu b bai", appleWords.pronunciation)
+        assertEquals(ApplePronunciationTextSource.APPLE, appleWords.source)
+
+        // Only a line Apple left completely empty falls back to our lane.
+        val online = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = null,
+            officialWordVectorText = null,
+            onlineText = "gubbai",
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.MAIN_LINE_TIMING, online.track)
+        assertEquals("gubbai", online.pronunciation)
+        assertEquals(ApplePronunciationTextSource.ONLINE, online.source)
+
+        val hidden = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = null,
+            officialWordVectorText = null,
+            onlineText = null,
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.HIDDEN, hidden.track)
+        assertEquals(null, hidden.pronunciation)
+        assertEquals(ApplePronunciationTextSource.NONE, hidden.source)
+    }
+
+    @Test
     fun `wordTrack keeps Apple's own words first and hides when there is nothing`() {
         assertEquals(
             ApplePronunciationWordTrack.OFFICIAL,

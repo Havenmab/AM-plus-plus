@@ -108,14 +108,14 @@ class AppleMusic700NativeLyricsProfileTest {
             AppleMusicHookPoint.LYRICS_WORD_RENDER_ADAPTER,
         )
         assertTrue(adapters.isNotEmpty())
-        // HLE's 1607 profile overrides the adapter to player.C; its 1606 profile
-        // inherits player.A from the 6.5.x line. Both are pinned so the adapter
-        // resolves on whichever beta is installed; the render scan itself
-        // requires a LyricsWordVector -> ArrayMap method, so a class that is not
-        // the adapter is never hooked.
+        // HLE's 1606 profile inherits player.A from the 6.5.x line. player.C is
+        // HLE's *1607* override, not a 1606 value: pinning it made the exact 1606
+        // profile resolve a class the verified build may not have. The render scan
+        // itself requires a LyricsWordVector -> ArrayMap method, so a same-named
+        // unrelated class is never hooked anyway.
         assertEquals(
-            setOf("com.apple.android.music.player.C", "com.apple.android.music.player.A"),
-            adapters.map { it.className }.toSet(),
+            listOf("com.apple.android.music.player.A"),
+            adapters.map { it.className },
         )
         assertTrue(adapters.none { it.allowFirstMatch })
 
@@ -125,6 +125,62 @@ class AppleMusic700NativeLyricsProfileTest {
             vector.className,
         )
         assertNull(vector.methodName)
+    }
+
+    @Test
+    fun `1606 pins HLE's preference and lyrics-view surfaces`() {
+        // HLE's 1606 APPLE_SHARED_PREFERENCES_CLASS override: ja.i0 with the
+        // cache-first preference members the fork's AppleLyricsPreferenceReader
+        // ports. g/s/k/h/d are HLE's exact runtime names.
+        val preferences = target(AppleMusicHookPoint.APPLE_SHARED_PREFERENCES_CLASS)
+        assertEquals("ja.i0", preferences.className)
+        fun member(name: AppleMusicRuntimeMember) = preferences.runtimeMemberNames[name]
+        assertEquals("g", member(AppleMusicRuntimeMember.LYRICS_PREFERENCES_TRANSLATION_GETTER))
+        assertEquals("s", member(AppleMusicRuntimeMember.LYRICS_PREFERENCES_PRONUNCIATION_CACHE_FIELD))
+        assertEquals("k", member(AppleMusicRuntimeMember.LYRICS_PREFERENCES_PRONUNCIATION_KEY_FIELD))
+        assertEquals("h", member(AppleMusicRuntimeMember.LYRICS_PREFERENCES_STORE_GETTER))
+        assertEquals("d", member(AppleMusicRuntimeMember.LYRICS_PREFERENCES_STORE_READ_METHOD))
+
+        // HLE's pronunciation preference setter: ja.i0#m(boolean) static void.
+        val preferenceTarget = target(AppleMusicHookPoint.LYRICS_PRONUNCIATION_PREFERENCE)
+        assertEquals("ja.i0", preferenceTarget.className)
+        assertEquals("m", preferenceTarget.methodName)
+        assertEquals(1, preferenceTarget.parameterCount)
+        assertEquals(listOf("boolean"), preferenceTarget.parameterTypeNames)
+        assertEquals("void", preferenceTarget.returnTypeName)
+        assertEquals(true, preferenceTarget.isStatic)
+
+        // HLE's early fragment registration: onCreateView(3) plus the 1606-only
+        // binding field n0 and the recycler accessor getRecyclerView.
+        val create = target(AppleMusicHookPoint.LYRICS_UI_ON_CREATE_VIEW)
+        assertEquals(
+            "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+            create.className,
+        )
+        assertEquals("onCreateView", create.methodName)
+        assertEquals(3, create.parameterCount)
+        assertEquals(
+            listOf("android.view.LayoutInflater", "android.view.ViewGroup", "android.os.Bundle"),
+            create.parameterTypeNames,
+        )
+        assertEquals("android.view.View", create.returnTypeName)
+        assertEquals(false, create.isStatic)
+        assertEquals(
+            "getRecyclerView",
+            create.runtimeMemberNames[AppleMusicRuntimeMember.LYRICS_UI_RECYCLER_VIEW_METHOD],
+        )
+        assertEquals(
+            "n0",
+            create.runtimeMemberNames[AppleMusicRuntimeMember.LYRICS_UI_BINDING_FIELD],
+        )
+
+        val destroy = target(AppleMusicHookPoint.LYRICS_UI_ON_DESTROY_VIEW)
+        assertEquals(
+            "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+            destroy.className,
+        )
+        assertEquals("onDestroyView", destroy.methodName)
+        assertEquals(0, destroy.parameterCount)
     }
 
     @Test
@@ -303,8 +359,10 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
-        // The HLE policy decides the track and aligns the romanization.
-        assertTrue(hooks.contains("ApplePronunciationPolicy.wordTrack("))
+        // The HLE policy decides the track and aligns the romanization. The host
+        // now calls the Apple-first planner (which itself calls `wordTrack`), so
+        // Apple's own word vector wins even when Apple left the line text empty.
+        assertTrue(hooks.contains("ApplePronunciationPolicy.planPronunciationWords("))
         assertTrue(hooks.contains("ApplePronunciationPolicy.displaySegments("))
         // The render plan is consumed by the app's own word-render adapter, and
         // the vector type comes from the profile, never a guessed signature.
@@ -318,6 +376,73 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(hooks.contains("online-translation pronunciation-words"))
         assertTrue(hooks.contains("track=\${track.name}"))
         assertTrue(hooks.contains("words=\${vectorSize(resolved)}"))
+    }
+
+    @Test
+    fun `the word diagnostic explains the decision and the late-word ask is wired`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // Task-4 diagnostics: the next log must carry the decision inputs, not
+        // only the winning track.
+        assertTrue(hooks.contains("officialWords=\$officialWords"))
+        assertTrue(hooks.contains("compat=\$officialWordsCompatible"))
+        assertTrue(hooks.contains("mainTiming=\${mainTimingSource.token}"))
+        assertTrue(hooks.contains("selected=\${track.name}"))
+
+        // Late-word self-correction, mirroring the lane-ready trigger: the first
+        // OFFICIAL answer after our lane had to stand in for a line asks for one
+        // guarded refresh.
+        assertTrue(hooks.contains("PresentationRefreshTrigger.WORD_READY"))
+        assertTrue(hooks.contains("\"word-ready\""))
+        assertTrue(hooks.contains("private fun onPronunciationWordReady("))
+        assertTrue(hooks.contains("announceWordReadyIfAppleWordsArrived("))
+        assertTrue(hooks.contains("NativeLyricModelPolicy.pronunciationWordReadyKey("))
+        // The hard anti-loop bound: the per-song key is recorded *before* the ask.
+        assertTrue(hooks.contains("if (key == wordReadyKey) return"))
+        assertTrue(hooks.contains("wordReadyKey = key"))
+        val wordReady = hooks
+            .substringAfter("private fun onPronunciationWordReady(")
+            .substringBefore("private fun requestPreferencePresentationRefresh(")
+        assertTrue(wordReady.contains("if (isModuleSupplementSong(songId)) return"))
+        assertTrue(wordReady.contains("wordReadyKey = key"))
+    }
+
+    @Test
+    fun `the preference surface is hooked and the real preference replaces the substitute`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // HLE's onAppleLyricsDisplayPreferenceChanged(PRONUNCIATION): clear the
+        // pending one-shot word plans and re-present.
+        assertTrue(hooks.contains("LYRICS_PRONUNCIATION_PREFERENCE"))
+        assertTrue(hooks.contains("private fun installPronunciationPreferenceHook("))
+        assertTrue(hooks.contains("internal fun onPronunciationPreferenceChanged("))
+        assertTrue(hooks.contains("pendingPronunciationRenderPlans.clear()"))
+        // The real Apple preference, cache-first, fail-open.
+        assertTrue(hooks.contains("AppleLyricsPreferenceReader.isPronunciationSelected("))
+        assertTrue(hooks.contains("AppleLyricsPreferenceReader.isTranslationSelected("))
+        // The old `enabled && !mandarinHidden` substitute is gone from every gate.
+        assertFalse(hooks.contains("pronunciationSelected = enabled && !mandarinHidden,"))
+        assertFalse(hooks.contains("pronunciationPreferenceAvailable &&"))
+
+        // HLE's early fragment registration and onDestroyView cleanup.
+        assertTrue(hooks.contains("private fun installLyricsViewFragmentSeam("))
+        assertTrue(hooks.contains("LYRICS_UI_ON_CREATE_VIEW"))
+        assertTrue(hooks.contains("LYRICS_UI_ON_DESTROY_VIEW"))
+        assertTrue(hooks.contains("private fun cleanupPresentationBinding("))
+
+        val reader = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPreferenceReader.kt",
+        )
+        // HLE's read order: getter -> cache field -> snapshot -> key/store read.
+        val getter = reader.indexOf("LYRICS_PREFERENCES_PRONUNCIATION_GETTER")
+        val cache = reader.indexOf("LYRICS_PREFERENCES_PRONUNCIATION_CACHE_FIELD")
+        val snapshot = reader.indexOf("if (snapshot != null) return snapshot")
+        val store = reader.indexOf("LYRICS_PREFERENCES_STORE_READ_METHOD")
+        assertTrue(getter in 0 until cache)
+        assertTrue(cache in 0 until snapshot)
+        assertTrue(snapshot in 0 until store)
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

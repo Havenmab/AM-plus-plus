@@ -44,7 +44,7 @@
 
 ## 项目简介
 
-设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。
+设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”。
 
 支持通过 ZIP 导入和管理插件；开发说明见 [插件开发手册](docs/plugin-development.md)。
 

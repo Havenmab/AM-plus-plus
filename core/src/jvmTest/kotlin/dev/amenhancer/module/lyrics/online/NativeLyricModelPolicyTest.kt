@@ -548,4 +548,31 @@ class NativeLyricModelPolicyTest {
         // like a lane: the host additionally requires probe || lane != null.
         assertNotEquals(key(null, true), key("", false))
     }
+
+    @Test
+    fun `the word-ready edge is one per song, not one per line`() {
+        // The late-word ask is deliberately per song: a whole song's word getters
+        // run during one bind, and a per-line key would request a refresh for
+        // every line (thrash). One key per song bounds the correction to at most
+        // one extra re-presentation per track, and the host records it before
+        // asking so the rebuild cannot bump it again.
+        assertEquals(
+            NativeLyricModelPolicy.pronunciationWordReadyKey(42L),
+            NativeLyricModelPolicy.pronunciationWordReadyKey(42L),
+        )
+        assertNotEquals(
+            NativeLyricModelPolicy.pronunciationWordReadyKey(42L),
+            NativeLyricModelPolicy.pronunciationWordReadyKey(43L),
+        )
+        // It must not be mistakable for a lane-ready key, so a word edge can never
+        // suppress or be suppressed by a language edge.
+        assertNotEquals(
+            NativeLyricModelPolicy.pronunciationWordReadyKey(42L),
+            NativeLyricModelPolicy.pronunciationLaneReadyKey(
+                songId = 42L,
+                officialLane = "words",
+                hasValidOfficialPronunciation = true,
+            ),
+        )
+    }
 }

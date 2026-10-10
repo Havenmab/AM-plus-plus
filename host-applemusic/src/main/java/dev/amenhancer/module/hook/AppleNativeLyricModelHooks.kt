@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.os.Handler
 import android.os.Looper
 import dev.amenhancer.module.lyrics.online.ApplePronunciationPolicy
+import dev.amenhancer.module.lyrics.online.ApplePronunciationTextSource
 import dev.amenhancer.module.lyrics.online.ApplePronunciationVisibilityPolicy
 import dev.amenhancer.module.lyrics.online.ApplePronunciationWordTrack
 import dev.amenhancer.module.lyrics.online.LyricsRenderProbe
@@ -121,6 +122,29 @@ import java.util.concurrent.ConcurrentHashMap
  *    with a build for the same lane state is a no-op
  *    (`PresentationRefreshState.sameLaneRefresh`); the build gate never consumes
  *    the edge because it only reads [pronunciationLaneRevision].
+ *  - Apple's own **word** vector is a first-class Apple source: a word-timing
+ *    line whose line-level `getHtmlPronunciationLineText` Apple left empty used
+ *    to render our online lane on the main word timing (device log:
+ *    `getPronunciationWords … track=MAIN_LINE_TIMING` beside
+ *    `getHtmlPronunciationLineText … official=false online=true`).
+ *    [ApplePronunciationPolicy.planPronunciationWords] returns Apple's own
+ *    aligned word vector as `OFFICIAL` even without the line text, and otherwise
+ *    prefers Apple's line text, then Apple's unaligned word text, over ours.
+ *  - A late **word-ready** ask is the fourth trigger: the word track is decided
+ *    per `getPronunciationWords()` call and the app caches the vector, so a line
+ *    our online lane had to fill followed by an `OFFICIAL` line calls
+ *    [onPronunciationWordReady], which dedupes per song
+ *    ([NativeLyricModelPolicy.pronunciationWordReadyKey], recorded before the
+ *    ask) and reuses the same guarded refresh, tagged `trigger=word-ready`. That
+ *    bounds the late-word correction to at most one extra re-presentation per
+ *    track; a line Apple already covers with its own text never arms the edge.
+ *  - The app's own pronunciation preference is honoured: the 1606 profile now
+ *    pins `ja.i0#m(boolean)` and `APPLE_SHARED_PREFERENCES_CLASS` (`g`/`s`/`k`/
+ *    `h`/`d`), [AppleLyricsPreferenceReader] ports HLE's cache-first
+ *    `PreferencesMonitor` read, and the preference hook runs HLE's
+ *    `onAppleLyricsDisplayPreferenceChanged(PRONUNCIATION)` — clear the pending
+ *    render plans and re-present — so a toggle is visible on the same frame
+ *    instead of the old `enabled && !mandarinHidden` substitute.
  *  - A latched refresh also reproduces the mechanism a background→foreground
  *    cycle uses: the app's own `PlayerLyricsViewModel#loadLyrics` is re-invoked
  *    with the exact (view model, PlaybackItem) pair Apple itself passed
@@ -216,7 +240,11 @@ internal class AppleNativeLyricModelHooks(
             ?.runtimeMemberNames
             .orEmpty()
 
-    /** 1606 has no verified Apple preference target; keep that uncertainty explicit. */
+    /**
+     * True when the exact profile pins the Apple pronunciation-preference setter
+     * (1606: `ja.i0#m(boolean)`). [applePronunciationSelected] then reads the real
+     * preference; a profile without the surface keeps the old fail-open behaviour.
+     */
     private val pronunciationPreferenceAvailable =
         AppleMusicHookProfiles.exactTargets(
             resolver.version,
@@ -286,6 +314,35 @@ internal class AppleNativeLyricModelHooks(
      */
     @Volatile
     private var laneReadyKey: String? = null
+
+    /**
+     * The word-ready edge: the per-song key of the last accepted late-word-vector
+     * ask ([NativeLyricModelPolicy.pronunciationWordReadyKey]). Recorded *before*
+     * the refresh is requested, so the rebuild our own refresh triggers can never
+     * bump it again — the anti-loop half of the word trigger. Reset with the rest
+     * of the per-song state on a track change.
+     */
+    @Volatile
+    private var wordReadyKey: String? = null
+
+    /**
+     * True once a word getter answered a line with **our** online lane for the
+     * current model, i.e. Apple left that line's line text empty and had no aligned
+     * word vector yet. The first later OFFICIAL answer for the model is the
+     * "Apple's words arrived late" edge. A line Apple already covers with its own
+     * text does not arm the edge. Per model, reset on a track change.
+     */
+    @Volatile
+    private var wordDecisionSawOnline: Boolean = false
+
+    /**
+     * The last value the app's own pronunciation setter pushed (HLE's
+     * `PreferencesMonitor.pronunciationSnapshot`). Wins over a cold DataStore read
+     * in [AppleLyricsPreferenceReader], so the preference hook's result is visible
+     * immediately.
+     */
+    @Volatile
+    private var pronunciationPreferenceSnapshot: Boolean? = null
 
     /** The song whose model the current hooks were installed for. */
     @Volatile
@@ -417,6 +474,8 @@ internal class AppleNativeLyricModelHooks(
         BUILD("build"),
         CUSTOM_OVERLAY("custom-overlay"),
         LANE_READY("lane-ready"),
+        WORD_READY("word-ready"),
+        PREFERENCE("preference"),
         F2_RETRY("f2-retry"),
     }
 
@@ -496,6 +555,8 @@ internal class AppleNativeLyricModelHooks(
         installNativeLoadSeam()
         installNativeModelSeam()
         installNativePresentationSeam()
+        installLyricsViewFragmentSeam()
+        installPronunciationPreferenceHook()
         installPreferredLanguageExpansion()
         installPronunciationLanguageMatch()
     }
@@ -727,8 +788,7 @@ internal class AppleNativeLyricModelHooks(
             hasValidOfficialPronunciation(songNative) || officialLane != null
         val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
         val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
-        val pronunciationSelected = pronunciationPreferenceAvailable &&
-            enabled && !mandarinHidden
+        val pronunciationSelected = enabled && !mandarinHidden && applePronunciationSelected()
         val sourceIsApple = !isModuleSupplementSong(songId)
 
         val state = PresentationRefreshState(
@@ -777,10 +837,12 @@ internal class AppleNativeLyricModelHooks(
         // The lane-ready reload builds synchronously inside the attempt that
         // latched it, so the gate runs again with the same (bumped) lane revision
         // and could ask for a second refresh of the state that was just applied.
-        // Only a preceding *lane-ready* for this exact lane state is suppressed —
+        // Only a preceding edge trigger for this exact lane state is suppressed —
         // a preceding custom-overlay stays a distinct state, as before.
         if (lastState != null &&
-            lastState.trigger == PresentationRefreshTrigger.LANE_READY &&
+            (lastState.trigger == PresentationRefreshTrigger.LANE_READY ||
+                lastState.trigger == PresentationRefreshTrigger.WORD_READY ||
+                lastState.trigger == PresentationRefreshTrigger.PREFERENCE) &&
             state.sameLaneRefresh(lastState)
         ) {
             return
@@ -884,7 +946,7 @@ internal class AppleNativeLyricModelHooks(
             officialLane = officialLane,
             onlineTranslation = onlineTranslation,
             onlinePronunciation = onlinePronunciation,
-            pronunciationSelected = enabled && !mandarinHidden,
+            pronunciationSelected = enabled && !mandarinHidden && applePronunciationSelected(),
             laneRevision = pronunciationLaneRevision,
         )
         // Once per (song, overlay revision): a completion that changed no overlay
@@ -999,7 +1061,7 @@ internal class AppleNativeLyricModelHooks(
             officialLane = officialLane,
             onlineTranslation = onlineTranslation,
             onlinePronunciation = onlinePronunciation,
-            pronunciationSelected = enabled && !mandarinHidden,
+            pronunciationSelected = enabled && !mandarinHidden && applePronunciationSelected(),
             laneRevision = pronunciationLaneRevision,
         )
         // The lane state, not the trigger, is the dedupe key for this ask: a
@@ -1042,6 +1104,164 @@ internal class AppleNativeLyricModelHooks(
     }
 
     /**
+     * The late-word-vector trigger: Apple's own pronunciation words became
+     * available *after* the first word getter had already answered with our lane.
+     *
+     * The word track is decided inside `getPronunciationWords()`, and the app
+     * caches the vector it gets back while the row binds, so nothing re-reads the
+     * decision on its own. The first OFFICIAL answer after our lane had to stand in
+     * for a line (`announceWordReadyIfAppleWordsArrived`) is that edge; this asks
+     * for the same guarded re-presentation as [onPronunciationLaneReady], tagged
+     * `trigger=word-ready`.
+     *
+     * Guarantees, identical to the lane-ready ask:
+     *  - main-handler posted, so it lands after Apple's current presentation;
+     *  - Apple's own document only (a supplement pointer's lanes are the
+     *    overlay's job);
+     *  - expected-song checked here and again against the bound pointer in
+     *    [performPresentationRefresh];
+     *  - our own invoke is ignored through [presentationInvokeGuard];
+     *  - deduped per song by [NativeLyricModelPolicy.pronunciationWordReadyKey]
+     *    and recorded *before* the ask, so the rebuild our own refresh triggers
+     *    can never bump it again — the hard anti-loop bound. A model whose first
+     *    word answer is already OFFICIAL never asks. The bumped
+     *    [pronunciationLaneRevision] is part of [ReloadKey], so the reload is
+     *    still exactly once per edge.
+     */
+    private fun onPronunciationWordReady() {
+        if (!enabled || nativeNames.isEmpty()) return
+        if (presentationInvokeGuard.get() == true) return
+        val songNative = songNativeRef?.get() ?: return
+        val songId = nativeSongId(songNative)
+        if (songId <= 0L || !isCurrentSong(songNative)) return
+        if (isModuleSupplementSong(songId)) return
+        val key = NativeLyricModelPolicy.pronunciationWordReadyKey(songId)
+        if (key == wordReadyKey) return
+        wordReadyKey = key
+        pronunciationLaneRevision += 1
+
+        val advertised = advertisedPronunciationLanguages(songPronunciationLanguages(songNative))
+        val officialLane = NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
+        val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
+        val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
+        val state = PresentationRefreshState(
+            trigger = PresentationRefreshTrigger.WORD_READY,
+            songId = songId,
+            overlayRevision = overlay.revision(),
+            sourceIsApple = true,
+            // The edge *is* Apple's own word vector having arrived.
+            officialPronunciation = true,
+            officialLane = officialLane,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = enabled && !mandarinHidden && applePronunciationSelected(),
+            laneRevision = pronunciationLaneRevision,
+        )
+        val last = lastPresentationRefreshState
+        if (last != null && state.sameLaneRefresh(last)) return
+        lastPresentationRefreshState = state
+        if (pendingPresentationRefresh?.trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY) {
+            pendingPresentationRefresh = null
+        }
+
+        val reason = refreshReason(state)
+        logPresentationRefresh(
+            songId = songId,
+            reason = reason,
+            hasValidOfficialPronunciation = state.officialPronunciation,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = state.pronunciationSelected,
+            refreshed = false,
+            detail = DETAIL_WORD_READY,
+            adapterName = null,
+            stateCleared = false,
+            reload = reloadIntent(state, shouldRefresh = true),
+            trigger = PresentationRefreshTrigger.WORD_READY.token,
+        )
+        pendingPresentationRefresh = state
+        adapterRetryAttempts = 0
+        mainHandler.post {
+            performPresentationRefresh(state, PresentationRefreshTrigger.WORD_READY)
+        }
+    }
+
+    /**
+     * HLE's `PreferencesMonitor.notifyPronunciationSelectedChanged`: record the
+     * value Apple itself just wrote, then run the pronunciation display event —
+     * `clearPendingApplePronunciationRenderPlans()` followed by
+     * `refreshAppleLyricsSupplementPresentation()`. The fork had neither, so a
+     * preference toggle was invisible and the gate kept using the substitute.
+     */
+    internal fun onPronunciationPreferenceChanged(selected: Boolean) {
+        pronunciationPreferenceSnapshot = selected
+        if (!enabled || nativeNames.isEmpty()) return
+        synchronized(pendingPronunciationRenderPlans) {
+            pendingPronunciationRenderPlans.clear()
+        }
+        mainHandler.post { requestPreferencePresentationRefresh() }
+    }
+
+    /**
+     * The preference trigger. HLE refreshes unconditionally here — the changed
+     * preference *is* the reason — and the shared state dedupe makes a repeated
+     * setter call with the same value a no-op while a genuine toggle is always a
+     * new state ([PresentationRefreshState.pronunciationSelected]). The refresh
+     * re-runs `applyAppleNativePronunciationSelection`, so Apple's own lane is
+     * re-applied with the new preference on the same frame.
+     */
+    private fun requestPreferencePresentationRefresh() {
+        if (presentationInvokeGuard.get() == true) return
+        val songNative = songNativeRef?.get() ?: return
+        val songId = nativeSongId(songNative)
+        if (songId <= 0L || songId != modelSongId) return
+        val advertised = advertisedPronunciationLanguages(songPronunciationLanguages(songNative))
+        val officialLane = NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
+        val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
+        val onlinePronunciation = enabled && overlay.hasPronunciation(songId.toString())
+        val state = PresentationRefreshState(
+            trigger = PresentationRefreshTrigger.PREFERENCE,
+            songId = songId,
+            overlayRevision = overlay.revision(),
+            sourceIsApple = !isModuleSupplementSong(songId),
+            officialPronunciation = hasValidOfficialPronunciation(songNative) || officialLane != null,
+            officialLane = officialLane,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = enabled && !mandarinHidden && applePronunciationSelected(),
+            laneRevision = pronunciationLaneRevision,
+        )
+        if (state == lastPresentationRefreshState) return
+        lastPresentationRefreshState = state
+        if (pendingPresentationRefresh != state &&
+            pendingPresentationRefresh?.trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY
+        ) {
+            pendingPresentationRefresh = null
+        }
+
+        val reason = refreshReason(state)
+        logPresentationRefresh(
+            songId = songId,
+            reason = reason,
+            hasValidOfficialPronunciation = state.officialPronunciation,
+            onlineTranslation = onlineTranslation,
+            onlinePronunciation = onlinePronunciation,
+            pronunciationSelected = state.pronunciationSelected,
+            refreshed = false,
+            detail = DETAIL_PREFERENCE,
+            adapterName = null,
+            stateCleared = false,
+            reload = reloadIntent(state, shouldRefresh = true),
+            trigger = PresentationRefreshTrigger.PREFERENCE.token,
+        )
+        pendingPresentationRefresh = state
+        adapterRetryAttempts = 0
+        mainHandler.post {
+            performPresentationRefresh(state, PresentationRefreshTrigger.PREFERENCE)
+        }
+    }
+
+    /**
      * The [PresentationRefreshState]'s reason, from the trigger that decided it:
      * the build gate keeps HLE's `sourceIsApple`/online/official rule, while the
      * post-overlay trigger uses the store-update rule (a lane exists in the
@@ -1057,6 +1277,8 @@ internal class AppleNativeLyricModelHooks(
                 )
             PresentationRefreshTrigger.BUILD,
             PresentationRefreshTrigger.LANE_READY,
+            PresentationRefreshTrigger.WORD_READY,
+            PresentationRefreshTrigger.PREFERENCE,
             PresentationRefreshTrigger.F2_RETRY -> NativeLyricModelPolicy.presentationRefreshReason(
                 sourceIsApple = state.sourceIsApple,
                 hasValidOfficialPronunciation = state.officialPronunciation,
@@ -1396,6 +1618,11 @@ internal class AppleNativeLyricModelHooks(
             // previous track's revision.
             pronunciationLaneRevision = 0L
             laneReadyKey = null
+            // The word-ready edge is per song too: the new track's own late word
+            // vector must be able to ask its own refresh, and must not inherit the
+            // previous track's ask (the hard per-song bound).
+            wordReadyKey = null
+            wordDecisionSawOnline = false
         }
         modelSongId = songId
         songNativeRef = java.lang.ref.WeakReference(songNative)
@@ -1609,6 +1836,24 @@ internal class AppleNativeLyricModelHooks(
             hideMandarinPinyin = hideMandarinPinyin,
         )
 
+    /**
+     * The app's real "lyrics pronunciation selected" preference, HLE's
+     * `PreferencesMonitor.isPronunciationSelected()`. Fail-open: true when the
+     * profile pins no preference target or the value cannot be read, so a profile
+     * without the surface never silently disables Apple's own pronunciation. This
+     * replaces the fork's `enabled && !mandarinHidden` substitute, which asked
+     * HLE's build gate for a refresh even when the user had switched Apple's
+     * pronunciation row off (and vice versa: it could not react to a toggle at
+     * all).
+     */
+    private fun applePronunciationSelected(): Boolean {
+        if (!pronunciationPreferenceAvailable) return true
+        return AppleLyricsPreferenceReader.isPronunciationSelected(
+            resolver = resolver,
+            snapshot = pronunciationPreferenceSnapshot,
+        ) ?: true
+    }
+
     private fun installSongAvailabilityHooks(clazz: Class<*>) {
         listOf(
             AppleMusicRuntimeMember.LYRICS_NATIVE_SET_TRANSLATION_METHOD,
@@ -1817,13 +2062,17 @@ internal class AppleNativeLyricModelHooks(
      * The device log shows the language selected and Apple's line text read while
      * nothing is romanized, which is exactly that gap.
      *
-     * The port mirrors HLE exactly:
+     * The port mirrors HLE, with the fork's Apple-first correction:
      *
      *  - `getPronunciationWords()` / `getPronunciationBackgroundWords(boolean)`
-     *    return Apple's own vector when its words are valid **and** timed like the
-     *    main line (OFFICIAL — Apple's own data first), otherwise Apple's *main*
-     *    word vector plus a one-shot render plan (MAIN_LINE_TIMING), otherwise
+     *    return Apple's own vector whenever its words are timed like the main line
+     *    (OFFICIAL — Apple's own data first, whether or not Apple also filled the
+     *    line-level text), otherwise Apple's *main* word vector plus a one-shot
+     *    render plan whose text is Apple's line text, then Apple's own unaligned
+     *    word text, and only then the online lane (MAIN_LINE_TIMING), otherwise
      *    HLE's empty container (HIDDEN, the Mandarin rule).
+     *    [ApplePronunciationPolicy.planPronunciationWords] owns that ordering and is
+     *    JVM-tested; the host only resolves Apple's members and reports the result.
      *  - The plan is consumed by the app's own word-render adapter
      *    (`LYRICS_WORD_RENDER_ADAPTER`: the methods taking a `LyricsWordVector` and
      *    returning `android.util.ArrayMap`); while it runs, each native main word's
@@ -1981,12 +2230,24 @@ internal class AppleNativeLyricModelHooks(
     }
 
     /**
-     * HLE's `hookApplePronunciationWordsGetter` body, in HLE's order: official
-     * text and word compatibility first, then the `wordTrack` decision, then the
-     * resolved vector. `mainTimingPronunciation` deliberately prefers Apple's own
-     * line text when Apple has one but its word vector cannot be aligned to the
-     * main line — that is HLE's `officialPronunciation` branch, not the online
-     * one.
+     * HLE's `hookApplePronunciationWordsGetter` body with the fork's Apple-first
+     * correction: Apple's own line text *and* Apple's own word vector are Apple
+     * sources, and either wins over our online lane.
+     *
+     * HLE only reaches `OFFICIAL` from
+     * `officialLineText != null && officialWordVectorText != null`
+     * (`AppleLyricsSupplementPronunciationSupport.kt:258-262`), so a word-timing
+     * line whose line-level text Apple left empty was always rendered with the
+     * online lane on the main timing — the device log's
+     * `getPronunciationWords … track=MAIN_LINE_TIMING` beside
+     * `getHtmlPronunciationLineText … official=false online=true`.
+     * [ApplePronunciationPolicy.planPronunciationWords] treats an aligned Apple
+     * word vector as Apple data on its own, and still prefers Apple's line text
+     * (then Apple's unaligned word text) over ours for the `MAIN_LINE_TIMING`
+     * render plan, exactly as HLE's `mainTimingPronunciation` does.
+     *
+     * The first OFFICIAL answer after our online lane had to stand in for a line
+     * is the late-word-vector edge ([announceWordReadyIfAppleWordsArrived]).
      */
     private fun resolvePronunciationWords(
         line: Any,
@@ -2003,7 +2264,7 @@ internal class AppleNativeLyricModelHooks(
             return emptyPronunciationWords(original, null) ?: original
         }
         val originalText = rawText(line, originalTextMember)
-        val officialPronunciation = RomanizationPolicy.sanitize(
+        val officialLineText = RomanizationPolicy.sanitize(
             originalText = originalText,
             pronunciation = rawText(line, pronunciationTextMember),
         )
@@ -2012,29 +2273,30 @@ internal class AppleNativeLyricModelHooks(
         } else {
             null
         }
-        val hasValidOfficialWords = officialPronunciation != null &&
-            RomanizationPolicy.sanitize(
-                originalText = originalText,
-                pronunciation = rawWordVectorText(original),
-            ) != null
+        // Apple's own word vector text (HLE's `nativeRawWordVectorText`): the
+        // romanization carried on the pronunciation words themselves. On a
+        // word-timing song this is often the only Apple source for the line, and
+        // the fork used to ignore it.
+        val officialWordVectorText = RomanizationPolicy.sanitize(
+            originalText = originalText,
+            pronunciation = rawWordVectorText(original),
+        )
         val mainWords = nativeNames[mainWordsMember]?.let { name ->
             runCatching { AppleReflection.call(line, name, *args) }.getOrNull()
         }
-        val hasCompatibleOfficialWords = hasValidOfficialWords &&
-            ApplePronunciationPolicy.hasCompatibleOfficialWordTiming(
-                mainWordBegins = renderableWordBegins(mainWords),
-                pronunciationWordBegins = renderableWordBegins(original),
-            )
-        val mainTimingPronunciation = when {
-            officialPronunciation != null && !hasCompatibleOfficialWords -> officialPronunciation
-            else -> onlinePronunciationText
-        }
-        val track = ApplePronunciationPolicy.wordTrack(
-            hasValidOfficialPronunciation = hasCompatibleOfficialWords,
-            hasOnlinePronunciation = mainTimingPronunciation != null,
+        val officialWordsCompatible = ApplePronunciationPolicy.hasCompatibleOfficialWordTiming(
+            mainWordBegins = renderableWordBegins(mainWords),
+            pronunciationWordBegins = renderableWordBegins(original),
         )
+        val plan = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = officialLineText,
+            officialWordVectorText = officialWordVectorText,
+            onlineText = onlinePronunciationText,
+            officialWordsCompatible = officialWordsCompatible,
+        )
+        val track = plan.track
         val vector = mainWords?.takeIf { vectorSize(it) > 0 }
-        val pronunciation = mainTimingPronunciation
+        val pronunciation = plan.pronunciation
         val canRegisterRenderPlan =
             track == ApplePronunciationWordTrack.MAIN_LINE_TIMING &&
                 vector != null &&
@@ -2061,7 +2323,11 @@ internal class AppleNativeLyricModelHooks(
             track = track,
             resolved = resolved,
             renderPlanRegistered = canRegisterRenderPlan,
+            officialWords = vectorSize(original),
+            officialWordsCompatible = officialWordsCompatible,
+            mainTimingSource = plan.source,
         )
+        announceWordReadyIfAppleWordsArrived(track, plan.source, onlineFallback)
         recordRenderProbe(
             phase = LyricsRenderProbe.Phase.WORD_GETTER,
             getter = getterName,
@@ -2071,6 +2337,39 @@ internal class AppleNativeLyricModelHooks(
             result = track.name,
         )
         return resolved
+    }
+
+    /**
+     * The word-decision counterpart of [onPronunciationLaneReady]: Apple's own
+     * word vector often arrives *after* the first bind, so the first
+     * `getPronunciationWords()` answer is `MAIN_LINE_TIMING` with **our** lane and
+     * the app then caches it. The first `OFFICIAL` answer after our lane stood in
+     * for a line ([wordDecisionSawOnline]) is that edge; it asks for one
+     * re-presentation so the rebuilt model re-consults the word getter.
+     *
+     * Only an `ONLINE`-sourced `MAIN_LINE_TIMING` arms the edge: a line Apple
+     * already covers with its own line text is not a displacement, so a mixed song
+     * (some lines with Apple words, some with Apple line text) cannot request a
+     * needless rebuild. Anti-loop: [onPronunciationWordReady] records the per-song
+     * edge key before asking, so the rebuild our own refresh triggers can never
+     * bump it again, and a model whose very first word answer is already `OFFICIAL`
+     * never asks at all. Only the main `getPronunciationWords` getter participates
+     * ([onlineFallback]); the background getter's lane is Apple's own text with no
+     * fallback.
+     */
+    private fun announceWordReadyIfAppleWordsArrived(
+        track: ApplePronunciationWordTrack,
+        source: ApplePronunciationTextSource,
+        onlineFallback: Boolean,
+    ) {
+        if (!onlineFallback) return
+        if (track == ApplePronunciationWordTrack.OFFICIAL) {
+            if (!wordDecisionSawOnline) return
+            wordDecisionSawOnline = false
+            onPronunciationWordReady()
+        } else if (source == ApplePronunciationTextSource.ONLINE) {
+            wordDecisionSawOnline = true
+        }
     }
 
     /**
@@ -2266,9 +2565,18 @@ internal class AppleNativeLyricModelHooks(
     /**
      * The visible-channel proof that the app asks for word-level pronunciation
      * and what we answer:
-     * `online-translation pronunciation-words id=… getter=… track=… words=N line=…`.
-     * Emitted on the raw logger (not the budgeted `native-write` diagnostic) and
-     * de-duplicated per build/getter, so the next device log always carries it.
+     * `online-translation pronunciation-words id=… getter=… track=… words=N line=…
+     * renderPlan=… renderAdapter=… officialWords=N compat=… mainTiming=…
+     * selected=…`.
+     *
+     * `officialWords` is how many words Apple's own pronunciation vector carries
+     * for the line, `compat` whether those word begins align with the main line,
+     * `mainTiming` which lane supplied the text (`apple`/`online`/`none`) and
+     * `selected` the resulting track, so the next device log explains *why* the
+     * decision went the way it did instead of only which track won. Emitted on the
+     * raw logger (not the budgeted `native-write` diagnostic) and de-duplicated per
+     * build/getter/decision, so the next device log always carries it without
+     * increasing the per-track budget.
      */
     private fun reportPronunciationWords(
         line: Any,
@@ -2277,9 +2585,13 @@ internal class AppleNativeLyricModelHooks(
         track: ApplePronunciationWordTrack,
         resolved: Any?,
         renderPlanRegistered: Boolean,
+        officialWords: Int,
+        officialWordsCompatible: Boolean,
+        mainTimingSource: ApplePronunciationTextSource,
     ) {
         val songId = modelSongId
-        val key = "$songId:$getterName/$parameterCount:${track.name}:$renderPlanRegistered"
+        val key = "$songId:$getterName/$parameterCount:${track.name}:$renderPlanRegistered:" +
+            "$officialWords:$officialWordsCompatible:${mainTimingSource.token}"
         if (!wordDiagnosticKeys.add(key)) return
         runCatching {
             val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
@@ -2288,7 +2600,9 @@ internal class AppleNativeLyricModelHooks(
                     "getter=$getterName/$parameterCount track=${track.name} " +
                     "words=${vectorSize(resolved)} line=${begin ?: NONE} " +
                     "renderPlan=$renderPlanRegistered " +
-                    "renderAdapter=$wordRenderAdapterAvailable",
+                    "renderAdapter=$wordRenderAdapterAvailable " +
+                    "officialWords=$officialWords compat=$officialWordsCompatible " +
+                    "mainTiming=${mainTimingSource.token} selected=${track.name}",
             )
         }
     }
@@ -2490,6 +2804,89 @@ internal class AppleNativeLyricModelHooks(
         }, scope)
     }
 
+    /**
+     * HLE's `hookAppleLyricsDisplayPreferences` pronunciation half and its
+     * `onAppleLyricsDisplayPreferenceChanged(PRONUNCIATION)` event: the app's own
+     * `ja.i0.m(boolean)` setter is the authority for "the user just toggled
+     * Apple's pronunciation row". The after hook records the value for
+     * [AppleLyricsPreferenceReader] and asks for the guarded re-presentation
+     * ([onPronunciationPreferenceChanged]). Fail-open: no pinned target leaves the
+     * app's own behaviour untouched.
+     */
+    private fun installPronunciationPreferenceHook() {
+        val method = runCatching {
+            resolver.resolveMethod(AppleMusicHookPoint.LYRICS_PRONUNCIATION_PREFERENCE).method
+        }.getOrNull() ?: return
+        if (!installed.add("pref:${method.declaringClass.name}#${method.name}")) return
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val selected = param.args.firstOrNull() as? Boolean ?: return
+                runCatching { onPronunciationPreferenceChanged(selected) }.onFailure { error ->
+                    log("online-translation pronunciation-preference hook failed: ${error.message}")
+                }
+            }
+        }, scope)
+    }
+
+    /**
+     * HLE's early fragment registration (`LYRICS_UI_ON_CREATE_VIEW` `before`) and
+     * its `onDestroyView` cleanup.
+     *
+     * HLE registers the fragment in `onCreateView` because a refresh that runs
+     * before Apple's first native presentation has no fragment bound and aborts
+     * `not-bound`; on 1606 the profile used to leave this point empty, so the
+     * fork's only binding seam was the later `F2` presentation. Registering the
+     * fragment here lets the native-presentation seam re-dispatch an accepted
+     * refresh the moment the pointer arrives instead of waiting for the page to be
+     * re-created. `onDestroyView` drops the binding so a dead fragment is never
+     * re-invoked (HLE's `cleanupLyricsResultObserver`). Both are fail-open.
+     */
+    private fun installLyricsViewFragmentSeam() {
+        val onCreateView = runCatching {
+            resolver.resolveMethod(AppleMusicHookPoint.LYRICS_UI_ON_CREATE_VIEW).method
+        }.getOrNull()
+        if (onCreateView != null &&
+            installed.add("ui-create:${onCreateView.declaringClass.name}#${onCreateView.name}")
+        ) {
+            ModernXposedRuntime.hookMethod(onCreateView, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val fragment = param.thisObject ?: return
+                    if (presentationFragmentRef?.get() !== fragment) {
+                        presentationFragmentRef = java.lang.ref.WeakReference(fragment)
+                    }
+                }
+            }, scope)
+        }
+        val onDestroyView = runCatching {
+            resolver.resolveMethod(AppleMusicHookPoint.LYRICS_UI_ON_DESTROY_VIEW).method
+        }.getOrNull()
+        if (onDestroyView != null &&
+            installed.add("ui-destroy:${onDestroyView.declaringClass.name}#${onDestroyView.name}")
+        ) {
+            ModernXposedRuntime.hookMethod(onDestroyView, object : ModernMethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    runCatching { cleanupPresentationBinding(param.thisObject) }
+                }
+            }, scope)
+        }
+    }
+
+    /**
+     * HLE's `onDestroyView` cleanup: drop the fragment/pointer binding when the
+     * destroyed fragment is the bound one, and clear the one-shot word render
+     * plans that belonged to its model, so a dead view is never re-invoked and no
+     * stale plan leaks into the next one.
+     */
+    private fun cleanupPresentationBinding(fragment: Any?) {
+        if (fragment != null && presentationFragmentRef?.get() === fragment) {
+            presentationFragmentRef = null
+            presentationPointerRef = null
+        }
+        synchronized(pendingPronunciationRenderPlans) {
+            pendingPronunciationRenderPlans.clear()
+        }
+    }
+
     private fun fallbackLanguage(languages: List<String> = applePronunciationLanguages): String? =
         NativeLyricModelPolicy.thirdPartyPronunciationFallbackLanguage(
             systemLanguage = systemLyricsLanguage,
@@ -2527,9 +2924,11 @@ internal class AppleNativeLyricModelHooks(
      * can show the two diverging; `officialLanguage` is Apple's advertised own
      * lane, `selectedLanguage` what `setPronunciation` was handed,
      * `appleLanguagesKnown` whether Apple's language vector was populated at this
-     * call, and `selection`/`reason` which lane was chosen and why — so the log
-     * proves a fallback was selected (`reason=apple-unanswered`) and can show it
-     * superseded by Apple's lane (`reason=apple-lane`) on the next pass.
+     * call, `translationSelected` the app's own lyrics-translation preference
+     * (HLE's `PreferencesMonitor.isTranslationSelected()`, `none` when
+     * unreadable), and `selection`/`reason` which lane was chosen and why — so the
+     * log proves a fallback was selected (`reason=apple-unanswered`) and can show
+     * it superseded by Apple's lane (`reason=apple-lane`) on the next pass.
      */
     private fun reportNativeWrite(
         lines: List<Any>,
@@ -2554,6 +2953,8 @@ internal class AppleNativeLyricModelHooks(
                 "officialLanguage=${officialLanguage ?: NONE} " +
                 "selectedLanguage=${selection.language ?: NONE} " +
                 "appleLanguagesKnown=${selection.appleLanguagesKnown} " +
+                "translationSelected=" +
+                "${AppleLyricsPreferenceReader.isTranslationSelected(resolver)?.toString() ?: NONE} " +
                 "selection=${selection.selection.token} " +
                 "reason=${selection.reason} " +
                 "mandarinHidden=$mandarinHidden",
@@ -2693,6 +3094,22 @@ internal class AppleNativeLyricModelHooks(
          * `custom-overlay`).
          */
         const val DETAIL_LANE_READY = "lane-ready"
+
+        /**
+         * The `detail=` token of the late-word-vector decision line
+         * (`trigger=word-ready`): Apple's own pronunciation words arrived after
+         * the first word getter had answered with our lane. The later
+         * `render-probe … result=OFFICIAL` line is the visible proof the rebuilt
+         * model answered with Apple's own words.
+         */
+        const val DETAIL_WORD_READY = "word-ready"
+
+        /**
+         * The `detail=` token of the preference decision line
+         * (`trigger=preference`): the app's own pronunciation preference setter
+         * ran, HLE's `onAppleLyricsDisplayPreferenceChanged(PRONUNCIATION)`.
+         */
+        const val DETAIL_PREFERENCE = "preference"
 
         /**
          * `result=` tokens on a `render-probe` line: what the app's own read was

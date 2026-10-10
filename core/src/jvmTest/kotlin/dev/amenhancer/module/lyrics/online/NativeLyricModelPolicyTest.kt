@@ -2,6 +2,7 @@ package dev.amenhancer.module.lyrics.online
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -451,5 +452,100 @@ class NativeLyricModelPolicyTest {
                 }
             }
         }
+    }
+
+    private fun customRefresh(
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+    ) = NativeLyricModelPolicy.shouldRefreshPresentationAfterCustomOverlay(
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+    )
+
+    private fun customRefreshReason(
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+    ) = NativeLyricModelPolicy.customOverlayRefreshReason(
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+    )
+
+    /**
+     * HLE's supplement store update (`AppleSupplementDataReceive`) refreshes on
+     * `displayContentChanged` alone; the fork's custom overlay write is the same
+     * signal, so the post-overlay trigger must accept whenever a lane exists —
+     * including on the supplement pointer the build gate deliberately skips.
+     */
+    @Test
+    fun `the custom overlay trigger accepts any lane despite the supplement skip`() {
+        assertFalse(customRefresh())
+        assertTrue(customRefresh(onlineTranslation = true))
+        assertTrue(customRefresh(onlinePronunciation = true))
+        assertTrue(customRefresh(onlineTranslation = true, onlinePronunciation = true))
+        // The build gate denies exactly this state (`sourceIsApple=false`); the
+        // post-overlay trigger is the refresh the supplement path owns instead.
+        assertFalse(
+            NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
+                sourceIsApple = false,
+                hasValidOfficialPronunciation = false,
+                hasOnlineTranslation = true,
+                hasOnlinePronunciation = true,
+                pronunciationSelected = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `the custom overlay reason names the lane branch and never disagrees`() {
+        assertEquals(NativeLyricModelPolicy.REFRESH_REASON_NONE, customRefreshReason())
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_OVERLAY,
+            customRefreshReason(onlineTranslation = true),
+        )
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_OVERLAY,
+            customRefreshReason(onlinePronunciation = true),
+        )
+        listOf(true, false).forEach { translation ->
+            listOf(true, false).forEach { pronunciation ->
+                val reason = customRefreshReason(
+                    onlineTranslation = translation,
+                    onlinePronunciation = pronunciation,
+                )
+                assertEquals(
+                    "translation=$translation pronunciation=$pronunciation",
+                    customRefresh(
+                        onlineTranslation = translation,
+                        onlinePronunciation = pronunciation,
+                    ),
+                    reason != NativeLyricModelPolicy.REFRESH_REASON_NONE,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the lane-ready edge is the song, the Apple lane and the per-line probe`() {
+        fun key(lane: String?, probe: Boolean, songId: Long = 42L) =
+            NativeLyricModelPolicy.pronunciationLaneReadyKey(
+                songId = songId,
+                officialLane = lane,
+                hasValidOfficialPronunciation = probe,
+            )
+
+        // Apple advertising a lane the build never saw is a new edge.
+        assertNotEquals(key(null, false), key("ja-Latn", false))
+        // So is the lane whose per-line text only populated after the build: the
+        // reported `officialAtBuild=false` then `true` sequence.
+        assertNotEquals(key("ja-Latn", false), key("ja-Latn", true))
+        // A different song is always a different edge.
+        assertNotEquals(key("ja-Latn", true), key("ja-Latn", true, songId = 43L))
+        // Repeated reads of one settled lane are the same key: the anti-thrash
+        // half that keeps a per-bind availability query from re-asking.
+        assertEquals(key("ja-Latn", true), key("ja-Latn", true))
+        assertEquals(key(null, false), key(null, false))
+        // A lane-less song with no probe never produces a ready key that looks
+        // like a lane: the host additionally requires probe || lane != null.
+        assertNotEquals(key(null, true), key("", false))
     }
 }

@@ -178,6 +178,18 @@ object NativeLyricModelPolicy {
     const val REFRESH_REASON_NONE = "none"
 
     /**
+     * The reason of the fork's second, post-overlay refresh trigger: the custom
+     * lyric-model overlay was just written for the current track. HLE's own
+     * supplement path refreshes on exactly this signal — `AppleSupplementDataReceive`
+     * calls `refreshAppleLyricsSupplementPresentation` whenever the store receipt
+     * reports `displayContentChanged` — because a completion that arrives after
+     * the first presentation would otherwise never be re-presented. The custom
+     * document is the module's own, so the build gate's `sourceIsApple` rule
+     * (which deliberately skips a supplement pointer) does not apply here.
+     */
+    const val REFRESH_REASON_CUSTOM_OVERLAY = "custom-overlay"
+
+    /**
      * HLE's `ApplePronunciationPolicy.shouldRefreshPresentationAfterBuild`,
      * ported verbatim.
      *
@@ -221,6 +233,41 @@ object NativeLyricModelPolicy {
         hasOnlineTranslation || hasOnlinePronunciation -> REFRESH_REASON_ONLINE_LANE
         pronunciationSelected && hasValidOfficialPronunciation -> REFRESH_REASON_OFFICIAL_LANE
         else -> REFRESH_REASON_NONE
+    }
+
+    /**
+     * HLE's `AppleSupplementDataReceive` store-update decision, reduced to the
+     * fork's overlay: after a custom document's lane completion wrote the
+     * native overlay, re-present whenever there is a lane to show. HLE gates its
+     * refresh on `displayContentChanged`, not on the build gate's
+     * `sourceIsApple` rule, because a supplement pointer deliberately never
+     * refreshes from the build seam (Apple's track refresh makes the page
+     * twitch). This is the post-overlay half that then owns the re-presentation.
+     *
+     * The content-change half is the overlay revision the host state carries:
+     * an unchanged completion produces an unchanged state and is a no-op, so the
+     * function only has to answer "is there anything to re-present".
+     */
+    fun shouldRefreshPresentationAfterCustomOverlay(
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+    ): Boolean = hasOnlineTranslation || hasOnlinePronunciation
+
+    /**
+     * The [shouldRefreshPresentationAfterCustomOverlay] branch that fired, as a
+     * stable log token: [REFRESH_REASON_CUSTOM_OVERLAY] when the overlay has a
+     * lane, else [REFRESH_REASON_NONE]. The same inputs produce the same
+     * decision, so `reason=` and `detail=` can never disagree.
+     */
+    fun customOverlayRefreshReason(
+        hasOnlineTranslation: Boolean,
+        hasOnlinePronunciation: Boolean,
+    ): String {
+        val refresh = shouldRefreshPresentationAfterCustomOverlay(
+            hasOnlineTranslation = hasOnlineTranslation,
+            hasOnlinePronunciation = hasOnlinePronunciation,
+        )
+        return if (refresh) REFRESH_REASON_CUSTOM_OVERLAY else REFRESH_REASON_NONE
     }
 
     /**
@@ -278,6 +325,26 @@ object NativeLyricModelPolicy {
         if (normalized.equals(THIRD_PARTY_PRONUNCIATION_LANGUAGE, ignoreCase = true)) return false
         return RomanizationPolicy.isLatinLanguageTag(normalized)
     }
+
+    /**
+     * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.
+     * The late-lane trigger fires when this key *changes*, so:
+     *
+     *  - Apple advertising a lane the build had not seen is a new edge;
+     *  - a lane whose per-line text only populated after the build
+     *    (`officialAtBuild=false` then `true`, the reported device sequence) is a
+     *    new edge even though the advertised language is unchanged;
+     *  - the app's repeated `getPronunciationLanguages` reads of one settled lane
+     *    produce the same key and are suppressed, which is the anti-thrash half.
+     *
+     * Kept pure so the edge rule is covered by JVM tests; the host resolves the
+     * values and stores the key per track.
+     */
+    fun pronunciationLaneReadyKey(
+        songId: Long,
+        officialLane: String?,
+        hasValidOfficialPronunciation: Boolean,
+    ): String = "$songId:${officialLane.orEmpty()}:$hasValidOfficialPronunciation"
 
     /**
      * Apple's own pronunciation language, from the song's advertised
@@ -431,4 +498,38 @@ object NativeLyricModelPolicy {
     private fun String?.latinLanguageOrNull(): String? = this
         ?.trim()
         ?.takeIf { it.isNotEmpty() && RomanizationPolicy.isLatinLanguageTag(it) }
+}
+
+/**
+ * The terminal outcome of one main-thread presentation-refresh attempt.
+ *
+ * HLE's `refreshAppleLyricsSupplementPresentation` ends by re-invoking Apple's
+ * own result presentation and then rebinding the lyrics adapter
+ * (`refreshAppleLyricsRecyclerView` → `appleRecyclerNotifyDataSetChanged`); the
+ * host prints which step the attempt reached in `detail=`.
+ *
+ * Only an attempt whose invoke actually returned may latch the gate dedupe
+ * state. Every abort — a missing presentation method, an unbound
+ * fragment/pointer, a dead pointer, a song that changed under us, or a throwing
+ * invoke — clears the recorded state so a later build seam or the native
+ * presentation binding seam can ask again (`cleared`). [REBOUND] is a latched
+ * invoke whose adapter was also notified; [ADAPTER_UNAVAILABLE] latched the
+ * invoke but could not resolve or notify the lyrics adapter, which is the
+ * remaining device-only uncertainty.
+ *
+ * The tokens are the `detail=` values the device log prints, so this enum is
+ * the single place the retry rule and the diagnostics can drift apart.
+ */
+enum class PresentationRefreshOutcome(val token: String, val latches: Boolean) {
+    REBOUND("rebound", true),
+    ADAPTER_UNAVAILABLE("adapter-unavailable", true),
+    NO_PRESENTATION_METHOD("no-presentation-method", false),
+    NOT_BOUND("not-bound", false),
+    POINTER_DEAD("pointer-dead", false),
+    SONG_CHANGED("song-changed", false),
+    INVOKE_FAILED("invoke-failed", false),
+    ;
+
+    /** True when the recorded dedupe state must be cleared so a later attempt can retry. */
+    val cleared: Boolean get() = !latches
 }

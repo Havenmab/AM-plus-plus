@@ -21,12 +21,16 @@ import java.util.concurrent.RejectedExecutionException
  * overlay that [dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore]
  * exposes to the host hooks. Two deliberate properties:
  *
- *  - **The custom body always wins.** The merged document the enricher returns is
- *    discarded here. Nothing in this class can parse, publish or display it, so a
- *    searched source can never replace the custom document; only the overlay side
- *    effect is kept, and the native hooks deliver both lanes from it. That is
- *    also sufficient on 1606, where the document lane (an injected
- *    `<transliterations>` head track) is not rendered at all.
+ *  - **The custom body always wins.** The merge only edits the document's head
+ *    lanes, so the feed forwards the enricher's merged document together with the
+ *    raw body through [onMergedDocument]; the host's custom session refuses to
+ *    publish it unless the `<body>` survived byte for byte, and a searched
+ *    source can therefore never replace the user's document. Only the enriched
+ *    pointer and the overlay side effect are kept, and the native hooks deliver
+ *    both lanes from them. Publishing the merged document is what the automatic
+ *    path already does with its merged candidate; it is also the re-parse that
+ *    makes a late lane visible on 1606, where the injected
+ *    `<transliterations>` head track is not rendered.
  *  - **Keyed by track and document revision.** [remember] stores the raw document
  *    the session just verified and read; [onDisplayed] runs once per
  *    (track, revision), so a repeated lyrics presentation or a re-entrant I2
@@ -46,11 +50,39 @@ import java.util.concurrent.RejectedExecutionException
  * Every path fails open: a blank id, a missing remembered document, a rejecting
  * executor or a throwing enricher leaves the custom document displayed exactly as
  * it was.
+ *
+ * [onOverlayUpdated] is the other half of a successful completion: the overlay
+ * now holds the merged lanes, so the host asks for the presentation refresh that
+ * re-reads them (HLE's supplement path does the same from its store update,
+ * `AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`).
+ * It is a plain per-instance callback, never a global, wired by the host to the
+ * native lyric delivery it already owns; its default makes the feed a no-op for
+ * every caller that does not need it, and a throwing callback fails open.
  */
 class CustomLyricsCompletionFeed(
     private val enrich: (Long, String) -> String?,
     private val executor: Executor,
     private val log: (Long, String) -> Unit = { _, _ -> },
+    /**
+     * Invoked once per successful completion, after the enricher wrote the
+     * native overlay for the track. The host re-checks the overlay revision, so a
+     * completion that changed nothing is a no-op there.
+     */
+    private val onOverlayUpdated: (Long) -> Unit = {},
+    /**
+     * Invoked once per successful completion with the **raw** custom body and the
+     * enricher's **merged** document (the user's body plus the injected lanes),
+     * before [onOverlayUpdated]. The host hands both to the custom replacement
+     * session, which re-parses the merged document as the track's preferred
+     * replacement pointer once it has verified the body is unchanged. That is the
+     * custom path's equivalent of the automatic path publishing its merged
+     * candidate: a fresh model is built with the lanes present, instead of the
+     * overlay lanes waiting for the page to be re-created. A throwing callback
+     * fails open and never fails the completion; the body-preservation check
+     * lives in the session, so this class still never parses or installs
+     * anything itself.
+     */
+    private val onMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> },
     private val maxTracks: Int = MAX_TRACKS,
 ) {
     private data class Document(val revision: String, val ttml: String)
@@ -135,6 +167,16 @@ class CustomLyricsCompletionFeed(
         // `publish` and the per-lane `translationSource`/`pronunciationSource`
         // line come from the enricher itself; this is the inject counterpart.
         log(appleMusicId, injectLine(appleMusicId, published = merged != null))
+        // Only a successful enrichment wrote the overlay. The refresh request is
+        // fail-open: a host callback that throws never fails the completion.
+        if (merged != null) {
+            // Publish the merged document first: the post-overlay refresh below
+            // re-invokes Apple's presentation, whose I2 hook installs whichever
+            // pointer the session holds, so the enriched pointer must already be
+            // the ready one. Both callbacks are best-effort and in this order.
+            runCatching { onMergedDocument(appleMusicId, document.ttml, merged) }
+            runCatching { onOverlayUpdated(appleMusicId) }
+        }
     }
 
     private fun injectLine(appleMusicId: Long, published: Boolean): String =

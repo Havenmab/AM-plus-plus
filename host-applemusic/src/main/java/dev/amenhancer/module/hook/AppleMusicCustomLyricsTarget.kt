@@ -100,14 +100,31 @@ internal class AppleMusicCustomLyricsTarget(
         }
         val mainHandler = Handler(Looper.getMainLooper())
         val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
+        // The post-overlay presentation refresh the custom completion asks for:
+        // HLE's own supplement store refreshes on its content change
+        // (`AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`),
+        // and the feed's overlay write is the fork's equivalent. Wired below to
+        // the native lyric delivery this target already owns — no new global — and
+        // left a no-op until then, so an early completion fails open.
+        var onCustomOverlayUpdated: (Long) -> Unit = {}
+        // The other half of a successful completion: the enricher's merged
+        // document (the user's body plus the injected lanes). The feed forwards
+        // it here and, once the custom session exists below, it is re-parsed as
+        // the track's preferred replacement pointer. That is what the automatic
+        // path already does with its merged candidate, and it is the re-parse
+        // that makes a late lane visible on a custom pointer instead of waiting
+        // for the page to be re-created. Left a no-op until wired, so an early
+        // completion fails open; the session re-checks the body invariant.
+        var publishMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> }
         // The custom path's half of the runtime's translation/pronunciation
         // completion. The automatic path stays closed for every manual/mapped
         // id: when its enrichment returns null it falls through to
         // `resolverFetch`, which would replace the user's body with a searched
         // document. This feed therefore calls the same enricher directly, for
-        // the document the custom session is about to display, and keeps only
-        // its native-overlay side effect. The merged document it returns is
-        // discarded, so the custom body always wins and no searched source can
+        // the document the custom session is about to display. Its overlay side
+        // effect delivers the lanes and its merged document becomes the session's
+        // preferred pointer — but only after the session proves the body is
+        // unchanged, so the custom body still wins and no searched source can
         // replace it.
         val customCompletion = autoLyricsRuntime?.let { runtime ->
             runtime.translationEnricher?.let { enrich ->
@@ -115,6 +132,10 @@ internal class AppleMusicCustomLyricsTarget(
                     enrich = enrich,
                     executor = runtime.executor,
                     log = { appleMusicId, line -> translationLog.log(appleMusicId, line) },
+                    onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },
+                    onMergedDocument = { appleMusicId, raw, merged ->
+                        publishMergedDocument(appleMusicId, raw, merged)
+                    },
                 )
             }
         }
@@ -155,6 +176,19 @@ internal class AppleMusicCustomLyricsTarget(
             ),
             logger = ModernXposedRuntime::log,
         )
+        // The custom session now exists: a completed enrichment publishes its
+        // merged document as the track's preferred replacement pointer, so the
+        // post-overlay refresh below installs a fresh model that carries the
+        // lanes. Idempotent per (track, merged content) and body-checked inside
+        // the session, so a repeated completion is a no-op and the user's body
+        // can never be replaced.
+        publishMergedDocument = { appleMusicId, rawTtml, mergedTtml ->
+            val published = session.publishMerged(appleMusicId, rawTtml, mergedTtml)
+            translationLog.log(
+                appleMusicId,
+                "online-translation merged-publish id=$appleMusicId published=$published",
+            )
+        }
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
@@ -252,7 +286,8 @@ internal class AppleMusicCustomLyricsTarget(
                         // HLE skips the refresh on a supplement pointer because
                         // the supplement path has its own refresh. A *ready*
                         // module replacement is the fork's counterpart: the
-                        // displayed document is ours, so `readyReapply` owns the
+                        // displayed document is ours, so `readyReapply` and the
+                        // completion feed's post-overlay trigger own the
                         // re-presentation. A merely in-flight fetch still shows
                         // Apple's document, so it must not suppress the refresh.
                         isModuleSupplementSong = { appleMusicId ->
@@ -261,6 +296,13 @@ internal class AppleMusicCustomLyricsTarget(
                     )
                 }
             }
+        // The custom feed's post-overlay refresh now reaches the native
+        // delivery. This is the fork's counterpart of HLE's supplement store
+        // refresh; the dedupe (once per song and overlay revision), the
+        // main-handler post and the latch-and-retry state all live in the hooks.
+        onCustomOverlayUpdated = { appleMusicId ->
+            nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
+        }
         runCatching { nativeLyricDelivery?.install() }
             .onFailure { error ->
                 ModernXposedRuntime.log("native lyric model hooks failed: $error")

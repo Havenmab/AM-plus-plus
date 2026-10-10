@@ -331,4 +331,125 @@ class NativeLyricModelPolicyTest {
     fun `the third-party tag is HLE's script-neutral Latin tag`() {
         assertEquals("und-Latn", NativeLyricModelPolicy.THIRD_PARTY_PRONUNCIATION_LANGUAGE)
     }
+
+    private fun refresh(
+        sourceIsApple: Boolean = true,
+        official: Boolean = false,
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+        pronunciationSelected: Boolean = true,
+    ) = NativeLyricModelPolicy.shouldRefreshPresentationAfterBuild(
+        sourceIsApple = sourceIsApple,
+        hasValidOfficialPronunciation = official,
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+        pronunciationSelected = pronunciationSelected,
+    )
+
+    private fun refreshReason(
+        sourceIsApple: Boolean = true,
+        official: Boolean = false,
+        onlineTranslation: Boolean = false,
+        onlinePronunciation: Boolean = false,
+        pronunciationSelected: Boolean = true,
+    ) = NativeLyricModelPolicy.presentationRefreshReason(
+        sourceIsApple = sourceIsApple,
+        hasValidOfficialPronunciation = official,
+        hasOnlineTranslation = onlineTranslation,
+        hasOnlinePronunciation = onlinePronunciation,
+        pronunciationSelected = pronunciationSelected,
+    )
+
+    /**
+     * HLE's `shouldRefreshPresentationAfterBuild`, line for line:
+     * ```
+     * if (!sourceIsApple) return false
+     * if (hasOnlineTranslation || hasOnlinePronunciation) return true
+     * return pronunciationSelected && hasValidOfficialPronunciation
+     * ```
+     * The reported stall is the `else` arm: with no online lane yet and no
+     * official pronunciation read at the build seam, no refresh is requested, so
+     * the page keeps the first render until it is re-created.
+     */
+    @Test
+    fun `the refresh gate is HLE's source-online-official decision`() {
+        // A module supplement pointer has its own refresh path and is never the trigger.
+        assertFalse(refresh(sourceIsApple = false))
+        assertFalse(refresh(sourceIsApple = false, onlineTranslation = true, official = true))
+        // Any online lane is enough, regardless of Apple's own lane.
+        assertTrue(refresh(onlineTranslation = true))
+        assertTrue(refresh(onlinePronunciation = true))
+        assertTrue(refresh(onlineTranslation = true, pronunciationSelected = false))
+        assertTrue(refresh(onlinePronunciation = true, pronunciationSelected = false))
+        // No online lane: only a selected official pronunciation triggers it.
+        assertTrue(refresh(official = true, pronunciationSelected = true))
+        assertFalse(refresh(official = true, pronunciationSelected = false))
+        // Nothing to show: the gate stays closed (the first-play stall).
+        assertFalse(refresh(official = false, pronunciationSelected = true))
+    }
+
+    @Test
+    fun `the reason names the branch the gate accepted`() {
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_NONE,
+            refreshReason(sourceIsApple = false),
+        )
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_ONLINE_LANE,
+            refreshReason(onlineTranslation = true),
+        )
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_ONLINE_LANE,
+            refreshReason(onlinePronunciation = true),
+        )
+        // The official branch is named even before the line probe is valid.
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_OFFICIAL_LANE,
+            refreshReason(official = true, pronunciationSelected = true),
+        )
+        assertEquals(
+            NativeLyricModelPolicy.REFRESH_REASON_NONE,
+            refreshReason(official = true, pronunciationSelected = false),
+        )
+    }
+
+    /**
+     * The reason and the boolean come from one rule: every one of the 2^5 input
+     * combinations must agree, so a log can never claim a refresh the gate denied
+     * (or vice versa).
+     */
+    @Test
+    fun `the reason never disagrees with the refresh decision`() {
+        listOf(true, false).forEach { source ->
+            listOf(true, false).forEach { official ->
+                listOf(true, false).forEach { onlineTranslation ->
+                    listOf(true, false).forEach { onlinePronunciation ->
+                        listOf(true, false).forEach { pronunciationSelected ->
+                            val decision = refresh(
+                                sourceIsApple = source,
+                                official = official,
+                                onlineTranslation = onlineTranslation,
+                                onlinePronunciation = onlinePronunciation,
+                                pronunciationSelected = pronunciationSelected,
+                            )
+                            val reason = refreshReason(
+                                sourceIsApple = source,
+                                official = official,
+                                onlineTranslation = onlineTranslation,
+                                onlinePronunciation = onlinePronunciation,
+                                pronunciationSelected = pronunciationSelected,
+                            )
+                            val requested = reason != NativeLyricModelPolicy.REFRESH_REASON_NONE
+                            assertEquals(
+                                "source=$source official=$official translation=$onlineTranslation " +
+                                    "pronunciation=$onlinePronunciation selected=$pronunciationSelected",
+                                decision,
+                                requested,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

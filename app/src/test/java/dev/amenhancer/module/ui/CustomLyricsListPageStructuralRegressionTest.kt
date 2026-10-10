@@ -102,6 +102,24 @@ class CustomLyricsListPageStructuralRegressionTest {
     }
 
     @Test
+    fun `the custom lyrics page clears all mappings behind a count confirmation`() {
+        val host = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt",
+        )
+
+        assertTrue(host.contains("清空自定义歌词"))
+        assertTrue(host.contains("删除全部 \${entries.size} 条自定义歌词"))
+        assertTrue(host.contains("confirmEmbeddedCustomLyricsClear(activity, entries.size)"))
+        assertTrue(
+            host.contains(
+                "internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(",
+            ),
+        )
+        assertTrue(host.contains("将删除全部 \$entryCount 条自定义歌词映射"))
+        assertTrue(host.contains("runAsync(activity) { controller.clearLyrics() }"))
+    }
+
+    @Test
     fun `renders the online lyric chain toggles from plain source data only`() {
         // The custom-lyrics page rows live in EmbeddedSettingsPages.kt (the
         // settings host was split before this test was written); reading the host

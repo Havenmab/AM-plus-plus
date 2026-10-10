@@ -631,7 +631,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSettingRow(
             activity,
             "补全歌词翻译与发音",
-            "优先使用Apple源，三方在线源兜底；缺少翻译或发音时补齐，需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            "补齐缺失的歌词翻译；发音仅保留 Apple 官方音译，不再使用三方音译；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
             settings.onlineLyricsTranslationEnabled,
             enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
@@ -644,7 +644,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSettingRow(
             activity,
             "不显示国语歌拼音",
-            "国语（普通话）歌曲不补充在线拼音；粤语歌不受影响",
+            "国语（普通话）歌曲不显示官方拼音；粤语歌不受影响",
             settings.onlineLyricsHideMandarinPinyinEnabled,
             enabled = settings.customLyricsEnabled &&
                 settings.automaticLyricsEnabled &&
@@ -878,7 +878,47 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             renderEntries()
         }
         parent.addView(lyricsContent)
+
+        // The one-shot clear-all action, mirroring the 「清空检索库」 precedent: a
+        // navigation row, a count-carrying confirmation, then [runAsync]'s toast
+        // and page re-render.
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 12 else 16))
+        parent.addView(embeddedDivider(activity))
+        parent.addView(embeddedNavigationRow(
+            activity,
+            "清空自定义歌词",
+            if (entries.isEmpty()) {
+                "删除所有自定义歌词映射及其已存储的 TTML 文件"
+            } else {
+                "删除全部 ${entries.size} 条自定义歌词及其已存储的 TTML 文件"
+            },
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Delete,
+                EmbeddedSettingsPalette.accent,
+            ),
+        ) {
+            confirmEmbeddedCustomLyricsClear(activity, entries.size) {
+                runAsync(activity) { controller.clearLyrics() }
+            }
+        })
     }
+
+
+internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(
+    activity: Activity,
+    entryCount: Int,
+    onConfirmed: () -> Unit,
+) {
+    AlertDialog.Builder(activity)
+        .setTitle("清空自定义歌词")
+        .setMessage(
+            "将删除全部 $entryCount 条自定义歌词映射及其已存储的 TTML 文件，" +
+                "并重置歌词索引。此操作不可撤销。",
+        )
+        .setNegativeButton("取消", null)
+        .setPositiveButton("清空") { _, _ -> onConfirmed() }
+        .show()
+}
 
 
 internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(

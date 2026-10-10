@@ -49,6 +49,13 @@ object ModuleConstants {
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
+
+    /**
+     * Identifies the package a device log came from. Bump it whenever a
+     * release ships, and print it once per session so a log can never be
+     * mistaken for a newer (or older) build than it is.
+     */
+    const val BUILD_TAG = "2026-10-10-apple-only-pronunciation"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

@@ -27,14 +27,18 @@ data class AppleTtmlLine(
  * Apple renders those with `lyrics_karaoke_non_breaking_span`, which stops long
  * lines from wrapping.
  *
- * A line's [AppleTtmlLine.translation] / [AppleTtmlLine.romanization] are
- * lifted into Apple's head tracks — `translations` and `transliterations`,
- * linked back through `itunes:key` — the way `AmllTtmlFormatConverter` writes
- * them: the track lists every keyed line, in key order, and a line without text
- * still holds a single space so the entries stay contiguous. A line translated
- * only in its background opens with that same space ahead of an `x-bg` span. A
- * track no line contributed to is not opened at all, and a document with no
- * translation or romanization lane is emitted exactly as before.
+ * A line's [AppleTtmlLine.translation] is lifted into Apple's `translations`
+ * head track, linked back through `itunes:key`, the way
+ * `AmllTtmlFormatConverter` writes it: the track lists every keyed line, in key
+ * order, and a line without text still holds a single space so the entries stay
+ * contiguous. A line translated only in its background opens with that same
+ * space ahead of an `x-bg` span. A track no line contributed to is not opened at
+ * all.
+ *
+ * A `<transliterations>` track is **never** written: the third-party
+ * romanization lane has been removed from the product, and only Apple's own
+ * transliterations (read back by [AppleLyricTtmlReader]) are ever shown. A
+ * provider's `romanization` column is therefore ignored.
  *
  * Pure and textual: whitespace between spans carries word separation, so only
  * markup is generated and lyric text is escaped verbatim.
@@ -46,15 +50,6 @@ object AppleLyricTtmlWriter {
 
     /** Pinned the way `AmllTtmlFormatConverter` pins Apple's track languages. */
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
-
-    /**
-     * HLE reports third-party pronunciation under `und-Latn` ("undetermined, Latin script")
-     * when the system lyrics language is not itself a Latin tag
-     * (`AppleSupplementTextHooks.thirdPartyPronunciationFallbackLanguage`).  A tag naming a
-     * *different* language than the lyrics makes Apple ignore the transliterations track, which
-     * is why this must not be a language-specific tag.
-     */
-    private const val TRANSLITERATION_LANGUAGE = "und-Latn"
     private const val TRANSLATION_TYPE = "subtitle"
 
     /** Stands in for a line the track has no text for, keeping the entry there. */
@@ -72,8 +67,9 @@ object AppleLyricTtmlWriter {
     )
 
     /**
-     * Adapts a provider result, carrying the translation/romanization lanes the
-     * provider already aligned (see [OnlineTranslationExtraction]).
+     * Adapts a provider result, carrying only the translation lane the provider
+     * already aligned (see [OnlineTranslationExtraction]). The provider's
+     * romanization column is deliberately dropped: it is never published.
      */
     fun from(result: LyricsResult): List<AppleTtmlLine> {
         val lanes = OnlineTranslationExtraction.extract(result)
@@ -81,7 +77,6 @@ object AppleLyricTtmlWriter {
             val lane = lanes.getOrNull(index)
             from(line).copy(
                 translation = lane?.translation,
-                romanization = lane?.romanization,
             )
         }
     }
@@ -169,7 +164,7 @@ object AppleLyricTtmlWriter {
     }
 
     private fun buildTracks(lines: List<AppleTtmlLine>): String =
-        (translationsTrack(lines) ?: "") + (transliterationsTrack(lines) ?: "")
+        translationsTrack(lines) ?: ""
 
     /**
      * The `translations` head track for [lines], keyed by [keys], or null when
@@ -195,25 +190,6 @@ object AppleLyricTtmlWriter {
             item = "translation",
             language = TRANSLATION_LANGUAGE,
             type = TRANSLATION_TYPE,
-        )
-    }
-
-    internal fun transliterationsTrack(
-        lines: List<AppleTtmlLine>,
-        keys: List<String> = positionalKeys(lines),
-    ): String? {
-        val entries = lines.mapIndexed { index, line ->
-            TrackEntry(
-                key = keys.getOrElse(index) { "L${index + 1}" },
-                main = line.romanization?.trim()?.takeIf(String::isNotEmpty),
-                background = null,
-            )
-        }
-        return buildTrack(
-            entries,
-            container = "transliterations",
-            item = "transliteration",
-            language = TRANSLITERATION_LANGUAGE,
         )
     }
 

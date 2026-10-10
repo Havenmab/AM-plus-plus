@@ -447,6 +447,14 @@ object ModuleSettingsSchema {
         KEY_CUSTOM_LYRICS_INDEX_SIZE_BYTES,
     )
 
+    /**
+     * Every preference key that can point at a custom-lyrics index file: the
+     * published pointer plus the legacy v1 manifest string. The
+     * 「清空自定义歌词」 action removes them all, so a reset index can never be
+     * re-materialized from a stale pointer or a leftover legacy value.
+     */
+    val customLyricsIndexKeys: Set<String> = indexPointerKeys + KEY_CUSTOM_LYRICS_MANIFEST
+
     private const val KEY_DUAL_PANE = "dual_pane_enabled"
     private const val KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET =
         "disable_editorial_video_on_tablet"

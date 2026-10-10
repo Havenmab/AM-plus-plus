@@ -61,31 +61,17 @@ class OnlineEnrichmentPolicyTest {
     }
 
     @Test
-    fun `requested pronunciation triggers enrichment when a line lacks it`() {
-        assertTrue(
+    fun `pronunciation is never a reason to enrich`() {
+        // Every line is translated but none carries a romanization, and Apple's
+        // own translation lane is present: the Apple-only policy adds no
+        // pronunciation lane, so there is nothing to do.
+        assertFalse(
             OnlineEnrichmentPolicy.needsOnlineEnrichment(
                 document = document(hasTranslation = true),
                 lines = listOf(
                     NativeLyricLine(text = "hello world", translation = "你好，世界"),
                     NativeLyricLine(text = "second line", translation = "第二行"),
                 ),
-                translationRequested = false,
-                pronunciationRequested = true,
-            ),
-        )
-    }
-
-    @Test
-    fun `complete pronunciation means no enrichment even when requested`() {
-        assertFalse(
-            OnlineEnrichmentPolicy.needsOnlineEnrichment(
-                document = document(hasTranslation = true),
-                lines = listOf(
-                    NativeLyricLine(text = "hello world", translation = "你好，世界", roma = "hello"),
-                    NativeLyricLine(text = "second line", translation = "第二行", roma = "second"),
-                ),
-                translationRequested = false,
-                pronunciationRequested = true,
             ),
         )
     }
@@ -99,20 +85,6 @@ class OnlineEnrichmentPolicyTest {
                     NativeLyricLine(text = "感谢你曾来过"),
                     NativeLyricLine(text = "我早已明白了"),
                 ),
-            ),
-        )
-    }
-
-    @Test
-    fun `a fully chinese song can still request pronunciation`() {
-        assertTrue(
-            OnlineEnrichmentPolicy.needsOnlineEnrichment(
-                document = document(),
-                lines = listOf(
-                    NativeLyricLine(text = "感谢你曾来过", roma = "gan xie"),
-                    NativeLyricLine(text = "我早已明白了"),
-                ),
-                pronunciationRequested = true,
             ),
         )
     }

@@ -7,11 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pure-JVM coverage for the timing-keyed overlay HLE's native-model delivery
- * reads through. The store is the fork's port of HLE's
- * `AppleNativeOnlineTranslationStore`: one overlay for the active track,
- * sanitized on write, looked up by timing and text, and never readable across
- * tracks.
+ * Pure-JVM coverage for the timing-keyed translation overlay the native-model
+ * delivery reads through. The store is the fork's port of HLE's
+ * `AppleNativeOnlineTranslationStore`, reduced to the translation half under the
+ * Apple-only pronunciation policy: one overlay for the active track, sanitized
+ * on write, looked up by timing and text, never readable across tracks, and
+ * never carrying a provider's romanization.
  */
 class NativeLyricOverlayStoreTest {
 
@@ -30,7 +31,7 @@ class NativeLyricOverlayStoreTest {
     )
 
     @Test
-    fun `stores the sanitized online lanes keyed by timing and text`() {
+    fun `stores the sanitized translation lane keyed by timing and text`() {
         val store = NativeLyricOverlayStore()
 
         assertTrue(
@@ -40,24 +41,44 @@ class NativeLyricOverlayStoreTest {
                     line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa"),
                 ),
                 translationSource = "QM",
-                pronunciationSource = "QM",
             ),
         )
         assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
-        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
         assertTrue(store.hasTranslation("77"))
-        assertTrue(store.hasPronunciation("77"))
         assertEquals("QM", store.translationSource("77"))
-        assertEquals("QM", store.pronunciationSource("77"))
         assertEquals("77", store.currentSongId())
+    }
+
+    @Test
+    fun `a provider romanization is never stored`() {
+        val store = NativeLyricOverlayStore()
+
+        // A pronunciation-only body has no lane to store at all.
+        assertFalse(
+            store.update(
+                songId = "77",
+                lines = listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")),
+            ),
+        )
+        assertNull(store.currentSongId())
+        // A body with both lanes keeps only the translation.
+        assertTrue(
+            store.update(
+                songId = "77",
+                lines = listOf(
+                    line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa"),
+                ),
+            ),
+        )
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
     }
 
     @Test
     fun `a timing with a single entry still answers when Apple re-normalizes the text`() {
         val store = NativeLyricOverlayStore()
-        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")))
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
 
-        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の  名は"))
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の  名は"))
     }
 
     @Test
@@ -79,26 +100,11 @@ class NativeLyricOverlayStoreTest {
     @Test
     fun `another track can never read the overlay`() {
         val store = NativeLyricOverlayStore()
-        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")))
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
 
-        assertNull(store.pronunciation("88", 1_000L, 2_000L, "君の名は"))
-        assertFalse(store.hasPronunciation("88"))
-        assertTrue(store.hasPronunciation("77"))
-    }
-
-    @Test
-    fun `a pronunciation the policy rejects is not advertised`() {
-        val store = NativeLyricOverlayStore()
-        // The echo and the kana candidate are both dropped by RomanizationPolicy.
-        store.update(
-            "77",
-            listOf(
-                line(1_000L, 2_000L, "君の名は", roma = "君の名は"),
-                line(2_000L, 3_000L, "ありがとう", roma = "ありがとう"),
-            ),
-        )
-
-        assertFalse(store.hasPronunciation("77"))
+        assertNull(store.translation("88", 1_000L, 2_000L, "君の名は"))
+        assertFalse(store.hasTranslation("88"))
+        assertTrue(store.hasTranslation("77"))
     }
 
     @Test
@@ -113,32 +119,32 @@ class NativeLyricOverlayStoreTest {
     @Test
     fun `a blank id and an empty body are rejected without clearing the previous overlay`() {
         val store = NativeLyricOverlayStore()
-        assertTrue(store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa"))))
+        assertTrue(store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字"))))
         val revision = store.revision()
 
         assertFalse(store.update("", listOf(line(1_000L, 2_000L, "x", translation = "y"))))
         assertFalse(store.update("77", listOf(line(1_000L, 2_000L, "君の名は"))))
         assertEquals(revision, store.revision())
-        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
     }
 
     @Test
     fun `an identical update does not advance the revision`() {
         val store = NativeLyricOverlayStore()
-        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")))
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
         val revision = store.revision()
 
-        assertFalse(store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa"))))
+        assertFalse(store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字"))))
         assertEquals(revision, store.revision())
     }
 
     @Test
     fun `clear only drops the matching track`() {
         val store = NativeLyricOverlayStore()
-        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")))
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
 
         assertFalse(store.clear("88"))
-        assertTrue(store.hasPronunciation("77"))
+        assertTrue(store.hasTranslation("77"))
         assertTrue(store.clear("77"))
         assertNull(store.currentSongId())
     }

@@ -87,24 +87,23 @@ class OnlineTranslationGateTest {
     }
 
     @Test
-    fun `pronunciation alone can carry the pass past Apple's translation and fully-Chinese rules`() {
-        // Apple already translated, but no line has a romanization: the pass must
-        // still run for pronunciation.
+    fun `there is no pronunciation-only pass`() {
+        // Apple already translated the document: nothing is enriched even though
+        // no line has a romanization, because the fork adds no pronunciation lane.
         assertEquals(
-            OnlineTranslationReason.PROCEED,
+            OnlineTranslationReason.APPLE_ALREADY_TRANSLATED,
             OnlineTranslationGate.firstBlocker(
                 candidateCount = 1,
                 baseLineCount = 2,
                 document = foreignUntranslated().copy(hasTranslation = true),
                 lines = untranslatedLines(),
                 translationRequested = true,
-                pronunciationRequested = true,
             ),
         )
-        // Fully-Chinese lyrics never take a translation lane, but may still take
-        // a pronunciation lane.
+        // Fully-Chinese lyrics never take a translation lane, and there is no
+        // pronunciation lane to fall back to.
         assertEquals(
-            OnlineTranslationReason.PROCEED,
+            OnlineTranslationReason.FULLY_CHINESE,
             OnlineTranslationGate.firstBlocker(
                 candidateCount = 1,
                 baseLineCount = 2,
@@ -114,32 +113,6 @@ class OnlineTranslationGateTest {
                     NativeLyricLine(begin = 1_000L, text = "我早已明白了"),
                 ),
                 translationRequested = true,
-                pronunciationRequested = true,
-            ),
-        )
-        // Every line already carries a romanization (Apple's own lane counts) and
-        // Apple translated the document, so there is nothing left to do.
-        assertEquals(
-            OnlineTranslationReason.APPLE_ALREADY_TRANSLATED,
-            OnlineTranslationGate.firstBlocker(
-                candidateCount = 1,
-                baseLineCount = 2,
-                document = foreignUntranslated().copy(hasTranslation = true),
-                lines = untranslatedLines().map { it.copy(roma = "apple romanization") },
-                translationRequested = true,
-                pronunciationRequested = true,
-            ),
-        )
-        // Pronunciation not requested keeps the translation-only verdict.
-        assertEquals(
-            OnlineTranslationReason.APPLE_ALREADY_TRANSLATED,
-            OnlineTranslationGate.firstBlocker(
-                candidateCount = 1,
-                baseLineCount = 2,
-                document = foreignUntranslated().copy(hasTranslation = true),
-                lines = untranslatedLines(),
-                translationRequested = true,
-                pronunciationRequested = false,
             ),
         )
     }
@@ -165,29 +138,24 @@ class OnlineTranslationGateTest {
         documents.forEach { document ->
             lineCases.forEach { lines ->
                 listOf(true, false).forEach { requested ->
-                    listOf(true, false).forEach { pronunciationRequested ->
-                        val gate = OnlineTranslationGate.firstBlocker(
-                            candidateCount = 2,
-                            baseLineCount = lines.size,
-                            document = document,
-                            lines = lines,
-                            translationRequested = requested,
-                            pronunciationRequested = pronunciationRequested,
-                        )
-                        val production = OnlineEnrichmentPolicy.needsOnlineEnrichment(
-                            document = document,
-                            lines = lines,
-                            translationRequested = requested,
-                            pronunciationRequested = pronunciationRequested,
-                        )
-                        assertEquals(
-                            "gate=$gate production=$production document=$document " +
-                                "translationRequested=$requested " +
-                                "pronunciationRequested=$pronunciationRequested",
-                            production,
-                            gate == OnlineTranslationReason.PROCEED,
-                        )
-                    }
+                    val gate = OnlineTranslationGate.firstBlocker(
+                        candidateCount = 2,
+                        baseLineCount = lines.size,
+                        document = document,
+                        lines = lines,
+                        translationRequested = requested,
+                    )
+                    val production = OnlineEnrichmentPolicy.needsOnlineEnrichment(
+                        document = document,
+                        lines = lines,
+                        translationRequested = requested,
+                    )
+                    assertEquals(
+                        "gate=$gate production=$production document=$document " +
+                            "translationRequested=$requested",
+                        production,
+                        gate == OnlineTranslationReason.PROCEED,
+                    )
                 }
             }
         }

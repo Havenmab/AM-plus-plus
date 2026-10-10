@@ -5,6 +5,8 @@ import dev.amenhancer.module.font.FontImportTransaction
 import dev.amenhancer.module.lyrics.CustomLyricsBackupCodec
 import dev.amenhancer.module.lyrics.CustomLyricsBackupEncodeResult
 import dev.amenhancer.module.lyrics.CustomLyricsBatchSaveResult
+import dev.amenhancer.module.lyrics.CustomLyricsClearResult
+import dev.amenhancer.module.lyrics.CustomLyricsClearTransaction
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
@@ -277,6 +279,28 @@ internal class EmbeddedContentManager(
     /** Backward-compatible single-ID delete API. */
     fun deleteLyrics(appleMusicId: Long): EmbeddedLyricsMutationResult =
         deleteLyrics(listOf(appleMusicId))
+
+    /**
+     * Deletes every custom-lyrics entry and its stored TTML file. The published
+     * index pointer (and the legacy manifest key) is reset before the
+     * now-unreferenced entry/index files are retired, so a failed reset leaves
+     * everything intact and a successful one leaves no orphan file. Runs under
+     * the same mutation lock as every other manifest edit.
+     */
+    fun clearAllLyrics(): CustomLyricsClearResult = synchronized(mutationLock) {
+        session.withCustomLyricsMutation {
+            val state = session.customLyricsIndexState()
+            if (!state.canCommit) {
+                return@withCustomLyricsMutation CustomLyricsClearResult.Failed(
+                    "歌词索引文件不可读，无法清空",
+                )
+            }
+            CustomLyricsClearTransaction(
+                resetIndex = session::resetCustomLyricsIndex,
+                deleteRemoteFile = session::deleteFile,
+            ).clear(oldManifest = state.manifest, pointer = state.pointer)
+        }
+    }
 
     fun backupLyrics(out: OutputStream): CustomLyricsBackupEncodeResult = synchronized(mutationLock) {
         CustomLyricsBackupCodec.encode(currentLyricsManifest(), ::readFile, out)

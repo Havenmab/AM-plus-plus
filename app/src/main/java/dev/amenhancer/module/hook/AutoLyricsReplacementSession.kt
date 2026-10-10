@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.ModuleConstants
+
 import dev.amenhancer.module.lyrics.source.LunabeatClient
 import dev.amenhancer.module.lyrics.source.HttpLyricTransport
 import dev.amenhancer.module.lyrics.source.FileLunabeatCatalogCache
@@ -95,11 +97,11 @@ internal fun buildOnlineLyricsChain(
  * [logger] receives the bounded per-track decision lines through the module's
  * existing log channel.
  *
- * The single 「补全歌词翻译与发音」 opt-in requests both lanes, so the same
- * candidate body can fill a missing translation and a missing pronunciation.
- * [hideMandarinPronunciation] and [genreFor] feed HLE's 「不显示国语歌拼音」
- * rule: the genre is resolved by the host from the metadata cache and is null
- * whenever it is unavailable, which hides nothing.
+ * The single 「补全歌词翻译与发音」 opt-in now drives the **translation** lane only:
+ * the third-party pronunciation lane has been removed, so a provider's
+ * romanization column is read past and never published. Apple's own pronunciation
+ * is delivered by the native lyric-model hooks, and a song Apple itself gives no
+ * pronunciation shows no romanization at all.
  *
  * The `rawTtml` this receives is Apple's own parsed document, so the lane only
  * runs once Apple has parsed the displayed document — in practice once the
@@ -112,12 +114,10 @@ internal fun translationEnricher(
     composite: CompositeOnlineSearchAutoLyricsSource,
     currentTrack: () -> CurrentSongDetails?,
     logger: (String) -> Unit = {},
-    hideMandarinPronunciation: Boolean = false,
-    genreFor: (Long) -> String? = { null },
     /**
-     * Timing-keyed native-model overlay. On success the merged per-line lanes
-     * are written here so the host's lyric-model getters can deliver them even
-     * when Apple renders no transliteration track from the merged document.
+     * Timing-keyed native-model overlay. On success the merged per-line
+     * translations are written here so the host's lyric-model getters can deliver
+     * the translation lane even when Apple renders no track from the document.
      */
     overlay: NativeLyricOverlayStore? = null,
 ): (Long, String) -> String? {
@@ -128,9 +128,6 @@ internal fun translationEnricher(
                 ttml = rawTtml,
                 candidates = composite.fetchTranslationCandidates(appleMusicId),
                 translationRequested = true,
-                pronunciationRequested = true,
-                hideMandarinPronunciation = hideMandarinPronunciation,
-                genre = genreFor(appleMusicId),
                 durationMs = currentTrack()?.durationMs ?: 0L,
                 appleMusicId = appleMusicId,
                 diagnostic = { line -> scoped.log(appleMusicId, line) },
@@ -139,7 +136,6 @@ internal fun translationEnricher(
                     songId = appleMusicId.toString(),
                     lines = outcome.lines,
                     translationSource = outcome.translationSource,
-                    pronunciationSource = outcome.pronunciationSource,
                 )
                 outcome.ttml
             }
@@ -280,18 +276,17 @@ internal fun createAutoLyricsRuntime(
                 composite = composite,
                 currentTrack = currentTrack,
                 logger = logger,
-                hideMandarinPronunciation = hideMandarinPronunciation,
-                genreFor = genreFor,
                 overlay = nativeLyricOverlay,
             )
         }
     logger(
         "online-translation runtime supplement=$onlineLyricsSupplementEnabled " +
             "translation=$onlineLyricsTranslationEnabled " +
-            "pronunciation=$onlineLyricsTranslationEnabled " +
+            "applePronunciationOnly=true " +
             "hideMandarinPinyin=$hideMandarinPronunciation " +
             "sources=${onlineLyricsSelection.sources.joinToString(",")} " +
-            "enricher=${enricher != null}",
+            "enricher=${enricher != null} " +
+            "build=${ModuleConstants.BUILD_TAG}",
     )
     return AutoLyricsRuntime(
         resolver = resolver,

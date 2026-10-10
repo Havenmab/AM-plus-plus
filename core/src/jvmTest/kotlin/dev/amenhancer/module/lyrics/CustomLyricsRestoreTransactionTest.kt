@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.CustomLyricsSources
@@ -139,7 +141,7 @@ class CustomLyricsRestoreTransactionTest {
         val result = transaction(events) { events += "publish"; false }
             .merge(current, CustomLyricsRestorePolicy.KEEP_EXISTING, streamBackup(backup, files))
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法发布歌词映射"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_MAPPING_PUBLISH_FAILED.text()), result)
         assertEquals(
             listOf("write:lyrics_new1", "write:lyrics_new2", "publish", "delete:lyrics_new1", "delete:lyrics_new2"),
             events,
@@ -168,7 +170,7 @@ class CustomLyricsRestoreTransactionTest {
             },
         ) { events += "publish"; true }.merge(current, CustomLyricsRestorePolicy.OVERWRITE, streamBackup(backup, files))
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法写入共享歌词文件"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text()), result)
         assertEquals(
             listOf(
                 "write:lyrics_new1",
@@ -197,7 +199,7 @@ class CustomLyricsRestoreTransactionTest {
         val result = transaction(events) { events += "publish"; false }
             .merge(current, CustomLyricsRestorePolicy.OVERWRITE, streamBackup(backup, files))
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法发布歌词映射"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_MAPPING_PUBLISH_FAILED.text()), result)
         assertEquals(
             listOf("write:lyrics_new1", "write:lyrics_new2", "publish", "delete:lyrics_new1", "delete:lyrics_new2"),
             events,
@@ -260,7 +262,7 @@ class CustomLyricsRestoreTransactionTest {
                 CustomLyricsBackupDecodeResult.Decoded(CustomLyricsBackup(CustomLyricsManifest.empty()))
             }
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法写入共享歌词文件"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text()), result)
         assertEquals(
             listOf(
                 "write:lyrics_new1",
@@ -293,7 +295,7 @@ class CustomLyricsRestoreTransactionTest {
                 CustomLyricsBackupDecodeResult.Decoded(declared)
             }
 
-        assertEquals(CustomLyricsRestoreResult.Failed("备份条目重复"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.BACKUP_ENTRIES_DUPLICATE.text()), result)
         assertEquals(
             listOf(
                 "write:lyrics_new1",
@@ -389,7 +391,7 @@ class CustomLyricsRestoreTransactionTest {
         val result = transaction(events, fileIdFactory = { "bad file id!" }) { events += "publish"; true }
             .merge(CustomLyricsManifest.empty(), CustomLyricsRestorePolicy.OVERWRITE, streamBackup(backup, files))
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法生成歌词文件 ID"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_FILE_ID_CREATE_FAILED.text()), result)
         assertTrue(events.isEmpty())
     }
 
@@ -401,7 +403,7 @@ class CustomLyricsRestoreTransactionTest {
         val result = transaction(events, fileIdFactory = { "lyrics_taken" }) { events += "publish"; true }
             .merge(CustomLyricsManifest(listOf(existingEntry(1L, "lyrics_taken"))), CustomLyricsRestorePolicy.OVERWRITE, streamBackup(backup, files))
 
-        assertEquals(CustomLyricsRestoreResult.Failed("无法生成唯一歌词文件 ID"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.LYRICS_UNIQUE_ID_FAILED.text()), result)
         assertTrue(events.isEmpty())
     }
 
@@ -411,10 +413,10 @@ class CustomLyricsRestoreTransactionTest {
 
         val result = transaction(events) { events += "publish"; true }.merge(CustomLyricsManifest.empty()) { onFile ->
             onFile("lyrics_bb", ttmlBytes())
-            CustomLyricsBackupDecodeResult.Rejected("备份条目过多")
+            CustomLyricsBackupDecodeResult.Rejected(ModuleText.BACKUP_TOO_MANY_ENTRIES.text())
         }
 
-        assertEquals(CustomLyricsRestoreResult.Failed("备份条目过多"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.BACKUP_TOO_MANY_ENTRIES.text()), result)
         assertEquals(listOf("write:lyrics_new1", "delete:lyrics_new1"), events)
     }
 
@@ -435,7 +437,7 @@ class CustomLyricsRestoreTransactionTest {
             CustomLyricsBackupDecodeResult.Decoded(declared)
         }
 
-        assertEquals(CustomLyricsRestoreResult.Failed("备份内容缺失"), result)
+        assertEquals(CustomLyricsRestoreResult.Failed(ModuleText.BACKUP_CONTENT_MISSING.text()), result)
         assertEquals(listOf("write:lyrics_new1", "delete:lyrics_new1"), events)
     }
 

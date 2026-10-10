@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
@@ -95,7 +97,7 @@ internal fun FragmentGlassNavigation(
                 onSelect = { id -> select(id) ?: snapshot.selectedId ?: id },
                 panelHeight = if (panelHeightPx > 1) with(density) { panelHeightPx.toDp() } else 56.dp,
                 panelBlur = blurDp.dp, style = GlassNavigationStyle.TabletLabels,
-                drawerIcon = drawer, drawerDescription = "打开侧边导航", onDrawer = onDrawer)
+                drawerIcon = drawer, drawerDescription = ModuleText.OPEN_SIDEBAR.text(), onDrawer = onDrawer)
         }
         return
     }

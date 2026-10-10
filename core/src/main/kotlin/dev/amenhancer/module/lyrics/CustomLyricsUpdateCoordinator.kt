@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.source.AmLyricsClient
 import dev.amenhancer.module.lyrics.source.AmLyricsIndex
 import dev.amenhancer.module.lyrics.source.AmLyricsIndexEntry
@@ -9,6 +11,8 @@ import dev.amenhancer.module.lyrics.source.LunabeatSong
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.hook.AutoLyricsCandidate
+import dev.amenhancer.module.hook.TtmlTimingPolicy
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -22,6 +26,7 @@ data class CustomLyricsUpdateSources(
     val fetchAmLyricsTtml: (AmLyricsIndexEntry) -> String?,
     val loadLunabeatCatalog: () -> LunabeatCatalog?,
     val fetchLunabeatTtml: (LunabeatSong) -> String?,
+    val fetchAutoCache: ((Long) -> AutoLyricsCandidate?)? = null,
 )
 
 /**
@@ -46,12 +51,20 @@ class CustomLyricsUpdateCoordinator(
         isBaselineCurrent: () -> Boolean = { true },
         isCancelled: () -> Boolean = { false },
         onProgress: (CustomLyricsUpdateProgress) -> Unit = {},
+        targetIds: Set<Long>? = null,
+        requireWordTiming: Boolean = false,
     ): CustomLyricsUpdateResult {
         val safeOld = dev.amenhancer.module.config.CustomLyricsManifestPolicy.sanitize(oldManifest)
         if (safeOld.entries.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("本地歌词索引无效，无法更新")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LOCAL_LYRICS_INDEX_INVALID.text())
         }
-        if (oldManifest.entries.isEmpty()) {
+        val selected = CustomLyricsManifest(oldManifest.entries.filter {
+            targetIds == null || it.appleMusicId in targetIds
+        })
+        if (targetIds != null && selected.entries.map { it.appleMusicId }.toSet() != targetIds) {
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_MAPPING_MISSING.text())
+        }
+        if (selected.entries.isEmpty()) {
             return CustomLyricsUpdateResult.Updated(
                 manifest = oldManifest,
                 summary = CustomLyricsUpdateSummary(),
@@ -60,12 +73,12 @@ class CustomLyricsUpdateCoordinator(
 
         val decisions = linkedMapOf<Long, CustomLyricsUpdateItem>()
         fun report() {
-            val summary = summarize(decisions.values, oldManifest.entries.size)
+            val summary = summarize(decisions.values, selected.entries.size)
             runCatching {
                 onProgress(
                     CustomLyricsUpdateProgress(
                         checkedEntries = decisions.size,
-                        totalEntries = oldManifest.entries.size,
+                        totalEntries = selected.entries.size,
                         updatedEntries = summary.updated,
                         unchangedEntries = summary.unchanged,
                         skippedEntries = summary.skipped,
@@ -75,57 +88,82 @@ class CustomLyricsUpdateCoordinator(
             }
         }
         fun record(entry: CustomLyricsEntry, item: CustomLyricsUpdateItem) {
-            decisions[entry.appleMusicId] = item
+            decisions[entry.appleMusicId] = if (requireWordTiming &&
+                item is CustomLyricsUpdateItem.Changed &&
+                !TtmlTimingPolicy.isWord(item.bytes.toString(Charsets.UTF_8))
+            ) {
+                CustomLyricsUpdateItem.Failed(entry.appleMusicId, entry.source,
+                    CustomLyricsUpdateFailureKind.INVALID_TTML, ModuleText.REMOTE_TTML_NOT_WORD.text())
+            } else item
             report()
         }
         fun cancelled(): Boolean = runCatching { isCancelled() }.getOrDefault(false)
 
-        // Manual TTML and AUTO_CACHE have no authoritative remote source.
-        oldManifest.entries.forEach { entry ->
-            if (entry.source == CustomLyricsSources.MANUAL ||
-                entry.source == CustomLyricsSources.AUTO_CACHE
+        selected.entries.forEach { entry ->
+            if (cancelled()) return CustomLyricsUpdateResult.Cancelled
+            if (requireWordTiming && !entry.enabled || entry.source == CustomLyricsSources.MANUAL ||
+                entry.source == CustomLyricsSources.AUTO_CACHE && sources.fetchAutoCache == null
             ) {
                 record(
                     entry,
                     CustomLyricsUpdateItem.Skipped(
                         appleMusicId = entry.appleMusicId,
                         source = entry.source,
-                        message = "没有可验证的远程来源",
+                        message = ModuleText.REMOTE_SOURCE_UNVERIFIABLE.text(),
                     ),
                 )
+            }
+            else if (entry.source == CustomLyricsSources.AUTO_CACHE) {
+                val candidate = runCatching { sources.fetchAutoCache?.invoke(entry.appleMusicId) }.getOrNull()
+                val validSource = candidate?.source in setOf(CustomLyricsSources.AMLL,
+                    CustomLyricsSources.LUNABEAT, CustomLyricsSources.AM_LYRICS)
+                val item = if (candidate == null || !validSource) {
+                    CustomLyricsUpdateItem.Failed(entry.appleMusicId, entry.source,
+                        CustomLyricsUpdateFailureKind.NETWORK, ModuleText.AUTO_CACHE_SOURCE_LOOKUP_FAILED.text())
+                } else if (requireWordTiming && !TtmlTimingPolicy.isWord(candidate.ttml)) {
+                    CustomLyricsUpdateItem.Failed(entry.appleMusicId, entry.source,
+                        CustomLyricsUpdateFailureKind.INVALID_TTML, ModuleText.REMOTE_TTML_NOT_WORD.text())
+                } else when (val compared = compareTtml(entry, candidate.ttml)) {
+                    is CustomLyricsUpdateItem.Changed -> compared.copy(replacementSource = candidate.source)
+                    is CustomLyricsUpdateItem.Unchanged -> CustomLyricsUpdateItem.SourceRecovered(
+                        entry.appleMusicId, entry.source, candidate.source)
+                    else -> compared
+                }
+                record(entry, item)
             }
         }
         if (cancelled()) return CustomLyricsUpdateResult.Cancelled
 
-        updateAmll(oldManifest, decisions, ::record, ::cancelled)
+        val remote = CustomLyricsManifest(selected.entries.filter { it.appleMusicId !in decisions })
+        updateAmll(remote, decisions, ::record, ::cancelled)
             ?.let { return it }
         if (cancelled()) return CustomLyricsUpdateResult.Cancelled
 
-        updateAmLyrics(oldManifest, decisions, ::record, ::cancelled)
+        updateAmLyrics(remote, decisions, ::record, ::cancelled)
             ?.let { return it }
         if (cancelled()) return CustomLyricsUpdateResult.Cancelled
 
-        updateLunabeat(oldManifest, decisions, ::record, ::cancelled)
+        updateLunabeat(remote, decisions, ::record, ::cancelled)
             ?.let { return it }
         if (cancelled()) return CustomLyricsUpdateResult.Cancelled
 
         // A sanitized manifest normally contains only known sources. Keep an
         // unexpected source fail-open, just as a removed provider is treated
         // as manually managed by the manifest policy.
-        oldManifest.entries.forEach { entry ->
+        selected.entries.forEach { entry ->
             if (entry.appleMusicId !in decisions) {
                 record(
                     entry,
                     CustomLyricsUpdateItem.Skipped(
                         appleMusicId = entry.appleMusicId,
                         source = entry.source,
-                        message = "来源不支持自动更新",
+                        message = ModuleText.SOURCE_UPDATE_UNSUPPORTED.text(),
                     ),
                 )
             }
         }
-        if (decisions.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("歌词更新未能检查全部条目")
+        if (decisions.size != selected.entries.size) {
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_INCOMPLETE.text())
         }
 
         return CustomLyricsUpdateTransaction(
@@ -136,7 +174,8 @@ class CustomLyricsUpdateCoordinator(
             isBaselineCurrent = isBaselineCurrent,
         ).apply(
             oldManifest = oldManifest,
-            items = oldManifest.entries.map { decisions.getValue(it.appleMusicId) },
+            items = selected.entries.map { decisions.getValue(it.appleMusicId) },
+            targetIds = selected.entries.mapTo(mutableSetOf()) { it.appleMusicId },
             isCancelled = isCancelled,
             onProgress = onProgress,
         )
@@ -167,7 +206,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "AMLL 歌词不存在或读取失败",
+                        ModuleText.AMLL_LYRICS_UNAVAILABLE.text(),
                     ),
                 )
             } else {
@@ -195,7 +234,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "AM-Lyrics 索引读取失败",
+                        ModuleText.AM_LYRICS_INDEX_FAILED.text(),
                     ),
                 )
             }
@@ -212,7 +251,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "AM-Lyrics 未找到对应歌曲",
+                        ModuleText.AM_LYRICS_SONG_MISSING.text(),
                     ),
                 )
             } else if (!remote.enabled) {
@@ -222,7 +261,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "AM-Lyrics 条目已禁用",
+                        ModuleText.AM_LYRICS_ENTRY_DISABLED.text(),
                     ),
                 )
             } else if (
@@ -253,7 +292,7 @@ class CustomLyricsUpdateCoordinator(
                             entry.appleMusicId,
                             entry.source,
                             CustomLyricsUpdateFailureKind.NETWORK,
-                            "AM-Lyrics 歌词下载失败或校验失败",
+                            ModuleText.AM_LYRICS_DOWNLOAD_FAILED.text(),
                         ),
                     )
                 } else {
@@ -282,7 +321,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.NETWORK,
-                        "Lunabeat catalog 读取失败",
+                        ModuleText.LUNABEAT_CATALOG_FAILED.text(),
                     ),
                 )
             }
@@ -299,7 +338,7 @@ class CustomLyricsUpdateCoordinator(
                         entry.appleMusicId,
                         entry.source,
                         CustomLyricsUpdateFailureKind.SOURCE_MISSING,
-                        "Lunabeat 未找到对应歌曲",
+                        ModuleText.LUNABEAT_SONG_MISSING.text(),
                     ),
                 )
             } else if (song.sha256.equals(entry.sha256, ignoreCase = true)) {
@@ -324,7 +363,7 @@ class CustomLyricsUpdateCoordinator(
                             entry.appleMusicId,
                             entry.source,
                             CustomLyricsUpdateFailureKind.NETWORK,
-                            "Lunabeat 歌词下载失败或校验失败",
+                            ModuleText.LUNABEAT_DOWNLOAD_FAILED.text(),
                         ),
                     )
                 } else {
@@ -343,7 +382,7 @@ class CustomLyricsUpdateCoordinator(
                 entry.appleMusicId,
                 entry.source,
                 CustomLyricsUpdateFailureKind.INVALID_TTML,
-                "远程歌词不是有效 TTML",
+                ModuleText.REMOTE_TTML_INVALID.text(),
             )
         }
         inspected as CustomLyricsInspection.Accepted
@@ -415,7 +454,7 @@ class CustomLyricsUpdateCoordinator(
     ): CustomLyricsUpdateSummary = CustomLyricsUpdateSummary(
         checked = items.size.coerceAtMost(total),
         updated = items.count { it is CustomLyricsUpdateItem.Changed },
-        unchanged = items.count { it is CustomLyricsUpdateItem.Unchanged },
+        unchanged = items.count { it is CustomLyricsUpdateItem.Unchanged || it is CustomLyricsUpdateItem.SourceRecovered },
         skipped = items.count { it is CustomLyricsUpdateItem.Skipped },
         failed = items.count { it is CustomLyricsUpdateItem.Failed },
     )

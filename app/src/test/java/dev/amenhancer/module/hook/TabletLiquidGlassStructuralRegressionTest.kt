@@ -127,7 +127,7 @@ class TabletLiquidGlassStructuralRegressionTest {
         // The compensation toggle is native-bar-only; showing it while glass
         // owns the geometry would read as a live switch that does nothing.
         assertTrue(settings.contains("if (!settings.phoneLiquidGlassEnabled)"))
-        assertTrue(settings.contains("平板底栏补偿"))
+        assertTrue(settings.contains("ModuleText.TABLET_BOTTOM_BAR_FIX"))
     }
 
     @Test

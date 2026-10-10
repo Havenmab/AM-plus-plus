@@ -38,6 +38,12 @@ internal class FragmentChromeContract(loader: ClassLoader, val names: JSONObject
     val selectMenuItem = method(nativeMenuListener.type, names.getString("menuSelectMethod"), android.view.MenuItem::class.java)
     val activityTouch = android.app.Activity::class.java.getDeclaredMethod("dispatchTouchEvent", android.view.MotionEvent::class.java)
     val resources = names.getJSONObject("resources")
+    val tabletMiniMargins = names.getJSONObject("tablet").let {
+        method(loader.loadClass(it.getString("miniMarginsOwner")), it.getString("miniMarginsMethod"),
+            android.view.View::class.java, java.lang.Float.TYPE, java.lang.Float.TYPE).also { target ->
+            check(java.lang.reflect.Modifier.isStatic(target.modifiers) && target.returnType == java.lang.Void.TYPE)
+        }
+    }
     val blurDraw = method(loader.loadClass(names.getString("blurClass")), "draw", android.graphics.Canvas::class.java)
 
     companion object {

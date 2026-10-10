@@ -1,5 +1,7 @@
 package dev.amenhancer.module.settings
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.ui.*
 
 import android.content.Context
@@ -79,19 +81,19 @@ internal class EmbeddedRuntimeSettingsController(
     ): EmbeddedActionResult = content.saveLyrics(draft, replacingAppleMusicIds).toActionResult()
 
     override fun setLyricsEnabled(appleMusicId: Long, enabled: Boolean): EmbeddedActionResult =
-        content.setLyricsEnabled(appleMusicId, enabled).toActionResult("歌词状态已更新")
+        content.setLyricsEnabled(appleMusicId, enabled).toActionResult(ModuleText.LYRICS_STATE_UPDATED.text())
 
     override fun setLyricsEnabled(
         appleMusicIds: List<Long>,
         enabled: Boolean,
     ): EmbeddedActionResult = content.setLyricsEnabled(appleMusicIds, enabled)
-        .toActionResult("歌词状态已更新")
+        .toActionResult(ModuleText.LYRICS_STATE_UPDATED.text())
 
     override fun deleteLyrics(appleMusicId: Long): EmbeddedActionResult =
-        content.deleteLyrics(appleMusicId).toActionResult("歌词映射已删除")
+        content.deleteLyrics(appleMusicId).toActionResult(ModuleText.LYRICS_MAPPING_DELETED.text())
 
     override fun deleteLyrics(appleMusicIds: List<Long>): EmbeddedActionResult =
-        content.deleteLyrics(appleMusicIds).toActionResult("歌词映射已删除")
+        content.deleteLyrics(appleMusicIds).toActionResult(ModuleText.LYRICS_MAPPING_DELETED.text())
 
     override fun clearLyrics(): EmbeddedActionResult =
         when (val result = content.clearAllLyrics()) {
@@ -104,21 +106,21 @@ internal class EmbeddedRuntimeSettingsController(
     override fun importFont(uri: Uri): EmbeddedActionResult {
         val bytes = try {
             appContext.contentResolver.openInputStream(uri)?.use(FontFilePolicy::readBounded)
-                ?: return EmbeddedActionResult.Failed("无法读取所选字体")
+                ?: return EmbeddedActionResult.Failed(ModuleText.FONT_READ_FAILED.text())
         } catch (_: Throwable) {
-            return EmbeddedActionResult.Failed("无法读取所选字体")
+            return EmbeddedActionResult.Failed(ModuleText.FONT_READ_FAILED.text())
         }
-        return when (val result = content.importFont(displayName(uri, "导入字体"), bytes)) {
-            is FontImportResult.Imported -> EmbeddedActionResult.Done("字体已导入，重启 Apple Music 后生效")
+        return when (val result = content.importFont(displayName(uri, ModuleText.IMPORTED_FONT.text()), bytes)) {
+            is FontImportResult.Imported -> EmbeddedActionResult.Done(ModuleText.FONT_IMPORTED.text())
             is FontImportResult.Failed -> EmbeddedActionResult.Failed(result.message)
         }
     }
 
     override fun clearFont(): EmbeddedActionResult =
         if (content.clearFont()) {
-            EmbeddedActionResult.Done("已清除自定义字体，重启 Apple Music 后生效")
+            EmbeddedActionResult.Done(ModuleText.FONT_CLEARED.text())
         } else {
-            EmbeddedActionResult.Failed("清除字体失败")
+            EmbeddedActionResult.Failed(ModuleText.FONT_CLEAR_FAILED.text())
         }
 
     override fun importTtml(
@@ -130,9 +132,9 @@ internal class EmbeddedRuntimeSettingsController(
         val ttml = try {
             appContext.contentResolver.openInputStream(uri)?.use(CustomLyricsFilePolicy::readBounded)
                 ?.toString(Charsets.UTF_8)
-                ?: return EmbeddedActionResult.Failed("无法读取 TTML")
+                ?: return EmbeddedActionResult.Failed(ModuleText.TTML_READ_FAILED.text())
         } catch (_: Throwable) {
-            return EmbeddedActionResult.Failed("无法读取 TTML")
+            return EmbeddedActionResult.Failed(ModuleText.TTML_READ_FAILED.text())
         }
         return content.saveLyrics(
             CustomLyricsDraft(
@@ -147,10 +149,10 @@ internal class EmbeddedRuntimeSettingsController(
 
     override fun backupLyrics(uri: Uri): EmbeddedActionResult {
         val output = runCatching { appContext.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
-            ?: return EmbeddedActionResult.Failed("无法创建备份文件")
+            ?: return EmbeddedActionResult.Failed(ModuleText.BACKUP_CREATE_FAILED.text())
         return when (val result = output.use(content::backupLyrics)) {
             is dev.amenhancer.module.lyrics.CustomLyricsBackupEncodeResult.Encoded ->
-                EmbeddedActionResult.Done("已备份 ${result.entryCount} 条歌词")
+                EmbeddedActionResult.Done(ModuleText.LYRICS_BACKED_UP.text(result.entryCount))
             is dev.amenhancer.module.lyrics.CustomLyricsBackupEncodeResult.Failed ->
                 EmbeddedActionResult.Failed(result.message)
         }
@@ -161,10 +163,10 @@ internal class EmbeddedRuntimeSettingsController(
         policy: dev.amenhancer.module.lyrics.CustomLyricsRestorePolicy,
     ): EmbeddedActionResult {
         val input = runCatching { appContext.contentResolver.openInputStream(uri) }.getOrNull()
-            ?: return EmbeddedActionResult.Failed("无法读取备份文件")
+            ?: return EmbeddedActionResult.Failed(ModuleText.BACKUP_FILE_UNREADABLE.text())
         return when (val result = input.use { content.restoreLyrics(it, policy) }) {
             is CustomLyricsRestoreResult.Restored ->
-                EmbeddedActionResult.Done("已恢复 ${result.manifest.entries.size} 条歌词")
+                EmbeddedActionResult.Done(ModuleText.LYRICS_RESTORED.text(result.manifest.entries.size))
             is CustomLyricsRestoreResult.Failed -> EmbeddedActionResult.Failed(result.message)
         }
     }
@@ -232,7 +234,7 @@ internal class EmbeddedRuntimeSettingsController(
             onProgress = onProgress,
         )
     }.getOrElse { error ->
-        CustomLyricsUpdateResult.Failed("歌词更新失败：${error.message.orEmpty()}")
+        CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_FAILED.text(error.message.orEmpty()))
     }
 
     private fun displayName(uri: Uri, fallback: String): String = runCatching {
@@ -265,12 +267,12 @@ internal class EmbeddedRuntimeSettingsController(
 }
 
 private fun CustomLyricsSaveResult.toActionResult(): EmbeddedActionResult = when (this) {
-    is CustomLyricsSaveResult.Saved -> EmbeddedActionResult.Done("歌词已保存")
+    is CustomLyricsSaveResult.Saved -> EmbeddedActionResult.Done(ModuleText.LYRICS_SAVED.text())
     is CustomLyricsSaveResult.Failed -> EmbeddedActionResult.Failed(message)
 }
 
 private fun CustomLyricsBatchSaveResult.toActionResult(): EmbeddedActionResult = when (this) {
-    is CustomLyricsBatchSaveResult.Saved -> EmbeddedActionResult.Done("歌词已保存")
+    is CustomLyricsBatchSaveResult.Saved -> EmbeddedActionResult.Done(ModuleText.LYRICS_SAVED.text())
     is CustomLyricsBatchSaveResult.Failed -> EmbeddedActionResult.Failed(message)
 }
 

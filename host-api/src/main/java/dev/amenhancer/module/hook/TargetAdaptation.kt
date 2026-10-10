@@ -39,6 +39,9 @@ data class TargetAdaptation(
     val cellularDataEntry: CellularDataEntryTarget = CellularDataEntryTarget {
         TargetCapabilityInstall.Degraded("Cellular data entry target was not configured")
     },
+    val playerRecovery: PlayerRecoveryTarget = PlayerRecoveryTarget {
+        TargetCapabilityInstall.Unsupported("Native player recovery is not available for this host")
+    },
 ) {
 }
 
@@ -86,6 +89,10 @@ fun interface CellularDataEntryTarget {
     fun install(): TargetCapabilityInstall
 }
 
+fun interface PlayerRecoveryTarget {
+    fun install(): TargetCapabilityInstall
+}
+
 sealed interface TargetCapabilityInstall {
     val message: String
 
@@ -107,4 +114,3 @@ sealed interface TargetCapabilityInstall {
         }
     }
 }
-

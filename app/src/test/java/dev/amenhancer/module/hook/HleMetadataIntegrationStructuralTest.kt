@@ -471,14 +471,21 @@ class HleMetadataIntegrationStructuralTest {
     @Test
     fun `embedded settings expose HLE's four region controls without restoring refresh action`() {
         val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
-        // HLE's four controls, with HLE's own labels, in HLE's order.
-        assertTrue(embedded.contains("将Apple Music改成其他地区"))
+        val text = source("core/src/main/kotlin/dev/amenhancer/module/i18n/ModuleText.kt")
+        // HLE's four controls, with HLE's own labels, in HLE's order. The labels now live
+        // in ModuleText, which is where upstream routes every user-visible settings string,
+        // so the fidelity assertions read the catalog and the component asserts the keys.
+        assertTrue(embedded.contains("ModuleText.REGION_SELECTION"))
+        assertTrue(text.contains("将Apple Music改成其他地区"))
         assertTrue(embedded.contains("regionSelection"))
-        assertTrue(embedded.contains("歌曲信息替换至设定地区语言"))
+        assertTrue(embedded.contains("ModuleText.REGION_METADATA_LANGUAGE"))
+        assertTrue(text.contains("歌曲信息替换至设定地区语言"))
         assertTrue(embedded.contains("overrideAccountLanguage"))
-        assertTrue(embedded.contains("替换中日韩歌曲信息为原地区原名"))
+        assertTrue(embedded.contains("ModuleText.REGION_RESTORE_ORIGINAL"))
+        assertTrue(text.contains("替换中日韩歌曲信息为原地区原名"))
         assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
-        assertTrue(embedded.contains("创建检索库以提升替换体验"))
+        assertTrue(embedded.contains("ModuleText.REGION_METADATA_CACHE"))
+        assertTrue(text.contains("创建检索库以提升替换体验"))
         assertTrue(embedded.contains("localizedMetadataCache"))
         // The retired fork-only master switch is gone.
         assertFalse(embedded.contains("titleCorrectionEnabled"))
@@ -492,10 +499,11 @@ class HleMetadataIntegrationStructuralTest {
         assertFalse(embedded.contains("刷新资料库"))
         // AM++ adds the one-shot 「清空检索库」 action right after HLE's four controls,
         // with its own confirmation dialog and the persisted generation signal.
-        assertTrue(embedded.contains("清空检索库"))
+        assertTrue(embedded.contains("ModuleText.REGION_CACHE_CLEAR"))
+        assertTrue(text.contains("清空检索库"))
         assertTrue(embedded.contains("metadataCacheClearGeneration"))
         assertTrue(embedded.contains("confirmEmbeddedMetadataCacheClear"))
-        assertTrue(embedded.contains("下次读取时重新向 Apple Music 获取"))
+        assertTrue(text.contains("下次读取时重新向 Apple Music 获取"))
     }
 
     @Test

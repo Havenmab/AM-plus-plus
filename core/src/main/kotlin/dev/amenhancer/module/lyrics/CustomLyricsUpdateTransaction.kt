@@ -1,8 +1,11 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.config.CustomLyricsManifestPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
+import dev.amenhancer.module.model.CustomLyricsSources
 
 /** Why a remote source could not replace a local mapping. */
 enum class CustomLyricsUpdateFailureKind {
@@ -64,7 +67,7 @@ sealed interface CustomLyricsUpdateResult {
 
 /**
  * A source-independent update decision. The coordinator creates one item for
- * every local entry, including entries which are unchanged, skipped, or failed.
+ * every selected entry, including entries which are unchanged, skipped, or failed.
  * Only [Changed] items can cause a remote file write.
  */
 sealed interface CustomLyricsUpdateItem {
@@ -75,6 +78,14 @@ sealed interface CustomLyricsUpdateItem {
         override val appleMusicId: Long,
         override val source: String,
         val bytes: ByteArray,
+        val replacementSource: String? = null,
+    ) : CustomLyricsUpdateItem
+
+    /** A legacy cache matched the remote body; only its origin needs publication. */
+    data class SourceRecovered(
+        override val appleMusicId: Long,
+        override val source: String,
+        val replacementSource: String,
     ) : CustomLyricsUpdateItem
 
     data class Unchanged(
@@ -115,25 +126,37 @@ class CustomLyricsUpdateTransaction(
         items: List<CustomLyricsUpdateItem>,
         isCancelled: () -> Boolean = { false },
         onProgress: (CustomLyricsUpdateProgress) -> Unit = {},
+        targetIds: Set<Long> = oldManifest.entries.mapTo(mutableSetOf()) { it.appleMusicId },
     ): CustomLyricsUpdateResult {
         val safeOld = CustomLyricsManifestPolicy.sanitize(oldManifest)
         if (safeOld.entries.size != oldManifest.entries.size) {
-            return CustomLyricsUpdateResult.Failed("本地歌词索引无效，无法更新")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LOCAL_LYRICS_INDEX_INVALID.text())
         }
         val oldById = oldManifest.entries.associateBy(CustomLyricsEntry::appleMusicId)
         if (oldById.size != oldManifest.entries.size ||
-            items.size != oldManifest.entries.size ||
-            items.map(CustomLyricsUpdateItem::appleMusicId).toSet() != oldById.keys
+            items.size != targetIds.size ||
+            items.map(CustomLyricsUpdateItem::appleMusicId).toSet() != targetIds ||
+            !oldById.keys.containsAll(targetIds)
         ) {
-            return CustomLyricsUpdateResult.Failed("歌词更新基线已变化，请重试")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_BASELINE_CHANGED.text())
         }
 
-        val summary = summarize(items, oldManifest.entries.size)
-        report(onProgress, summary, oldManifest.entries.size)
+        val summary = summarize(items, targetIds.size)
+        report(onProgress, summary, targetIds.size)
         if (isCancelledSafely(isCancelled)) return CustomLyricsUpdateResult.Cancelled
 
         val changed = items.filterIsInstance<CustomLyricsUpdateItem.Changed>()
-        if (changed.isEmpty()) {
+        val recovered = items.filterIsInstance<CustomLyricsUpdateItem.SourceRecovered>()
+        val replacements = items.mapNotNull { item -> when (item) {
+            is CustomLyricsUpdateItem.Changed -> item.replacementSource?.let { item to it }
+            is CustomLyricsUpdateItem.SourceRecovered -> item to item.replacementSource
+            else -> null
+        } }
+        if (replacements.any { (item, source) -> oldById.getValue(item.appleMusicId).source != CustomLyricsSources.AUTO_CACHE ||
+                source !in setOf(CustomLyricsSources.AMLL, CustomLyricsSources.LUNABEAT, CustomLyricsSources.AM_LYRICS) }) {
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_SOURCE_RECOVERY_INVALID.text(), summary)
+        }
+        if (changed.isEmpty() && recovered.isEmpty()) {
             // A read-only check should not rotate the index pointer.
             return CustomLyricsUpdateResult.Updated(
                 manifest = oldManifest,
@@ -146,6 +169,10 @@ class CustomLyricsUpdateTransaction(
         val allocatedIds = oldManifest.entries.mapTo(mutableSetOf(), CustomLyricsEntry::fileId)
         val writtenIds = mutableListOf<String>()
         val replacementEntries = mutableMapOf<Long, CustomLyricsEntry>()
+        recovered.forEach { item ->
+            replacementEntries[item.appleMusicId] = oldById.getValue(item.appleMusicId)
+                .copy(source = item.replacementSource)
+        }
 
         fun cleanupNewFiles() {
             writtenIds.forEach { fileId -> runCatching { deleteRemoteFile(fileId) } }
@@ -161,7 +188,7 @@ class CustomLyricsUpdateTransaction(
                 ?: run {
                     cleanupNewFiles()
                     return CustomLyricsUpdateResult.Failed(
-                        "更新后的歌词无效",
+                        ModuleText.UPDATED_LYRICS_INVALID.text(),
                         summary,
                     )
                 }
@@ -169,12 +196,12 @@ class CustomLyricsUpdateTransaction(
                 ?.takeIf(CustomLyricsManifestPolicy::isValidFileId)
             if (fileId == null || !allocatedIds.add(fileId)) {
                 cleanupNewFiles()
-                return CustomLyricsUpdateResult.Failed("无法生成唯一歌词文件 ID", summary)
+                return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UNIQUE_ID_FAILED.text(), summary)
             }
             if (!runCatching { writeRemoteFile(fileId, accepted.bytes) }.getOrDefault(false)) {
                 runCatching { deleteRemoteFile(fileId) }
                 cleanupNewFiles()
-                return CustomLyricsUpdateResult.Failed("无法写入共享歌词文件", summary)
+                return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text(), summary)
             }
             writtenIds += fileId
             val previous = oldById.getValue(item.appleMusicId)
@@ -182,9 +209,9 @@ class CustomLyricsUpdateTransaction(
                 fileId = fileId,
                 sizeBytes = accepted.bytes.size.toLong(),
                 sha256 = accepted.sha256,
-                // displayName, enabled, ID and source intentionally remain
-                // local state; remote catalogs are never allowed to overwrite
-                // those fields.
+                source = item.replacementSource ?: previous.source,
+                // ID, enabled and displayName remain local state. Only a legacy
+                // AUTO_CACHE origin can be recovered from a remote candidate.
             )
         }
 
@@ -195,7 +222,7 @@ class CustomLyricsUpdateTransaction(
         if (!runCatching { isBaselineCurrent() }.getOrDefault(false)) {
             cleanupNewFiles()
             return CustomLyricsUpdateResult.Failed(
-                "歌词索引在更新期间已被修改，请重试",
+                ModuleText.LYRICS_INDEX_CHANGED.text(),
                 summary,
             )
         }
@@ -212,11 +239,11 @@ class CustomLyricsUpdateTransaction(
                 oldManifest.entries.map(CustomLyricsEntry::appleMusicId)
         ) {
             cleanupNewFiles()
-            return CustomLyricsUpdateResult.Failed("更新后的歌词索引无效", summary)
+            return CustomLyricsUpdateResult.Failed(ModuleText.UPDATED_INDEX_INVALID.text(), summary)
         }
         if (!runCatching { publishManifest(nextManifest) }.getOrDefault(false)) {
             cleanupNewFiles()
-            return CustomLyricsUpdateResult.Failed("无法发布歌词索引", summary)
+            return CustomLyricsUpdateResult.Failed(ModuleText.INDEX_PUBLISH_FAILED.text(), summary)
         }
 
         val nextFileIds = nextManifest.entries.mapTo(mutableSetOf(), CustomLyricsEntry::fileId)
@@ -239,7 +266,7 @@ class CustomLyricsUpdateTransaction(
     ): CustomLyricsUpdateSummary = CustomLyricsUpdateSummary(
         checked = total,
         updated = items.count { it is CustomLyricsUpdateItem.Changed },
-        unchanged = items.count { it is CustomLyricsUpdateItem.Unchanged },
+        unchanged = items.count { it is CustomLyricsUpdateItem.Unchanged || it is CustomLyricsUpdateItem.SourceRecovered },
         skipped = items.count { it is CustomLyricsUpdateItem.Skipped },
         failed = items.count { it is CustomLyricsUpdateItem.Failed },
     )

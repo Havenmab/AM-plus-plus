@@ -8,6 +8,7 @@ class HookRegistrationScope : AutoCloseable {
     private val cleanup = mutableListOf<() -> Unit>()
 
     val isActive: Boolean get() = synchronized(lock) { state == State.ACTIVE }
+    val isClosed: Boolean get() = synchronized(lock) { state == State.CLOSED }
 
     fun activate() = synchronized(lock) {
         check(state == State.PREPARING) { "Registration scope cannot be activated again" }

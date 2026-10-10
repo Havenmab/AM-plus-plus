@@ -1,7 +1,8 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.widget.TextView
@@ -13,16 +14,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal fun EmbeddedSettingsHost.updateEmbeddedLyrics(activity: Activity) {
         val cancelled = AtomicBoolean(false)
         val progress = TextView(activity).apply {
-            text = "正在检查歌词…"
+            text = localizedText(ModuleText.CHECKING_LYRICS)
             textSize = 15f
-            setTextColor(EmbeddedSettingsPalette.onSurface)
+            setEmbeddedTextColor(activity) { colors -> colors.onSurface }
             setSingleLine(false)
             setPadding(dp(activity, 24), dp(activity, 8), dp(activity, 24), dp(activity, 8))
         }
-        val dialog = AlertDialog.Builder(activity)
-            .setTitle("歌词更新")
+        val dialog = embeddedDialogBuilder(activity)
+            .setTitle(localizedText(ModuleText.LYRICS_UPDATE))
             .setView(progress)
-            .setNegativeButton("取消") { _, _ -> cancelled.set(true) }
+            .setNegativeButton(localizedText(ModuleText.CANCEL)) { _, _ -> cancelled.set(true) }
             .create()
         dialog.setCanceledOnTouchOutside(false)
         dialog.setOnCancelListener { cancelled.set(true) }
@@ -35,16 +36,16 @@ internal fun EmbeddedSettingsHost.updateEmbeddedLyrics(activity: Activity) {
                         mainHandler.post {
                             if (dialog.isShowing) {
                                 progress.text =
-                                    "正在检查 ${update.checkedEntries}/${update.totalEntries} 条歌词…\n" +
-                                        "更新 ${update.updatedEntries} · 无变化 ${update.unchangedEntries} · " +
-                                        "跳过 ${update.skippedEntries} · 失败 ${update.failedEntries}"
+                                    localizedText(ModuleText.LYRICS_UPDATE_PROGRESS,
+                                        update.checkedEntries, update.totalEntries, update.updatedEntries,
+                                        update.unchangedEntries, update.skippedEntries, update.failedEntries)
                             }
                         }
                     },
                 )
             }.getOrElse { error ->
                 CustomLyricsUpdateResult.Failed(
-                    "歌词更新失败：${error.message.orEmpty()}",
+                    localizedText(ModuleText.LYRICS_UPDATE_FAILED, error.message.orEmpty()),
                 )
             }
             mainHandler.post {
@@ -53,13 +54,13 @@ internal fun EmbeddedSettingsHost.updateEmbeddedLyrics(activity: Activity) {
                 when (result) {
                     is CustomLyricsUpdateResult.Updated -> Toast.makeText(
                         current,
-                        "歌词更新完成：检查 ${result.checked} 条，更新 ${result.updated} 条，" +
-                            "无变化 ${result.unchanged} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条",
+                        localizedText(ModuleText.LYRICS_UPDATE_COMPLETE, result.checked, result.updated,
+                            result.unchanged, result.skipped, result.failed),
                         Toast.LENGTH_LONG,
                     ).show()
                     CustomLyricsUpdateResult.Cancelled -> Toast.makeText(
                         current,
-                        "歌词更新已取消",
+                        localizedText(ModuleText.LYRICS_UPDATE_CANCELLED),
                         Toast.LENGTH_SHORT,
                     ).show()
                     is CustomLyricsUpdateResult.Failed -> Toast.makeText(
@@ -97,7 +98,7 @@ internal fun EmbeddedSettingsHost.launchSafPicker(
         runCatching { activity.startActivityForResult(intent, requestCode) }
             .onFailure {
                 safRouter.route(requestCode, EmbeddedSafResult.RESULT_CANCELED, null)
-                Toast.makeText(activity, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, localizedText(ModuleText.PICKER_OPEN_FAILED), Toast.LENGTH_SHORT).show()
             }
     }
 
@@ -105,6 +106,7 @@ internal fun EmbeddedSettingsHost.launchSafPicker(
 internal fun EmbeddedSettingsHost.handleSafSelection(operation: EmbeddedSafOperation, uri: Uri) {
         val activity = currentActivity() ?: return
         when (operation) {
+            EmbeddedSafOperation.PluginZip -> importPluginZip(uri)
             EmbeddedSafOperation.Font -> runAsync(activity) { controller.importFont(uri) }
             EmbeddedSafOperation.Ttml -> {
                 val editorImport = pendingTtmlImport
@@ -117,19 +119,19 @@ internal fun EmbeddedSettingsHost.handleSafSelection(operation: EmbeddedSafOpera
                             if (imported == null) {
                                 Toast.makeText(
                                     current,
-                                    "所选文件不是有效且不超过 512 KiB 的 TTML",
+                                    localizedText(ModuleText.SELECTED_TTML_INVALID),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             } else {
                                 editorImport(imported)
-                                Toast.makeText(current, "TTML 已导入，请确认后保存", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(current, localizedText(ModuleText.TTML_IMPORTED), Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
                 } else {
                     val song = controller.currentSongDetails()
                     if (song == null) {
-                        Toast.makeText(activity, "尚未捕获当前歌曲", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activity, localizedText(ModuleText.NO_CURRENT_SONG), Toast.LENGTH_SHORT).show()
                     } else {
                         runAsync(activity) {
                             val replacing = controller.lyricsEntries()
@@ -155,16 +157,16 @@ internal fun EmbeddedSettingsHost.handleSafSelection(operation: EmbeddedSafOpera
 
 
 internal fun EmbeddedSettingsHost.confirmEmbeddedRestore(activity: Activity, uri: Uri) {
-        AlertDialog.Builder(activity)
-            .setTitle("恢复歌词备份")
-            .setMessage("覆盖：冲突歌词使用备份版本；不覆盖：冲突歌词保留当前版本。")
-            .setNegativeButton("取消", null)
-            .setNeutralButton("不覆盖") { _, _ ->
+        embeddedDialogBuilder(activity)
+            .setTitle(localizedText(ModuleText.RESTORE_LYRICS_BACKUP))
+            .setMessage(localizedText(ModuleText.RESTORE_CONFLICT_NOTICE))
+            .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+            .setNeutralButton(localizedText(ModuleText.KEEP_EXISTING)) { _, _ ->
                 runAsync(activity) {
                     controller.restoreLyrics(uri, CustomLyricsRestorePolicy.KEEP_EXISTING)
                 }
             }
-            .setPositiveButton("覆盖") { _, _ ->
+            .setPositiveButton(localizedText(ModuleText.OVERWRITE)) { _, _ ->
                 runAsync(activity) {
                     controller.restoreLyrics(uri, CustomLyricsRestorePolicy.OVERWRITE)
                 }
@@ -174,10 +176,10 @@ internal fun EmbeddedSettingsHost.confirmEmbeddedRestore(activity: Activity, uri
 
 
 internal fun EmbeddedSettingsHost.runAsync(activity: Activity, action: () -> EmbeddedActionResult) {
-        Toast.makeText(activity, "处理中…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(activity, localizedText(ModuleText.PROCESSING), Toast.LENGTH_SHORT).show()
         worker.execute {
             val result = runCatching(action).getOrElse {
-                EmbeddedActionResult.Failed(it.message.orEmpty().ifBlank { "操作失败" })
+                EmbeddedActionResult.Failed(it.message.orEmpty().ifBlank { localizedText(ModuleText.OPERATION_FAILED) })
             }
             mainHandler.post {
                 val current = currentActivity() ?: return@post

@@ -84,6 +84,7 @@ internal class AppleHookRegistrar(
             if (BuildConfig.DEBUG) callbackTracer.wrap(moduleId, executable, hooker) else hooker
         )
         AppleMusicDexKitWatchdog.hookInstalled(executable)
+        dev.amenhancer.module.hook.HookRegistrations.register("AM++ HLE: $moduleId", true, target = executable)
     }
 }
 

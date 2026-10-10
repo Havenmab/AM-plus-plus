@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics.source
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import java.io.File
 import java.io.FileOutputStream
@@ -108,7 +110,7 @@ data class LunabeatSong(
         get() = listOfNotNull(
             title.takeIf(String::isNotBlank),
             artists.joinToString(", ").takeIf(String::isNotBlank),
-        ).joinToString(" - ").ifBlank { "Lunabeat 自定义歌词" }
+        ).joinToString(" - ").ifBlank { ModuleText.LUNABEAT_LYRICS_NAME.text() }
 }
 
 data class LunabeatCatalog(

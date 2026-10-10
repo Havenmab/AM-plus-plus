@@ -1,5 +1,7 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
@@ -36,7 +38,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         if (currentDialog?.isShowing == true) return
 
         val initialSettings = runCatching { controller.currentSettings() }.getOrElse {
-            Toast.makeText(activity, "无法读取 AM++ 设置", Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, localizedText(ModuleText.SETTINGS_READ_FAILED), Toast.LENGTH_SHORT).show()
             return
         }
         val draft = EmbeddedSettingsDraft(initialSettings, controller::saveOrdinarySettings)
@@ -44,15 +46,11 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         var dialogReady = false
         lateinit var dialog: AlertDialog
 
-        val panelBackground = GradientDrawable().apply {
-            setColor(EmbeddedSettingsPalette.pageBackground)
-            cornerRadius = embeddedCardCornerRadius(activity)
-        }
         val pageHost = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             val hostInset = dp(activity, if (isEmbeddedPhone(activity)) 0 else 8)
             setPadding(hostInset, 0, hostInset, 0)
-            setBackgroundColor(EmbeddedSettingsPalette.pageBackground)
+            setEmbeddedBackgroundColor(activity) { colors -> colors.pageBackground }
         }
         val topBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -62,42 +60,42 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             setPadding(phoneHeaderInset, 0, phoneHeaderInset, 0)
         }
         val backButton = ImageView(activity).apply {
-            setImageDrawable(
-                embeddedSvgDrawable(EmbeddedSvgIcon.Back) ?: EmbeddedGlyphDrawable(
+            setEmbeddedImageDrawable(activity,
+                embeddedSvgDrawable(EmbeddedSvgIcon.Back, activity) ?: EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.BackArrow,
-                    EmbeddedSettingsPalette.primary,
+                    EmbeddedSettingsPalette.Light.primary,
                     strokeWidthFraction = 0.055f,
                 ),
             )
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            contentDescription = "返回"
+            contentDescription = localizedText(ModuleText.BACK)
             isClickable = true
             isFocusable = true
             setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
         }
         val moduleIcon = ImageView(activity).apply {
-            setImageDrawable(EmbeddedAmppBrandDrawable())
+            setEmbeddedImageDrawable(activity, EmbeddedAmppBrandDrawable())
             contentDescription = "AM++"
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(0, 0, 0, 0)
         }
         val pageTitle = TextView(activity).apply {
             textSize = embeddedTextSize(activity, 19f, 18f)
-            setTextColor(EmbeddedSettingsPalette.onSurface)
+            setEmbeddedTextColor(activity) { colors -> colors.onSurface }
             setTypeface(typeface, if (isEmbeddedPhone(activity)) Typeface.BOLD else Typeface.NORMAL)
             setSingleLine(false)
             maxLines = 2
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val saveButton = TextView(activity).apply {
-            text = "保存"
+            text = localizedText(ModuleText.SAVE)
             textSize = embeddedTextSize(activity, 15f, 14f)
             gravity = Gravity.CENTER
-            setTextColor(EmbeddedSettingsPalette.primary)
+            setEmbeddedTextColor(activity) { colors -> colors.primary }
             isClickable = true
             isFocusable = true
             setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 8), dp(activity, 8))
-            contentDescription = "保存 AM++ 设置"
+            contentDescription = localizedText(ModuleText.SAVE_SETTINGS)
         }
         topBar.addView(backButton, LinearLayout.LayoutParams(dp(activity, 44), embeddedTopBarHeight(activity)))
         topBar.addView(moduleIcon, LinearLayout.LayoutParams(embeddedHeaderIconSize(activity), embeddedHeaderIconSize(activity)).apply {
@@ -111,7 +109,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             embeddedTopBarHeight(activity),
         ))
         val headerDivider = View(activity).apply {
-            setBackgroundColor(EmbeddedSettingsPalette.divider)
+            setEmbeddedBackgroundColor(activity) { colors -> colors.divider }
             visibility = View.GONE
         }
         pageHost.addView(headerDivider, LinearLayout.LayoutParams(
@@ -131,18 +129,18 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         val closeBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            setBackgroundColor(EmbeddedSettingsPalette.pageBackground)
+            setEmbeddedBackgroundColor(activity) { colors -> colors.pageBackground }
             val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 16 else 12)
             setPadding(horizontalPadding, 0, horizontalPadding, 0)
         }
         val closeButton = TextView(activity).apply {
-            text = "关闭"
+            text = localizedText(ModuleText.CLOSE)
             textSize = embeddedTextSize(activity, 16f, 14f)
             gravity = Gravity.CENTER
-            setTextColor(EmbeddedSettingsPalette.primary)
+            setEmbeddedTextColor(activity) { colors -> colors.primary }
             isClickable = true
             isFocusable = true
-            contentDescription = "关闭 AM++ 设置"
+            contentDescription = localizedText(ModuleText.CLOSE_SETTINGS)
             setOnClickListener { dialog.dismiss() }
         }
         closeBar.addView(closeButton, LinearLayout.LayoutParams(
@@ -152,7 +150,12 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = panelBackground
+            bindEmbeddedTheme(activity) { colors ->
+                background = GradientDrawable().apply {
+                    setColor(colors.pageBackground)
+                    cornerRadius = embeddedCardCornerRadius(activity)
+                }
+            }
             clipToOutline = true
             addView(pageHost, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -167,16 +170,16 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
 
         fun saveDraft(close: Boolean) {
             if (draft.save()) {
-                Toast.makeText(activity, "已保存；需要重启的设置请重开 Apple Music。", Toast.LENGTH_LONG).show()
+                Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVED), Toast.LENGTH_LONG).show()
                 if (close) dialog.dismiss()
             } else {
-                Toast.makeText(activity, "保存 AM++ 设置失败", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
             }
         }
 
         fun updateDraft(next: ModuleSettings) {
             if (!draft.update(next)) {
-                Toast.makeText(activity, "保存 AM++ 设置失败", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -215,7 +218,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             ))
 
             val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
-            pageTitle.text = if (customLyricsPage) "自定义歌词" else "AM++"
+            pageTitle.text = if (customLyricsPage) localizedText(ModuleText.CUSTOM_LYRICS) else "AM++"
             (pageTitle.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
                 params.marginStart = dp(activity, if (customLyricsPage && !isEmbeddedPhone(activity)) 20 else 0)
                 pageTitle.layoutParams = params
@@ -240,7 +243,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     onSettingsChanged = ::updateDraft,
                     onCellularDataEntryChanged = { enabled ->
                         if (!draft.updateCellularDataEntry(enabled)) {
-                            Toast.makeText(activity, "保存 AM++ 设置失败", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
                         }
                     },
                     onOpenCustomLyrics = {
@@ -260,6 +263,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             }
             syncBottomCloseButton()
             syncDialogLayout()
+            refreshEmbeddedTheme(activity)
         }
 
         backButton.setOnClickListener {
@@ -271,7 +275,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             }
         }
         saveButton.setOnClickListener { saveDraft(close = true) }
-        dialog = AlertDialog.Builder(activity)
+        dialog = embeddedDialogBuilder(activity, customPanel = true)
             .setView(root)
             .create()
         dialog.setOnShowListener {
@@ -314,28 +318,28 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         onChooseFont: () -> Unit,
         onClearFont: () -> Unit,
     ) {
-        parent.addView(embeddedCard(activity, "功能", outlined = false) {
+        parent.addView(embeddedCard(activity, localizedText(ModuleText.FEATURES), outlined = false) {
             addView(embeddedSettingRow(
                 activity,
-                "平板双栏播放器",
-                "平板横屏启用双栏",
+                localizedText(ModuleText.TABLET_DUAL_PANE),
+                localizedText(ModuleText.TABLET_DUAL_PANE_SUMMARY),
                 settings.dualPaneEnabled,
-                iconTint = EmbeddedSettingsPalette.primary,
+                iconTint = EmbeddedSettingsPalette.Light.primary,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.TabletDualPane,
-                    EmbeddedSettingsPalette.primary,
+                    EmbeddedSettingsPalette.Light.primary,
                 ),
             ) { onSettingsChanged(settings.copy(dualPaneEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "强制显示蜂窝数据入口",
-                "恢复原生蜂窝数据设置 · 重开应用后显示",
+                localizedText(ModuleText.CELLULAR_SETTINGS),
+                localizedText(ModuleText.CELLULAR_SETTINGS_SUMMARY),
                 settings.forceCellularDataEntryEnabled,
-                iconTint = EmbeddedSettingsPalette.primary,
+                iconTint = EmbeddedSettingsPalette.Light.primary,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Document,
-                    EmbeddedSettingsPalette.primary,
+                    EmbeddedSettingsPalette.Light.primary,
                 ),
             ) {
                 onCellularDataEntryChanged(it)
@@ -348,72 +352,72 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 addView(embeddedDivider(activity))
                 addView(embeddedSettingRow(
                     activity,
-                    "平板底栏补偿",
-                    "如果底栏显示异常开启该选项",
+                    localizedText(ModuleText.TABLET_BOTTOM_BAR_FIX),
+                    localizedText(ModuleText.TABLET_BOTTOM_BAR_FIX_SUMMARY),
                     settings.navigationCompensationEnabled,
-                    iconTint = EmbeddedSettingsPalette.primary,
+                    iconTint = EmbeddedSettingsPalette.Light.primary,
                     iconDrawable = EmbeddedGlyphDrawable(
                         EmbeddedGlyphKind.BottomBar,
-                        EmbeddedSettingsPalette.primary,
+                        EmbeddedSettingsPalette.Light.primary,
                     ),
                 ) { onSettingsChanged(settings.copy(navigationCompensationEnabled = it)) })
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "液态玻璃底栏",
-                "为手机与开启平板双栏播放器的平板横屏的底栏和迷你播放器启用液态玻璃效果，需重开应用",
+                localizedText(ModuleText.LIQUID_GLASS_NAVIGATION),
+                localizedText(ModuleText.LIQUID_GLASS_NAVIGATION_SUMMARY),
                 settings.phoneLiquidGlassEnabled,
-                iconTint = EmbeddedSettingsPalette.accent,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Glass,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
             ) { onSettingsChanged(settings.copy(phoneLiquidGlassEnabled = it)); pageRefresh?.invoke() })
             if (settings.phoneLiquidGlassEnabled) {
                 addView(embeddedDivider(activity))
                 addView(embeddedGlassRangeRow(
                     activity = activity,
-                    title = "底栏高度",
+                    title = localizedText(ModuleText.BOTTOM_BAR_HEIGHT),
                     value = settings.phoneLiquidGlassBottomGapDp,
                     defaultValue = GlassPolicy.BOTTOM_DP,
                     rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-                    suffix = "底栏距屏幕底部的距离",
+                    suffix = localizedText(ModuleText.BOTTOM_BAR_HEIGHT_SUMMARY),
                 ) { onSettingsChanged(settings.copy(phoneLiquidGlassBottomGapDp = it)) })
                 addView(embeddedDivider(activity))
                 addView(embeddedGlassRangeRow(
                     activity = activity,
-                    title = "底栏背景模糊强度",
+                    title = localizedText(ModuleText.BOTTOM_BAR_BLUR),
                     value = settings.phoneLiquidGlassPanelBlurDp,
                     defaultValue = GlassPolicy.PANEL_BLUR_DP.toInt(),
                     rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-                    suffix = "作用于底栏与迷你播放器",
+                    suffix = localizedText(ModuleText.BOTTOM_BAR_BLUR_SUMMARY),
                 ) { onSettingsChanged(settings.copy(phoneLiquidGlassPanelBlurDp = it)) })
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "双向歌词模糊",
-                "手动滚动停止 1 秒后恢复",
+                localizedText(ModuleText.BIDIRECTIONAL_LYRIC_BLUR),
+                localizedText(ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY),
                 settings.futureBlurEnabled,
-                iconTint = EmbeddedSettingsPalette.primary,
+                iconTint = EmbeddedSettingsPalette.Light.primary,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.LyricsBlur,
-                    EmbeddedSettingsPalette.primary,
+                    EmbeddedSettingsPalette.Light.primary,
                 ),
             ) { onSettingsChanged(settings.copy(futureBlurEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "CJK 长尾歌词动画",
-                "CJK 歌词启用原生 rush-gradient 动画 · 重开 Apple Music 后生效",
+                localizedText(ModuleText.CJK_KARAOKE_ANIMATION),
+                localizedText(ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY),
                 settings.cjkKaraokeAnimationEnabled,
-                iconTint = EmbeddedSettingsPalette.accent,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Music,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
             ) { onSettingsChanged(settings.copy(cjkKaraokeAnimationEnabled = it)) })
             addView(embeddedDivider(activity))
@@ -423,14 +427,14 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
             val metadataLookupEnabled =
                 regionReplacementEnabled || settings.restoreCjkOriginalMetadata
-            // 1. HLE 将Apple Music改成其他地区 (title/summary/options verbatim).
+            // 1. HLE 将Apple Music改成其他地区 (title/summary/options verbatim, text in ModuleText).
             addView(embeddedNavigationRow(
                 activity,
-                "将Apple Music改成其他地区",
-                "可能影响加载速度，仅用于内容UI语言切换，无法播放/使用账号所在地区没有的歌曲/服务，此类歌曲/服务只能浏览",
+                localizedText(ModuleText.REGION_SELECTION),
+                localizedText(ModuleText.REGION_SELECTION_SUMMARY),
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
                 trailingValue = settings.regionSelection.displayName,
             ) {
@@ -446,13 +450,13 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 addView(embeddedDivider(activity))
                 addView(embeddedSettingRow(
                     activity,
-                    "歌曲信息替换至设定地区语言",
+                    localizedText(ModuleText.REGION_METADATA_LANGUAGE),
                     "",
                     settings.overrideAccountLanguage,
-                    iconTint = EmbeddedSettingsPalette.accent,
+                    iconTint = EmbeddedSettingsPalette.Light.accent,
                     iconDrawable = EmbeddedGlyphDrawable(
                         EmbeddedGlyphKind.Translate,
-                        EmbeddedSettingsPalette.accent,
+                        EmbeddedSettingsPalette.Light.accent,
                     ),
                 ) {
                     onSettingsChanged(settings.copy(overrideAccountLanguage = it))
@@ -463,13 +467,13 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
-                "替换中日韩歌曲信息为原地区原名",
+                localizedText(ModuleText.REGION_RESTORE_ORIGINAL),
                 "",
                 settings.restoreCjkOriginalMetadata,
-                iconTint = EmbeddedSettingsPalette.accent,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
             ) {
                 onSettingsChanged(settings.copy(restoreCjkOriginalMetadata = it))
@@ -480,13 +484,13 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 addView(embeddedDivider(activity))
                 addView(embeddedSettingRow(
                     activity,
-                    "创建检索库以提升替换体验",
-                    "极少量空间占用换取高效率性能，当关闭时冷启动后需重新抓取歌曲信息，推荐开启",
+                    localizedText(ModuleText.REGION_METADATA_CACHE),
+                    localizedText(ModuleText.REGION_METADATA_CACHE_SUMMARY),
                     settings.localizedMetadataCache,
-                    iconTint = EmbeddedSettingsPalette.accent,
+                    iconTint = EmbeddedSettingsPalette.Light.accent,
                     iconDrawable = EmbeddedGlyphDrawable(
                         EmbeddedGlyphKind.Document,
-                        EmbeddedSettingsPalette.accent,
+                        EmbeddedSettingsPalette.Light.accent,
                     ),
                 ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
             }
@@ -497,11 +501,11 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 addView(embeddedDivider(activity))
                 addView(embeddedNavigationRow(
                     activity,
-                    "清空检索库",
-                    "删除已缓存的所有地区歌曲信息与原地区原名结果，下次读取时重新向 Apple Music 获取",
+                    localizedText(ModuleText.REGION_CACHE_CLEAR),
+                    localizedText(ModuleText.REGION_CACHE_CLEAR_SUMMARY),
                     iconDrawable = EmbeddedGlyphDrawable(
                         EmbeddedGlyphKind.DocumentSearch,
-                        EmbeddedSettingsPalette.accent,
+                        EmbeddedSettingsPalette.Light.accent,
                     ),
                 ) {
                     confirmEmbeddedMetadataCacheClear(activity) {
@@ -519,7 +523,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                         pageRefresh?.invoke()
                         Toast.makeText(
                             activity,
-                            "已请求清空检索库，将在下次读取歌曲信息时生效",
+                            localizedText(ModuleText.REGION_CACHE_CLEAR_REQUESTED),
                             Toast.LENGTH_LONG,
                         ).show()
                     }
@@ -528,17 +532,17 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,
-                "自定义歌词",
-                if (lyricsCount == 0) "添加和管理 Apple Music ID 歌词映射" else "已配置 $lyricsCount 首歌词",
+                localizedText(ModuleText.CUSTOM_LYRICS),
+                if (lyricsCount == 0) localizedText(ModuleText.CUSTOM_LYRICS_SUMMARY) else localizedText(ModuleText.CONFIGURED_LYRICS_COUNT, lyricsCount),
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Music,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
                 onClick = onOpenCustomLyrics,
             ))
         })
         parent.addView(embeddedSpacer(activity, 12))
-        parent.addView(embeddedCard(activity, "高级设置") {
+        parent.addView(embeddedCard(activity, localizedText(ModuleText.ADVANCED_SETTINGS)) {
             addView(embeddedBlurRadiusRow(activity, settings.lyricBlurRadiusOffsetPx) {
                 onSettingsChanged(settings.copy(lyricBlurRadiusOffsetPx = it))
             })
@@ -556,16 +560,17 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             onClearFont = onClearFont,
         ))
         parent.addView(embeddedSpacer(activity, 20))
-        parent.addView(embeddedSectionLabel(activity, "应用"))
+        parent.addView(embeddedSectionLabel(activity, localizedText(ModuleText.APPLICATION)))
+        parent.addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGINS), localizedText(ModuleText.PLUGINS_SUMMARY), onClick = { showPluginManagement(activity) }))
         parent.addView(embeddedInfoCard(
             activity,
-            "配置保存在 Apple Music 私有目录中",
+            localizedText(ModuleText.PRIVATE_STORAGE_NOTICE),
         ))
         parent.addView(embeddedSpacer(activity, 16))
-        parent.addView(embeddedSectionLabel(activity, "帮助"))
+        parent.addView(embeddedSectionLabel(activity, localizedText(ModuleText.HELP)))
         parent.addView(embeddedInfoCard(
             activity,
-            "重启提示\n字体、双栏播放器以及标记“需重启”的设置，需要完全停止并重新打开 Apple Music 后生效。",
+            localizedText(ModuleText.RESTART_NOTICE),
             onClick = { showEmbeddedHelp(activity) },
         ))
     }
@@ -583,12 +588,12 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
 
         parent.addView(embeddedSettingRow(
             activity,
-            "自定义歌词替换",
-            "按 Apple Music ID 注入，更改后重开 Apple Music 生效",
+            localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT),
+            localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT_SUMMARY),
             settings.customLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) {
@@ -600,26 +605,26 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "自动实时补全",
-            "非逐字歌词自动查找 AMLL、Lunabeat 和我的仓库，关闭后仅使用已配置歌词",
+            localizedText(ModuleText.AUTO_LYRICS),
+            localizedText(ModuleText.AUTO_LYRICS_SUMMARY),
             settings.automaticLyricsEnabled,
             enabled = settings.customLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(automaticLyricsEnabled = it)) })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "在线补充无歌词歌曲",
-            "无歌词时按歌名、歌手和时长在线搜索；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT),
+            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT_SUMMARY),
             settings.onlineLyricsSupplementEnabled,
             enabled = settings.customLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) {
@@ -630,28 +635,28 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "补全歌词翻译与发音",
-            "补齐缺失的歌词翻译；发音仅保留 Apple 官方音译，不再使用三方音译；需要开启“自动实时补全”，更改后重开 Apple Music 生效",
+            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION),
+            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION_SUMMARY),
             settings.onlineLyricsTranslationEnabled,
             enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it)) })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "不显示国语歌拼音",
-            "国语（普通话）歌曲不显示官方拼音；粤语歌不受影响",
+            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN),
+            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN_SUMMARY),
             settings.onlineLyricsHideMandarinPinyinEnabled,
             enabled = settings.customLyricsEnabled &&
                 settings.automaticLyricsEnabled &&
                 settings.onlineLyricsTranslationEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) {
@@ -665,26 +670,26 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "自动选择来源顺序",
-            "按内置顺序（网易云、QQ、酷我、酷狗）依次尝试；关闭后使用自定义顺序",
+            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER),
+            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER_SUMMARY),
             settings.onlineLyricsAutomaticOrderEnabled,
             enabled = chainEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(onlineLyricsAutomaticOrderEnabled = it)) })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedSettingRow(
             activity,
-            "全局最优匹配",
-            "开启后为命中的来源候选评分并取最高分；关闭则采用首个达到匹配分数的候选",
+            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST),
+            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST_SUMMARY),
             settings.onlineLyricsGlobalBestEnabled,
             enabled = chainEnabled,
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(onlineLyricsGlobalBestEnabled = it)) })
@@ -694,12 +699,12 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             parent.addView(embeddedSettingRow(
                 activity,
                 embeddedOnlineLyricsSourceLabel(sourceId),
-                "无歌词时搜索该来源",
+                localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY),
                 settings.onlineLyricsSourceEnabled(sourceId),
                 enabled = chainEnabled,
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.DocumentSearch,
-                    EmbeddedSettingsPalette.accent,
+                    EmbeddedSettingsPalette.Light.accent,
                 ),
                 compactWidePadding = true,
             ) {
@@ -737,7 +742,9 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             )
 
             val search = EditText(activity).apply {
-                hint = "搜索名称或 Apple Music ID"
+
+                bindEmbeddedInputTheme(activity)
+                hint = localizedText(ModuleText.SEARCH_LYRICS)
                 textSize = embeddedTextSize(activity, 14f, 13f)
                 inputType = InputType.TYPE_CLASS_TEXT
                 imeOptions = EditorInfo.IME_ACTION_SEARCH
@@ -746,20 +753,22 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                 includeFontPadding = false
                 setText(customLyricsSearchQuery)
                 setPadding(dp(activity, 12), 0, dp(activity, 12), 0)
-                setTextColor(EmbeddedSettingsPalette.onSurface)
-                setHintTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+                setEmbeddedTextColor(activity) { colors -> colors.onSurface }
+                setEmbeddedHintColor(activity) { colors -> colors.onSurfaceVariant }
                 background = null
             }
             addView(FrameLayout(activity).apply {
-                background = GradientDrawable().apply {
-                    setColor(EmbeddedSettingsPalette.softBackground)
-                    cornerRadius = dp(activity, 8).toFloat()
+                bindEmbeddedTheme(activity) { colors ->
+                    background = GradientDrawable().apply {
+                        setColor(colors.softBackground)
+                        cornerRadius = dp(activity, 8).toFloat()
+                    }
                 }
                 addView(ImageView(activity).apply {
-                    setImageDrawable(
+                    setEmbeddedImageDrawable(activity,
                         EmbeddedGlyphDrawable(
                             EmbeddedGlyphKind.Search,
-                            EmbeddedSettingsPalette.onSurfaceVariant,
+                            EmbeddedSettingsPalette.Light.onSurfaceVariant,
                         ),
                     )
                     contentDescription = null
@@ -788,16 +797,16 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                     dp(activity, 6),
                 )
                 addView(TextView(activity).apply {
-                    text = "已配置"
+                    text = localizedText(ModuleText.CONFIGURED)
                     textSize = embeddedTextSize(activity, 14f, 13f)
-                    setTextColor(EmbeddedSettingsPalette.accent)
+                    setEmbeddedTextColor(activity) { colors -> colors.accent }
                     setTypeface(typeface, Typeface.BOLD)
                 }, LinearLayout.LayoutParams(0, dp(activity, 28), 1f))
                 addView(TextView(activity).apply {
-                    text = "${entries.size} 首"
+                    text = localizedText(ModuleText.SONG_COUNT, entries.size)
                     textSize = embeddedTextSize(activity, 13f, 13f)
                     gravity = Gravity.CENTER_VERTICAL or Gravity.END
-                    setTextColor(EmbeddedSettingsPalette.accent)
+                    setEmbeddedTextColor(activity) { colors -> colors.accent }
                     setTypeface(typeface, Typeface.BOLD)
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 28)))
             }, matchWidthWrapContent())
@@ -815,28 +824,28 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                         gravity = Gravity.CENTER_HORIZONTAL
                         setPadding(dp(activity, 16), dp(activity, 42), dp(activity, 16), dp(activity, 48))
                         addView(ImageView(activity).apply {
-                            setImageDrawable(
+                            setEmbeddedImageDrawable(activity,
                                 EmbeddedGlyphDrawable(
                                     EmbeddedGlyphKind.DocumentSearch,
-                                    EmbeddedSettingsPalette.disabledText,
+                                    EmbeddedSettingsPalette.Light.disabledText,
                                 ),
                             )
                             contentDescription = null
                             setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
                         }, LinearLayout.LayoutParams(dp(activity, 56), dp(activity, 56)))
                         addView(TextView(activity).apply {
-                            text = if (entries.isEmpty()) "暂无自定义歌词" else "未找到匹配结果"
+                            text = if (entries.isEmpty()) localizedText(ModuleText.NO_CUSTOM_LYRICS) else localizedText(ModuleText.NO_SEARCH_RESULTS)
                             textSize = 15f
                             gravity = Gravity.CENTER
-                            setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+                            setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                             setSingleLine(false)
                             setPadding(0, dp(activity, 8), 0, 0)
                         }, matchWidthWrapContent())
                         addView(TextView(activity).apply {
-                            text = if (entries.isEmpty()) "添加歌词后会显示在这里" else "尝试更换关键词或检查 ID 是否正确"
+                            text = if (entries.isEmpty()) localizedText(ModuleText.ADD_LYRICS_EMPTY_HINT) else localizedText(ModuleText.SEARCH_LYRICS_EMPTY_HINT)
                             textSize = 12.5f
                             gravity = Gravity.CENTER
-                            setTextColor(EmbeddedSettingsPalette.disabledText)
+                            setEmbeddedTextColor(activity) { colors -> colors.mutedText }
                             setSingleLine(false)
                             setPadding(0, dp(activity, 4), 0, 0)
                         }, matchWidthWrapContent())
@@ -849,16 +858,16 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                     if (index < visibleGroups.lastIndex) entriesRegion.addView(embeddedDivider(activity))
                 }
                 entriesRegion.addView(TextView(activity).apply {
-                    text = "已显示 ${state.visibleCount} / 共 ${state.totalCount} 首"
+                    text = localizedText(ModuleText.LYRICS_VISIBLE_COUNT, state.visibleCount, state.totalCount)
                     textSize = 13f
-                    setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+                    setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                     setPadding(dp(activity, 16), dp(activity, 8), dp(activity, 16), dp(activity, 12))
                 })
                 if (state.hasMore) {
                     entriesRegion.addView(LinearLayout(activity).apply {
                         orientation = embeddedActionOrientation(activity)
                         setPadding(dp(activity, 12), 0, dp(activity, 12), dp(activity, 12))
-                        addView(embeddedActionButton(activity, "加载更多") {
+                        addView(embeddedActionButton(activity, localizedText(ModuleText.LOAD_MORE)) {
                             customLyricsListState.loadMore()
                             renderEntries()
                         }, embeddedActionButtonParams(activity))
@@ -886,15 +895,15 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         parent.addView(embeddedDivider(activity))
         parent.addView(embeddedNavigationRow(
             activity,
-            "清空自定义歌词",
+            localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
             if (entries.isEmpty()) {
-                "删除所有自定义歌词映射及其已存储的 TTML 文件"
+                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL)
             } else {
-                "删除全部 ${entries.size} 条自定义歌词及其已存储的 TTML 文件"
+                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, entries.size)
             },
             iconDrawable = EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.Delete,
-                EmbeddedSettingsPalette.accent,
+                EmbeddedSettingsPalette.Light.accent,
             ),
         ) {
             confirmEmbeddedCustomLyricsClear(activity, entries.size) {
@@ -909,14 +918,11 @@ internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(
     entryCount: Int,
     onConfirmed: () -> Unit,
 ) {
-    AlertDialog.Builder(activity)
-        .setTitle("清空自定义歌词")
-        .setMessage(
-            "将删除全部 $entryCount 条自定义歌词映射及其已存储的 TTML 文件，" +
-                "并重置歌词索引。此操作不可撤销。",
-        )
-        .setNegativeButton("取消", null)
-        .setPositiveButton("清空") { _, _ -> onConfirmed() }
+    embeddedDialogBuilder(activity)
+        .setTitle(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS))
+        .setMessage(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM, entryCount))
+        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
         .show()
 }
 
@@ -937,10 +943,12 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
         // The inline edit/delete row was removed; the remaining 44dp control row
         // plus symmetric card padding is the complete intrinsic height.
         minimumHeight = dp(activity, if (isEmbeddedPhone(activity)) 60 else 56)
-        background = GradientDrawable().apply {
-            setColor(Color.WHITE)
-            setStroke(dp(activity, 1), EmbeddedSettingsPalette.outline)
-            cornerRadius = dp(activity, 8).toFloat()
+        bindEmbeddedTheme(activity) { colors ->
+            background = GradientDrawable().apply {
+                setColor(colors.surface)
+                setStroke(dp(activity, 1), colors.outline)
+                cornerRadius = dp(activity, 8).toFloat()
+            }
         }
         val artist = song
             ?.takeIf { it.appleMusicId == entry.appleMusicId }
@@ -956,9 +964,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
             append("AM ID: ")
             append(entry.appleMusicId)
             if (group.entries.size > 1) {
-                append(" · 共 ")
-                append(group.entries.size)
-                append(" 个 ID")
+                append(localizedText(ModuleText.LYRICS_ID_COUNT, group.entries.size))
             }
         }
         addView(LinearLayout(activity).apply {
@@ -969,7 +975,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                 addView(TextView(activity).apply {
                     text = entry.displayName.ifBlank { entry.appleMusicId.toString() }
                     textSize = embeddedTextSize(activity, 16f, 14f)
-                    setTextColor(EmbeddedSettingsPalette.onSurface)
+                    setEmbeddedTextColor(activity) { colors -> colors.onSurface }
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     setSingleLine(false)
                     maxLines = 2
@@ -977,7 +983,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                 addView(TextView(activity).apply {
                     text = secondary
                     textSize = embeddedTextSize(activity, 12.5f, 12f)
-                    setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+                    setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                     setPadding(0, dp(activity, 2), 0, 0)
                     setSingleLine(false)
                     maxLines = 3
@@ -987,22 +993,21 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
             })
             addView(Switch(activity).apply {
                 isChecked = group.allEnabled
-                contentDescription = "${entry.displayName} 自定义歌词开关"
-                thumbTintList = embeddedSwitchThumbColors()
-                trackTintList = embeddedSwitchTrackColors()
+                contentDescription = localizedText(ModuleText.LYRICS_TOGGLE_ACCESSIBILITY, entry.displayName)
+                bindEmbeddedSwitchTheme(activity)
                 setOnCheckedChangeListener { _, checked ->
                     runAsync(activity) { controller.setLyricsEnabled(group.appleMusicIds, checked) }
                 }
             }, LinearLayout.LayoutParams(dp(activity, if (isEmbeddedPhone(activity)) 56 else 48), dp(activity, 44)))
             addView(ImageView(activity).apply {
-                setImageDrawable(
+                setEmbeddedImageDrawable(activity,
                     EmbeddedGlyphDrawable(
                         EmbeddedGlyphKind.MoreVertical,
-                        EmbeddedSettingsPalette.onSurfaceVariant,
+                        EmbeddedSettingsPalette.Light.onSurfaceVariant,
                     ),
                 )
                 scaleType = ImageView.ScaleType.CENTER
-                contentDescription = "更多歌词操作"
+                contentDescription = localizedText(ModuleText.MORE_LYRICS_ACTIONS)
                 isClickable = true
                 isFocusable = true
                 setPadding(dp(activity, 6), dp(activity, 8), dp(activity, 6), dp(activity, 8))
@@ -1016,27 +1021,24 @@ internal fun EmbeddedSettingsHost.confirmEmbeddedMetadataCacheClear(
     activity: Activity,
     onConfirmed: () -> Unit,
 ) {
-    AlertDialog.Builder(activity)
-        .setTitle("清空检索库")
-        .setMessage(
-            "将删除所有地区已缓存的歌曲信息与原地区原名结果，下次读取时重新向 Apple Music 获取。" +
-                "歌词、字体等自定义内容不受影响。",
-        )
-        .setNegativeButton("取消", null)
-        .setPositiveButton("清空") { _, _ -> onConfirmed() }
+    embeddedDialogBuilder(activity)
+        .setTitle(localizedText(ModuleText.REGION_CACHE_CLEAR))
+        .setMessage(localizedText(ModuleText.REGION_CACHE_CLEAR_CONFIRM))
+        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
         .show()
 }
 
 
 internal fun EmbeddedSettingsHost.confirmEmbeddedLyricsDelete(activity: Activity, group: CustomLyricsUiGroup) {
         val entry = group.primary
-        AlertDialog.Builder(activity)
+        embeddedDialogBuilder(activity)
             .setMessage(
-                "删除“${entry.displayName.ifBlank { entry.appleMusicId.toString() }}”及其 " +
-                    "${group.entries.size} 个 Apple Music ID 的 TTML 映射？",
+                localizedText(ModuleText.DELETE_LYRICS_CONFIRM,
+                    entry.displayName.ifBlank { entry.appleMusicId.toString() }, group.entries.size),
             )
-            .setNegativeButton("取消", null)
-            .setPositiveButton("删除") { _, _ ->
+            .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+            .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ ->
                 runAsync(activity) { controller.deleteLyrics(group.appleMusicIds) }
             }
             .show()
@@ -1049,16 +1051,17 @@ internal fun EmbeddedSettingsHost.showEmbeddedLyricsOverflowMenu(
         song: CurrentSongDetails?,
         anchor: View,
     ) {
-        PopupMenu(activity, anchor).apply {
-            menu.add("编辑").setOnMenuItemClickListener {
+        refreshEmbeddedTheme(activity)
+        PopupMenu(embeddedThemedContext(activity), anchor).apply {
+            menu.add(localizedText(ModuleText.EDIT)).setOnMenuItemClickListener {
                 showLyricsEditor(activity, group, song)
                 true
             }
-            menu.add("删除").setOnMenuItemClickListener {
+            menu.add(localizedText(ModuleText.DELETE)).setOnMenuItemClickListener {
                 confirmEmbeddedLyricsDelete(activity, group)
                 true
             }
-            menu.add("复制 Apple Music ID").setOnMenuItemClickListener {
+            menu.add(localizedText(ModuleText.COPY_MUSIC_ID)).setOnMenuItemClickListener {
                 val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                 clipboard?.setPrimaryClip(
                     android.content.ClipData.newPlainText(
@@ -1066,7 +1069,7 @@ internal fun EmbeddedSettingsHost.showEmbeddedLyricsOverflowMenu(
                         group.appleMusicIds.joinToString(","),
                     ),
                 )
-                Toast.makeText(activity, "已复制 Apple Music ID", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, localizedText(ModuleText.MUSIC_ID_COPIED), Toast.LENGTH_SHORT).show()
                 true
             }
             show()
@@ -1075,15 +1078,15 @@ internal fun EmbeddedSettingsHost.showEmbeddedLyricsOverflowMenu(
 
 
 internal fun EmbeddedSettingsHost.embeddedCustomLyricsSourceName(source: String): String = when (source) {
-        CustomLyricsSources.AUTO_CACHE -> "自动缓存"
+        CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)
         CustomLyricsSources.AMLL -> "AMLL"
-        CustomLyricsSources.AM_LYRICS -> "AM-Lyrics 仓库"
+        CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.AM_LYRICS_REPOSITORY)
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
         CustomLyricsSources.KUWO -> "酷我"
         CustomLyricsSources.NETEASE -> "网易云"
         CustomLyricsSources.QQ -> "QQ 音乐"
         CustomLyricsSources.KUGOU -> "酷狗"
-        else -> "手动 TTML"
+        else -> localizedText(ModuleText.MANUAL_TTML)
     }
 
 /** Display name for one selectable online chain source id. */

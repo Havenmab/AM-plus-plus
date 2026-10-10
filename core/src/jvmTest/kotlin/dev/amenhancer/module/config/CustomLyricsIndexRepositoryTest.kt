@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.CustomLyricsSources
@@ -101,7 +103,7 @@ class CustomLyricsIndexRepositoryTest {
         assertTrue(state.manifest.entries.isEmpty())
         assertEquals(false, state.canCommit)
         assertEquals(
-            CustomLyricsIndexCommitResult.Failed("歌词索引文件不可读，无法修改"),
+            CustomLyricsIndexCommitResult.Failed(ModuleText.LYRICS_INDEX_UNREADABLE.text()),
             result,
         )
         assertTrue(events.isEmpty())
@@ -144,7 +146,7 @@ class CustomLyricsIndexRepositoryTest {
         val result = repository.commit(repository.state(prefs), largeManifest(2))
 
         assertEquals(
-            CustomLyricsIndexCommitResult.Failed("歌词索引文件不可读，无法修改"),
+            CustomLyricsIndexCommitResult.Failed(ModuleText.LYRICS_INDEX_UNREADABLE.text()),
             result,
         )
         assertTrue(events.isEmpty())
@@ -170,7 +172,7 @@ class CustomLyricsIndexRepositoryTest {
         )
 
         assertEquals(
-            CustomLyricsIndexCommitResult.Failed("歌词索引超出大小上限"),
+            CustomLyricsIndexCommitResult.Failed(ModuleText.LYRICS_INDEX_TOO_LARGE.text()),
             result,
         )
         assertTrue(events.isEmpty())

@@ -7,6 +7,10 @@
 <h1 align="center">AM++</h1>
 
 <p align="center">
+  简体中文 | <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   Apple Music 的 Android 增强模块：平板双栏、歌词模糊与字体、自定义歌词、歌曲名修正、液态玻璃底栏。
 </p>
 
@@ -27,28 +31,22 @@
 1. [项目简介](#项目简介)
 2. [功能](#功能)
 3. [效果展示](#效果展示)
-4. [兼容性与限制](#兼容性与限制)
-5. [安装](#安装)
-6. [使用](#使用)
-7. [从源码构建](#从源码构建)
-8. [项目结构](#项目结构)
-9. [路线图](#路线图)
-10. [贡献](#贡献)
-11. [隐私与权限](#隐私与权限)
-12. [许可证与致谢](#许可证与致谢)
+4. [安装](#安装)
+5. [使用](#使用)
+6. [从源码构建](#从源码构建)
+7. [项目结构](#项目结构)
+8. [路线图](#路线图)
+9. [贡献](#贡献)
+10. [隐私与权限](#隐私与权限)
+11. [许可证与致谢](#许可证与致谢)
 
 </details>
 
-## 版本适配重构
-
-架构和后续适配入口见 [适配手册](docs/host-adaptation-guide.md)，旧版重构验证见 [验证记录](docs/refactor-validation.md)。开发分支已为精确的 Apple Music **7.0.0-beta/1606** 实现 Fragment 接入和新平板玻璃，正在用户真机验收，详见 [1606 适配记录](docs/applemusic-700-adaptation.md)。其他 7.x 版本需要独立适配。
-
-
 ## 项目简介
 
-AM++ 通过 libxposed API 102 注入 Apple Music（`com.apple.android.music`）。它不替换播放器，只在保留原有播放流程的前提下补充增强能力。
+设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”。
 
-设置页嵌在 Apple Music 自己的设置列表中，入口是“AM++ 模块设置”，没有独立的桌面图标。首次启动时会把 Xposed remote preferences／remote file 中的旧配置迁移到 Apple Music 宿主私有目录，之后设置和文件都保存在那里。
+支持通过 ZIP 导入和管理插件；开发说明见 [插件开发手册](docs/plugin-development.md)。
 
 ## 功能
 
@@ -99,14 +97,6 @@ AM++ 通过 libxposed API 102 注入 Apple Music（`com.apple.android.music`）�
   <img src="docs/images/liquid-glass-demo.jpg" alt="液态玻璃底栏与迷你播放器（主页与资料库）" width="720">
 </p>
 
-## 兼容性与限制
-
-| 项目 | 支持范围 |
-| --- | --- |
-| Android | 8.0（API 26）及以上；双向歌词模糊需 12（API 31）及以上；液态玻璃底栏需 13（API 33）及以上 |
-| Xposed 框架 | 实现 libxposed API 102、remote preferences 和 remote file 的框架 |
-| Apple Music | `6.5.1 (1583)`、`6.5.2 (1586)`、`6.5.3 (1599)` |
-
 ## 安装
 
 ### Xposed 模块（推荐）
@@ -117,7 +107,7 @@ AM++ 通过 libxposed API 102 注入 Apple Music（`com.apple.android.music`）�
 2. 在 LSPosed 或兼容的 Xposed 管理器中启用 **AM++**。
 3. 作用域只勾选 Apple Music（`com.apple.android.music`）。
 4. 强制停止并重新打开 Apple Music。
-5. 打开 Apple Music → 设置 → “AM++ 模块设置”，确认页面显示已连接 libxposed API 102 后再修改设置。
+5. 打开 Apple Music → 设置 → “AM++ 模块设置”。
 
 ### npatch 嵌入版
 
@@ -217,12 +207,9 @@ hook-runtime/             libxposed 包装、注册作用域与日志
 host-applemusic/           版本 profile、反射/DexKit 解析与原生宿主接入
 glass/                    AndroidLiquidGlass 渲染器（固定提交纳入）
 backdrop/                 上游 Backdrop 库
-docs/images/              演示图
-docs/                     当前维护文档、功能矩阵与验证记录
+docs/                     适配与功能文档
 scripts/                  可选的真机回归、录屏分析与 host profile 校验脚本
 ```
-
-`scripts/` 中的设备脚本需要 ADB；部分液态玻璃检查还需要 root、Python 和 OpenCV，并按参考设备的分辨率写死了坐标，运行前用 `-Serial`、`-Device` 或 `ANDROID_SERIAL` 指定设备。`verify-host-profile.py` 不需要设备，只读校验 APK 里的 profile 符号。详见 [scripts/README.md](scripts/README.md)。
 
 ## 路线图
 
@@ -231,8 +218,8 @@ scripts/                  可选的真机回归、录屏分析与 host profile �
 - [x] 自定义歌词注入与备份恢复
 - [x] 歌词字体导入与恢复
 - [x] 液态玻璃底栏与迷你播放器（手机；开启双栏的平板横屏生效范围待真机验收）
+- [x] 歌曲名显示修正
 - [x] 地区/元数据四项设置（对齐 HyperLyrics Enhanced：地区选择 + 歌曲信息替换 + 原名还原 + 检索库；仅静态验证，待真机验收）
-- [ ] 补齐 Apple Music 6.5.3 的两处降级
 - [ ] 为 6.5.1/1583 与 6.5.2/1586 取证目录执行器与 amp-api 目标（当前这两层仅 6.5.3/1599 与 7.0.0-beta/1606 可用）
 - [ ] 持续适配后续 Apple Music 版本
 

@@ -4,6 +4,13 @@ import android.view.View
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
+/** getMediaBrowser is ia.a$c's public default method, not declared on a Fragment superclass. */
+internal fun resolveFragmentNativeBrowserGetter(fragment: Class<*>): Method =
+    fragment.getMethod("getMediaBrowser").apply {
+        check(!Modifier.isStatic(modifiers) && returnType != java.lang.Void.TYPE)
+        isAccessible = true
+    }
+
 /** 1606's own selector handles both the song card and native queue header. No artwork mutation. */
 internal fun resolveFragmentNativeCoverGetter(controller: Class<*>): Method =
     controller.getDeclaredMethod("f1", controller).apply {

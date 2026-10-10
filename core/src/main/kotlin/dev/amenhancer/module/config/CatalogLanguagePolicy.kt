@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import java.util.Locale
 
 /**
@@ -28,10 +30,10 @@ object CatalogLanguagePolicy {
 
     fun displayName(tag: String?, displayLocale: Locale = Locale.getDefault()): String {
         val normalized = normalize(tag)
-        if (normalized.isEmpty()) return "不改写（跟随 Apple Music）"
+        if (normalized.isEmpty()) return ModuleText.CATALOG_LANGUAGE_DEFAULT.text(locale = displayLocale)
         val locale = Locale.forLanguageTag(normalized)
         val language = locale.getDisplayLanguage(displayLocale).ifBlank { normalized }
-        return "$language（$normalized）"
+        return ModuleText.CATALOG_LANGUAGE_NAME.text(language, normalized, locale = displayLocale)
     }
 
     private fun buildLocale(tag: String): Locale? =

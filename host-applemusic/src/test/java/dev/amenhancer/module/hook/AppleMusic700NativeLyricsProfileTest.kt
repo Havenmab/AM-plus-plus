@@ -212,21 +212,21 @@ class AppleMusic700NativeLyricsProfileTest {
         val target = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
         )
-        assertTrue(target.contains("hookResolver: AppleMusicHookResolver? = null"))
-        assertTrue(target.contains("AppleNativeLyricModelHooks("))
-        assertTrue(target.contains("runtime.nativeLyricOverlay"))
+        assertTrue(target.contains("nativeLyricDelivery: NativeLyricsTarget? = null"))
         assertTrue(target.contains("nativeLyricDelivery?.onLyricsPointer(original)"))
+        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPresentation(param.thisObject, original)"))
 
         val factory = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt",
         )
         assertTrue(factory.contains("AppleMusicVersion(build.versionName, build.versionCode)"))
-        assertTrue(factory.contains("hookResolver = nativeLyricResolver"))
+        assertTrue(factory.contains("nativeLyrics = nativeLyricsTarget"))
+        assertTrue(factory.contains("AppleMusicNativeLyricsTarget("))
 
         val runtime = projectFile(
             "app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt",
         )
-        assertTrue(runtime.contains("val nativeLyricOverlay = NativeLyricOverlayStore()"))
+        assertTrue(runtime.contains("nativeLyricOverlay: NativeLyricOverlayStore"))
         assertTrue(runtime.contains("nativeLyricOverlay = nativeLyricOverlay"))
         assertTrue(runtime.contains("overlay?.update("))
     }

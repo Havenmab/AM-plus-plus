@@ -53,6 +53,11 @@ object ModernXposedRuntime {
 
     fun hookMethod(executable: Executable, callback: ModernMethodHook, scope: HookRegistrationScope? = null): Boolean {
         val activeModule = module ?: error("Modern Xposed runtime is not attached")
+        // ART may already have compiled the lyrics word getter/render adapter by
+        // the time the feature session is installed. HLE deoptimizes every
+        // executable before intercepting it; without the same step, a hook can
+        // report as installed while optimized calls bypass its callback.
+        runCatching { activeModule.deoptimize(executable) }
         activeModule.hook(executable).intercept { chain ->
             if (scope != null && !scope.isActive) return@intercept chain.proceed()
             val param = ModernMethodHook.MethodHookParam(

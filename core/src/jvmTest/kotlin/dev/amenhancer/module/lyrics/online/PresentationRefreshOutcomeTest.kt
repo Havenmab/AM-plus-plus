@@ -17,9 +17,9 @@ class PresentationRefreshOutcomeTest {
     @Test
     fun `only an applied presentation latches the dedupe state`() {
         assertTrue(PresentationRefreshOutcome.REBOUND.latches)
-        assertTrue(PresentationRefreshOutcome.ADAPTER_UNAVAILABLE.latches)
+        assertFalse(PresentationRefreshOutcome.ADAPTER_UNAVAILABLE.latches)
         assertFalse(PresentationRefreshOutcome.REBOUND.cleared)
-        assertFalse(PresentationRefreshOutcome.ADAPTER_UNAVAILABLE.cleared)
+        assertTrue(PresentationRefreshOutcome.ADAPTER_UNAVAILABLE.cleared)
 
         listOf(
             PresentationRefreshOutcome.NO_PRESENTATION_METHOD,

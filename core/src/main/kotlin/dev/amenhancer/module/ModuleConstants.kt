@@ -48,6 +48,7 @@ object ModuleConstants {
     const val FEATURE_CJK_KARAOKE_ANIMATION = "cjk_karaoke_animation"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
+    const val FEATURE_NATIVE_LYRICS = "native_lyrics"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

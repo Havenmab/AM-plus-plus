@@ -33,6 +33,14 @@ class ApplePresentationRefreshWiringTest {
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
     )
 
+    private val nativeTarget = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicNativeLyricsTarget.kt",
+    )
+
+    private val factory = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt",
+    )
+
     private val rebind = projectFile(
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPresentationRebind.kt",
     )
@@ -61,7 +69,8 @@ class ApplePresentationRefreshWiringTest {
         // in-flight fetch still shows Apple's document and must not suppress it.
         assertTrue(hooks.contains("isModuleSupplementSong"))
         assertTrue(hooks.contains("!isModuleSupplementSong(songId)"))
-        assertTrue(target.contains("isModuleSupplementSong = { appleMusicId ->"))
+        assertTrue(nativeTarget.contains("isModuleSupplementSong = { songId ->"))
+        assertTrue(target.contains("setModuleSupplementSongResolver"))
         assertTrue(target.contains("readyReplacementFor(appleMusicId) != null"))
     }
 
@@ -70,7 +79,8 @@ class ApplePresentationRefreshWiringTest {
         // The primitive: the fork's `lyrics-install-method` (HLE's
         // LYRICS_RESULT_PRESENTATION). It is the method custom lyrics already
         // resolved and hooked, and it is handed to the native-model hooks.
-        assertTrue(target.contains("presentationMethod = installMethod"))
+        assertTrue(nativeTarget.contains("presentationMethod = presentationMethod"))
+        assertTrue(factory.contains("nativePresentationMethod"))
         assertTrue(hooks.contains("private val presentationMethod: Method?"))
         assertTrue(hooks.contains("mainHandler.post"))
         assertTrue(hooks.contains("method.invoke(fragment, pointer)"))

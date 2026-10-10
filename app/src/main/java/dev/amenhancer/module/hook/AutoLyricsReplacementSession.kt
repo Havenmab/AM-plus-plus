@@ -159,6 +159,7 @@ internal fun createAutoLyricsRuntime(
     currentTrack: () -> CurrentSongDetails? = { null },
     logger: (String) -> Unit = {},
     displayedTtml: (Long) -> String? = { null },
+    nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
     val lyricTransport = HttpLyricTransport(
@@ -269,10 +270,9 @@ internal fun createAutoLyricsRuntime(
             }
         }
     }
-    // One overlay for the active track. The enricher writes it and the host's
-    // native lyric-model hooks read it back, so pronunciation renders even when
-    // Apple ignores the injected transliteration head track (1606).
-    val nativeLyricOverlay = NativeLyricOverlayStore()
+    // One overlay for the active track. The optional enricher writes it and the
+    // independent native-lyrics target reads it back, so Apple's own lanes still
+    // work when online completion is disabled.
     val enricher = chain.composite
         ?.takeIf { onlineLyricsTranslationEnabled }
         ?.let { composite ->

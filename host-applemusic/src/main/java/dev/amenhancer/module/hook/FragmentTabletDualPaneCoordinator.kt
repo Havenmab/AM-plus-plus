@@ -31,6 +31,7 @@ internal object FragmentTabletDualPaneCoordinator {
         val lyricsClass = loader.loadClass("com.apple.android.music.player.fragment.PlayerLyricsViewFragment")
         val build = TargetBuild("com.apple.android.music", "7.0.0-beta", 1606L)
         val profile = checkNotNull(dev.amenhancer.host.applemusic.AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
+        FragmentTabletVideoHandoff(loader, profile.document.getJSONObject("fragmentTabletVideoHandoff")).install(registration)
         val karaoke = FragmentKaraokeWidthContract(lyricsClass, profile.document.getJSONObject("fragmentKaraokeWidth"))
         val visual = BetaLyricsPaneRuntime(lyricsClass, checkNotNull(LyricsLayoutFieldProfiles.resolve(lyricsClass, build)), karaoke)
         visual.validate(); visual.install(registration)
@@ -148,5 +149,8 @@ internal object FragmentTabletDualPaneCoordinator {
 
     fun onRestored(owner: Any) { roots[owner]?.post { reconcile(owner) } }
     fun active(player: View?): Boolean = sessions.values.any { it.installed && it.player === player && failed[it.controller] != true && eligible(it.root.context) }
+    fun activeController(owner: Any): Boolean = sessions[owner]?.let {
+        it.installed && failed[owner] != true && eligible(it.root.context)
+    } == true
     fun coverReady(player: View?): Boolean = sessions.values.any { it.installed && it.player === player && failed[it.controller] != true && eligible(it.root.context) && it.nativeCoverReady() }
 }

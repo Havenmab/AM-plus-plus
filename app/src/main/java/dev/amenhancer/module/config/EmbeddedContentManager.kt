@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.font.FontImportResult
 import dev.amenhancer.module.font.FontImportTransaction
 import dev.amenhancer.module.lyrics.CustomLyricsBackupCodec
@@ -225,7 +227,7 @@ internal class EmbeddedContentManager(
         session.withCustomLyricsMutation {
             val targetIds = appleMusicIds.toSet()
             if (targetIds.isEmpty() || targetIds.any { it <= 0L }) {
-                return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed("歌词映射不存在")
+                return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed(ModuleText.LYRICS_MAPPING_MISSING.text())
             }
             val current = currentLyricsManifest()
             var found = 0
@@ -238,7 +240,7 @@ internal class EmbeddedContentManager(
                 }
             }
             if (found != targetIds.size) {
-                return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed("歌词映射不存在")
+                return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed(ModuleText.LYRICS_MAPPING_MISSING.text())
             }
             publishLyrics(CustomLyricsManifest(nextEntries))
         }
@@ -253,12 +255,12 @@ internal class EmbeddedContentManager(
             session.withCustomLyricsMutation {
                 val targetIds = appleMusicIds.toSet()
                 if (targetIds.isEmpty() || targetIds.any { it <= 0L }) {
-                    return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed("歌词映射不存在")
+                    return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed(ModuleText.LYRICS_MAPPING_MISSING.text())
                 }
                 val current = currentLyricsManifest()
                 val removed = current.entries.filter { it.appleMusicId in targetIds }
                 if (removed.size != targetIds.size) {
-                    return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed("歌词映射不存在")
+                    return@withCustomLyricsMutation EmbeddedLyricsMutationResult.Failed(ModuleText.LYRICS_MAPPING_MISSING.text())
                 }
                 when (val result = publishLyrics(
                     CustomLyricsManifest(current.entries.filterNot { it.appleMusicId in targetIds }),
@@ -333,24 +335,37 @@ internal class EmbeddedContentManager(
         sources: CustomLyricsUpdateSources,
         isCancelled: () -> Boolean = { false },
         onProgress: (CustomLyricsUpdateProgress) -> Unit = {},
+        targetIds: Set<Long>? = null,
+        requireWordTiming: Boolean = false,
     ): CustomLyricsUpdateResult {
         val baseline = synchronized(mutationLock) { session.customLyricsIndexState() }
         if (!baseline.canCommit) {
-            return CustomLyricsUpdateResult.Failed("歌词索引文件不可读，无法更新")
+            return CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_INDEX_UPDATE_UNREADABLE.text())
         }
         return CustomLyricsUpdateCoordinator(sources).update(
             oldManifest = baseline.manifest,
             fileIdFactory = { fileIdFactory("lyrics") },
             writeRemoteFile = session::writeFile,
             publishManifest = { next ->
-                session.commitCustomLyricsIfUnchanged(baseline, next) is CustomLyricsIndexCommitResult.Committed
+                session.withCustomLyricsMutation {
+                    !isCancelled() && session.commitCustomLyricsIfUnchanged(baseline, next) is CustomLyricsIndexCommitResult.Committed
+                }
             },
             deleteRemoteFile = { fileId -> session.deleteFile(fileId) },
             isBaselineCurrent = { session.customLyricsIndexState() == baseline },
             isCancelled = isCancelled,
             onProgress = onProgress,
+            targetIds = targetIds,
+            requireWordTiming = requireWordTiming,
         )
     }
+
+    fun updateSong(
+        appleMusicId: Long,
+        sources: CustomLyricsUpdateSources,
+        isCancelled: () -> Boolean = { false },
+    ): CustomLyricsUpdateResult = updateLyrics(sources, isCancelled,
+        targetIds = setOf(appleMusicId), requireWordTiming = true)
 
     private fun currentLyricsManifest(): CustomLyricsManifest =
         CustomLyricsIndexRepository.resolve(session.values(), session::openFile)

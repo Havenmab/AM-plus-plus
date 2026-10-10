@@ -18,7 +18,7 @@ internal enum class EmbeddedSvgIcon {
     RestoreDefault,
 }
 
-/** Marks drawables that already contain their original SVG fill colour. */
+/** Marks drawables that own their SVG fill rather than inheriting ImageView tint. */
 internal interface EmbeddedOwnColorDrawable
 
 private data class EmbeddedSvgSpec(
@@ -168,14 +168,22 @@ internal object EmbeddedSettingsSvgAssets {
         EmbeddedSvgIcon.RestoreDefault to EmbeddedSvgSpec(RESTORE_DEFAULT_PATH, Color.parseColor("#FA233B")),
     )
 
-    fun drawable(icon: EmbeddedSvgIcon): Drawable? = runCatching {
-        EmbeddedSvgPathDrawable(specs.getValue(icon))
+    fun drawable(icon: EmbeddedSvgIcon, fillColor: Int? = null): Drawable? = runCatching {
+        EmbeddedSvgPathDrawable(icon, specs.getValue(icon), fillColor)
     }.getOrNull()
 }
 
 private class EmbeddedSvgPathDrawable(
+    private val icon: EmbeddedSvgIcon,
     private val spec: EmbeddedSvgSpec,
-) : Drawable(), EmbeddedOwnColorDrawable {
+    initialFillColor: Int?,
+) : Drawable(), EmbeddedOwnColorDrawable, EmbeddedPaletteDrawable {
+    private var fillColor = initialFillColor ?: spec.fillColor
+
+    override fun applyPalette(colors: EmbeddedSettingsColors) {
+        fillColor = if (colors.isDark) embeddedSvgColor(icon, colors) else spec.fillColor
+        invalidateSelf()
+    }
     private val path = parsePath(spec.pathData)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -190,7 +198,7 @@ private class EmbeddedSvgPathDrawable(
         val left = box.left + (box.width() - size) / 2f
         val top = box.top + (box.height() - size) / 2f
         val scale = size / SVG_VIEWPORT
-        paint.color = spec.fillColor
+        paint.color = fillColor
         paint.alpha = alphaValue
         paint.colorFilter = colorFilterValue
 

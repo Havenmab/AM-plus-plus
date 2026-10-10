@@ -52,7 +52,7 @@ class AppleMusicDpiOverrideStructuralTest {
 
         assertTrue(model.contains("appleMusicDpiOverrideDpi"))
         assertTrue(schema.contains("apple_music_dpi_override_dpi"))
-        assertTrue(ui.contains("Apple Music 内部 DPI"))
+        assertTrue(ui.contains("ModuleText.MUSIC_DPI"))
         assertTrue(installation.contains("AppleMusicDpiOverrideFeature()"))
     }
 }

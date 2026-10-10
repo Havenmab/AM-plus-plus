@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.CustomLyricsSources
@@ -32,7 +34,7 @@ class CustomLyricsImportTransactionTest {
 
         val result = transaction.upsert(CustomLyricsManifest.empty(), draft())
 
-        assertEquals(CustomLyricsSaveResult.Failed("无法发布歌词映射"), result)
+        assertEquals(CustomLyricsSaveResult.Failed(ModuleText.LYRICS_MAPPING_PUBLISH_FAILED.text()), result)
         assertEquals(listOf("write", "publish", "delete:lyrics_new"), events)
     }
 
@@ -85,7 +87,7 @@ class CustomLyricsImportTransactionTest {
             replacingAppleMusicId = 42L,
         )
 
-        assertEquals(CustomLyricsSaveResult.Failed("目标 Apple Music ID 已存在"), result)
+        assertEquals(CustomLyricsSaveResult.Failed(ModuleText.TARGET_MUSIC_ID_EXISTS.text()), result)
         assertTrue(events.isEmpty())
     }
 
@@ -99,7 +101,7 @@ class CustomLyricsImportTransactionTest {
             draft = draft(),
         )
 
-        assertEquals(CustomLyricsSaveResult.Failed("目标 Apple Music ID 已存在"), result)
+        assertEquals(CustomLyricsSaveResult.Failed(ModuleText.TARGET_MUSIC_ID_EXISTS.text()), result)
         assertTrue(events.isEmpty())
     }
 
@@ -149,7 +151,7 @@ class CustomLyricsImportTransactionTest {
             draft = multiDraft(listOf(42L, 84L)),
         )
 
-        assertEquals(CustomLyricsBatchSaveResult.Failed("无法写入共享歌词文件"), result)
+        assertEquals(CustomLyricsBatchSaveResult.Failed(ModuleText.LYRICS_FILE_WRITE_FAILED.text()), result)
         assertEquals(
             listOf(
                 "write:lyrics_1",

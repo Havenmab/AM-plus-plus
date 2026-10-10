@@ -1,6 +1,9 @@
 package dev.amenhancer.module.ui
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.Application
 import android.app.Dialog
 import android.content.Intent
@@ -37,6 +40,9 @@ internal class EmbeddedSettingsHost private constructor(
     internal var activityReference: WeakReference<Activity>? = null
     internal var dialogReference: WeakReference<Dialog>? = null
     internal var pageRefresh: (() -> Unit)? = null
+    internal var plugins: dev.amenhancer.plugin.runtime.PluginManager? = null
+    internal val pluginDialogs = mutableListOf<WeakReference<Dialog>>()
+    internal val themedDialogs = mutableListOf<WeakReference<AlertDialog>>()
     internal val customLyricsListState = CustomLyricsListState()
     internal var customLyricsSearchQuery = ""
     internal var pendingTtmlImport: ((String) -> Unit)? = null
@@ -67,6 +73,7 @@ internal class EmbeddedSettingsHost private constructor(
 
     override fun onActivityResumed(activity: Activity) {
         if (!registered) return
+        refreshEmbeddedTheme(activity)
         val role = activityMatcher.roleFor(activity) ?: return
         val action = lifecycleState.onActivityResumed(
             activityId = activityKey(activity),
@@ -130,7 +137,7 @@ internal class EmbeddedSettingsHost private constructor(
             is EmbeddedSafRoute.Canceled -> {
                 if (route.operation == EmbeddedSafOperation.Ttml) pendingTtmlImport = null
                 currentActivity()?.let { activity ->
-                    Toast.makeText(activity, "未选择文件", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, localizedText(ModuleText.NO_FILE_SELECTED), Toast.LENGTH_SHORT).show()
                 }
                 true
             }
@@ -151,6 +158,7 @@ internal class EmbeddedSettingsHost private constructor(
      */
     override fun onSettingsPreferencesReady(fragment: Any, activity: Activity) {
         if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         val previousActivity = activityReference?.get()
         if (previousActivity !== activity) removeInjectedViews(previousActivity)
@@ -182,6 +190,7 @@ internal class EmbeddedSettingsHost private constructor(
 
     override fun onSettingsFragmentResumed(fragment: Any, activity: Activity) {
         if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         lifecycleState.onActivityResumed(
             activityId = activityId,
@@ -222,6 +231,7 @@ internal class EmbeddedSettingsHost private constructor(
      */
     override fun onSettingsFragmentViewCreated(fragment: Any, activity: Activity, view: View?) {
         if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         lifecycleState.onActivityResumed(
             activityId = activityId,
@@ -378,18 +388,21 @@ internal class EmbeddedSettingsHost private constructor(
 
         val density = activity.resources.displayMetrics.density
         val button = Button(activity).apply {
+            bindEmbeddedButtonTheme(activity, tintBackground = false)
             tag = FLOATING_BUTTON_TAG
             text = "AM"
             textSize = 12f
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            contentDescription = "打开 AM++ 设置"
+            setEmbeddedTextColor(activity) { it.onPrimary }
+            contentDescription = localizedText(ModuleText.OPEN_SETTINGS)
             minWidth = 0
             minHeight = 0
             setPadding(0, 0, 0, 0)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(EmbeddedSettingsPalette.primary)
+            bindEmbeddedTheme(activity) { colors ->
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(colors.primary)
+                }
             }
             elevation = 4f * density
             setOnClickListener { showSettingsDialog(activity) }
@@ -427,18 +440,18 @@ internal class EmbeddedSettingsHost private constructor(
             minimumHeight = dp(activity, 64)
             setPadding(dp(activity, 20), dp(activity, 12), dp(activity, 20), dp(activity, 12))
             setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "打开 AM++ 模块设置"
+            contentDescription = localizedText(ModuleText.OPEN_MODULE_SETTINGS)
             setOnClickListener { showSettingsDialog(activity) }
             addView(TextView(activity).apply {
-                text = "AM++ 模块设置"
+                text = localizedText(ModuleText.MODULE_SETTINGS)
                 textSize = 16f
-                setTextColor(EmbeddedSettingsPalette.onSurface)
+                setEmbeddedTextColor(activity) { colors -> colors.onSurface }
                 setSingleLine(false)
             }, matchWidthWrapContent())
             addView(TextView(activity).apply {
-                text = "字体、歌词与模块功能"
+                text = localizedText(ModuleText.MODULE_SETTINGS_SUMMARY)
                 textSize = 13f
-                setTextColor(EmbeddedSettingsPalette.onSurfaceVariant)
+                setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                 setSingleLine(false)
             }, matchWidthWrapContent())
         }
@@ -545,6 +558,10 @@ internal class EmbeddedSettingsHost private constructor(
     }
 
     internal fun dismissDialog() {
+        themedDialogs.toList().forEach { it.get()?.dismiss() }
+        themedDialogs.clear()
+        pluginDialogs.toList().forEach { it.get()?.dismiss() }
+        pluginDialogs.clear()
         pendingTtmlImport = null
         dialogReference?.get()?.dismiss()
         dialogReference = null

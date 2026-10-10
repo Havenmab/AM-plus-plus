@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.content.SharedPreferences
 import android.os.ParcelFileDescriptor
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
@@ -43,7 +45,7 @@ internal object EmbeddedConfigurationMigration {
         destination: EmbeddedConfigurationStorage,
     ): EmbeddedConfigurationMigrationResult {
         val remoteValues = runCatching { remotePreferences.all }.getOrNull()
-            ?: return EmbeddedConfigurationMigrationResult.Failed("无法读取远程配置")
+            ?: return EmbeddedConfigurationMigrationResult.Failed(ModuleText.REMOTE_CONFIG_UNREADABLE.text())
         return migrate(
             remoteValues = remoteValues,
             openRemoteFile = { name ->
@@ -82,7 +84,7 @@ internal object EmbeddedConfigurationMigration {
 
         val plan = buildPlan(remoteValues, openRemoteFile)
             ?: return@synchronized EmbeddedConfigurationMigrationResult.Failed(
-                message = "远程配置或文件不可读",
+                message = ModuleText.REMOTE_CONTENT_UNREADABLE.text(),
             )
 
         if (!writeValues(
@@ -91,7 +93,7 @@ internal object EmbeddedConfigurationMigration {
             )
         ) {
             return@synchronized EmbeddedConfigurationMigrationResult.Failed(
-                message = "无法标记宿主存储迁移状态",
+                message = ModuleText.MIGRATION_STATE_FAILED.text(),
             )
         }
 
@@ -107,7 +109,7 @@ internal object EmbeddedConfigurationMigration {
                     )
                 ) {
                     return@synchronized EmbeddedConfigurationMigrationResult.Failed(
-                        message = "宿主文件与远程文件冲突: ${payload.name}",
+                        message = ModuleText.MIGRATION_FILE_CONFLICT.text(payload.name),
                         copiedFileIds = copied,
                     )
                 }
@@ -125,7 +127,7 @@ internal object EmbeddedConfigurationMigration {
                 }.getOrDefault(false)
             ) {
                 return@synchronized EmbeddedConfigurationMigrationResult.Failed(
-                    message = "无法复制远程文件: ${payload.name}",
+                    message = ModuleText.REMOTE_COPY_FAILED.text(payload.name),
                     copiedFileIds = copied,
                 )
             }
@@ -138,7 +140,7 @@ internal object EmbeddedConfigurationMigration {
         }
         if (!writeValues(destination, publishedValues)) {
             return@synchronized EmbeddedConfigurationMigrationResult.Failed(
-                message = "无法发布宿主配置",
+                message = ModuleText.HOST_CONFIG_PUBLISH_FAILED.text(),
                 copiedFileIds = copied,
             )
         }

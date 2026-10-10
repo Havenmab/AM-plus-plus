@@ -55,6 +55,9 @@ internal class FragmentSurfaceBinding(
     private var writing = false
     private val tree = root.viewTreeObserver
     private val layout = ViewTreeObserver.OnGlobalLayoutListener { resolveMini() }
+    private val miniStartup = if (placement == NavigationPlacement.TOP && miniBlur != null)
+        FragmentTabletMiniStartup(owner, root, miniBlur, contract.content.classLoader!!, contract.content,
+            contract.names.getJSONObject("tablet").getJSONObject("startup")) else null
     override val tabletChrome: FragmentTabletChromeBinding? by lazy {
         if (placement != NavigationPlacement.TOP) null else FragmentTabletChromeBinding(root, { region ->
             when (region) {
@@ -66,7 +69,8 @@ internal class FragmentSurfaceBinding(
                 TabletChromeRegion.SHEET -> sheet
                 TabletChromeRegion.PLAYER -> materialParent
             }
-        }, ::find, { FragmentTabletDualPaneCoordinator.coverReady(materialParent) })
+        }, ::find, { FragmentTabletDualPaneCoordinator.coverReady(materialParent) }, contract,
+            { playerIdentity?.let(contract.playerBehavior::get) })
     }
     override val phoneChrome: FragmentPhoneChromeBinding? by lazy {
         if (placement != NavigationPlacement.BOTTOM) null else FragmentPhoneChromeBinding(owner, activity, root, contract)
@@ -78,6 +82,7 @@ internal class FragmentSurfaceBinding(
         resolveMini()
         tree.addOnPreDrawListener(this)
         tree.addOnGlobalLayoutListener(layout)
+        miniStartup?.start()
     }
 
     private fun resolveMini() {
@@ -213,6 +218,7 @@ internal class FragmentSurfaceBinding(
     override fun close() {
         if (closed) return
         closed = true
+        miniStartup?.close()
         if (tree.isAlive) { tree.removeOnPreDrawListener(this); tree.removeOnGlobalLayoutListener(layout) }
         observers.clear()
         navigation.close()

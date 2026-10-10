@@ -26,6 +26,58 @@ import org.junit.Test
 class EmbeddedContentManagerTest {
 
     @Test
+    fun `single song update commits into full index and preserves other lyrics`() {
+        val storage = MemoryStorage()
+        val manager = EmbeddedContentManager(EmbeddedConfigurationSession(storage), sequenceFileIds("lyrics_song"))
+        val old = wordTtml("old")
+        val new = wordTtml("new")
+        manager.addLyrics(42, "Cached", old, CustomLyricsSources.AMLL)
+        manager.addLyrics(43, "Other", ttml("other"))
+        val other = manager.listLyrics().last()
+        val result = manager.updateSong(42, updateSources { new })
+        assertTrue(result is dev.amenhancer.module.lyrics.CustomLyricsUpdateResult.Updated)
+        assertEquals(1, result.summary.checked)
+        assertEquals(1, result.summary.updated)
+        assertEquals(other, manager.listLyrics().last())
+        assertEquals(ttml("other"), manager.readLyrics(43))
+        assertEquals("Cached", manager.listLyrics().first().displayName)
+        assertTrue(manager.readLyrics(42)!!.contains("new"))
+    }
+
+    @Test
+    fun `single song conflict or cancellation preserves newer edit delete and disable`() {
+        for (action in listOf("edit", "delete", "disable", "cancel")) {
+            val storage = MemoryStorage()
+            val manager = EmbeddedContentManager(EmbeddedConfigurationSession(storage), sequenceFileIds("lyrics_song"))
+            manager.addLyrics(42, "Cached", wordTtml("old"), CustomLyricsSources.AMLL)
+            var cancelled = false
+            val result = manager.updateSong(42, updateSources {
+                when (action) {
+                    "edit" -> manager.updateLyrics(42, "Edited", wordTtml("edited"))
+                    "delete" -> manager.deleteLyrics(42)
+                    "disable" -> manager.setLyricsEnabled(42, false)
+                    "cancel" -> cancelled = true
+                }
+                wordTtml("remote")
+            }, { cancelled })
+            assertTrue(result !is dev.amenhancer.module.lyrics.CustomLyricsUpdateResult.Updated)
+            when (action) {
+                "edit" -> assertEquals(wordTtml("edited"), manager.readLyrics(42))
+                "delete" -> assertTrue(manager.listLyrics().isEmpty())
+                "disable" -> assertFalse(manager.listLyrics().single().enabled)
+                "cancel" -> assertEquals(wordTtml("old"), manager.readLyrics(42))
+            }
+        }
+    }
+
+    private fun updateSources(fetch: (Long) -> String?) = dev.amenhancer.module.lyrics.CustomLyricsUpdateSources(
+        fetch, { null }, { null }, { null }, { null },
+    )
+
+    private fun wordTtml(text: String) =
+        "<tt xmlns:itunes=\"urn\" itunes:timing=\"Word\"><body><p><span begin=\"0s\" end=\"1s\">$text</span></p></body></tt>"
+
+    @Test
     fun `font replacement publishes the new manifest before retiring the old file`() {
         val storage = MemoryStorage()
         val session = EmbeddedConfigurationSession(storage)

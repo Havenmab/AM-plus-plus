@@ -8,6 +8,7 @@ import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Executor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -143,6 +144,7 @@ internal class AppleMusicCustomLyricsTarget(
             }
         }
         lateinit var readyReapply: CustomLyricsReadyReapply
+        var refreshSession: AutoLyricsRefreshSession? = null
         val configuredManualIds = runCatching {
             config.customLyricsManifest().entries
                 .filter(CustomLyricsEntry::enabled)
@@ -161,7 +163,14 @@ internal class AppleMusicCustomLyricsTarget(
             readAdamId = parser::adamIdOf,
             bindAdamId = parser::bindAdamId,
             onReplacementPublished = { appleMusicId ->
-                mainHandler.post { if (registration.isActive) readyReapply.onReplacementPublished(appleMusicId) }
+                mainHandler.post {
+                    if (registration.isActive) {
+                        readyReapply.onReplacementPublished(appleMusicId)
+                        if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
+                            refreshSession?.onSongChanged(appleMusicId)
+                        }
+                    }
+                }
             },
             executor = ThreadPoolExecutor(
                 1,
@@ -186,6 +195,27 @@ internal class AppleMusicCustomLyricsTarget(
                 appleMusicId,
                 "online-translation merged-publish id=$appleMusicId published=$published",
             )
+        }
+        refreshSession = autoLyricsRuntime?.let { runtime ->
+            val refreshSong = runtime.refreshSong ?: return@let null
+            val refreshExecutor = runtime.refreshExecutor ?: return@let null
+            AutoLyricsRefreshSession(
+                executor = refreshExecutor,
+                refreshSong = refreshSong,
+                isEnabled = { config.settings().let { it.customLyricsEnabled && it.automaticLyricsEnabled } },
+                onUpdated = { entry, isCancelled ->
+                    // This callback already runs on the independent refresh worker.
+                    session.refreshEntry(entry, isCancelled, Executor { it.run() }) { id ->
+                        mainHandler.post {
+                            if (registration.isActive && !isCancelled()) readyReapply.onReplacementPublished(id)
+                        }
+                    }
+                },
+                logger = ModernXposedRuntime::log,
+            ).also { refresh -> registration.onClose {
+                refresh.close()
+                runtime.closeRefresh()
+            } }
         }
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
@@ -238,7 +268,14 @@ internal class AppleMusicCustomLyricsTarget(
                 readAdamId = parser::adamIdOf,
                 bindAdamId = parser::bindAdamId,
                 onReplacementPublished = { appleMusicId ->
-                    mainHandler.post { if (registration.isActive) readyReapply.onReplacementPublished(appleMusicId) }
+                    mainHandler.post {
+                        if (registration.isActive) {
+                            readyReapply.onReplacementPublished(appleMusicId)
+                            if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
+                                refreshSession?.onSongChanged(appleMusicId)
+                            }
+                        }
+                    }
                 },
                 publisher = runtime.publisher,
                 isAllowed = { appleMusicId ->
@@ -249,6 +286,7 @@ internal class AppleMusicCustomLyricsTarget(
                 },
                 executor = runtime.executor,
                 logger = ModernXposedRuntime::log,
+                onFreshCandidate = { refreshSession?.markDownloaded(it) },
             )
         }
         val readyReplacementFor: (Long) -> Any? = { appleMusicId ->
@@ -276,6 +314,7 @@ internal class AppleMusicCustomLyricsTarget(
             currentSong = currentSong,
             logger = ModernXposedRuntime::log,
         )
+        registration.onClose(readyReapply::clear)
         val parserHooked = runCatching {
             parseMethod.isAccessible = true
             hook(parseMethod, object : ModernMethodHook() {
@@ -424,6 +463,9 @@ internal class AppleMusicCustomLyricsTarget(
                                 autoSession?.markTakeoverApplied(adamId)
                             }
                             param.thisObject?.let { readyReapply.dismiss(it) }
+                            parser.unwrap(replacement)?.let { nativeReplacement ->
+                                param.extras["ampp-installed-lyrics"] = adamId to nativeReplacement
+                            }
                             if (replacement !== original) {
                                 param.args[0] = parser.unwrap(replacement)
                             }
@@ -439,6 +481,14 @@ internal class AppleMusicCustomLyricsTarget(
                     }.onFailure { error ->
                         ModernXposedRuntime.log("custom lyrics I2 replacement hook failed: $error")
                     }
+                }
+
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    if (param.throwable != null) return
+                    @Suppress("UNCHECKED_CAST")
+                    val installed = param.extras["ampp-installed-lyrics"] as? Pair<Long, Any> ?: return
+                    if (param.args.firstOrNull() !== installed.second) return
+                    param.thisObject?.let { readyReapply.recordInstalled(it, installed.first, installed.second) }
                 }
             })
         }.isSuccess
@@ -540,6 +590,9 @@ internal class AppleMusicCustomLyricsTarget(
             val appleMusicId = current?.details?.appleMusicId
             appleMusicId?.let(session::ensureRequested)
             autoSession?.onSongChanged(appleMusicId)
+            readyReapply.onSongChanged(appleMusicId)
+            refreshSession?.onSongChanged(appleMusicId,
+                cacheReady = appleMusicId != null && session.readyReplacementFor(appleMusicId) != null)
             appleMusicId?.let { id ->
                 timingObservations.metadataOfAppleMusicId(id)
                     ?.takeIf(::shouldTryAutoLyricsForMetadata)

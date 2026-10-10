@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import android.app.Application
 import android.util.Log
 import dev.amenhancer.module.ModuleConstants
@@ -177,6 +179,11 @@ class HookEntry : XposedModule() {
                         )
                         settingsHost = host
                         AppleMusicHostFactory.installSettingsEntry(application, targetClassLoader, host)
+                        runCatching {
+                            val plugins = dev.amenhancer.plugin.runtime.PluginManager(application, targetClassLoader)
+                            host.plugins = plugins
+                            plugins.start()
+                        }.onFailure { ModernXposedRuntime.log("plugin runtime unavailable", it) }
                     }.onFailure { error ->
                         ModernXposedRuntime.log("embedded initialization failed open: $error")
                     }
@@ -194,7 +201,7 @@ class HookEntry : XposedModule() {
             getRemotePreferences(ModuleConstants.REMOTE_PREFERENCES_GROUP)
         }.getOrElse { error ->
             ModernXposedRuntime.log("embedded remote configuration unavailable; migration deferred", error)
-            return EmbeddedConfigurationMigrationResult.Failed("无法读取远程配置")
+            return EmbeddedConfigurationMigrationResult.Failed(ModuleText.REMOTE_CONFIG_UNREADABLE.text())
         }
 
         val result = runCatching {

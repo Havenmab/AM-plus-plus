@@ -17,6 +17,7 @@ internal enum class EmbeddedSafOperation {
     Backup,
     RestoreOverwrite,
     RestoreKeepExisting,
+    PluginZip,
 }
 
 internal data class EmbeddedSafPending(
@@ -56,6 +57,7 @@ internal class EmbeddedSafResultRouter {
             EmbeddedSafOperation.Backup -> REQUEST_CREATE_BACKUP
             EmbeddedSafOperation.RestoreOverwrite -> REQUEST_RESTORE_BACKUP
             EmbeddedSafOperation.RestoreKeepExisting -> REQUEST_RESTORE_BACKUP_KEEP
+            EmbeddedSafOperation.PluginZip -> REQUEST_PICK_PLUGIN
         }
         pendingRequest = EmbeddedSafPending(requestCode, operation)
         return requestCode
@@ -85,12 +87,14 @@ internal class EmbeddedSafResultRouter {
         const val REQUEST_CREATE_BACKUP = 6513
         const val REQUEST_RESTORE_BACKUP = 6514
         const val REQUEST_RESTORE_BACKUP_KEEP = 6515
+        const val REQUEST_PICK_PLUGIN = 6516
         val OWN_REQUEST_CODES: Set<Int> = setOf(
             REQUEST_PICK_FONT,
             REQUEST_PICK_TTML,
             REQUEST_CREATE_BACKUP,
             REQUEST_RESTORE_BACKUP,
             REQUEST_RESTORE_BACKUP_KEEP,
+            REQUEST_PICK_PLUGIN,
         )
     }
 }

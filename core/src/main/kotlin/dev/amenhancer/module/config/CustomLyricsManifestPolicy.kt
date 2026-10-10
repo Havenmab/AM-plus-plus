@@ -1,5 +1,7 @@
 package dev.amenhancer.module.config
 
+import dev.amenhancer.module.i18n.ModuleText
+
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.model.CustomLyricsManifest
@@ -37,7 +39,7 @@ object CustomLyricsManifestPolicy {
         .filterNot(Char::isISOControl)
         .trim()
         .take(120)
-        .ifBlank { "自定义歌词" }
+        .ifBlank { ModuleText.CUSTOM_LYRICS.text() }
 
     fun isValidFileId(fileId: String): Boolean =
         fileIdPattern.matches(fileId) && fileId.none { it == '.' || it == '/' || it == '\\' }

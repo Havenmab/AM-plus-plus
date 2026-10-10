@@ -12,6 +12,8 @@ interface FragmentTabletChromePort {
     fun playerLayers(frame: FragmentTabletGlassFrame, slide: Float)
     fun allowOverflow()
     fun transformMini(sx: Float, sy: Float, x: Float, y: Float)
+    /** Replaces the native mini bottom spacing; system-bar insets and native artwork stay owned by AM. */
+    fun setMiniBottomGap(gapPx: Int): Boolean
     fun opacity(view: View): Float
     fun navigationOpacity(): Float
     fun restore()

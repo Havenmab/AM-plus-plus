@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "id": "dev.amenhancer.example.basic",
+  "name": "插件 SDK 示例",
+  "author": "AM++",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "entryClass": "example.BasicPlugin",
+  "apiVersion": 1,
+  "minAndroidApi": 26,
+  "description": "展示独立构建、宿主方法观察、素材、配置与 View 设置；不修改播放器。"
+}

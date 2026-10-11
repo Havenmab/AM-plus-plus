@@ -627,4 +627,39 @@ class NativeLyricModelPolicyTest {
         // The custom path's late-lane reason is its own, not the build gate's none.
         assertEquals("custom-lane", NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_LANE)
     }
+
+    /**
+     * The `<transliteration xml:lang>` tag a document we write must carry. It is
+     * the lane's name in the app's own lyric model, so it has to mirror the set
+     * HLE asks Apple for — `ja-Latn`, `ko-Latn`, `zh-Latn` — and can only stay
+     * neutral when the song's language is genuinely undetermined.
+     */
+    @Test
+    fun `the transliteration tag mirrors HLE's requested language set`() {
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ja"))
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ja-JP"))
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("JPN"))
+        assertEquals("ko-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ko-KR"))
+        assertEquals("ko-Latn", NativeLyricModelPolicy.transliterationLanguageTag("kor"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("zh-Hans"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("cmn"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("yue"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("zh_Hant_TW"))
+        // `und`, an English song, an empty declaration and a null all keep the
+        // neutral tag: naming a language the song is not in would be worse than
+        // naming none, and no other language has a Latin romanization lane.
+        listOf(null, "", "  ", "und", "und-Latn", "en", "fr-FR").forEach { language ->
+            assertEquals(
+                "unexpected tag for $language",
+                NativeLyricModelPolicy.FALLBACK_PRONUNCIATION_LANGUAGE,
+                NativeLyricModelPolicy.transliterationLanguageTag(language),
+            )
+        }
+        assertEquals(
+            listOf(null, null, "ja", "ko", "zh", null),
+            listOf(null, "und", "ja", "ko", "zh", "en").map(
+                NativeLyricModelPolicy::transliterationScriptLanguage,
+            ),
+        )
+    }
 }

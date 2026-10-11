@@ -111,10 +111,33 @@ class CustomLyricsCompletionFeedTest {
         assertEquals(2, lines.size)
         assertTrue(lines[0].startsWith("online-translation capture id=42 rawTtml=custom"))
         assertTrue(lines[0].contains("timing=WORD"))
+        // The displayed document declares no transliterations block, so the lane
+        // is named `none` — the value the fix has to turn into the song's tag.
+        assertTrue(lines[0].contains("transliterationTags=none"))
+        assertTrue(lines[0].contains("transliterationLines=0/1"))
         assertEquals(
             "online-translation inject id=42 source=online-translation published=true",
             lines[1],
         )
+    }
+
+    @Test
+    fun `the capture line names the transliteration tag the document carries`() {
+        val lines = mutableListOf<String>()
+        val feed = newFeed(log = { _, line -> lines += line }) { _, _ -> "merged" }
+        val tagged = CUSTOM_DOCUMENT.replace(
+            "<head></head>",
+            "<head><iTunesMetadata xmlns=\"http://music.apple.com/lyric-ttml-internal\">" +
+                "<transliterations><transliteration xml:lang=\"ja-Latn\">" +
+                "<text for=\"L1\">yoru</text></transliteration></transliterations>" +
+                "</iTunesMetadata></head>",
+        )
+        feed.remember(42L, REVISION, tagged)
+
+        feed.onDisplayed(42L)
+
+        assertTrue(lines[0].contains("transliterationTags=ja-Latn"))
+        assertTrue(lines[0].contains("transliterationLines=1/1"))
     }
 
     @Test

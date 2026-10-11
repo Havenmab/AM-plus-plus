@@ -293,12 +293,62 @@ object NativeLyricModelPolicy {
         RomanizationPolicy.isLatinLanguageTag(language)
 
     /**
-     * The neutral Latin tag used when the per-line probe proves a pronunciation
-     * exists but Apple advertised no language name for it. It is the tag the app
-     * is handed so it can reveal the track; the pronunciation **text** is always
-     * Apple's own getter output ([probeConfirmedPronunciationLanguage]).
+     * The neutral Latin tag used when no lyrics language can be determined for a
+     * document's `<transliteration>` lane, and when the per-line probe proves a
+     * pronunciation exists but Apple advertised no language name for it. It is
+     * only ever written into a document or printed in a diagnostic; it is never
+     * handed to the app's native `setPronunciation` (see
+     * [transliterationLanguageTag]).
      */
     const val FALLBACK_PRONUNCIATION_LANGUAGE = "und-Latn"
+
+    /**
+     * The `<transliteration xml:lang>` tag for a song whose lyrics language is
+     * [lyricsLanguage], mirroring the set HLE requests
+     * (`expandAppleLyricsPronunciationLanguages`): `ja-Latn`, `ko-Latn`,
+     * `zh-Latn`.
+     *
+     * The tag is the lane's **name** in the app's own lyric model: the native
+     * `SongInfoParser::parsePronunciations` keys each parsed pronunciation by the
+     * `<transliteration>` element's language and `SongInfo#getPronunciationLanguages`
+     * reports those keys back, while `SongInfo#setPronunciation` refuses — and
+     * **clears the pronunciations already parsed** — when the language it is given
+     * "was not found in the ttml" (`libandroidappmusic.so`, proven by the
+     * `Can not switch to pronunciation … Will clear existing pronunciations.`
+     * branch). A neutral `und-Latn` names no language, so a document that carries
+     * romanization under it parses the text but advertises no lane, and nothing
+     * may select it.
+     *
+     * The lyrics language is read from the document's own `xml:lang` first; a
+     * primary subtag outside HLE's set (an English song, or one that names its
+     * language only as `und`) keeps [FALLBACK_PRONUNCIATION_LANGUAGE].
+     */
+    fun transliterationLanguageTag(lyricsLanguage: String?): String =
+        transliterationScriptLanguage(lyricsLanguage)
+            ?.let { "$it-Latn" }
+            ?: FALLBACK_PRONUNCIATION_LANGUAGE
+
+    /**
+     * The primary language a supported romanization tag can be built from, or
+     * null when [lyricsLanguage] names none of them. Split out so a caller that
+     * has more than one candidate language (a declared `xml:lang` and a script
+     * inferred from the lyrics) can tell "unsupported" from "undetermined"
+     * without comparing against [FALLBACK_PRONUNCIATION_LANGUAGE].
+     */
+    fun transliterationScriptLanguage(lyricsLanguage: String?): String? {
+        val primary = lyricsLanguage
+            ?.trim()
+            ?.replace('_', '-')
+            ?.lowercase()
+            ?.substringBefore('-')
+            ?.takeIf(String::isNotEmpty)
+        return when (primary) {
+            "ja", "jpn" -> "ja"
+            "ko", "kor" -> "ko"
+            "zh", "zho", "chi", "cmn", "yue" -> "zh"
+            else -> null
+        }
+    }
 
     /**
      * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.
@@ -516,9 +566,13 @@ object NativeLyricModelPolicy {
      *     which is the only evidence a partially-populated official document
      *     offers. Apple exposed the **text** but advertised no language name for
      *     it, so a neutral Latin tag is synthesized
-     *     ([probeConfirmedPronunciationLanguage]) purely to let the app light its
-     *     pronunciation track up. The content is still Apple's own getter output —
-     *     this is not a third-party transliteration lane.
+     *     ([probeConfirmedPronunciationLanguage]) purely to name the payload lane
+     *     in the diagnostic and to let the module reveal the text Apple already
+     *     parsed. The content is still Apple's own getter output — this is not a
+     *     third-party transliteration lane, and the tag is **never** handed to the
+     *     native `setPronunciation`: a language the TTML does not carry makes the
+     *     app clear the pronunciations it parsed
+     *     (`setPronunciation`'s "was not found in the ttml" branch).
      *
      * [NONE][PronunciationLaneSource.NONE] means the payload must not be
      * dispatched: without one of these an empty pronunciation row would appear.
@@ -566,18 +620,19 @@ object NativeLyricModelPolicy {
     }
 
     /**
-     * The neutral Latin tag handed to the app when the per-line probe proves a
-     * pronunciation exists but Apple advertised no language name for it
+     * The neutral Latin tag **named in the diagnostic** when the per-line probe
+     * proves a pronunciation exists but Apple advertised no language name for it
      * ([pronunciationPayloadLane]'s `line-probe` branch).
      *
      * This is HLE's `thirdPartyPronunciationFallbackLanguage()` **semantics**,
      * reduced to the Apple-only policy: the *content* is never third-party — it is
-     * the app's own `getHtmlPronunciationLineText` — and this tag only names the
-     * track so the app can reveal it. The system lyrics language is reused when it
-     * is already a Latin tag (so the selected track matches what the app expects),
-     * else the neutral [FALLBACK_PRONUNCIATION_LANGUAGE]. The tag only ever
-     * confirms a payload when the probe actually read text, so it cannot invent an
-     * empty pronunciation row.
+     * the app's own `getHtmlPronunciationLineText`. The system lyrics language is
+     * reused when it is already a Latin tag (so the printed lane matches what the
+     * app expects), else the neutral [FALLBACK_PRONUNCIATION_LANGUAGE]. It is a
+     * **payload-lane name only**: unlike HLE, this module never passes it to the
+     * native `setPronunciation`, because a language the document does not carry
+     * makes the app clear the pronunciations it did parse. A document we write
+     * carries a real per-song tag instead ([transliterationLanguageTag]).
      */
     fun probeConfirmedPronunciationLanguage(systemLyricsLanguage: String?): String =
         systemLyricsLanguage?.takeIf { isOfficialPronunciationLanguage(it) }

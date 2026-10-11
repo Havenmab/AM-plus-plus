@@ -31,11 +31,13 @@ object AppleLyricTtmlReader {
     private val transliterationsBlock =
         Regex("""(?is)<transliterations\b[^>]*>(.*?)</transliterations\s*>""")
     private val textElement = Regex("""(?is)<text\b([^>]*)>(.*?)</text\s*>""")
+    private val transliterationElement = Regex("""(?is)<transliteration\b([^>]*?)/?>""")
 
     private val beginAttribute = attribute("begin")
     private val endAttribute = attribute("end")
     private val keyAttribute = attribute("itunes:key")
     private val forAttribute = attribute("for")
+    private val languageAttribute = attribute("xml:lang")
     private val entity = Regex("""&(?:#x?[0-9A-Fa-f]+|[A-Za-z]+);""")
 
     /** Parses [ttml]'s body lines, in document order. */
@@ -65,6 +67,25 @@ object AppleLyricTtmlReader {
             )
         }.toList()
     }.getOrDefault(emptyList())
+
+    /**
+     * The `xml:lang` tags of [ttml]'s head `<transliterations>` track, in
+     * document order and de-duplicated — what the app's native parser keys each
+     * pronunciation by, and therefore the only names
+     * `getPronunciationLanguages()` can report back. Empty when the document
+     * carries no such track; used by the custom-lyrics diagnostic so a device log
+     * shows the tag actually written into the displayed document.
+     */
+    fun transliterationLanguages(ttml: String): List<String> {
+        val content = transliterationsBlock.find(ttml)?.groupValues?.get(1) ?: return emptyList()
+        return transliterationElement.findAll(content)
+            .mapNotNull { element ->
+                languageAttribute.findAttribute(element.groupValues[1])
+                    ?.takeIf(String::isNotBlank)
+            }
+            .distinct()
+            .toList()
+    }
 
     private fun words(inner: String): List<AppleTtmlWord> = timedSpan.findAll(inner)
         .mapNotNull { span ->

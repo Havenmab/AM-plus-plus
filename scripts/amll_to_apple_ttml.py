@@ -44,7 +44,9 @@ ROLE_BACKGROUND = "x-bg"
 # Pinned so Apple Music on Android renders both auxiliary tracks.
 LYRIC_LANGUAGE = "ko"
 TRANSLATION_LANGUAGE = "zh-Hans"
-TRANSLITERATION_LANGUAGE = "ko-Latn"
+
+# The <transliteration> tag kept when no lyrics language can be determined.
+FALLBACK_PRONUNCIATION_LANGUAGE = "und-Latn"
 
 # How Apple labels a translation meant to be shown under the lyric.
 TRANSLATION_TYPE = "subtitle"
@@ -285,18 +287,23 @@ def clock_seconds(value: str | None) -> float | None:
 # --- Track migration --------------------------------------------------
 
 
-def to_apple_format(ttml: str) -> TtmlFormatConversion:
+def to_apple_format(ttml: str, lyric_language: str | None = None) -> TtmlFormatConversion:
     if not ttml:
         return TtmlFormatConversion(ttml, False)
     # Judged per kind, so a head that already declares one track does not
     # hide the other kind still sitting inline. An <iTunesMetadata> on its
     # own is no such signal: AMLL writes one to carry <songwriters>.
     declared = declared_tracks(ttml)
-    if declared.any and not has_undeclared_inline_track(ttml, declared):
+    # A declared <transliterations> block whose entries name no language is
+    # still a rewrite: the native parser registers a pronunciation lane only
+    # under the language its <transliteration> element carries.
+    unnamed = unnamed_transliterations(ttml)
+    if declared.any and not unnamed and not has_undeclared_inline_track(ttml, declared):
         # The head already speaks for every kind the body carries, so this is
         # Apple's own document and nothing, the root included, is rewritten.
         return TtmlFormatConversion(ttml, False)
-    migrated = migrate_auxiliary_tracks(ttml, declared)
+    written_language = transliteration_language(ttml, lyric_language)
+    migrated = migrate_auxiliary_tracks(ttml, declared, written_language, unnamed)
     body = next_element(migrated, "body", 0)
     result = normalize_tags(
         migrated,
@@ -310,6 +317,73 @@ def declared_tracks(ttml: str) -> DeclaredTracks:
         translations=next_element(ttml, "translations", 0) is not None,
         transliterations=next_element(ttml, "transliterations", 0) is not None,
     )
+
+
+def unnamed_transliterations(ttml: str) -> list[Element]:
+    """The head track's <transliteration> elements that carry no ``xml:lang``."""
+    block = next_element(ttml, "transliterations", 0)
+    if block is None:
+        return []
+    unnamed: list[Element] = []
+    cursor = block.content_start
+    while True:
+        item = next_element(ttml, "transliteration", cursor)
+        if item is None or item.end > block.content_end:
+            break
+        cursor = item.end
+        if not (attribute(item.attributes, LANGUAGE_ATTRIBUTE) or "").strip():
+            unnamed.append(item)
+    return unnamed
+
+
+def transliteration_language(ttml: str, declared: str | None = None) -> str:
+    """The ``<transliteration xml:lang>`` tag for a song's own lyrics language."""
+    candidates = [declared, document_language(ttml)]
+    for candidate in candidates:
+        script = transliteration_script_language(candidate)
+        if script is not None:
+            return f"{script}-Latn"
+    return transliteration_language_tag(inferred_lyrics_language(ttml))
+
+
+def transliteration_script_language(lyrics_language: str | None) -> str | None:
+    primary = (lyrics_language or "").strip().replace("_", "-").lower().split("-")[0]
+    if primary in ("ja", "jpn"):
+        return "ja"
+    if primary in ("ko", "kor"):
+        return "ko"
+    if primary in ("zh", "zho", "chi", "cmn", "yue"):
+        return "zh"
+    return None
+
+
+def transliteration_language_tag(lyrics_language: str | None) -> str:
+    script = transliteration_script_language(lyrics_language)
+    return f"{script}-Latn" if script is not None else FALLBACK_PRONUNCIATION_LANGUAGE
+
+
+def document_language(ttml: str) -> str | None:
+    root = next_element(ttml, "tt", 0)
+    return None if root is None else attribute(root.attributes, LANGUAGE_ATTRIBUTE)
+
+
+def inferred_lyrics_language(ttml: str) -> str:
+    """The language the body's own lyric text is written in; ``und`` when unclear."""
+    import unicodedata
+
+    body = next_element(ttml, "body", 0)
+    if body is None:
+        return "und"
+    has_han = False
+    for character in ttml[body.content_start : body.content_end]:
+        name = unicodedata.name(character, "")
+        if name.startswith("HIRAGANA") or name.startswith("KATAKANA"):
+            return "ja"
+        if name.startswith("HANGUL"):
+            return "ko"
+        if name.startswith("CJK UNIFIED IDEOGRAPH") or name.startswith("CJK COMPATIBILITY IDEOGRAPH"):
+            has_han = True
+    return "zh" if has_han else "und"
 
 
 def has_undeclared_inline_track(ttml: str, declared: DeclaredTracks) -> bool:
@@ -338,15 +412,29 @@ def has_undeclared_inline_track(ttml: str, declared: DeclaredTracks) -> bool:
     return False
 
 
-def migrate_auxiliary_tracks(ttml: str, declared: DeclaredTracks) -> str:
+def migrate_auxiliary_tracks(
+    ttml: str,
+    declared: DeclaredTracks,
+    transliteration_language_: str,
+    unnamed_transliterations_: list[Element],
+) -> str:
     """Moves inline ``x-translation`` / ``x-roman`` spans into a head <iTunesMetadata>."""
+    # A preserved head track that names no language still has to be named: the
+    # tag is the lane's key in the app's own lyric model.
+    edits: list[Edit] = [
+        Edit(
+            item.start + 1 + len("transliteration"),
+            item.start + 1 + len("transliteration"),
+            f' xml:lang="{transliteration_language_}"',
+        )
+        for item in unnamed_transliterations_
+    ]
     metadata = next_element(ttml, "metadata", 0)
     if metadata is None:
-        return ttml
+        return apply_edits(ttml, edits)
 
     translations: list[TrackEntry] = []
     transliterations: list[TrackEntry] = []
-    edits: list[Edit] = []
 
     cursor = metadata.end
     while True:
@@ -370,7 +458,12 @@ def migrate_auxiliary_tracks(ttml: str, declared: DeclaredTracks) -> str:
         return apply_edits(ttml, edits)
 
     edits.append(
-        declare_tracks(ttml, metadata, build_tracks(translations, transliterations), declared)
+        declare_tracks(
+            ttml,
+            metadata,
+            build_tracks(translations, transliterations, transliteration_language_),
+            declared,
+        )
     )
     return apply_edits(ttml, edits)
 
@@ -516,10 +609,11 @@ def declare_tracks(
 def build_tracks(
     translations: list[TrackEntry],
     transliterations: list[TrackEntry],
+    transliteration_language_: str = FALLBACK_PRONUNCIATION_LANGUAGE,
 ) -> str:
     parts: list[str] = []
     append_track(parts, translations, "translations", "translation", TRANSLATION_LANGUAGE, TRANSLATION_TYPE)
-    append_track(parts, transliterations, "transliterations", "transliteration", TRANSLITERATION_LANGUAGE, None)
+    append_track(parts, transliterations, "transliterations", "transliteration", transliteration_language_, None)
     return "".join(parts)
 
 
@@ -830,7 +924,7 @@ def _selftest() -> int:
             "</translation></translations>" in result.ttml
         )
         assert (
-            '<transliterations><transliteration xml:lang="ko-Latn">'
+            '<transliterations><transliteration xml:lang="und-Latn">'
             "<text for=\"L1\">R1</text><text for=\"L2\">R2</text>"
             "</transliteration></transliterations>" in result.ttml
         )
@@ -933,13 +1027,54 @@ def _selftest() -> int:
         result = to_apple_format(roman_only).ttml
         assert "<translations>" not in result
         assert (
-            '<transliterations><transliteration xml:lang="ko-Latn">'
+            '<transliterations><transliteration xml:lang="und-Latn">'
             '<text for="L1">R1</text><text for="L2"> </text>'
             "</transliteration></transliterations>" in result
         )
         return True
 
     checks.append(("a kind nobody speaks for gets no track", check_roman_only))
+
+    def check_unnamed_head_transliteration() -> bool:
+        # AMLL's own shape: the head declares the track, the entry names no
+        # language, and the lyrics are Japanese. The tag has to be stamped, or
+        # the app parses the romanization under no language and cannot select it.
+        unnamed_head = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration><text for="L1">ki</text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">\u304d</span>
+            <span ttm:role="x-roman">ki</span>
+            </p></div></body></tt>
+            """
+        )
+        assert (
+            '<transliteration xml:lang="ja-Latn"><text for="L1">ki</text>'
+            in to_apple_format(unnamed_head).ttml
+        )
+        # An entry that already names a language is never rewritten.
+        named_head = unnamed_head.replace(
+            "<transliteration>", '<transliteration xml:lang="en-Latn">'
+        )
+        stamped = to_apple_format(named_head).ttml
+        assert '<transliteration xml:lang="en-Latn">' in stamped
+        assert "ja-Latn" not in stamped
+        # A declared language wins over the script the lyrics are written in.
+        assert (
+            '<transliteration xml:lang="zh-Latn">'
+            in to_apple_format(unnamed_head, lyric_language="zh").ttml
+        )
+        return True
+
+    checks.append(
+        (
+            "an unnamed head transliteration is stamped with the song's tag",
+            check_unnamed_head_transliteration,
+        )
+    )
 
     def check_background_only_line() -> bool:
         background_only = textwrap.dedent(
@@ -1026,7 +1161,7 @@ def _selftest() -> int:
         assert once.ttml.count("<transliterations>") == 1
         assert once.ttml.index("<translations>") < once.ttml.index("<transliterations>")
         assert (
-            '<transliterations><transliteration><text for="L1">'
+            '<transliterations><transliteration xml:lang="und-Latn"><text for="L1">'
             '<span begin="0.0" end="1.0">ro</span></text>' in once.ttml
         )
         assert "x-translation" not in once.ttml.split("<body", 1)[1]

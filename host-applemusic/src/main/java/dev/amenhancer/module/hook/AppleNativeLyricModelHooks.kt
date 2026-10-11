@@ -144,7 +144,12 @@ import java.util.concurrent.ConcurrentHashMap
  *    a synthesized neutral Latin tag ([probeConfirmedPronunciationLanguage],
  *    HLE's `thirdPartyPronunciationFallbackLanguage()` semantics; the content
  *    stays Apple's own getter output). A supplement that confirms no lane is
- *    unchanged (`payload=skipped(custom-no-lane)`).
+ *    unchanged (`payload=skipped(custom-no-lane)`). The synthesized tag is a
+ *    **payload-lane name and diagnostic only**: it is never handed to the native
+ *    `setPronunciation`, which *clears the pronunciations it parsed* when the
+ *    language "was not found in the ttml" (`libandroidappmusic.so`). A document
+ *    this module writes instead names its lane for its own song, per
+ *    [NativeLyricModelPolicy.transliterationLanguageTag].
  *  - Apple's own **word** vector is the only word-level source: a word-timing
  *    line whose line-level `getHtmlPronunciationLineText` Apple left empty used
  *    to render our online lane on the main word timing (device log:
@@ -295,16 +300,6 @@ internal class AppleNativeLyricModelHooks(
 
     @Volatile
     private var selectedPronunciationLanguage: String? = null
-
-    /**
-     * The model for which the probe-confirmed neutral Latin tag
-     * ([NativeLyricModelPolicy.probeConfirmedPronunciationLanguage]) was already
-     * handed to `setPronunciation`. One attempt per model bounds a tag Apple
-     * rejects, so a per-read retry cannot spam the native setter. Reset on a track
-     * change.
-     */
-    @Volatile
-    private var probeFallbackAttemptedFor: java.lang.ref.WeakReference<Any>? = null
 
     @Volatile
     private var selectedTranslationSong: java.lang.ref.WeakReference<Any>? = null
@@ -1999,7 +1994,6 @@ internal class AppleNativeLyricModelHooks(
             applePronunciationLanguages = emptyList()
             selectedPronunciationSong = null
             selectedPronunciationLanguage = null
-            probeFallbackAttemptedFor = null
             selectedTranslationSong = null
             selectedTranslationLanguage = null
             systemLyricsLanguage = null
@@ -2042,17 +2036,23 @@ internal class AppleNativeLyricModelHooks(
         // diagnostic and for the "did Apple populate the lines yet" signal. It is
         // not the decision input: on 1606 it is false until a language is
         // selected, which is exactly why the selection may not gate Apple's own
-        // lane behind it.
-        val officialAtBuild = hasValidOfficialPronunciation(songNative)
+        // lane behind it. The count is kept so the log can show a lane the
+        // selection pass destroyed (34 -> 0) rather than only `true -> false`.
+        val officialAtBuildLines = officialPronunciationLineCount(songNative)
         lines.map { it.javaClass }.distinct().forEach(::installLineTextHooks)
         installPronunciationWordHooks(lines, clearPendingPlans = modelChanged)
         applyAppleNativeTranslationSelection(songNative)
         val selection = applyAppleNativePronunciationSelection(songNative, languages)
         reportNativeWrite(
             lines = lines,
-            officialAtBuild = officialAtBuild,
+            officialAtBuild = !mandarinHidden && officialAtBuildLines > 0,
+            officialAtBuildLines = officialAtBuildLines,
             officialNow = hasValidOfficialPronunciation(songNative),
             languages = languages,
+            // The raw vector *after* the selection pass: it shows whether the lane
+            // the document names is now advertised by the model, i.e. whether the
+            // per-song `<transliteration xml:lang>` tag became a real lane name.
+            advertisedAfterSelection = songPronunciationLanguages(songNative),
             selection = selection,
         )
     }
@@ -2102,14 +2102,25 @@ internal class AppleNativeLyricModelHooks(
     private fun hasValidOfficialPronunciation(songNative: Any?): Boolean {
         if (songNative == null) return false
         if (isMandarinHidden(songPronunciationLanguages(songNative))) return false
-        return nativeLines(songNative).any { line ->
-            val text = rawLineText(line)
-            val pronunciation = withRawRead {
-                call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD) as? String
-            }
-            !text.isNullOrBlank() &&
-                RomanizationPolicy.sanitize(text, pronunciation) != null
+        return officialPronunciationLineCount(songNative) > 0
+    }
+
+    /**
+     * The build-time probe's **count**, not only its truth: `native-write` prints
+     * it beside the post-selection count, so a lane that our own selection pass
+     * destroyed (`probeAtBuildLines=34` then `pronunciationLines=0`) is visible in
+     * one line instead of hiding behind two booleans.
+     */
+    private fun officialPronunciationLineCount(songNative: Any): Int =
+        nativeLines(songNative).count(::hasOfficialPronunciationLine)
+
+    /** Same per-line predicate [hasValidOfficialPronunciation] has always used. */
+    private fun hasOfficialPronunciationLine(line: Any): Boolean {
+        val text = rawLineText(line)
+        val pronunciation = withRawRead {
+            call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD) as? String
         }
+        return !text.isNullOrBlank() && RomanizationPolicy.sanitize(text, pronunciation) != null
     }
 
     /**
@@ -2380,14 +2391,23 @@ internal class AppleNativeLyricModelHooks(
     /**
      * HLE's `applyAppleNativePronunciationSelection`, Apple-only: hand the app's
      * own setter Apple's advertised Latin language when the song offers one, and
-     * nothing otherwise. The third-party fallback is gone, so `setPronunciation`
-     * is left untouched when Apple has no lane yet. The plan is recorded in
-     * [pronunciationSelectionOpen]: while Apple's own lane has not been selected,
-     * every later entry point calls this again, so the lane is picked up the
-     * moment Apple advertises it. A transient empty read never withdraws a lane
-     * Apple already advertised ([advertisedPronunciationLanguages]). Skipped
-     * entirely while the Mandarin rule hides the song. Returns the plan, for the
-     * diagnostic.
+     * nothing otherwise. `setPronunciation` is left untouched when Apple's model
+     * advertises no lane yet — the plan is recorded in
+     * [pronunciationSelectionOpen] and every later entry point calls this again,
+     * so a lane is picked up the moment it appears. A transient empty read never
+     * withdraws a lane Apple already advertised
+     * ([advertisedPronunciationLanguages]). Skipped entirely while the Mandarin
+     * rule hides the song. Returns the plan, for the diagnostic.
+     *
+     * **Only an advertised language is ever handed to the setter.** A synthesized
+     * tag is not: `libandroidappmusic.so`'s
+     * `SongInfo::setPronunciation` logs `Can not switch to pronunciation {0}
+     * because one was not found in the ttml. Will clear existing pronunciations.`
+     * and *clears the pronunciations it parsed* when the language is not one the
+     * document carries. A document we write therefore names the lane for its own
+     * song ([NativeLyricModelPolicy.transliterationLanguageTag]); a document that
+     * names none is left alone and the per-line text Apple did parse is revealed
+     * by the payload path, which never touches the model.
      */
     private fun applyAppleNativePronunciationSelection(
         songNative: Any,
@@ -2408,23 +2428,7 @@ internal class AppleNativeLyricModelHooks(
         // retry it.
         val appleLane = plan.selection == NativeLyricModelPolicy.PronunciationSelection.APPLE
         pronunciationSelectionOpen = !appleLane
-        // Apple exposed the pronunciation **text** (the per-line probe reads it)
-        // but advertised no language name for it. Hand the app the neutral Latin
-        // tag HLE's `thirdPartyPronunciationFallbackLanguage()` uses, purely so
-        // the pronunciation track can be revealed; the text stays Apple's own
-        // getter output, so this is not a third-party transliteration lane. One
-        // attempt per model, so a rejected tag is not retried on every read.
-        val probeFallback = plan.language == null &&
-            !mandarinHidden &&
-            probeFallbackAttemptedFor?.get() !== songNative &&
-            hasValidOfficialPronunciation(songNative)
-        val language = plan.language
-            ?: if (probeFallback) {
-                probeFallbackAttemptedFor = java.lang.ref.WeakReference(songNative)
-                NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(systemLyricsLanguage)
-            } else {
-                return plan
-            }
+        val language = plan.language ?: return plan
         if (
             language == selectedPronunciationLanguage &&
             selectedPronunciationSong?.get() === songNative
@@ -2449,9 +2453,7 @@ internal class AppleNativeLyricModelHooks(
                 selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
                 selectedPronunciationLanguage = language
                 if (appleLane) pronunciationSelectionOpen = false
-                // A probe-confirmed neutral tag is a confirmed lane too: the text
-                // exists (the probe read it), only the name was synthesized.
-                confirmedLane = appleLane || probeFallback
+                confirmedLane = appleLane
             } else {
                 pronunciationSelectionOpen = true
             }
@@ -3326,32 +3328,32 @@ internal class AppleNativeLyricModelHooks(
     /**
      * The device-facing per-track proof that the native model was written.
      * `officialPronunciation` is the per-call reading that drives the decision;
-     * `officialAtBuild` is the build-time reading, kept so a log can show the two
-     * diverging; `officialLanguage` is Apple's advertised own lane,
-     * `selectedLanguage` what `setPronunciation` was handed,
-     * `appleLanguagesKnown` whether Apple's language vector was populated at this
-     * call, `translationSelected` the app's own lyrics-translation preference
-     * (HLE's `PreferencesMonitor.isTranslationSelected()`, `none` when
-     * unreadable), and `selection`/`reason` which Apple lane was chosen and why.
-     * `pronunciationLines` counts the lines carrying **Apple's own** romanization;
-     * the module adds none.
+     * `officialAtBuild`/`probeAtBuildLines` are the build-time reading of the same
+     * per-line probe (counted, so a lane our own selection pass destroyed shows as
+     * `probeAtBuildLines=34 … pronunciationLines=0`); `languages` is the raw
+     * `getPronunciationLanguages` vector read **at build**, before our selection,
+     * and `advertisedAfterSelection` the same raw read afterwards — the pair that
+     * proves whether the document's `<transliteration xml:lang>` tag became a lane
+     * name the model reports. `officialLanguage` is Apple's advertised own lane,
+     * `selectedLanguage` what `setPronunciation` was handed, `appleLanguagesKnown`
+     * whether Apple's language vector was populated at this call,
+     * `translationSelected` the app's own lyrics-translation preference (HLE's
+     * `PreferencesMonitor.isTranslationSelected()`, `none` when unreadable), and
+     * `selection`/`reason` which Apple lane was chosen and why. `pronunciationLines`
+     * counts the lines carrying **Apple's own** romanization; the module adds none.
      */
     private fun reportNativeWrite(
         lines: List<Any>,
         officialAtBuild: Boolean,
+        officialAtBuildLines: Int,
         officialNow: Boolean,
         languages: List<String>,
+        advertisedAfterSelection: List<String>,
         selection: NativeLyricModelPolicy.PronunciationSelectionPlan,
     ) {
         val songId = modelSongId
         val translationLines = lines.count { onlineTranslation(it) != null }
-        val pronunciationLines = lines.count { line ->
-            val text = rawLineText(line)
-            val pronunciation = withRawRead {
-                call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD) as? String
-            }
-            !text.isNullOrBlank() && RomanizationPolicy.sanitize(text, pronunciation) != null
-        }
+        val pronunciationLines = lines.count(::hasOfficialPronunciationLine)
         val advertised = advertisedPronunciationLanguages(languages)
         val officialLanguage = NativeLyricModelPolicy.officialPronunciationLanguage(advertised)
         diagnostic.log(
@@ -3360,8 +3362,10 @@ internal class AppleNativeLyricModelHooks(
                 "translationLines=$translationLines " +
                 "pronunciationLines=$pronunciationLines " +
                 "languages=${languages.joinToString(",")} " +
+                "advertisedAfterSelection=${advertisedAfterSelection.joinToString(",")} " +
                 "officialPronunciation=$officialNow " +
                 "officialAtBuild=$officialAtBuild " +
+                "probeAtBuildLines=$officialAtBuildLines " +
                 "officialLanguage=${officialLanguage ?: NONE} " +
                 "selectedLanguage=${selection.language ?: NONE} " +
                 "appleLanguagesKnown=${selection.appleLanguagesKnown} " +

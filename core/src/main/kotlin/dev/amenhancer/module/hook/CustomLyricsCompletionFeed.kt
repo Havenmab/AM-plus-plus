@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
 
@@ -161,7 +162,8 @@ class CustomLyricsCompletionFeed(
             appleMusicId,
             "online-translation capture id=$appleMusicId rawTtml=custom " +
                 "bytes=${document.ttml.length} revision=${document.revision.take(SHORT_REVISION)} " +
-                "timing=${metadata.timingMode} appleTranslation=${metadata.hasTranslation}",
+                "timing=${metadata.timingMode} appleTranslation=${metadata.hasTranslation} " +
+                transliterationSummary(document.ttml),
         )
         val merged = runCatching { enrich(appleMusicId, document.ttml) }.getOrNull()
         // `publish` and the per-lane `translationSource`/`pronunciationSource`
@@ -182,6 +184,25 @@ class CustomLyricsCompletionFeed(
     private fun injectLine(appleMusicId: Long, published: Boolean): String =
         "online-translation inject id=$appleMusicId source=online-translation published=$published"
 
+    /**
+     * The document side of the romanization proof for the once-per-revision
+     * `capture` line: the `<transliteration xml:lang>` tag(s) the displayed
+     * document carries (`none` when unnamed) and how many of its lines actually
+     * carry romanization. The tag is what the app's native TTML parser keys the
+     * lane by, so it names the language `getPronunciationLanguages` must report
+     * back for the lane to be selectable; the count says whether there is a lane
+     * to select at all. Read against `native-write`'s advertised vector, the pair
+     * answers "did the app drop the track, or did our own write destroy it?".
+     */
+    private fun transliterationSummary(ttml: String): String {
+        val lines = AppleLyricTtmlReader.read(ttml)
+        val tags = AppleLyricTtmlReader.transliterationLanguages(ttml)
+            .joinToString(",")
+            .ifEmpty { NONE }
+        val romanized = lines.count { !it.romanization.isNullOrBlank() }
+        return "transliterationTags=$tags transliterationLines=$romanized/${lines.size}"
+    }
+
     private companion object {
         /**
          * At most this many tracks keep a remembered body. The custom session's
@@ -191,5 +212,8 @@ class CustomLyricsCompletionFeed(
         const val MAX_TRACKS = 32
 
         const val SHORT_REVISION = 12
+
+        /** The printed value when the displayed document declares no language tag. */
+        const val NONE = "none"
     }
 }

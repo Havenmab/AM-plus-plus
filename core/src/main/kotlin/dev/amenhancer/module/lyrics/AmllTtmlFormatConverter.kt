@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
+
 data class TtmlFormatConversion(
     val ttml: String,
     val converted: Boolean,
@@ -17,9 +19,23 @@ data class TtmlFormatConversion(
  *
  * <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
  *   <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">…</text></translation></translations>
- *   <transliterations><transliteration xml:lang="und-Latn"><text for="L1">…</text></transliteration></transliterations>
+ *   <transliterations><transliteration xml:lang="ja-Latn"><text for="L1">…</text></transliteration></transliterations>
  * </iTunesMetadata>
  * ```
+ *
+ * The transliteration tag is **per song**, derived from the lyrics language
+ * ([NativeLyricModelPolicy.transliterationLanguageTag]): `ja-Latn`, `ko-Latn` or
+ * `zh-Latn` for a Japanese, Korean or Chinese document, else the neutral
+ * `und-Latn`. The tag is the lane's name inside the app's own lyric model — its
+ * native TTML parser keys each pronunciation by the element's language and
+ * `getPronunciationLanguages` reports those keys — so a neutral tag leaves the
+ * romanization parsed but unnamed, and nothing can then select it. The tag is
+ * therefore written twice over: on a track this converter builds, and on a head
+ * `<transliterations>` track the source already declared but left unnamed —
+ * which is the shape AMLL itself ships
+ * (`<transliterations><transliteration><text for="L1">…`), and the one whose
+ * romanization the app parses under no language. An entry that already names a
+ * language is never rewritten.
  *
  * A `<text>` carries whatever the source span held, so a line-by-line track
  * stays plain text and a word-by-word one keeps its timed `<span>`s. Spans
@@ -48,12 +64,15 @@ data class TtmlFormatConversion(
  *
  * The root is pinned rather than carried over. Android's TTML parser renders a
  * translation and a transliteration together only when the lyrics are Korean, so
- * the root is marked `ko`, translations `zh-Hans` and transliterations `und-Latn`;
- * because only one track of each kind survives that constraint, the first
- * translation and first romanization of each line win. The root also gets the
- * `itunes:timing` Apple expects — `Word` when the body carries timed syllables,
- * `Line` otherwise. AMLL's `xmlns=""` on `<metadata>` and `<div>` goes too: it
- * drops the lyric subtree out of the TTML namespace, leaving Apple no lines.
+ * the root is marked `ko` and translations `zh-Hans`; because only one track of
+ * each kind survives that constraint, the first translation and first
+ * romanization of each line win. The transliterations tag is not pinned: the lane
+ * exists in the model only under the language the song's own romanization is
+ * named by, so it follows the document's lyrics language (see above). The root
+ * also gets the `itunes:timing` Apple expects — `Word` when the body carries
+ * timed syllables, `Line` otherwise. AMLL's `xmlns=""` on `<metadata>` and
+ * `<div>` goes too: it drops the lyric subtree out of the TTML namespace,
+ * leaving Apple no lines.
  *
  * The rewrite is textual on purpose: whitespace between `<span>` tags carries
  * word separation, and a DOM round-trip would not preserve it. Only markup is
@@ -69,11 +88,12 @@ object AmllTtmlFormatConverter {
     /** Pinned so Apple Music on Android renders both auxiliary tracks. */
     private const val LYRIC_LANGUAGE = "ko"
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
-    /** Neutral Latin-script tag: a language-specific tag can make Apple drop the track. */
-    private const val TRANSLITERATION_LANGUAGE = "und-Latn"
 
     /** How Apple labels a translation meant to be shown under the lyric. */
     private const val TRANSLATION_TYPE = "subtitle"
+
+    /** The head lane item element, used to locate the attribute insertion point. */
+    private const val TRANSLITERATION_ELEMENT = "transliteration"
 
     /** Stands in for a line the track has no text for, keeping the entry there. */
     private const val ABSENT_TEXT = " "
@@ -94,30 +114,110 @@ object AmllTtmlFormatConverter {
     private fun attributePattern(name: String) =
         Regex("""\s${Regex.escape(name)}\s*=\s*"([^"]*)"|\s${Regex.escape(name)}\s*=\s*'([^']*)'""")
 
-    fun toAppleFormat(ttml: String): TtmlFormatConversion {
+    fun toAppleFormat(ttml: String, lyricLanguage: String? = null): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
         // Judged per kind, so a head that already declares one track does not
         // hide the other kind still sitting inline. An `<iTunesMetadata>` on its
         // own is no such signal: AMLL writes one to carry `<songwriters>`.
         val declared = declaredTracks(ttml)
+        // A declared `<transliterations>` block whose entries name no language is
+        // still a rewrite: the native parser registers a pronunciation lane only
+        // under the language its `<transliteration>` element carries, so an
+        // unnamed block parses the romanization yet advertises no lane to select.
+        val unnamed = unnamedTransliterations(ttml)
         // The head already speaks for every kind the body carries, so this is
         // Apple's own document and nothing, the root included, is rewritten.
-        if (declared.any && !hasUndeclaredInlineTrack(ttml, declared)) {
+        if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(ttml, declared)) {
             return TtmlFormatConversion(ttml, false)
         }
-        val migrated = migrateAuxiliaryTracks(ttml, declared)
+        // Read before `normalizeTags` pins the root: the source document's own
+        // language is the song's lyrics language. A document that names an
+        // unsupported (or no) language falls back to the script its lyrics are
+        // written in, and only an undeterminable one keeps the neutral tag.
+        val writtenLanguage = transliterationLanguage(ttml, lyricLanguage)
+        val migrated = migrateAuxiliaryTracks(ttml, declared, writtenLanguage, unnamed)
         val body = nextElement(migrated, "body", 0)
         val result = normalizeTags(
             migrated,
             wordTimed = body != null && hasTimedSpan(migrated, body),
         )
-        return TtmlFormatConversion(result, result != ttml)
+        return TtmlFormatConversion(
+            ttml = result,
+            converted = result != ttml,
+        )
+    }
+
+    /**
+     * The `<transliteration xml:lang>` tag for [ttml]: the caller's explicit
+     * [declared] language when it names one of HLE's romanization languages, else
+     * the document's own root `xml:lang`, else the script the lyrics are actually
+     * written in (kana → Japanese, Hangul → Korean, Han → Chinese). A document
+     * that offers none of those — an English song, or a body the converter cannot
+     * read — keeps the neutral tag, because naming a language the song is not in
+     * would be worse than naming none.
+     */
+    private fun transliterationLanguage(ttml: String, declared: String?): String {
+        listOfNotNull(declared, documentLanguage(ttml))
+            .firstNotNullOfOrNull(NativeLyricModelPolicy::transliterationScriptLanguage)
+            ?.let { return "$it-Latn" }
+        return NativeLyricModelPolicy.transliterationLanguageTag(inferredLyricsLanguage(ttml))
+    }
+
+    /** The root `<tt>`'s own `xml:lang`, which AMLL uses for the lyric language. */
+    private fun documentLanguage(ttml: String): String? =
+        nextElement(ttml, "tt", 0)?.let { attribute(it.attributes, LANGUAGE_ATTRIBUTE) }
+
+    /**
+     * The language the **body's** lyric text is written in, from the first
+     * script-bearing code point that is not Latin: kana is decisive for Japanese
+     * even beside the Han it shares, Hangul for Korean, and bare Han for Chinese.
+     * Only the body is examined, so a `zh-Hans` translation in the head cannot
+     * name the lyrics. Anything else (including a purely Latin body) is `und`.
+     */
+    private fun inferredLyricsLanguage(ttml: String): String {
+        val body = nextElement(ttml, "body", 0) ?: return "und"
+        var hasHan = false
+        var index = body.contentStart
+        while (index < body.contentEnd) {
+            val codePoint = ttml.codePointAt(index)
+            when (Character.UnicodeScript.of(codePoint)) {
+                Character.UnicodeScript.HIRAGANA,
+                Character.UnicodeScript.KATAKANA,
+                -> return "ja"
+                Character.UnicodeScript.HANGUL -> return "ko"
+                Character.UnicodeScript.HAN -> hasHan = true
+                else -> Unit
+            }
+            index += Character.charCount(codePoint)
+        }
+        return if (hasHan) "zh" else "und"
     }
 
     private fun declaredTracks(ttml: String) = DeclaredTracks(
         translations = nextElement(ttml, "translations", 0) != null,
         transliterations = nextElement(ttml, "transliterations", 0) != null,
     )
+
+    /**
+     * The `<transliteration>` elements of the head track that carry no
+     * `xml:lang`, in document order. AMLL's own documents declare the track that
+     * way (`<transliterations><transliteration><text for="L1">…`), so the lane is
+     * preserved by [migrateAuxiliaryTracks] yet never named — the exact shape the
+     * device log's `languages=` (empty) beside a parsed romanization came from.
+     * An entry that already names a language is left exactly as it was.
+     */
+    private fun unnamedTransliterations(ttml: String): List<Element> {
+        val block = nextElement(ttml, "transliterations", 0) ?: return emptyList()
+        val unnamed = mutableListOf<Element>()
+        var cursor = block.contentStart
+        while (true) {
+            val item = nextElement(ttml, "transliteration", cursor) ?: break
+            if (item.end > block.contentEnd) break
+            cursor = item.end
+            if (attribute(item.attributes, LANGUAGE_ATTRIBUTE).isNullOrBlank()) unnamed += item
+        }
+        return unnamed
+    }
 
     /** True when the body still carries a kind the head leaves undeclared. */
     private fun hasUndeclaredInlineTrack(ttml: String, declared: DeclaredTracks): Boolean {
@@ -143,12 +243,25 @@ object AmllTtmlFormatConverter {
     }
 
     /** Moves inline `x-translation` / `x-roman` spans into a head `<iTunesMetadata>`. */
-    private fun migrateAuxiliaryTracks(ttml: String, declared: DeclaredTracks): String {
-        val metadata = nextElement(ttml, "metadata", 0) ?: return ttml
+    private fun migrateAuxiliaryTracks(
+        ttml: String,
+        declared: DeclaredTracks,
+        transliterationLanguage: String,
+        unnamedTransliterations: List<Element>,
+    ): String {
+        // A preserved head track that names no language still has to be named:
+        // the tag is the lane's key in the app's own lyric model, so without it
+        // the romanization is parsed but no language is ever advertised. An
+        // entry that already carries one is not touched.
+        val edits = mutableListOf<Edit>()
+        unnamedTransliterations.forEach { item ->
+            val insertAt = item.start + 1 + TRANSLITERATION_ELEMENT.length
+            edits += Edit(insertAt, insertAt, " xml:lang=\"$transliterationLanguage\"")
+        }
+        val metadata = nextElement(ttml, "metadata", 0) ?: return applyEdits(ttml, edits)
 
         val translations = mutableListOf<TrackEntry>()
         val transliterations = mutableListOf<TrackEntry>()
-        val edits = mutableListOf<Edit>()
 
         var cursor = metadata.end
         while (true) {
@@ -170,7 +283,7 @@ object AmllTtmlFormatConverter {
         edits += declareTracks(
             ttml,
             metadata,
-            buildTracks(translations, transliterations),
+            buildTracks(translations, transliterations, transliterationLanguage),
             declared,
         )
         return applyEdits(ttml, edits)
@@ -346,9 +459,10 @@ object AmllTtmlFormatConverter {
     private fun buildTracks(
         translations: List<TrackEntry>,
         transliterations: List<TrackEntry>,
+        transliterationLanguage: String,
     ): String = buildString {
         appendTrack(translations, "translations", "translation", TRANSLATION_LANGUAGE, TRANSLATION_TYPE)
-        appendTrack(transliterations, "transliterations", "transliteration", TRANSLITERATION_LANGUAGE)
+        appendTrack(transliterations, "transliterations", "transliteration", transliterationLanguage)
     }
 
     private fun StringBuilder.appendTrack(

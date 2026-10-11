@@ -131,5 +131,49 @@ class AppleLyricTtmlReaderTest {
               </div></body>
             </tt>
         """.trimIndent()
+
+        /** AMLL's own head track: `<transliteration>` with no `xml:lang` at all. */
+        val UNNAMED_TRANSLITERATION_DOCUMENT = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+              <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+                <transliterations><transliteration>
+                  <text for="L1">ki</text>
+                </transliteration></transliterations>
+              </iTunesMetadata></metadata></head>
+              <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">き</span></p></div></body>
+            </tt>
+        """.trimIndent()
+    }
+
+    /**
+     * The diagnostic reads the displayed document's own tag: it is what the app's
+     * native parser keys the lane by, so a device log can compare it with the
+     * model's advertised vector.
+     */
+    @Test
+    fun `the head transliteration languages are read in order and de-duplicated`() {
+        assertEquals(
+            listOf("ja-Latn"),
+            AppleLyricTtmlReader.transliterationLanguages(WORD_DOCUMENT),
+        )
+        val twoTracks = WORD_DOCUMENT
+            .replace(
+                "<transliterations>",
+                "<transliterations>" +
+                    "<transliteration xml:lang=\"ko-Latn\"><text for=\"L1\">k</text></transliteration>" +
+                    "<transliteration xml:lang=\"ko-Latn\"><text for=\"L2\">k2</text></transliteration>",
+            )
+        assertEquals(
+            listOf("ko-Latn", "ja-Latn"),
+            AppleLyricTtmlReader.transliterationLanguages(twoTracks),
+        )
+        // An AMLL document that names no language reports none, which is exactly
+        // the state the lane-name fix has to remove.
+        assertEquals(
+            emptyList<String>(),
+            AppleLyricTtmlReader.transliterationLanguages(UNNAMED_TRANSLITERATION_DOCUMENT),
+        )
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationLanguages("not ttml"))
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationLanguages(""))
     }
 }

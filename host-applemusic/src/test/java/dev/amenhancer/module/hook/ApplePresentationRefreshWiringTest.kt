@@ -599,16 +599,35 @@ class ApplePresentationRefreshWiringTest {
                 "performPresentationRefresh(state, PresentationRefreshTrigger.BUILD)",
             ),
         )
-        // The probe-confirmed neutral tag: synthesized only when the probe read
-        // text and Apple advertised no language, handed to `setPronunciation` once
-        // per model, and a confirmed lane when Apple accepts it.
-        assertTrue(hooks.contains("val probeFallback = plan.language == null &&"))
-        assertTrue(
-            hooks.contains("NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(systemLyricsLanguage)"),
+        // The probe-confirmed neutral tag is a payload-lane name only. It must
+        // never be handed to the native setter: `SongInfo::setPronunciation`
+        // clears the pronunciations it parsed when the language "was not found in
+        // the ttml" (`libandroidappmusic.so`), which is exactly what turned a
+        // custom-lyrics `probeAtBuildLines=34` into `pronunciationLines=0`. The
+        // document's own per-song `<transliteration xml:lang>` tag is what names
+        // the lane; the selection hands the app only what the model advertised.
+        assertFalse(hooks.contains("probeFallbackAttemptedFor"))
+        assertFalse(hooks.contains("val probeFallback = plan.language == null"))
+        assertFalse(
+            hooks.contains(
+                "NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(systemLyricsLanguage)",
+            ),
         )
-        assertTrue(hooks.contains("probeFallbackAttemptedFor = java.lang.ref.WeakReference(songNative)"))
-        assertTrue(hooks.contains("confirmedLane = appleLane || probeFallback"))
-        assertTrue(hooks.contains("probeFallbackAttemptedFor = null"))
+        assertTrue(hooks.contains("val language = plan.language ?: return plan"))
+        // The per-line probe count is printed before and after the selection pass,
+        // and the raw advertised vector is read after it, so one log line settles
+        // whether the written tag became a lane name.
+        assertTrue(
+            hooks.contains("val officialAtBuildLines = officialPronunciationLineCount(songNative)"),
+        )
+        assertTrue(hooks.contains("officialAtBuildLines = officialAtBuildLines"))
+        assertTrue(hooks.contains("advertisedAfterSelection = songPronunciationLanguages(songNative)"))
+        assertTrue(hooks.contains("probeAtBuildLines=\$officialAtBuildLines"))
+        assertTrue(
+            hooks.contains(
+                "advertisedAfterSelection=\${advertisedAfterSelection.joinToString(\",\")}",
+            ),
+        )
     }
 
     @Test

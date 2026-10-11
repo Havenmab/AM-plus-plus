@@ -23,6 +23,10 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
     private val progressContent = TabletProgressContent(::find)
     val player = find(root, "player_root") as ViewGroup
     private val songHost = find(player, "player_fragments_host") as ViewGroup
+    private val bottomDivider = find(songHost, native.hostBottomDividerResource)?.takeIf { it.parent === songHost }
+    private val bottomDividerVisibility = bottomDivider?.let { view ->
+        OwnedHostProperty({ view.visibility }, { view.visibility = it })
+    }
     private val originalParams = songHost.layoutParams
     private var originalIndex = player.indexOfChild(songHost)
     private val wrapper = object : FrameLayout(root.context) {
@@ -108,6 +112,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         wrapper.addView(songHost, FrameLayout.LayoutParams(1, ViewGroup.LayoutParams.MATCH_PARENT))
         wrapper.addView(right, FrameLayout.LayoutParams(1, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT))
         installed = true
+        if (FragmentTabletDualPaneCoordinator.eligible(root.context)) suppressHostBottomDivider()
         slide = currentSlide()
         layoutPanes(player.width)
     }
@@ -198,6 +203,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
                 root.post { restore() }
                 return true
             }
+            suppressHostBottomDivider()
             if (artworkLayoutPending) {
                 if (artworkContainer?.isLayoutRequested == true) {
                     root.requestLayout(); root.postInvalidateOnAnimation()
@@ -492,7 +498,16 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         }
     }
 
+    /** Keep the native Snackbar anchor and layout slot; only suppress its painted seam. */
+    private fun suppressHostBottomDivider() {
+        val divider = bottomDivider ?: return
+        if (divider.parent === songHost && divider.visibility == View.VISIBLE) {
+            bottomDividerVisibility?.set(View.INVISIBLE)
+        }
+    }
+
     private fun restoreDecorations() {
+        bottomDividerVisibility?.close()
         components?.close(); components = null
         componentsFailed = false
         paneMotion.close()
@@ -516,6 +531,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
     }
     fun destroy() {
         destroyed = true; stopObserver()
+        bottomDividerVisibility?.close()
         components?.close(); components = null
         paneMotion.close()
         songLayoutRestore?.invoke(); songLayoutRestore = null

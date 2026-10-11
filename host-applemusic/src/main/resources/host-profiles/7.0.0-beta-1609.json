@@ -3337,6 +3337,9 @@
     "backgroundId": "background_layers"
   },
   "fragmentDualPane": {
+    "resources": {
+      "hostBottomDivider": "nav_bar_divider"
+    },
     "classes": {
       "controller": "com.apple.android.music.player.fragment.PlayerMainFragment",
       "lyrics": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",

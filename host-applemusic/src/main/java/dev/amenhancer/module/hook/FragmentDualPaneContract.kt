@@ -9,6 +9,7 @@ import java.lang.reflect.Modifier
 internal class FragmentDualPaneContract(val profile: AppleMusicHostProfile, private val members: FragmentProfileMembers,
     val songLayout: FragmentTabletSongLayoutContract?) {
     private val names = profile.document.getJSONObject("fragmentDualPane")
+    val hostBottomDividerResource = names.getJSONObject("resources").getString("hostBottomDivider")
     private fun type(role: String) = members.type(names.getJSONObject("classes").getString(role))
     val controller = type("controller")
     val lyrics = type("lyrics")
@@ -61,6 +62,7 @@ internal class FragmentDualPaneContract(val profile: AppleMusicHostProfile, priv
 
     init {
         check(profile.family == "fragment-content")
+        check(hostBottomDividerResource.isNotBlank()) { "fragmentDualPane.resources.hostBottomDivider missing" }
         check(state.isEnum && states.keys.containsAll(listOf("SONG", "LYRICS", "QUEUE")))
         check(transactionConstructor.declaringClass == transaction && transactionConstructor.parameterTypes.contentEquals(arrayOf(manager)))
         check(callback.type == coverFrame.declaringClass && callbackOwner.type == controller)

@@ -2,6 +2,7 @@
 build/
 app/build/
 .kotlin/
+__pycache__/
 **/build/
 .externalNativeBuild/
 .cxx/

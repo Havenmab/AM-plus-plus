@@ -15,9 +15,11 @@ import kotlin.math.roundToLong
  *
  * A Word-timed `<p>` keeps one [AppleTtmlWord] per innermost timed `<span>`, so
  * a background-vocal group is flattened to its syllables rather than read as a
- * single word. A line with no timed span is Line-timed and keeps only `<p>`
- * timing. Translation and romanization entries are looked up by `itunes:key`
- * from the head tracks; the first entry for a key wins.
+ * single word. A line's `begin`/`end` is the `<p>` element's own timing — the
+ * same value the app's native line model carries — and only a `<p>` without one
+ * falls back to its first/last timed span. Translation and romanization entries
+ * are looked up by `itunes:key` from the head tracks; the first entry for a key
+ * wins.
  *
  * A malformed document yields an empty list rather than throwing: the caller
  * then leaves the displayed document untouched.
@@ -53,11 +55,21 @@ object AppleLyricTtmlReader {
                 ?.takeIf(String::isNotBlank)
                 ?: "L${index + 1}"
             val words = words(inner)
-            val begin = words.firstOrNull()?.begin
-                ?: clockMs(beginAttribute.findAttribute(attributes))
+            // The line's own `<p begin end>` is authoritative, because that is
+            // exactly what the app's native parser builds the line's
+            // `LyricsTiming` from (`LyricsTimingParser::make` reads the element's
+            // `begin`/`end` attributes), and the app's per-line getters are then
+            // matched against this model by that timing. Deriving it from the
+            // first/last timed span instead diverges whenever the document's last
+            // span ends past `<p end>` — a background-vocal group that starts
+            // after the lyric line does exactly that, and the whole line then
+            // missed its own overlay row. The span ends remain the fallback for a
+            // `<p>` that declares no timing at all.
+            val begin = clockMs(beginAttribute.findAttribute(attributes))
+                ?: words.firstOrNull()?.begin
                 ?: 0L
-            val end = words.lastOrNull()?.end
-                ?: clockMs(endAttribute.findAttribute(attributes))
+            val end = clockMs(endAttribute.findAttribute(attributes))
+                ?: words.lastOrNull()?.end
                 ?: begin
             AppleTtmlLine(
                 begin = begin,

@@ -148,6 +148,59 @@ class NativeLyricOverlayStoreTest {
         assertNull(store.translation("77", 1_000L, 2_000L, "c"))
         assertEquals("甲", store.translation("77", 1_000L, 2_000L, "a"))
         assertEquals("乙", store.translation("77", 1_000L, 2_000L, "b"))
+        // Every key that could answer is ambiguous here, so the lookup reports the
+        // miss instead of guessing.
+        assertEquals(OverlayMatch.MISSING, store.lookup("77", 1_000L, 2_000L, "c").match)
+        assertNull(store.lookup("77", 1_000L, 2_000L, "c").content)
+    }
+
+    @Test
+    fun `a line kept by its begin still answers when the app's end differs`() {
+        // The document's `<p end>` and the app's line end are derived
+        // independently: a background vocal may end the app's line after the
+        // lyric line's own `<p end>`, and an offline/online merge may re-time an
+        // end. The line's begin is its identity, so it is the bounded fallback.
+        val store = NativeLyricOverlayStore()
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
+
+        val row = store.lookup("77", 1_000L, 2_350L, "君の名は")
+        assertEquals(OverlayMatch.BEGIN, row.match)
+        assertEquals("你的名字", row.content?.translation)
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_350L, "君の名は"))
+    }
+
+    @Test
+    fun `a line kept by its text still answers when both ends differ`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            "77",
+            listOf(
+                line(1_000L, 2_000L, "君の名は", translation = "你的名字"),
+                line(3_000L, 4_000L, "夢のあと", translation = "梦的痕迹"),
+            ),
+        )
+
+        val row = store.lookup("77", 1_050L, 2_100L, "君の名は")
+        assertEquals(OverlayMatch.TEXT, row.match)
+        assertEquals("你的名字", row.content?.translation)
+        // A repeated line (two rows with the same text) is never guessed at.
+        store.update(
+            "77",
+            listOf(
+                line(1_000L, 2_000L, "同じ", translation = "同"),
+                line(3_000L, 4_000L, "同じ", translation = "又同"),
+            ),
+        )
+        assertEquals(OverlayMatch.MISSING, store.lookup("77", 1_050L, 2_100L, "同じ").match)
+    }
+
+    @Test
+    fun `a matching key is named so the log can tell exact from fallback`() {
+        val store = NativeLyricOverlayStore()
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
+
+        assertEquals(OverlayMatch.EXACT_TIMING, store.lookup("77", 1_000L, 2_000L, "君の名は").match)
+        assertEquals(OverlayMatch.TIMING, store.lookup("77", 1_000L, 2_000L, "君の  名は").match)
     }
 
     @Test

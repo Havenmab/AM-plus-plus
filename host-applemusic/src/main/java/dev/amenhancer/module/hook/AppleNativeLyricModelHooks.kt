@@ -11,6 +11,7 @@ import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
 import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
+import dev.amenhancer.module.lyrics.online.OverlayMatch
 import dev.amenhancer.module.lyrics.online.PresentationRefreshOutcome
 import dev.amenhancer.module.lyrics.online.PronunciationLaneSource
 import dev.amenhancer.module.lyrics.online.PronunciationPayloadLane
@@ -262,6 +263,20 @@ internal class AppleNativeLyricModelHooks(
      * immediately, without dumping every line.
      */
     private val pronunciationWordSpanDetailKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * De-duplicates the per-row `word-lane` diagnostic: one row per lyric line per
+     * model generation. Unlike `pronunciation-word-spans` (which can only fire
+     * once the app actually renders a word plan) this is emitted on the word
+     * getter for **every** row, including the ones that resolve to nothing, so a
+     * line that never reaches the word lane is named with its reason instead of
+     * silently missing.
+     */
+    private val wordLaneRowKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Rows emitted per model generation before the diagnostic stops counting. */
+    @Volatile
+    private var wordLaneRowsEmitted: Int = 0
 
     /** True once at least one `LyricsWordVector -> ArrayMap` adapter method is hooked. */
     @Volatile
@@ -2633,6 +2648,8 @@ internal class AppleNativeLyricModelHooks(
         wordDiagnosticKeys.clear()
         pronunciationWordSpanKeys.clear()
         pronunciationWordSpanDetailKeys.clear()
+        wordLaneRowKeys.clear()
+        wordLaneRowsEmitted = 0
         lines.map { it.javaClass }.distinct().forEach { clazz ->
             installLineGetter(
                 clazz = clazz,
@@ -2788,11 +2805,12 @@ internal class AppleNativeLyricModelHooks(
                 AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_TEXT_METHOD,
             ),
         )
-        val onlinePronunciationText = if (onlineFallback) {
-            supplementPronunciation(line, originalText)
-        } else {
-            null
-        }
+        // One lookup for the row: the line-lane text the app's own decision reads
+        // and the per-word spans the render plan carries must come from the same
+        // stored row, or a line can end up asked for words with no spans to give
+        // it (or the reverse).
+        val supplementRow = if (onlineFallback) supplementPronunciationRow(line, originalText) else null
+        val onlinePronunciationText = supplementRow?.lineText
         // Apple's own word vector text (HLE's `nativeRawWordVectorText`): the
         // romanization carried on the pronunciation words themselves. On a
         // word-timing song this is often the only Apple source for the line.
@@ -2820,28 +2838,34 @@ internal class AppleNativeLyricModelHooks(
         // line-level romanization to split, so a line string (Apple's or the
         // document's) never arms a word plan: an unmatched word keeps its text
         // instead of the whole line piling onto the last word.
-        val wordSpans = if (onlineFallback && track == ApplePronunciationWordTrack.MAIN_LINE_TIMING) {
-            supplementPronunciationSpans(line)
-        } else {
-            emptyList()
-        }
+        val wordSpans = supplementRow?.spans.orEmpty()
+        // A Word-timed line whose line-level concatenation was sanitized away (or
+        // whose line getter missed its row) still carries its own one-span-per-word
+        // lane. Those spans are the lane on their own, so they arm the plan even
+        // when no line text exists — but only once the matcher confirms at least
+        // one native main word actually owns a span, so the main lyric text can
+        // never be handed back to the app as a pronunciation row.
+        val spansOwnMainWord = track != ApplePronunciationWordTrack.MAIN_LINE_TIMING &&
+            wordSpans.isNotEmpty() && vector != null &&
+            spansMatchMainWords(vector, wordSpans)
+        val wordLaneArmed =
+            track == ApplePronunciationWordTrack.MAIN_LINE_TIMING || spansOwnMainWord
         val canRegisterRenderPlan =
-            track == ApplePronunciationWordTrack.MAIN_LINE_TIMING &&
-                vector != null &&
-                wordSpans.isNotEmpty() &&
-                wordRenderAdapterAvailable
+            track != ApplePronunciationWordTrack.OFFICIAL &&
+                wordLaneArmed && vector != null && wordSpans.isNotEmpty() && wordRenderAdapterAvailable
         val resolved: Any? = when (track) {
             ApplePronunciationWordTrack.OFFICIAL -> original
-            ApplePronunciationWordTrack.MAIN_LINE_TIMING ->
-                // The explicit null check (not `canRegisterRenderPlan`) is what
-                // lets the compiler smart-cast the argument.
+            // The explicit null check (not `canRegisterRenderPlan`) is what
+            // lets the compiler smart-cast the argument.
+            ApplePronunciationWordTrack.MAIN_LINE_TIMING, ApplePronunciationWordTrack.HIDDEN ->
                 if (vector != null && canRegisterRenderPlan) {
                     registerPronunciationRenderPlan(vector, wordSpans)
                     vector
-                } else {
+                } else if (track == ApplePronunciationWordTrack.MAIN_LINE_TIMING) {
                     emptyPronunciationWords(original, mainWords) ?: original
+                } else {
+                    emptyPronunciationWords(original, null) ?: original
                 }
-            ApplePronunciationWordTrack.HIDDEN -> emptyPronunciationWords(original, null) ?: original
         }
         reportPronunciationWords(
             line = line,
@@ -2854,6 +2878,17 @@ internal class AppleNativeLyricModelHooks(
             officialWords = vectorSize(original),
             officialWordsCompatible = officialWordsCompatible,
             mainTimingSource = plan.source,
+        )
+        reportWordLaneRow(
+            line = line,
+            supplementRow = supplementRow,
+            laneAvailable = onlineFallback,
+            track = track,
+            planSource = plan.source,
+            wordCount = vectorSize(vector),
+            spanCount = wordSpans.size,
+            wordLaneArmed = wordLaneArmed,
+            renderPlanRegistered = canRegisterRenderPlan,
         )
         announceWordReadyIfAppleWordsArrived(track, plan.source, onlineFallback)
         recordRenderProbe(
@@ -3079,6 +3114,86 @@ internal class AppleNativeLyricModelHooks(
         )
     }
 
+    /**
+     * Whether at least one native main word of [vector] owns one of [spans] by
+     * time — the pure half of [buildPronunciationWordRenderContext], evaluated
+     * *before* a one-shot render plan is armed. A line whose line-level
+     * pronunciation text was sanitized away still carries a real per-word lane
+     * when its spans land on its own words; only then may the native main vector
+     * stand in, so the main lyric text can never be returned as romanization.
+     */
+    private fun spansMatchMainWords(vector: Any, spans: List<NativePronunciationSpan>): Boolean {
+        val wordIdName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_WORD_ID_METHOD]
+            ?: return false
+        val beginName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD]
+            ?: return false
+        val endName = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD]
+            ?: return false
+        val timings = vectorItems(vector).mapNotNull { word ->
+            val whitespace =
+                (call(word, AppleMusicRuntimeMember.LYRICS_NATIVE_WHITESPACE_METHOD) as? Boolean) == true
+            if (whitespace) return@mapNotNull null
+            pronunciationWordKey(word, wordIdName, beginName, endName)?.let { key ->
+                PronunciationWordTiming(begin = key.begin.toLong(), end = key.end.toLong())
+            }
+        }
+        if (timings.isEmpty()) return false
+        return ApplePronunciationPolicy.matchPronunciationSpans(timings, spans).isNotEmpty()
+    }
+
+    /**
+     * The bounded per-row proof of the word-lane decision, emitted on the word
+     * getter for **every** row (unlike `pronunciation-word-spans`, which can only
+     * appear once the app has actually rendered a registered plan):
+     *
+     * `online-translation word-lane id=… row=<begin> words=<n> spans=<n>
+     * match=<exact|timing|begin|text|missing> reason=<…> track=…`
+     *
+     * `words` is the native main word count the line offers, `spans` the displayed
+     * document's own timed slices for it, and `match` the stored key that answered
+     * (see [OverlayMatch]) — `missing` is the one value that leaves a Word-timed
+     * line without a word lane at all. `reason` names the first failing condition
+     * in the same order [resolvePronunciationWords] decides them, so the next
+     * device log can tell a document problem (`no-row`, `no-timed-spans`) from a
+     * host problem (`no-main-vector`, `no-render-adapter`).
+     */
+    private fun reportWordLaneRow(
+        line: Any,
+        supplementRow: SupplementPronunciationRow?,
+        laneAvailable: Boolean,
+        track: ApplePronunciationWordTrack,
+        planSource: ApplePronunciationTextSource,
+        wordCount: Int,
+        spanCount: Int,
+        wordLaneArmed: Boolean,
+        renderPlanRegistered: Boolean,
+    ) {
+        if (wordLaneRowsEmitted >= MAX_WORD_LANE_ROWS) return
+        val songId = modelSongId
+        val begin = supplementRow?.begin
+            ?: number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
+            ?: -1L
+        if (!wordLaneRowKeys.add("$songId:$begin")) return
+        wordLaneRowsEmitted += 1
+        val reason = when {
+            track == ApplePronunciationWordTrack.OFFICIAL -> "official"
+            !laneAvailable -> "lane-unavailable"
+            supplementRow == null || supplementRow.match == OverlayMatch.MISSING -> "no-row"
+            spanCount == 0 -> "no-timed-spans"
+            wordCount <= 0 -> "no-main-vector"
+            !wordRenderAdapterAvailable -> "no-render-adapter"
+            renderPlanRegistered -> "ok"
+            !wordLaneArmed -> "hidden"
+            else -> "no-plan"
+        }
+        log(
+            "online-translation word-lane id=$songId row=$begin " +
+                "words=$wordCount spans=$spanCount " +
+                "match=${supplementRow?.match?.token ?: OverlayMatch.MISSING.token} " +
+                "reason=$reason track=${track.name} lane=${planSource.token}",
+        )
+    }
+
     /** HLE's `ApplePronunciationWordRenderContext.displayText`, keyed by identity. */
     private fun pronunciationWordRenderText(word: Any?): String? {
         val context = currentPronunciationWordRenderContext() ?: return null
@@ -3261,36 +3376,53 @@ internal class AppleNativeLyricModelHooks(
     }
 
     /**
-     * The overlay lane for one line: the displayed document's romanization at the
-     * line's timing and text, sanitized against the line's own words. This is
-     * HLE's `onlinePronunciation`, gated to a supplement track by the caller.
+     * One native line's overlay row and which key answered it, resolved **once** so
+     * the line-lane text (which decides whether the app even asks for words) and the
+     * per-word spans (which the one-shot render plan carries) can never disagree
+     * about which row the line owns.
      */
-    private fun supplementPronunciation(line: Any, text: String?): String? {
-        if (!enabled || mandarinHidden) return null
-        val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD)) ?: return null
-        val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD)) ?: return null
-        return RomanizationPolicy.sanitize(
-            originalText = text,
-            pronunciation = overlay.pronunciation(lineSongId(line), begin, end, text),
+    private data class SupplementPronunciationRow(
+        val laneAvailable: Boolean,
+        val lineText: String?,
+        val spans: List<NativePronunciationSpan>,
+        val match: OverlayMatch,
+        val begin: Long?,
+    )
+
+    private fun supplementPronunciationRow(line: Any, text: String?): SupplementPronunciationRow {
+        if (!enabled || mandarinHidden) {
+            return SupplementPronunciationRow(false, null, emptyList(), OverlayMatch.MISSING, null)
+        }
+        val songId = lineSongId(line)
+        if (!supplementLaneAvailable(songId)) {
+            return SupplementPronunciationRow(false, null, emptyList(), OverlayMatch.MISSING, null)
+        }
+        val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
+        val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD))
+        if (begin == null || end == null) {
+            return SupplementPronunciationRow(true, null, emptyList(), OverlayMatch.MISSING, begin)
+        }
+        val row = overlay.lookup(songId, begin, end, text)
+        val content = row.content
+        return SupplementPronunciationRow(
+            laneAvailable = true,
+            lineText = RomanizationPolicy.sanitize(
+                originalText = text,
+                pronunciation = content?.pronunciation,
+            ),
+            spans = content?.pronunciationSpans.orEmpty(),
+            match = row.match,
+            begin = begin,
         )
     }
 
     /**
-     * The displayed document's own **timed** romanization slices for one line.
-     * Unlike [supplementPronunciation] (the line-level concatenation the line
-     * getter serves), these are the per-word spans the word getter matches each
-     * native word against by time. Empty for a line whose transliteration entry
-     * carries no timed `<span>` — a line-level lane is never spread over words.
+     * The overlay lane for one line: the displayed document's romanization at the
+     * line's timing and text, sanitized against the line's own words. This is
+     * HLE's `onlinePronunciation`, gated to a supplement track by the caller.
      */
-    private fun supplementPronunciationSpans(line: Any): List<NativePronunciationSpan> {
-        if (!enabled || mandarinHidden) return emptyList()
-        val text = rawLineText(line)
-        val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD))
-            ?: return emptyList()
-        val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD))
-            ?: return emptyList()
-        return overlay.pronunciationSpans(lineSongId(line), begin, end, text)
-    }
+    private fun supplementPronunciation(line: Any, text: String?): String? =
+        supplementPronunciationRow(line, text).lineText
 
     private fun currentPronunciationWordRenderContext(): PronunciationWordRenderContext? =
         pronunciationWordRenderContexts.get()?.peekLast()
@@ -3709,6 +3841,13 @@ internal class AppleNativeLyricModelHooks(
          * without dumping every word of the line.
          */
         const val MAX_WORD_SPAN_DIAGNOSTIC_MATCHES = 3
+
+        /**
+         * The bound on the per-row `word-lane` diagnostic: one short line per
+         * lyric line per model generation, capped so a pathological document
+         * cannot flood the log the way an unbounded per-bind emission would.
+         */
+        const val MAX_WORD_LANE_ROWS = 128
 
         /**
          * The fork's verified lyrics-RecyclerView accessor, used when the

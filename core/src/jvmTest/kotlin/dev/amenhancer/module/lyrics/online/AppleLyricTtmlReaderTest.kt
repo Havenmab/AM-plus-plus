@@ -174,6 +174,44 @@ class AppleLyricTtmlReaderTest {
         assertTrue(AppleLyricTtmlReader.read(WORD_DOCUMENT).first().romanizationSpans.isEmpty())
     }
 
+    @Test
+    fun `a line's own p timing wins over a background span that ends later`() {
+        // Apple's own Word-timed documents always end the `<p>` where its last span
+        // ends, but an AMLL document can put a background vocal *after* the lyric
+        // line. The app's native line model then carries the `<p>` timing
+        // (`LyricsTimingParser::make` reads the element's own begin/end), so a
+        // reader that took the line's end from its last span would key the line at
+        // 3.400 and miss the native line at 3.000 for good.
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """itunes:timing="Word" xml:lang="ja">""" +
+                """<body><div><p begin="1.000" end="3.000" itunes:key="L1">""" +
+                """<span begin="1.000" end="2.000">Main</span>""" +
+                """<span ttm:role="x-bg"><span begin="3.100" end="3.400">(bon)</span></span>""" +
+                """</p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals(1_000L, line.begin)
+        assertEquals(3_000L, line.end)
+        // The background syllable is still flattened into the word list.
+        assertEquals(listOf(1_000L, 3_100L), line.words.map { it.begin })
+    }
+
+    @Test
+    fun `a paragraph with no timing falls back to its timed spans`() {
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" itunes:timing="Word" xml:lang="ja">""" +
+                """<body><div><p itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">a</span>""" +
+                """<span begin="1.500" end="2.000">b</span></p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals(1_000L, line.begin)
+        assertEquals(2_000L, line.end)
+    }
+
     private companion object {
         val WORD_DOCUMENT = """
             <?xml version='1.0' encoding='utf-8'?>

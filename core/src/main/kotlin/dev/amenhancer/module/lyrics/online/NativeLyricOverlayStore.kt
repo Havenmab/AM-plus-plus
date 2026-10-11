@@ -45,10 +45,19 @@ class NativeLyricOverlayStore {
 
     private data class Entry(val text: String, val content: Content)
 
+    /**
+     * The overlay lookup done for one native line: the row when one was found and
+     * the key that answered it. [OverlayMatch.MISSING] with a null [content] is the
+     * loud-but-bounded failure a device log can act on.
+     */
+    data class OverlayRow(val content: Content?, val match: OverlayMatch)
+
     private data class Overlay(
         val songId: String,
         val exactContent: Map<LineKey, Content>,
         val contentByTiming: Map<TimingKey, List<Entry>>,
+        val contentByBegin: Map<Long, List<Entry>>,
+        val contentByText: Map<String, List<Entry>>,
         val hasTranslation: Boolean,
         val translationSource: String?,
         val hasPronunciation: Boolean,
@@ -101,6 +110,16 @@ class NativeLyricOverlayStore {
                 keySelector = { it.first.timing },
                 valueTransform = { Entry(it.first.text, it.second) },
             ),
+            contentByBegin = entries.groupBy(
+                keySelector = { it.first.timing.begin },
+                valueTransform = { Entry(it.first.text, it.second) },
+            ),
+            contentByText = entries
+                .filter { it.first.text.isNotEmpty() }
+                .groupBy(
+                    keySelector = { it.first.text },
+                    valueTransform = { Entry(it.first.text, it.second) },
+                ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
             hasPronunciation = entries.any {
@@ -184,16 +203,54 @@ class NativeLyricOverlayStore {
     ): List<NativePronunciationSpan> =
         content(songId, begin, end, text)?.pronunciationSpans.orEmpty()
 
-    private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? {
-        val current = overlay ?: return null
-        if (songId.isNullOrBlank() || current.songId != songId) return null
+    /**
+     * The stored row for a native line plus **which key matched it**, so a device
+     * log can name the reason a row was served or missed instead of only
+     * observing that nothing rendered.
+     */
+    fun lookup(songId: String?, begin: Long, end: Long, text: String?): OverlayRow =
+        row(songId, begin, end, text)
+
+    private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? =
+        row(songId, begin, end, text).content
+
+    private fun row(songId: String?, begin: Long, end: Long, text: String?): OverlayRow {
+        val current = overlay ?: return OverlayRow(null, OverlayMatch.MISSING)
+        if (songId.isNullOrBlank() || current.songId != songId) {
+            return OverlayRow(null, OverlayMatch.MISSING)
+        }
         val timing = TimingKey(begin, end)
         // The exact (timing, text) entry wins; a timing that carries exactly one
         // entry still answers when Apple re-renders the same span with a slightly
         // different whitespace normalization. Two entries on one timing stay
         // ambiguous and return null rather than guessing, as HLE does.
-        current.exactContent[LineKey(timing, normalizeText(text))]?.let { return it }
-        return current.contentByTiming[timing]?.singleOrNull()?.content
+        current.exactContent[LineKey(timing, normalizeText(text))]?.let {
+            return OverlayRow(it, OverlayMatch.EXACT_TIMING)
+        }
+        current.contentByTiming[timing]?.singleOrNull()?.let {
+            return OverlayRow(it.content, OverlayMatch.TIMING)
+        }
+        // A native line's own end is not a stable key. The displayed document's
+        // `<p end>` may stop at the line's last lyric word while the app's line
+        // carries the background vocal's later end (Apple's own documents set the
+        // two equal), and an offline/online merge may re-time an end by a few
+        // milliseconds. The line's **begin** is its identity in a timed document,
+        // so it is the one further key that may answer — still only when it is
+        // unambiguous, so a malformed document with two lines on one begin is
+        // never guessed at.
+        current.contentByBegin[begin]?.singleOrNull()?.let {
+            return OverlayRow(it.content, OverlayMatch.BEGIN)
+        }
+        // Last resort for a line whose timing is unusable at both ends: a single
+        // row carrying this exact lyric text is that line. Two rows with the same
+        // text (a repeated chorus line) stay ambiguous and return nothing.
+        val normalized = normalizeText(text)
+        if (normalized.isNotEmpty()) {
+            current.contentByText[normalized]?.singleOrNull()?.let {
+                return OverlayRow(it.content, OverlayMatch.TEXT)
+            }
+        }
+        return OverlayRow(null, OverlayMatch.MISSING)
     }
 
     companion object {
@@ -204,6 +261,25 @@ class NativeLyricOverlayStore {
 
         fun normalizeText(text: String?): String = text.orEmpty().replace(WHITESPACE, " ").trim()
     }
+}
+
+/**
+ * Which stored key answered a native line's overlay lookup, printed as
+ * `match=` in the `word-lane` diagnostic.
+ *
+ * The app's native line and the displayed document describe the same line with
+ * two independently derived timing pairs, so a row must be findable by more than
+ * one key; naming the key that answered says whether the document's own `<p>`
+ * timing was exact ([EXACT_TIMING], [TIMING]) or whether a bounded fallback had
+ * to stand in ([BEGIN], [TEXT]). [MISSING] means no stored row matched at all —
+ * the one case that leaves a Word-timed line without word-level romanization.
+ */
+enum class OverlayMatch(val token: String) {
+    EXACT_TIMING("exact"),
+    TIMING("timing"),
+    BEGIN("begin"),
+    TEXT("text"),
+    MISSING("missing"),
 }
 
 /**

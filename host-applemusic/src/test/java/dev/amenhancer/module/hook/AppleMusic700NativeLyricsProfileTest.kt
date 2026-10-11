@@ -358,6 +358,58 @@ class AppleMusic700NativeLyricsProfileTest {
     }
 
     @Test
+    fun `every word-lane row names its own decision in the log`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The per-row proof: unlike `pronunciation-word-spans` (which can only fire
+        // once the app has actually rendered a registered plan), this is emitted on
+        // the word getter for every row, including the ones that resolve to
+        // nothing, so a line that never reaches the word lane is never silent.
+        assertTrue(hooks.contains("online-translation word-lane id=\$songId row=\$begin"))
+        assertTrue(hooks.contains("words=\$wordCount spans=\$spanCount"))
+        assertTrue(hooks.contains("match=\${supplementRow?.match?.token"))
+        assertTrue(hooks.contains("reason=\$reason"))
+        // The reasons name the first failing condition in decision order, so a
+        // document problem is distinguishable from a host problem.
+        assertTrue(hooks.contains("private fun reportWordLaneRow("))
+        listOf(
+            "\"lane-unavailable\"",
+            "\"no-row\"",
+            "\"no-timed-spans\"",
+            "\"no-main-vector\"",
+            "\"no-render-adapter\"",
+            "\"ok\"",
+        ).forEach { reason -> assertTrue("missing $reason", hooks.contains(reason)) }
+        // Bounded: one row per lyric line per model generation, capped.
+        assertTrue(hooks.contains("MAX_WORD_LANE_ROWS"))
+        assertTrue(hooks.contains("wordLaneRowKeys.add("))
+    }
+
+    @Test
+    fun `the displayed document's own p timing is the overlay's line key`() {
+        val reader = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/AppleLyricTtmlReader.kt",
+        )
+        // The app's native line model carries the `<p>` element's own begin/end
+        // (`LyricsTimingParser::make`), so the reader must key the line the same
+        // way and only fall back to its timed spans when the `<p>` names none. A
+        // background vocal that starts after the line ends made the old
+        // last-span rule key the row past the app's line for good.
+        assertTrue(reader.contains("val begin = clockMs(beginAttribute.findAttribute(attributes))"))
+        assertTrue(reader.contains("val end = clockMs(endAttribute.findAttribute(attributes))"))
+        val store = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/NativeLyricOverlayStore.kt",
+        )
+        // The lookup names which key answered, and only the unambiguous keys may.
+        listOf("EXACT_TIMING", "TIMING", "BEGIN", "TEXT", "MISSING").forEach { match ->
+            assertTrue("missing $match", store.contains(match))
+        }
+        assertTrue(store.contains("current.contentByBegin[begin]?.singleOrNull()"))
+        assertTrue(store.contains("current.contentByText[normalized]?.singleOrNull()"))
+    }
+
+    @Test
     fun `the native delivery wires HLE's word track instead of only the line getter`() {
         val hooks = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",

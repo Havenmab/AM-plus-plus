@@ -36,6 +36,10 @@ class PresentationRefreshOutcomeTest {
     @Test
     fun `the device log tokens stay stable`() {
         assertEquals("rebound", PresentationRefreshOutcome.REBOUND.token)
+        // A supplement lane ask runs only the payload, so its latching outcome is
+        // named for what actually happened instead of claiming a rebind.
+        assertEquals("payload-only", PresentationRefreshOutcome.PAYLOAD_ONLY.token)
+        assertTrue(PresentationRefreshOutcome.PAYLOAD_ONLY.latches)
         assertEquals("adapter-unavailable", PresentationRefreshOutcome.ADAPTER_UNAVAILABLE.token)
         assertEquals("no-presentation-method", PresentationRefreshOutcome.NO_PRESENTATION_METHOD.token)
         assertEquals("not-bound", PresentationRefreshOutcome.NOT_BOUND.token)

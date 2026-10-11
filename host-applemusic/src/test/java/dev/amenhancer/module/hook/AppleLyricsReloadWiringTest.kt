@@ -159,8 +159,12 @@ class AppleLyricsReloadWiringTest {
         assertTrue(hooks.contains("!isModuleSupplementSong(songId)"))
         assertTrue(hooks.contains("PresentationRefreshTrigger.F2_RETRY"))
         // The reload is an addition, not a replacement: the invoke and rebind
-        // still run for every accepted refresh.
-        assertTrue(hooks.contains("method.invoke(fragment, pointer)"))
+        // still run for every accepted refresh. A supplement **lane** ask is the
+        // one payload-only exception (its document is already installed and Apple's
+        // track refresh on a supplement pointer twitches the page); the
+        // completion feed's own `custom-overlay` ask keeps the full sequence.
+        assertTrue(hooks.contains("method?.invoke(fragment, pointer)"))
+        assertTrue(hooks.contains("val payloadOnly = !state.sourceIsApple &&"))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

@@ -88,7 +88,7 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(factory.contains("nativePresentationMethod"))
         assertTrue(hooks.contains("private val presentationMethod: Method?"))
         assertTrue(hooks.contains("mainHandler.post"))
-        assertTrue(hooks.contains("method.invoke(fragment, pointer)"))
+        assertTrue(hooks.contains("method?.invoke(fragment, pointer)"))
         // HLE's expected-song check before touching the page.
         assertTrue(hooks.contains("nativeSongId(songNative) != state.songId"))
     }
@@ -345,11 +345,11 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(perform.contains("applyAppleNativePronunciationSelection("))
         assertTrue(
             perform.indexOf("ensureNativeModel(songNative, viewModel = null)") <
-                perform.indexOf("method.invoke(fragment, pointer)"),
+                perform.indexOf("method?.invoke(fragment, pointer)"),
         )
         assertTrue(
             perform.indexOf("applyAppleNativePronunciationSelection(") <
-                perform.indexOf("method.invoke(fragment, pointer)"),
+                perform.indexOf("method?.invoke(fragment, pointer)"),
         )
     }
 
@@ -405,17 +405,27 @@ class ApplePresentationRefreshWiringTest {
     fun `the lane revision is per song and resets on a track change`() {
         assertTrue(hooks.contains("private var pronunciationLaneRevision: Long = 0L"))
         assertTrue(hooks.contains("private var laneReadyKey: String? = null"))
+        assertTrue(hooks.contains("private var laneConfirmedKey: String? = null"))
         val newTrack = hooks
             .substringAfter("if (songId != modelSongId) {")
             .substringBefore("modelSongId = songId")
         assertTrue(newTrack.contains("pronunciationLaneRevision = 0L"))
         assertTrue(newTrack.contains("laneReadyKey = null"))
-        // Only Apple's own document: a supplement pointer's lanes are its
-        // overlay's job and the custom-overlay trigger owns that re-presentation.
+        assertTrue(newTrack.contains("laneConfirmedKey = null"))
+        // A module supplement (custom lyrics) document is included: it carries its
+        // own `<transliterations>` lane, the build gate skips it and the
+        // post-overlay ask only runs when a merged document was published, so its
+        // late-lane ask is the only trigger that can reach the payload when the
+        // custom document already had its translation. The supplement keeps its
+        // rules: never reloaded through Apple, and its edge key is distinct from
+        // Apple's own edge for the same (lane, probe).
         val laneReady = hooks
             .substringAfter("private fun onPronunciationLaneReady(")
-            .substringBefore("private fun refreshReason(")
-        assertTrue(laneReady.contains("if (isModuleSupplementSong(songId)) return"))
+            .substringBefore("private fun onOfficialLaneConfirmed(")
+        assertTrue(laneReady.contains("val supplement = isModuleSupplementSong(songId)"))
+        assertTrue(laneReady.contains("sourceIsApple = !supplement"))
+        assertTrue(laneReady.contains("SUPPLEMENT_LANE_KEY_PREFIX"))
+        assertFalse(laneReady.contains("if (isModuleSupplementSong(songId)) return"))
         assertTrue(laneReady.contains("if (presentationInvokeGuard.get() == true) return"))
     }
 
@@ -443,10 +453,12 @@ class ApplePresentationRefreshWiringTest {
             .substringAfter("private fun confirmedPronunciationLanguageForCurrentSong(")
             .substringBefore("private fun isMandarinHidden(")
         // Cross-song leakage guard: the model currently being delivered and the
-        // exact instance the native setter accepted.
+        // exact instance the native setter accepted. The selected-lane helper is
+        // extracted so the payload lane resolution can name `confirmed` as its
+        // source; the identity guard is the same, written as an early-out.
         assertTrue(helper.contains("val songNative = songNativeRef?.get() ?: return null"))
         assertTrue(helper.contains("if (!isCurrentSong(songNative)) return null"))
-        assertTrue(helper.contains("selectedPronunciationSong?.get() === songNative"))
+        assertTrue(helper.contains("selectedPronunciationSong?.get() !== songNative"))
         assertTrue(helper.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage(it)"))
         // Only a lane we actually confirmed: the selected lane, else Apple's
         // best-known advertisement for this same model.
@@ -472,19 +484,29 @@ class ApplePresentationRefreshWiringTest {
             .substringBefore("/** The `payload=` token of one attempt")
         assertTrue(perform.contains("presentationRebind.rebind(fragment)"))
         assertTrue(perform.contains("pronunciationPayload.apply("))
-        val invokeAt = perform.indexOf("method.invoke(fragment, pointer)")
+        val invokeAt = perform.indexOf("method?.invoke(fragment, pointer)")
         val rebindAt = perform.indexOf("presentationRebind.rebind(fragment)")
         val payloadAt = perform.indexOf("pronunciationPayload.apply(")
         assertTrue(invokeAt in 0 until payloadAt)
         assertTrue(rebindAt in 0 until payloadAt)
         // Only a confirmed lane the user wants: the same conjunct `F2`'s own
-        // `z && t2(...)` uses.
+        // `z && t2(...)` uses. The lane is confirmed from the model actually
+        // presenting the lyrics — for a custom (supplement) document that is the
+        // model parsed from the user's own file — through the pure policy, which
+        // names its source for `laneSrc=`.
         assertTrue(
             perform.contains(
-                "state.officialLane ?: confirmedPronunciationLanguageForCurrentSong()",
+                "NativeLyricModelPolicy.pronunciationPayloadLane(",
             ),
         )
-        assertTrue(perform.contains("hasConfirmedOfficialLane = lane != null"))
+        assertTrue(perform.contains("stateOfficialLane = state.officialLane"))
+        assertTrue(perform.contains("selectedLane = selectedPronunciationLaneForCurrentSong()"))
+        assertTrue(
+            perform.contains("advertisedLane = advertisedPronunciationLaneForCurrentSong(songNative)"),
+        )
+        assertTrue(perform.contains("hasOfficialLineProbe = hasValidOfficialPronunciation(songNative)"))
+        assertTrue(perform.contains("hasConfirmedOfficialLane = payloadLane.confirmed"))
+        assertTrue(perform.contains("lane = payloadLane"))
         assertTrue(perform.contains("pronunciationSelected = state.pronunciationSelected"))
         // The adapter field and flag are the profile pins, with the report's
         // verified 1606 literals as the fallback.
@@ -498,6 +520,68 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("FALLBACK_PRONUNCIATION_SELECTED_FIELD"))
         assertTrue(hooks.contains("FALLBACK_LYRICS_ADAPTER_FIELD = \"p0\""))
         assertTrue(hooks.contains("FALLBACK_PRONUNCIATION_SELECTED_FIELD = \"e\""))
+    }
+
+    /**
+     * The custom-lyrics half of the same fix. A module supplement document is
+     * parsed into its **own** model; when it already carries its translation the
+     * completion feed publishes no merged document, so the post-overlay ask never
+     * runs, and the build gate deliberately skips a supplement pointer. Before
+     * the late-lane trigger accepted supplements the payload therefore never ran
+     * and the document's own romanization only appeared after the page was
+     * re-created — the user's "custom lyrics still needs a background→foreground
+     * cycle".
+     */
+    @Test
+    fun `a custom lyrics lane reaches the guaranteed payload dispatch`() {
+        // The supplement is admitted to the late-lane ask, on its own rules.
+        val laneReady = hooks
+            .substringAfter("private fun onPronunciationLaneReady(")
+            .substringBefore("private fun onOfficialLaneConfirmed(")
+        assertTrue(laneReady.contains("val supplement = isModuleSupplementSong(songId)"))
+        assertTrue(laneReady.contains("sourceIsApple = !supplement"))
+        assertTrue(laneReady.contains("SUPPLEMENT_LANE_KEY_PREFIX"))
+        // The direct solution to the failing device log: our own accepted
+        // selection asks with its own trigger, because the availability override's
+        // lane-ready edge is suppressed by `pronunciationSelectionGuard` and the
+        // only build ask was skipped as a supplement.
+        val laneConfirmed = hooks
+            .substringAfter("private fun onOfficialLaneConfirmed(")
+            .substringBefore("private fun onPronunciationWordReady(")
+        assertTrue(laneConfirmed.contains("PresentationRefreshTrigger.LANE_CONFIRMED"))
+        assertTrue(laneConfirmed.contains("if (!isModuleSupplementSong(songId)) return"))
+        assertTrue(laneConfirmed.contains("if (pendingPresentationRefresh != null) return"))
+        assertTrue(laneConfirmed.contains("if (key == laneConfirmedKey) return"))
+        assertTrue(laneConfirmed.contains("laneConfirmedKey = key"))
+        assertTrue(laneConfirmed.contains("detail = DETAIL_LANE_CONFIRMED"))
+        assertTrue(laneConfirmed.contains("presentationInvokeGuard.get() == true"))
+        // Our own selection is where it is called from, after Apple accepted it.
+        assertTrue(hooks.contains("runCatching { onOfficialLaneConfirmed(songNative, language) }"))
+        // A supplement lane attempt is payload-only: the document is already
+        // installed, so the heavy re-present/rebind is skipped while the app's own
+        // pronunciation payload still runs last.
+        assertTrue(hooks.contains("val payloadOnly = !state.sourceIsApple &&"))
+        assertTrue(hooks.contains("trigger != PresentationRefreshTrigger.CUSTOM_OVERLAY"))
+        assertTrue(hooks.contains("payloadOnly -> PresentationRefreshOutcome.PAYLOAD_ONLY"))
+        assertTrue(hooks.contains("hasConfirmedOfficialLane = payloadLane.confirmed"))
+        // Its reason is the custom path's own, not the build gate's `none`.
+        assertTrue(hooks.contains("NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_LANE"))
+        // The post-overlay ask itself also accepts the document's own lane, so a
+        // completion with no translation to add still re-presents.
+        assertTrue(hooks.contains("val laneRefresh = state.officialPronunciation && state.pronunciationSelected"))
+        assertTrue(hooks.contains("val shouldRefresh = policyRefresh || laneRefresh"))
+        // The reload half is still skipped for a supplement: Apple's own track is
+        // never re-resolved.
+        assertTrue(hooks.contains("!state.sourceIsApple -> RELOAD_SKIPPED_SUPPLEMENT"))
+        assertTrue(hooks.contains("if (!state.sourceIsApple) return RELOAD_SKIPPED_SUPPLEMENT"))
+        // Diagnostics: a supplement that confirmed no lane says so, and every
+        // attempt names the lane + its source.
+        assertTrue(hooks.contains("PAYLOAD_CUSTOM_NO_LANE = \"skipped(custom-no-lane)\""))
+        assertTrue(hooks.contains("if (customNoLane) PAYLOAD_CUSTOM_NO_LANE else payloadToken(payload)"))
+        assertTrue(hooks.contains("lane=\$lane laneSrc=\$laneSource"))
+        assertTrue(
+            hooks.contains("laneSource = lane?.source?.token ?: PronunciationLaneSource.NONE.token"),
+        )
     }
 
     @Test

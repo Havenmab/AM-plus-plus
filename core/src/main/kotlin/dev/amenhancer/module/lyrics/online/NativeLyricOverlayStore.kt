@@ -176,6 +176,20 @@ object NativeLyricModelPolicy {
     const val REFRESH_REASON_CUSTOM_OVERLAY = "custom-overlay"
 
     /**
+     * The reason of a module supplement's late-lane ask: the custom document's
+     * own model advertised a pronunciation lane (or its per-line probe confirmed
+     * one) *after* the build, and the supplement path re-presents itself. The
+     * build gate deliberately never refreshes a supplement pointer, and the
+     * post-overlay ask only runs when the completion feed actually wrote a lane,
+     * so a custom document that already carries its translation (and therefore
+     * produces no merged document) had no ask at all — the reported
+     * "custom lyrics romanization only after backgrounding". The supplement is
+     * never reloaded through Apple, so this is the custom-overlay rule applied
+     * to the lane edge, not the build gate's `sourceIsApple` rule.
+     */
+    const val REFRESH_REASON_CUSTOM_LANE = "custom-lane"
+
+    /**
      * HLE's `ApplePronunciationPolicy.shouldRefreshPresentationAfterBuild`,
      * ported verbatim.
      *
@@ -472,6 +486,75 @@ object NativeLyricModelPolicy {
         else -> PronunciationPayloadOutcome.DISPATCHED
     }
 
+    /**
+     * Resolve the lane a payload dispatch may reveal, and where the evidence for
+     * it came from.
+     *
+     * The Apple-only policy has one model per presented pointer, and a module
+     * supplement (custom lyrics) track builds that model from the **user's own
+     * document**. Its `<transliterations>` lane therefore never appears in the
+     * per-song Apple advertisement cache that the build/lane-ready triggers read
+     * before the document is installed; it can only be confirmed from the model
+     * the document was parsed into. The order is the order the app itself would
+     * accept the lane:
+     *
+     *  1. the lane the accepted ask already resolved ([stateOfficialLane]);
+     *  2. the lane this module handed to `setPronunciation` and Apple accepted
+     *     ([selectedLane]) — the same evidence `F2`'s `z` uses;
+     *  3. the model's live/remembered `getPronunciationLanguages` admission
+     *     ([advertisedLane]);
+     *  4. a line whose pronunciation getter already returns romanization
+     *     ([hasOfficialLineProbe]) — HLE's per-call `hasValidOfficialRomanization`,
+     *     which is the only evidence a partially-populated official document
+     *     offers.
+     *
+     * [NONE][PronunciationLaneSource.NONE] means the payload must not be
+     * dispatched: without one of these an empty pronunciation row would appear.
+     * Every input is filtered to Apple's own Latin lane, so a non-Latin language
+     * tag can never confirm one. Pure, so the truth table is JVM-tested; the host
+     * resolves the app's model and calls in here.
+     */
+    fun pronunciationPayloadLane(
+        stateOfficialLane: String?,
+        selectedLane: String?,
+        advertisedLane: String?,
+        hasOfficialLineProbe: Boolean,
+    ): PronunciationPayloadLane = when {
+        stateOfficialLane.isOfficialLane() ->
+            PronunciationPayloadLane(
+                confirmed = true,
+                language = stateOfficialLane,
+                source = PronunciationLaneSource.STATE_OFFICIAL_LANE,
+            )
+        selectedLane.isOfficialLane() ->
+            PronunciationPayloadLane(
+                confirmed = true,
+                language = selectedLane,
+                source = PronunciationLaneSource.CONFIRMED_SELECTION,
+            )
+        advertisedLane.isOfficialLane() ->
+            PronunciationPayloadLane(
+                confirmed = true,
+                language = advertisedLane,
+                source = PronunciationLaneSource.ADVERTISED_VECTOR,
+            )
+        hasOfficialLineProbe ->
+            PronunciationPayloadLane(
+                confirmed = true,
+                language = null,
+                source = PronunciationLaneSource.LINE_PROBE,
+            )
+        else ->
+            PronunciationPayloadLane(
+                confirmed = false,
+                language = null,
+                source = PronunciationLaneSource.NONE,
+            )
+    }
+
+    private fun String?.isOfficialLane(): Boolean =
+        this != null && isOfficialPronunciationLanguage(this)
+
     private fun String?.latinLanguageOrNull(): String? = this
         ?.trim()
         ?.takeIf { it.isNotEmpty() && RomanizationPolicy.isLatinLanguageTag(it) }
@@ -513,6 +596,46 @@ enum class PronunciationPayloadOutcome(val token: String) {
 }
 
 /**
+ * Where the pronunciation lane a payload dispatch is about to reveal was
+ * confirmed from, printed as the `laneSrc=` field on `presentation-refresh`.
+ *
+ * The distinction is what makes the next device log answer *why* a custom
+ * (module supplement) track's romanization did or did not appear: its document's
+ * lane is invisible to the per-song Apple advertisement the build/lane-ready
+ * gates read before the document is installed, so the model the document was
+ * parsed into has to confirm it, either through its advertisement
+ * ([ADVERTISED_VECTOR]) or through a line that already reads its romanization
+ * ([LINE_PROBE]).
+ */
+enum class PronunciationLaneSource(val token: String) {
+    /** The lane the accepted refresh ask already resolved (`state.officialLane`). */
+    STATE_OFFICIAL_LANE("state"),
+
+    /** The lane this module handed to `setPronunciation` and Apple accepted. */
+    CONFIRMED_SELECTION("confirmed"),
+
+    /** The model's live/remembered `getPronunciationLanguages` admission. */
+    ADVERTISED_VECTOR("advertised"),
+
+    /** The per-line pronunciation getter already returns romanization. */
+    LINE_PROBE("line-probe"),
+
+    /** Nothing confirmed a lane; the payload must not be dispatched. */
+    NONE("none"),
+}
+
+/**
+ * One payload-lane resolution: whether the payload may be dispatched, the lane
+ * to print (null for the per-line probe, which has no language tag), and the
+ * evidence [source] that confirmed it.
+ */
+data class PronunciationPayloadLane(
+    val confirmed: Boolean,
+    val language: String?,
+    val source: PronunciationLaneSource,
+)
+
+/**
  * The terminal outcome of one main-thread presentation-refresh attempt.
  *
  * HLE's `refreshAppleLyricsSupplementPresentation` ends by re-invoking Apple's
@@ -527,13 +650,20 @@ enum class PronunciationPayloadOutcome(val token: String) {
  * presentation binding seam can ask again (`cleared`). [REBOUND] is a latched
  * invoke whose adapter was also notified; [ADAPTER_UNAVAILABLE] latched the
  * invoke but could not resolve or notify the lyrics adapter, which is the
- * remaining device-only uncertainty.
+ * remaining device-only uncertainty; [PAYLOAD_ONLY] is a supplement lane ask
+ * that deliberately ran only the pronunciation payload (no re-presentation), so
+ * it is a latched success with nothing left to retry.
  *
  * The tokens are the `detail=` values the device log prints, so this enum is
  * the single place the retry rule and the diagnostics can drift apart.
  */
 enum class PresentationRefreshOutcome(val token: String, val latches: Boolean) {
     REBOUND("rebound", true),
+    // A supplement (custom lyrics) lane ask is payload-only: its document is
+    // already installed, so no re-presentation/rebind ran and there is nothing
+    // for the `adapter-unavailable` retry to wait for. It is still a latched,
+    // successful attempt (`payload=` carries what the replay did).
+    PAYLOAD_ONLY("payload-only", true),
     // The presentation invoke succeeded, but the RecyclerView may still be
     // empty while LiveData/layout work catches up. Keep the ticket retryable.
     ADAPTER_UNAVAILABLE("adapter-unavailable", false),

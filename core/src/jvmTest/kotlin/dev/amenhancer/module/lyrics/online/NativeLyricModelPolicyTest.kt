@@ -536,4 +536,77 @@ class NativeLyricModelPolicyTest {
             PronunciationPayloadOutcome.entries.map { it.token },
         )
     }
+
+    private fun payloadLane(
+        stateLane: String? = null,
+        selectedLane: String? = null,
+        advertisedLane: String? = null,
+        probe: Boolean = false,
+    ) = NativeLyricModelPolicy.pronunciationPayloadLane(
+        stateOfficialLane = stateLane,
+        selectedLane = selectedLane,
+        advertisedLane = advertisedLane,
+        hasOfficialLineProbe = probe,
+    )
+
+    /**
+     * The payload lane resolution is what lets a **custom lyrics** (module
+     * supplement) track reach the guaranteed payload dispatch: its document is
+     * parsed into its own model, so the lane has to be confirmed from that model
+     * (its advertisement, the lane the setter accepted, or the per-line probe)
+     * rather than from the Apple advertisement the build gate read before the
+     * document was installed.
+     */
+    @Test
+    fun `the payload lane is confirmed from the strongest evidence and names its source`() {
+        // The accepted ask's own lane wins.
+        val state = payloadLane(stateLane = "ko-Latn", selectedLane = "ja-Latn", probe = true)
+        assertTrue(state.confirmed)
+        assertEquals("ko-Latn", state.language)
+        assertEquals(PronunciationLaneSource.STATE_OFFICIAL_LANE, state.source)
+
+        // Then the lane the native setter accepted (F2's own `z` evidence).
+        val selected = payloadLane(selectedLane = "ja-Latn", advertisedLane = "ko-Latn")
+        assertTrue(selected.confirmed)
+        assertEquals("ja-Latn", selected.language)
+        assertEquals(PronunciationLaneSource.CONFIRMED_SELECTION, selected.source)
+
+        // Then the model's live advertisement (the custom document's own lane).
+        val advertised = payloadLane(advertisedLane = "ko-Latn", probe = true)
+        assertTrue(advertised.confirmed)
+        assertEquals("ko-Latn", advertised.language)
+        assertEquals(PronunciationLaneSource.ADVERTISED_VECTOR, advertised.source)
+
+        // A partially-populated document: only the per-line probe confirms it.
+        val probe = payloadLane(probe = true)
+        assertTrue(probe.confirmed)
+        assertNull(probe.language)
+        assertEquals(PronunciationLaneSource.LINE_PROBE, probe.source)
+    }
+
+    @Test
+    fun `the payload lane is never confirmed without evidence`() {
+        val none = payloadLane()
+        assertFalse(none.confirmed)
+        assertNull(none.language)
+        assertEquals(PronunciationLaneSource.NONE, none.source)
+        // A non-Latin tag confirms nothing, exactly like the availability rule.
+        assertFalse(payloadLane(stateLane = "ja").confirmed)
+        assertFalse(payloadLane(selectedLane = "ja").confirmed)
+        assertFalse(payloadLane(advertisedLane = "cmn-Hans").confirmed)
+        assertEquals(
+            PronunciationLaneSource.NONE,
+            payloadLane(stateLane = "ja", selectedLane = "ja", advertisedLane = "ja").source,
+        )
+    }
+
+    @Test
+    fun `the payload lane source tokens are the device diagnostic values`() {
+        assertEquals(
+            listOf("state", "confirmed", "advertised", "line-probe", "none"),
+            PronunciationLaneSource.entries.map { it.token },
+        )
+        // The custom path's late-lane reason is its own, not the build gate's none.
+        assertEquals("custom-lane", NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_LANE)
+    }
 }

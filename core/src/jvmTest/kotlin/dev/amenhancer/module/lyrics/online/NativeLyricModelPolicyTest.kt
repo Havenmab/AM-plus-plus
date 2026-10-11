@@ -477,4 +477,63 @@ class NativeLyricModelPolicyTest {
             ),
         )
     }
+
+    private fun payloadOutcome(
+        lane: Boolean,
+        selected: Boolean,
+        adapterFlag: Boolean?,
+    ) = NativeLyricModelPolicy.pronunciationPayloadOutcome(
+        hasConfirmedOfficialLane = lane,
+        pronunciationSelected = selected,
+        adapterPronunciationSelected = adapterFlag,
+    )
+
+    /**
+     * The post-refresh payload decision — the reported fix's own truth table: a
+     * confirmed Apple lane plus the user's preference must reach a live adapter
+     * whose flag is still `false`. A song without a confirmed lane, a user who
+     * switched pronunciation off, a flag that is already true and an unreadable
+     * adapter each keep their old outcome.
+     */
+    @Test
+    fun `the payload is dispatched only for a wanted confirmed lane on a stale flag`() {
+        assertEquals(
+            PronunciationPayloadOutcome.DISPATCHED,
+            payloadOutcome(lane = true, selected = true, adapterFlag = false),
+        )
+        // A song with no confirmed Apple lane is unchanged.
+        assertEquals(
+            PronunciationPayloadOutcome.NOT_AVAILABLE,
+            payloadOutcome(lane = false, selected = true, adapterFlag = false),
+        )
+        // A user who switched the pronunciation row off must not see it appear.
+        assertEquals(
+            PronunciationPayloadOutcome.PREFERENCE_OFF,
+            payloadOutcome(lane = true, selected = false, adapterFlag = false),
+        )
+        // The rows were already told; the replay is skipped.
+        assertEquals(
+            PronunciationPayloadOutcome.ALREADY_TRUE,
+            payloadOutcome(lane = true, selected = true, adapterFlag = true),
+        )
+        // The live adapter could not be read: never silently no-op.
+        assertEquals(
+            PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE,
+            payloadOutcome(lane = true, selected = true, adapterFlag = null),
+        )
+    }
+
+    @Test
+    fun `the payload tokens are the device diagnostic values`() {
+        assertEquals(
+            listOf(
+                "dispatched",
+                "skipped(not-available)",
+                "skipped(preference-off)",
+                "skipped(already-true)",
+                "skipped(adapter-unavailable)",
+            ),
+            PronunciationPayloadOutcome.entries.map { it.token },
+        )
+    }
 }

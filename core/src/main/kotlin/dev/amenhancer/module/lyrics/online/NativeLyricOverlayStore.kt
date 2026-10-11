@@ -441,9 +441,75 @@ object NativeLyricModelPolicy {
         return original && hasValidOfficialPronunciation
     }
 
+    /**
+     * The pure decision behind the post-refresh pronunciation-payload
+     * re-application — HLE's "the adapter reads its flags once at bind" problem:
+     *
+     *  - no confirmed Apple lane ⇒ [PronunciationPayloadOutcome.NOT_AVAILABLE]
+     *    (the reported "songs without an official lane are unchanged");
+     *  - a lane the user has switched off ⇒
+     *    [PronunciationPayloadOutcome.PREFERENCE_OFF], mirroring `F2`'s own
+     *    `z && t2(...)` conjunct so the payload can never reveal romanization the
+     *    user disabled;
+     *  - the adapter's flag cannot be read ⇒
+     *    [PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE];
+     *  - the flag is already set ⇒
+     *    [PronunciationPayloadOutcome.ALREADY_TRUE] (the rows were already told);
+     *  - otherwise the payload is dispatched.
+     *
+     * Kept pure so the truth table is JVM-tested; the host resolves the app's
+     * adapter and calls in here.
+     */
+    fun pronunciationPayloadOutcome(
+        hasConfirmedOfficialLane: Boolean,
+        pronunciationSelected: Boolean,
+        adapterPronunciationSelected: Boolean?,
+    ): PronunciationPayloadOutcome = when {
+        !hasConfirmedOfficialLane -> PronunciationPayloadOutcome.NOT_AVAILABLE
+        !pronunciationSelected -> PronunciationPayloadOutcome.PREFERENCE_OFF
+        adapterPronunciationSelected == null -> PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE
+        adapterPronunciationSelected -> PronunciationPayloadOutcome.ALREADY_TRUE
+        else -> PronunciationPayloadOutcome.DISPATCHED
+    }
+
     private fun String?.latinLanguageOrNull(): String? = this
         ?.trim()
         ?.takeIf { it.isNotEmpty() && RomanizationPolicy.isLatinLanguageTag(it) }
+}
+
+/**
+ * The terminal outcome of the post-refresh pronunciation-payload
+ * re-application, printed as the `payload=` field on the `presentation-refresh`
+ * line.
+ *
+ * `PlayerLyricsViewFragment.F2` is the only writer of the live lyrics adapter's
+ * pronunciation flag (`n1.e`), and it derives that flag from
+ * `LocaleUtil.matchToSystemLyricsScript(model.getPronunciationLanguages())`.
+ * When Apple has not advertised the lane yet the vector is empty, `F2` latches
+ * `e=false`, and a plain `notifyDataSetChanged` cannot repair it (the row skips
+ * its whole text/visibility block when its cached strings are unchanged). The
+ * app's own payload — `notifyItemRangeChanged(0, count, n1.i)` — is the only
+ * path that re-applies `e` to already-bound rows, so the module replays it after
+ * our refresh.
+ *
+ * [token] is the exact `payload=` value, so the printed token and the decision
+ * can never disagree.
+ */
+enum class PronunciationPayloadOutcome(val token: String) {
+    /** The flag was false and the app's own payload was dispatched. */
+    DISPATCHED("dispatched"),
+
+    /** No confirmed Apple lane for this song, or the refresh never reached the page. */
+    NOT_AVAILABLE("skipped(not-available)"),
+
+    /** A confirmed lane exists, but the user's pronunciation preference is off. */
+    PREFERENCE_OFF("skipped(preference-off)"),
+
+    /** The adapter flag was already true, so the rows had already been told. */
+    ALREADY_TRUE("skipped(already-true)"),
+
+    /** The live adapter, or its payload surface, could not be resolved or threw. */
+    ADAPTER_UNAVAILABLE("skipped(adapter-unavailable)"),
 }
 
 /**

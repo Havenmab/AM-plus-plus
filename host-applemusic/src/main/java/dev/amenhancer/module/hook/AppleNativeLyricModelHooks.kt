@@ -10,6 +10,7 @@ import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
 import dev.amenhancer.module.lyrics.online.PresentationRefreshOutcome
+import dev.amenhancer.module.lyrics.online.PronunciationPayloadOutcome
 import dev.amenhancer.module.lyrics.online.RomanizationPolicy
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
@@ -431,6 +432,29 @@ internal class AppleNativeLyricModelHooks(
     )
 
     /**
+     * HLE's "the adapter reads its flags once at bind" tail, the fork's second
+     * half of the pronunciation fix: after the re-presentation and the rebind,
+     * the app's own `n1.i` payload is replayed so a row bound while `n1.e` was
+     * still `false` reveals Apple's romanization without a background→foreground
+     * cycle. The adapter field (`p0` on 1606) and the flag (`e`) are the profile
+     * pinned `LYRICS_UI_ON_CREATE_VIEW#LYRICS_UI_ADAPTER_FIELD` /
+     * `LYRICS_RECYCLER_ADAPTER#LYRICS_ADAPTER_PRONUNCIATION_SELECTED_FIELD`
+     * names, with the report's verified literals as the fallback so a profile
+     * that leaves those points empty still resolves the 1606 shape. Every step
+     * is fail-open.
+     */
+    private val pronunciationPayload = AppleLyricsPronunciationPayload(
+        adapterFieldNames = lyricsUiMemberNames(AppleMusicRuntimeMember.LYRICS_UI_ADAPTER_FIELD)
+            .ifEmpty { listOf(FALLBACK_LYRICS_ADAPTER_FIELD) },
+        adapterFlagFieldNames = lyricsAdapterMemberNames(
+            AppleMusicRuntimeMember.LYRICS_ADAPTER_PRONUNCIATION_SELECTED_FIELD,
+        ).ifEmpty { listOf(FALLBACK_PRONUNCIATION_SELECTED_FIELD) },
+        adapterItemCountMemberNames = lyricsAdapterMemberNames(
+            AppleMusicRuntimeMember.LYRICS_ADAPTER_ITEM_COUNT_METHOD,
+        ),
+    )
+
+    /**
      * The last (song, overlay revision, official lane) the build gate decided.
      * A repeated build with the same state is never refreshed twice, which is
      * what stops the refresh from looping through our own build hook: the
@@ -578,6 +602,13 @@ internal class AppleNativeLyricModelHooks(
     private fun lyricsAdapterMemberNames(member: AppleMusicRuntimeMember): List<String> =
         AppleMusicHookProfiles
             .exactTargets(resolver.version, AppleMusicHookPoint.LYRICS_RECYCLER_ADAPTER)
+            .mapNotNull { target -> target.runtimeMemberNames[member] }
+            .distinct()
+
+    /** The `LYRICS_UI_ON_CREATE_VIEW` fragment members of [member], in profile order. */
+    private fun lyricsUiMemberNames(member: AppleMusicRuntimeMember): List<String> =
+        AppleMusicHookProfiles
+            .exactTargets(resolver.version, AppleMusicHookPoint.LYRICS_UI_ON_CREATE_VIEW)
             .mapNotNull { target -> target.runtimeMemberNames[member] }
             .distinct()
 
@@ -1324,7 +1355,11 @@ internal class AppleNativeLyricModelHooks(
 
         val reason = refreshReason(state)
 
-        fun finish(outcome: PresentationRefreshOutcome, adapterName: String?) {
+        fun finish(
+            outcome: PresentationRefreshOutcome,
+            adapterName: String?,
+            payload: AppleLyricsPronunciationPayload.Result? = null,
+        ) {
             if (outcome.latches) {
                 if (pendingPresentationRefresh == state) pendingPresentationRefresh = null
             } else if (lastPresentationRefreshState == state) {
@@ -1354,6 +1389,8 @@ internal class AppleNativeLyricModelHooks(
                 stateCleared = outcome.cleared,
                 reload = reload,
                 trigger = trigger.token,
+                payload = payloadToken(payload),
+                adapterE = adapterFlagTransition(payload),
             )
             if (outcome == PresentationRefreshOutcome.ADAPTER_UNAVAILABLE) {
                 if (adapterRetryAttempts < MAX_ADAPTER_RETRY_ATTEMPTS) {
@@ -1436,6 +1473,31 @@ internal class AppleNativeLyricModelHooks(
                 log("online-translation presentation-refresh rebind failed: ${error.message}")
                 AppleLyricsPresentationRebind.Result(didNotify = false, adapterName = null)
             }
+
+        // The last step, deliberately: `F2` (inside the re-presentation above)
+        // recomputes `n1.e` from Apple's own vector and dispatches its payload
+        // with `e=false` when the lane is not advertised yet, and the rebind's
+        // full `notifyDataSetChanged` cannot repair a row whose cached strings
+        // are unchanged. Replaying the app's own pronunciation payload after both
+        // is what makes a row bound while `e` was false re-read the flag and
+        // reveal Apple's romanization. It only runs for a confirmed official
+        // lane the user wants, and every step is fail-open.
+        val lane = state.officialLane ?: confirmedPronunciationLanguageForCurrentSong()
+        val payload = runCatching {
+            pronunciationPayload.apply(
+                fragment = fragment,
+                hasConfirmedOfficialLane = lane != null,
+                pronunciationSelected = state.pronunciationSelected,
+            )
+        }.getOrElse { error ->
+            log("online-translation presentation-refresh pronunciation payload failed: ${error.message}")
+            AppleLyricsPronunciationPayload.Result(
+                outcome = PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE,
+                adapterName = null,
+                before = false,
+                after = false,
+            )
+        }
         finish(
             outcome = if (rebound.didNotify) {
                 PresentationRefreshOutcome.REBOUND
@@ -1443,8 +1505,21 @@ internal class AppleNativeLyricModelHooks(
                 PresentationRefreshOutcome.ADAPTER_UNAVAILABLE
             },
             adapterName = rebound.adapterName,
+            payload = payload,
         )
     }
+
+    /** The `payload=` token of one attempt: the outcome, or `not-available` for an abort. */
+    private fun payloadToken(payload: AppleLyricsPronunciationPayload.Result?): String =
+        payload?.outcome?.token ?: PronunciationPayloadOutcome.NOT_AVAILABLE.token
+
+    /** The `adapterE=` field: the flag before and after, or `none->none` for an abort. */
+    private fun adapterFlagTransition(payload: AppleLyricsPronunciationPayload.Result?): String =
+        if (payload?.adapterName == null) {
+            "$NONE->$NONE"
+        } else {
+            "${payload.before}->${payload.after}"
+        }
 
     /**
      * The device-facing proof of the refresh decision, on the same visible
@@ -1462,6 +1537,13 @@ internal class AppleNativeLyricModelHooks(
      * prints the real `invoked`/`failed`/`skipped(<why>)`. Together with the
      * `render-probe` lines they answer "did the app rebuild the model and then
      * re-read our getters" from the exported log alone.
+     *
+     * `payload=`/`adapterE=` extend it with the pronunciation fix's own proof:
+     * `payload=dispatched adapterE=false->true` on the first play is the app's
+     * own pronunciation payload having reached the live adapter, while
+     * `skipped(not-available|preference-off|already-true|adapter-unavailable)`
+     * names exactly why it did not. Decision lines (no attempt yet) print
+     * `payload=skipped(not-available) adapterE=none->none`.
      */
     private fun logPresentationRefresh(
         songId: Long,
@@ -1476,6 +1558,8 @@ internal class AppleNativeLyricModelHooks(
         stateCleared: Boolean,
         reload: String,
         trigger: String,
+        payload: String = PronunciationPayloadOutcome.NOT_AVAILABLE.token,
+        adapterE: String = "$NONE->$NONE",
     ) {
         log(
             "online-translation presentation-refresh id=$songId reason=$reason " +
@@ -1486,7 +1570,8 @@ internal class AppleNativeLyricModelHooks(
                 "presentationMethod=${presentationMethod != null} " +
                 "refreshed=$refreshed detail=$detail reload=$reload trigger=$trigger " +
                 "adapter=${adapterName ?: NONE} " +
-                "state=${if (stateCleared) STATE_CLEARED else STATE_LATCHED}",
+                "state=${if (stateCleared) STATE_CLEARED else STATE_LATCHED} " +
+                "payload=$payload adapterE=$adapterE",
         )
     }
 
@@ -1833,6 +1918,45 @@ internal class AppleNativeLyricModelHooks(
             live = languages,
             remembered = applePronunciationLanguages,
         )
+
+    /**
+     * The Apple pronunciation lane this module has already confirmed for the
+     * model currently being delivered, or null when it has confirmed none.
+     *
+     * This is the `matchToSystemLyricsScript` after-hook's fallback: on 1606
+     * `PlayerLyricsViewFragment.F2` reads that method's result to decide the
+     * live adapter's pronunciation flag `n1.e`, but Apple's own
+     * `getPronunciationLanguages` vector is still empty at the first
+     * presentation, so the pure policy yields null and `F2` latches `e=false`
+     * even though [applyAppleNativePronunciationSelection] already handed
+     * Apple's lane to `setPronunciation`. Returning the lane the module already
+     * confirmed lets `F2` see it in the same frame; the app's own setter still
+     * has the final say, so a genuinely rejected language yields `false` exactly
+     * as today.
+     *
+     * Cross-track safety: the confirmed selection is only returned while it
+     * still belongs to the model this module is delivering ([modelSongId]) and
+     * to the exact song instance the native setter accepted
+     * ([selectedPronunciationSong]); the advertised fallback only reads the
+     * per-model advertisement cache, which is reset on a track change and only
+     * written for the current model. A previous track's lane therefore cannot
+     * leak into the next one, and a song with no confirmed lane yields null.
+     */
+    private fun confirmedPronunciationLanguageForCurrentSong(): String? {
+        val songNative = songNativeRef?.get() ?: return null
+        if (!isCurrentSong(songNative)) return null
+        if (selectedPronunciationSong?.get() === songNative) {
+            selectedPronunciationLanguage
+                ?.takeIf { NativeLyricModelPolicy.isOfficialPronunciationLanguage(it) }
+                ?.let { return it }
+        }
+        // Apple's best-known advertisement for this model: the live read when it
+        // is non-empty, else the last non-empty one. The cache is per model and
+        // guarded by `isCurrentSong`, so it can only describe this song.
+        return NativeLyricModelPolicy.officialPronunciationLanguage(
+            advertisedPronunciationLanguages(songPronunciationLanguages(songNative)),
+        )
+    }
 
     private fun isMandarinHidden(languages: List<String>): Boolean =
         ApplePronunciationVisibilityPolicy.shouldHide(
@@ -2698,6 +2822,16 @@ internal class AppleNativeLyricModelHooks(
      * HLE's `hookAppleOfficialPronunciationLanguageMatching`: never match a
      * Mandarin pronunciation while hidden, and keep only a language Apple itself
      * advertises. No third-party language is substituted.
+     *
+     * The pure policy ([NativeLyricModelPolicy.selectLanguage]) is left
+     * untouched and still returns null on an empty Apple vector. When it does,
+     * the hook falls back to the lane this module has already confirmed for the
+     * current song ([confirmedPronunciationLanguageForCurrentSong]), so the
+     * app's own `F2` — the only writer of the live adapter's `n1.e` flag — sees
+     * `strMatch != null`, calls `setPronunciation(lane)`, and dispatches its own
+     * pronunciation payload. The fallback is identity-guarded to the current
+     * model, and the native setter still has the final say, so a rejected or
+     * absent lane keeps its old null/false outcome.
      */
     private fun installPronunciationLanguageMatch() {
         val method = runCatching {
@@ -2723,7 +2857,7 @@ internal class AppleNativeLyricModelHooks(
                     param.result = NativeLyricModelPolicy.selectLanguage(
                         systemMatch = param.result as? String,
                         appleLanguages = appleLanguages,
-                    )
+                    ) ?: confirmedPronunciationLanguageForCurrentSong()
                 }
             }
         }, scope)
@@ -2991,6 +3125,20 @@ internal class AppleNativeLyricModelHooks(
          * the same name.
          */
         const val FALLBACK_RECYCLER_VIEW_METHOD = "getRecyclerView"
+
+        /**
+         * The report's verified 1606 literals for the pronunciation-payload
+         * surface, used when the profile leaves the corresponding point empty:
+         * the fragment's live lyrics adapter field (`p0`, also pinned as
+         * `LYRICS_UI_ON_CREATE_VIEW#LYRICS_UI_ADAPTER_FIELD` on 1606) and the
+         * adapter's inherited pronunciation-selected flag (`e`, pinned as
+         * `LYRICS_RECYCLER_ADAPTER#LYRICS_ADAPTER_PRONUNCIATION_SELECTED_FIELD`).
+         * The remaining surfaces (`a`, `i`, `d(int,int,Object)`) live in
+         * `AppleLyricsPronunciationPayload`, which resolves them structurally as
+         * well.
+         */
+        const val FALLBACK_LYRICS_ADAPTER_FIELD = "p0"
+        const val FALLBACK_PRONUNCIATION_SELECTED_FIELD = "e"
 
         /** `state=` tokens: whether the dedupe state was cleared for a retry. */
         const val STATE_CLEARED = "cleared"

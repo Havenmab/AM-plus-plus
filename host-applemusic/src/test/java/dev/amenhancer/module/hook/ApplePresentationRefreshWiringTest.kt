@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +44,10 @@ class ApplePresentationRefreshWiringTest {
 
     private val rebind = projectFile(
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPresentationRebind.kt",
+    )
+
+    private val pronunciationPayload = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleLyricsPronunciationPayload.kt",
     )
 
     private val feed = projectFile(
@@ -186,6 +191,11 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("\"f2-retry\""))
         assertTrue(hooks.contains("adapter=\${adapterName ?: NONE}"))
         assertTrue(hooks.contains("state=\${if (stateCleared) STATE_CLEARED else STATE_LATCHED}"))
+        // `payload=`/`adapterE=` are the pronunciation fix's own device proof:
+        // the app's payload reaching the live adapter's stale flag.
+        assertTrue(hooks.contains("payload=\$payload adapterE=\$adapterE"))
+        assertTrue(hooks.contains("payloadToken(payload)"))
+        assertTrue(hooks.contains("adapterFlagTransition(payload)"))
         // The overlay revision is one of the anti-thrash state inputs and is
         // therefore visible through `reason=`/`detail=` decisions.
         assertTrue(hooks.contains("overlay.revision()"))
@@ -407,6 +417,120 @@ class ApplePresentationRefreshWiringTest {
             .substringBefore("private fun refreshReason(")
         assertTrue(laneReady.contains("if (isModuleSupplementSong(songId)) return"))
         assertTrue(laneReady.contains("if (presentationInvokeGuard.get() == true) return"))
+    }
+
+    /**
+     * Part 1 of the pronunciation fix. `F2` is the only writer of the live
+     * adapter's `n1.e` flag and derives it from
+     * `LocaleUtil.matchToSystemLyricsScript(model.getPronunciationLanguages())`.
+     * On the first play Apple's vector is still empty, so the pure policy returns
+     * null and `F2` latches `e=false` even though the module already selected the
+     * lane. The after-hook must fall back to that confirmed lane, guarded by the
+     * identity of the model being delivered so a previous track's lane can never
+     * leak.
+     */
+    @Test
+    fun `the official match hook falls back to the lane already confirmed for this song`() {
+        val matchHook = hooks
+            .substringAfter("private fun installPronunciationLanguageMatch(")
+            .substringBefore("private fun installPronunciationPreferenceHook(")
+        assertTrue(matchHook.contains("NativeLyricModelPolicy.selectLanguage("))
+        assertTrue(matchHook.contains("?: confirmedPronunciationLanguageForCurrentSong()"))
+        // A Mandarin-hidden song still yields null: the hide branch runs first,
+        // and the fallback can never resurrect it.
+        assertTrue(matchHook.contains("param.result = null"))
+        val helper = hooks
+            .substringAfter("private fun confirmedPronunciationLanguageForCurrentSong(")
+            .substringBefore("private fun isMandarinHidden(")
+        // Cross-song leakage guard: the model currently being delivered and the
+        // exact instance the native setter accepted.
+        assertTrue(helper.contains("val songNative = songNativeRef?.get() ?: return null"))
+        assertTrue(helper.contains("if (!isCurrentSong(songNative)) return null"))
+        assertTrue(helper.contains("selectedPronunciationSong?.get() === songNative"))
+        assertTrue(helper.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage(it)"))
+        // Only a lane we actually confirmed: the selected lane, else Apple's
+        // best-known advertisement for this same model.
+        assertTrue(helper.contains("NativeLyricModelPolicy.officialPronunciationLanguage("))
+        assertTrue(
+            helper.contains(
+                "advertisedPronunciationLanguages(songPronunciationLanguages(songNative))",
+            ),
+        )
+    }
+
+    /**
+     * Part 2 of the pronunciation fix. After the re-presentation (`F2` inside
+     * `w2`) and the full rebind, the app's own pronunciation payload is replayed
+     * last: `F2` writes `e=false` from the empty vector and
+     * `notifyDataSetChanged` cannot repair a row whose memoized strings are
+     * unchanged, so the payload must be the final mutation.
+     */
+    @Test
+    fun `the pronunciation payload is replayed after the invoke and the rebind`() {
+        val perform = hooks
+            .substringAfter("private fun performPresentationRefresh(")
+            .substringBefore("/** The `payload=` token of one attempt")
+        assertTrue(perform.contains("presentationRebind.rebind(fragment)"))
+        assertTrue(perform.contains("pronunciationPayload.apply("))
+        val invokeAt = perform.indexOf("method.invoke(fragment, pointer)")
+        val rebindAt = perform.indexOf("presentationRebind.rebind(fragment)")
+        val payloadAt = perform.indexOf("pronunciationPayload.apply(")
+        assertTrue(invokeAt in 0 until payloadAt)
+        assertTrue(rebindAt in 0 until payloadAt)
+        // Only a confirmed lane the user wants: the same conjunct `F2`'s own
+        // `z && t2(...)` uses.
+        assertTrue(
+            perform.contains(
+                "state.officialLane ?: confirmedPronunciationLanguageForCurrentSong()",
+            ),
+        )
+        assertTrue(perform.contains("hasConfirmedOfficialLane = lane != null"))
+        assertTrue(perform.contains("pronunciationSelected = state.pronunciationSelected"))
+        // The adapter field and flag are the profile pins, with the report's
+        // verified 1606 literals as the fallback.
+        assertTrue(hooks.contains("AppleMusicRuntimeMember.LYRICS_UI_ADAPTER_FIELD"))
+        assertTrue(
+            hooks.contains(
+                "AppleMusicRuntimeMember.LYRICS_ADAPTER_PRONUNCIATION_SELECTED_FIELD",
+            ),
+        )
+        assertTrue(hooks.contains("FALLBACK_LYRICS_ADAPTER_FIELD"))
+        assertTrue(hooks.contains("FALLBACK_PRONUNCIATION_SELECTED_FIELD"))
+        assertTrue(hooks.contains("FALLBACK_LYRICS_ADAPTER_FIELD = \"p0\""))
+        assertTrue(hooks.contains("FALLBACK_PRONUNCIATION_SELECTED_FIELD = \"e\""))
+    }
+
+    @Test
+    fun `the payload helper replays the app's own three-member dispatch and fails open`() {
+        // Fragment adapter field -> n1.e -> RecyclerView.g#d(int,int,Object).
+        assertTrue(pronunciationPayload.contains("readFieldOrNull(fragment, name)"))
+        assertTrue(pronunciationPayload.contains("resolved.flag.setBoolean(resolved.adapter, true)"))
+        assertTrue(pronunciationPayload.contains("PAYLOAD_POSITION_START"))
+        assertTrue(pronunciationPayload.contains("resolved.payloadMethod.invoke("))
+        assertTrue(pronunciationPayload.contains("resolved.itemCount"))
+        // `d(int,int,Object)` on the observable, resolved by shape as well as by
+        // the verified obfuscated name.
+        assertTrue(pronunciationPayload.contains("VERIFIED_PAYLOAD_METHOD = \"d\""))
+        assertTrue(pronunciationPayload.contains("PAYLOAD_METHOD_PARAMETERS"))
+        assertTrue(pronunciationPayload.contains("java.lang.Integer.TYPE"))
+        assertTrue(pronunciationPayload.contains("Any::class.java"))
+        // The static payload name is found by suffix (`n1.i`), the observable by
+        // the verified field `a`, and both fall back safely.
+        assertTrue(
+            pronunciationPayload.contains(
+                "PAYLOAD_SUFFIX = \"PAYLOAD_TOGGLE_PRONUNCIATION\"",
+            ),
+        )
+        assertTrue(pronunciationPayload.contains("VERIFIED_OBSERVABLE_FIELD = \"a\""))
+        assertTrue(pronunciationPayload.contains("VERIFIED_PAYLOAD_FIELD = \"i\""))
+        assertTrue(pronunciationPayload.contains("getField"))
+        assertTrue(pronunciationPayload.contains("runCatching"))
+        // Never `n1.f` (it picks the main line's text) and never the translation
+        // payload `n1.h`. The full `notifyDataSetChanged` is the rebind's job,
+        // not this helper's: only the app's own payload dispatch repairs the flag.
+        assertFalse(pronunciationPayload.contains("\"f\""))
+        assertFalse(pronunciationPayload.contains("PAYLOAD_TOGGLE_TRANSLATION"))
+        assertFalse(pronunciationPayload.contains("notifyDataSetChanged("))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

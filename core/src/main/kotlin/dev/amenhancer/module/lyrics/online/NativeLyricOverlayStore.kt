@@ -1,22 +1,29 @@
 package dev.amenhancer.module.lyrics.online
 
 /**
- * Timing-keyed overlay of the online **translation** lane for the current track.
- * This is the fork's port of HLE's `AppleNativeOnlineTranslationStore`, reduced
- * to the subset the native lyric-model delivery reads.
+ * Timing-keyed overlay of the online **translation** lane and the module's own
+ * **displayed-document romanization** for the current track. This is the fork's
+ * port of HLE's `AppleNativeOnlineTranslationStore`, reduced to the subset the
+ * native lyric-model delivery reads.
  *
- * Only the translation half survives the Apple-only pronunciation policy: the
- * third-party romanization lane has been removed from the product, so a
- * provider's pronunciation column is never stored here and can never reach the
- * app's own lyric model. Apple's own pronunciation is delivered by the native
- * hooks straight from Apple's lyric model.
+ * The pronunciation half carries the romanization of a document this module
+ * wrote and the app is displaying (a custom/supplement track). On 1606 a
+ * Word-timed `<transliterations>` head track written by the converter is parsed
+ * into the app's model but never surfaces on the rendered rows — the device log
+ * shows the language advertised (`languages=ja-Latn`) beside an empty per-line
+ * `getHtmlPronunciationLineText` and no word getter — so the module serves the
+ * document's own text through its line/word getters instead. A document Apple
+ * itself parsed is **not** served from here: Apple delivers those lanes straight
+ * from its own model, and the host reads this overlay only for a supplement
+ * track.
  *
  * One overlay is held at a time (the current track); every lookup is gated on
  * the caller's song id, so a stale track can never leak into the next one.
  * Content is sanitized on write: a translation is only stored when
- * [OnlineTranslationContentPolicy] considers it real. Fails open everywhere — a
- * missing overlay, a blank id or a timing miss all return null, so the caller
- * keeps Apple's own value.
+ * [OnlineTranslationContentPolicy] considers it real, and a pronunciation only
+ * when [RomanizationPolicy] accepts it against the line text. Fails open
+ * everywhere — a missing overlay, a blank id or a timing miss all return null,
+ * so the caller keeps Apple's own value.
  */
 class NativeLyricOverlayStore {
 
@@ -24,8 +31,8 @@ class NativeLyricOverlayStore {
 
     private data class LineKey(val timing: TimingKey, val text: String)
 
-    /** The translation lane stored for one line. */
-    data class Content(val translation: String?)
+    /** The lanes stored for one line. */
+    data class Content(val translation: String?, val pronunciation: String? = null)
 
     private data class Entry(val text: String, val content: Content)
 
@@ -35,6 +42,8 @@ class NativeLyricOverlayStore {
         val contentByTiming: Map<TimingKey, List<Entry>>,
         val hasTranslation: Boolean,
         val translationSource: String?,
+        val hasPronunciation: Boolean,
+        val pronunciationSource: String?,
     )
 
     @Volatile
@@ -45,23 +54,27 @@ class NativeLyricOverlayStore {
 
     /**
      * Replaces the overlay with [lines] for [songId]. Returns true when the
-     * stored content changed. A blank id or a body with no translation lane is
-     * rejected and leaves the previous overlay in place, mirroring HLE's
-     * "Apple source first, online only when it has something" rule. A provider's
-     * `roma` column is deliberately ignored: only Apple delivers pronunciation.
+     * stored content changed. A blank id or a body with neither lane is rejected
+     * and leaves the previous overlay in place, mirroring HLE's "Apple source
+     * first, online only when it has something" rule. A provider's `roma` column
+     * never reaches here as pronunciation: the enrichment layer only ever sets
+     * [NativeLyricLine.roma] from the displayed document's own
+     * `<transliterations>` entries.
      */
     @Synchronized
     fun update(
         songId: String?,
         lines: List<NativeLyricLine>,
         translationSource: String? = null,
+        pronunciationSource: String? = null,
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
         val entries = lines.mapNotNull { line ->
             val content = Content(
                 translation = OnlineTranslationContentPolicy.sanitize(line.translation),
+                pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
             )
-            if (content.translation == null) {
+            if (content.translation == null && content.pronunciation == null) {
                 return@mapNotNull null
             }
             LineKey(TimingKey(line.begin, line.end), normalizeText(line.text)) to content
@@ -76,11 +89,33 @@ class NativeLyricOverlayStore {
             ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
+            hasPronunciation = entries.any { it.second.pronunciation != null },
+            pronunciationSource = pronunciationSource,
         )
         if (overlay == next) return false
         overlay = next
         revision += 1
         return true
+    }
+
+    /**
+     * Publishes the lanes of a document this module wrote and the app is
+     * displaying (a custom/supplement track): the per-line translation and
+     * romanization read back through [DisplayedLyricPublication]. Returns true
+     * when the stored content changed. A blank id or a document with neither
+     * lane is rejected, leaving any previous overlay in place.
+     */
+    fun publishDisplayed(
+        songId: Long,
+        ttml: String,
+        pronunciationSource: String? = DISPLAYED_DOCUMENT_SOURCE,
+    ): Boolean {
+        if (songId <= 0L || ttml.isBlank()) return false
+        return update(
+            songId = songId.toString(),
+            lines = DisplayedLyricPublication.lines(ttml),
+            pronunciationSource = pronunciationSource,
+        )
     }
 
     /** Drops the overlay; a non-null [songId] only clears when it still matches. */
@@ -105,8 +140,20 @@ class NativeLyricOverlayStore {
     fun translationSource(songId: String?): String? =
         overlay?.takeIf { it.songId == songId && it.hasTranslation }?.translationSource
 
+    /** True when the displayed document's own romanization was published. */
+    fun hasPronunciation(songId: String?): Boolean =
+        !songId.isNullOrBlank() &&
+            overlay?.let { it.songId == songId && it.hasPronunciation } == true
+
+    fun pronunciationSource(songId: String?): String? =
+        overlay?.takeIf { it.songId == songId && it.hasPronunciation }?.pronunciationSource
+
     fun translation(songId: String?, begin: Long, end: Long, text: String?): String? =
         content(songId, begin, end, text)?.translation
+
+    /** The romanization published for the line at [begin]/[end] carrying [text]. */
+    fun pronunciation(songId: String?, begin: Long, end: Long, text: String?): String? =
+        content(songId, begin, end, text)?.pronunciation
 
     private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? {
         val current = overlay ?: return null
@@ -123,8 +170,39 @@ class NativeLyricOverlayStore {
     companion object {
         private val WHITESPACE = Regex("\\s+")
 
+        /** The `pronunciationSource` of a lane read from the displayed document. */
+        const val DISPLAYED_DOCUMENT_SOURCE = "displayed"
+
         fun normalizeText(text: String?): String = text.orEmpty().replace(WHITESPACE, " ").trim()
     }
+}
+
+/**
+ * The lanes of a document this module wrote and the app is displaying, as the
+ * per-line models [NativeLyricOverlayStore] stores.
+ *
+ * This is the publish counterpart the custom (supplement) path was missing: a
+ * document that already carries its own translation produces no merged document,
+ * so the enricher returns null, nothing ever writes the native overlay, and on
+ * 1606 the app's model does not surface the document's Word-timed
+ * `<transliterations>` track either. Reading the displayed document back through
+ * [AppleLyricTtmlReader] gives the module both lanes so its own getters can
+ * deliver them for that supplement track.
+ *
+ * Pure and fail-open: a malformed document yields an empty list.
+ */
+object DisplayedLyricPublication {
+
+    fun lines(ttml: String): List<NativeLyricLine> =
+        AppleLyricTtmlReader.read(ttml).map { line ->
+            NativeLyricLine(
+                begin = line.begin,
+                end = line.end,
+                text = line.text,
+                translation = line.translation,
+                roma = line.romanization,
+            )
+        }
 }
 
 /**
@@ -499,17 +577,21 @@ object NativeLyricModelPolicy {
     ): Boolean = original || (enabled && hasOnlineTranslation)
 
     /**
-     * HLE's `hasPronunciation` / `setPronunciation` availability resolution,
-     * Apple-only: a Mandarin song is hidden outright, otherwise Apple's own
-     * valid romanization is advertised. The module's online pronunciation lane
-     * no longer exists, so there is no third-party term to add.
+     * HLE's `hasPronunciation` / `setPronunciation` availability resolution. A
+     * Mandarin song is hidden outright. Otherwise Apple's own valid romanization
+     * advertises the lane, and — for a module supplement track only — the
+     * displayed document's own published romanization does too, so the app's
+     * pronunciation row is shown for the custom document whose Word-timed head
+     * track the model does not surface.
      */
     fun hasPronunciationAvailability(
         original: Boolean,
         hasValidOfficialPronunciation: Boolean,
         mandarinHidden: Boolean,
+        hasOnlinePronunciation: Boolean = false,
     ): Boolean {
         if (mandarinHidden) return false
+        if (hasOnlinePronunciation) return true
         return original && hasValidOfficialPronunciation
     }
 

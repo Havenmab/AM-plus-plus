@@ -54,8 +54,17 @@ data class TtmlFormatConversion(
  * of what it holds, rather than opening a second one beside it. A file can also
  * arrive half in each format — an Apple transliteration in the head beside
  * translations still inline — so each kind is judged on its own: a kind the head
- * declares keeps its inline spans, because migrating it again would duplicate
- * the track.
+ * declares keeps its inline **translation** spans, because migrating it again
+ * would duplicate the track, while its inline `x-roman` spans are **dropped**.
+ *
+ * The app's native parser knows only `x-bg` and `translation` role values
+ * (`libandroidappmusic.so`'s only role literals), so an inline `x-roman` span is
+ * never read as a pronunciation lane. On a Word-timed body the app's
+ * `LyricsLineParser::processSpanElements` walks it as one more lyric span — with
+ * no timing — which corrupts the line's word vector, while the romanization the
+ * app does parse lives only in the head `<transliteration>` track. A declared
+ * head track is therefore authoritative and the redundant, harmful body copy is
+ * removed; an undeclared one is still migrated into the head as before.
  *
  * The background vocal left in the body loses its `begin` / `end`, because Apple
  * reads the vocal's extent from its own syllables, and moves to the front of the
@@ -355,8 +364,18 @@ object AmllTtmlFormatConverter {
                     if (translation == null) translation = auxiliaryText(ttml, child)
                     edits += removal(ttml, child, line.contentStart)
                 }
-                ROLE_ROMAN -> if (!declared.transliterations) {
-                    if (roman == null) roman = auxiliaryText(ttml, child)
+                ROLE_ROMAN -> {
+                    // The app's native parser knows only `x-bg` and `translation`
+                    // role values, so an inline `x-roman` span is never read as a
+                    // pronunciation lane: on a Word-timed body
+                    // `LyricsLineParser::processSpanElements` treats it as one
+                    // more (untimed) lyric span and corrupts the line's word
+                    // vector. When the head already declares the track the body
+                    // copy is therefore dropped; otherwise it is migrated into
+                    // the head track as before.
+                    if (!declared.transliterations && roman == null) {
+                        roman = auxiliaryText(ttml, child)
+                    }
                     edits += removal(ttml, child, line.contentStart)
                 }
                 ROLE_BACKGROUND -> {
@@ -370,8 +389,8 @@ object AmllTtmlFormatConverter {
                                 }
                                 removals += removal(ttml, span, child.contentStart)
                             }
-                            ROLE_ROMAN -> if (!declared.transliterations) {
-                                if (backgroundRoman == null) {
+                            ROLE_ROMAN -> {
+                                if (!declared.transliterations && backgroundRoman == null) {
                                     backgroundRoman = auxiliaryText(ttml, span)
                                 }
                                 removals += removal(ttml, span, child.contentStart)

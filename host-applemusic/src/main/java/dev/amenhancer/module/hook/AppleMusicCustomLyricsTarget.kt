@@ -135,6 +135,14 @@ internal class AppleMusicCustomLyricsTarget(
                     onMergedDocument = { appleMusicId, raw, merged ->
                         publishMergedDocument(appleMusicId, raw, merged)
                     },
+                    // The displayed document's own lanes are published before the
+                    // enricher: a custom document that already carries its
+                    // translation produces no merged document, so this is the only
+                    // write that carries its (Word-timed) romanization into the
+                    // model the native getters can serve.
+                    onDisplayedDocument = { appleMusicId, ttml ->
+                        runtime.nativeLyricOverlay.publishDisplayed(appleMusicId, ttml)
+                    },
                 )
             }
         }

@@ -108,6 +108,38 @@ class AppleLyricTtmlReaderTest {
         assertNull(AppleLyricTtmlReader.clockMs(null))
     }
 
+    /**
+     * The two places a source can carry romanization, counted separately for the
+     * custom-document diagnostic: an inline `ttm:role="x-roman"` span (not a role
+     * the 1606 parser knows) and a head `<transliteration>` entry keyed by `for`.
+     */
+    @Test
+    fun `counts inline roman spans and head entry keys`() {
+        val document = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+                xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+              <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+                <transliterations><transliteration xml:lang="ja-Latn">
+                  <text for="L1">haro</text><text for="L2">wārudo</text>
+                </transliteration></transliterations>
+              </iTunesMetadata></metadata></head>
+              <body><div>
+                <p begin="1.0" end="2.0" itunes:key="L1"><span begin="1.0" end="2.0">世界</span>
+                  <span ttm:role="x-roman">haro</span></p>
+                <p begin="2.0" end="3.0" itunes:key="L2"><span begin="2.0" end="3.0">ワールド</span>
+                  <span ttm:role='x-roman'>wārudo</span></p>
+              </div></body>
+            </tt>
+        """.trimIndent()
+
+        assertEquals(listOf("L1", "L2"), AppleLyricTtmlReader.transliterationKeys(document))
+        assertEquals(2, AppleLyricTtmlReader.inlineRomanizationSpans(document))
+        // Apple's own document carries a head entry but no inline span.
+        assertEquals(0, AppleLyricTtmlReader.inlineRomanizationSpans(WORD_DOCUMENT))
+        assertEquals(listOf("L1"), AppleLyricTtmlReader.transliterationKeys(WORD_DOCUMENT))
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationKeys("not ttml"))
+    }
+
     private companion object {
         val WORD_DOCUMENT = """
             <?xml version='1.0' encoding='utf-8'?>

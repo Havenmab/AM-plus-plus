@@ -84,6 +84,18 @@ class CustomLyricsCompletionFeed(
      * anything itself.
      */
     private val onMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> },
+    /**
+     * Publishes the **displayed** document's own lanes (translation and the
+     * document's `<transliterations>` romanization) into the native overlay,
+     * before the enricher runs so a merged document can still refine the
+     * translation. This is the half a custom document that already carries its
+     * own lanes needs: the enricher then returns null (nothing to merge) and the
+     * overlay would otherwise never hold the document's romanization, which the
+     * app's model does not surface on 1606 for a Word-timed
+     * `<transliterations>` head track. Returns true when the stored content
+     * changed. Fail-open default so an unwired host is a no-op.
+     */
+    private val onDisplayedDocument: (Long, String) -> Boolean = { _, _ -> false },
     private val maxTracks: Int = MAX_TRACKS,
 ) {
     private data class Document(val revision: String, val ttml: String)
@@ -166,17 +178,28 @@ class CustomLyricsCompletionFeed(
                 transliterationSummary(document.ttml),
         )
         val merged = runCatching { enrich(appleMusicId, document.ttml) }.getOrNull()
+        // Publish the displayed document's own lanes *before* the enricher so a
+        // merged document (which carries the same romanization plus any provider
+        // translation) refines the overlay afterwards instead of racing it. A
+        // custom document that already carries its translation produces no merged
+        // document at all, so this is the only write its romanization gets.
+        val publishedDisplayed = runCatching {
+            onDisplayedDocument(appleMusicId, document.ttml)
+        }.getOrDefault(false)
         // `publish` and the per-lane `translationSource`/`pronunciationSource`
         // line come from the enricher itself; this is the inject counterpart.
-        log(appleMusicId, injectLine(appleMusicId, published = merged != null))
-        // Only a successful enrichment wrote the overlay. The refresh request is
-        // fail-open: a host callback that throws never fails the completion.
+        log(appleMusicId, injectLine(appleMusicId, published = merged != null || publishedDisplayed))
+        // A successful enrichment wrote the overlay, and a displayed-document
+        // publish did too. The refresh request is fail-open: a host callback that
+        // throws never fails the completion.
         if (merged != null) {
             // Publish the merged document first: the post-overlay refresh below
             // re-invokes Apple's presentation, whose I2 hook installs whichever
             // pointer the session holds, so the enriched pointer must already be
             // the ready one. Both callbacks are best-effort and in this order.
             runCatching { onMergedDocument(appleMusicId, document.ttml, merged) }
+            runCatching { onOverlayUpdated(appleMusicId) }
+        } else if (publishedDisplayed) {
             runCatching { onOverlayUpdated(appleMusicId) }
         }
     }
@@ -200,7 +223,17 @@ class CustomLyricsCompletionFeed(
             .joinToString(",")
             .ifEmpty { NONE }
         val romanized = lines.count { !it.romanization.isNullOrBlank() }
-        return "transliterationTags=$tags transliterationLines=$romanized/${lines.size}"
+        val inline = AppleLyricTtmlReader.inlineRomanizationSpans(ttml)
+        val keys = AppleLyricTtmlReader.transliterationKeys(ttml)
+            .take(MAX_KEY_SAMPLES)
+            .joinToString(",")
+            .ifEmpty { NONE }
+        // `romans=` separates the two places a source can carry romanization: an
+        // inline `ttm:role="x-roman"` span (which the 1606 parser does not know)
+        // and a head `<transliteration>` entry (which it does). `headKeys=` prints
+        // the key shape (`for@L1,...`) the native parser keys the lane by.
+        return "transliterationTags=$tags transliterationLines=$romanized/${lines.size} " +
+            "romans=inline:$inline/head:$romanized headKeys=$keys"
     }
 
     private companion object {
@@ -212,6 +245,9 @@ class CustomLyricsCompletionFeed(
         const val MAX_TRACKS = 32
 
         const val SHORT_REVISION = 12
+
+        /** Bound on the head-key samples the once-per-revision capture line prints. */
+        const val MAX_KEY_SAMPLES = 4
 
         /** The printed value when the displayed document declares no language tag. */
         const val NONE = "none"

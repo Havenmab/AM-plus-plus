@@ -32,6 +32,7 @@ object AppleLyricTtmlReader {
         Regex("""(?is)<transliterations\b[^>]*>(.*?)</transliterations\s*>""")
     private val textElement = Regex("""(?is)<text\b([^>]*)>(.*?)</text\s*>""")
     private val transliterationElement = Regex("""(?is)<transliteration\b([^>]*?)/?>""")
+    private val inlineRomanSpan = Regex("""(?is)ttm:role\s*=\s*(?:"x-roman"|'x-roman')""")
 
     private val beginAttribute = attribute("begin")
     private val endAttribute = attribute("end")
@@ -86,6 +87,31 @@ object AppleLyricTtmlReader {
             .distinct()
             .toList()
     }
+
+    /**
+     * The `for` keys of [ttml]'s head transliteration entries, in document order
+     * — the shape the native parser keys each pronunciation line by. Reported in
+     * the custom-document diagnostic so a device log shows whether the head track
+     * is keyed per line (`for="L1"`) or carries no keys at all.
+     */
+    fun transliterationKeys(ttml: String): List<String> {
+        val content = transliterationsBlock.find(ttml)?.groupValues?.get(1) ?: return emptyList()
+        return textElement.findAll(content)
+            .mapNotNull { element ->
+                forAttribute.findAttribute(element.groupValues[1])
+                    ?.takeIf(String::isNotBlank)
+            }
+            .toList()
+    }
+
+    /**
+     * How many inline `ttm:role="x-roman"` spans [ttml] still carries. The 1606
+     * native parser knows only `x-bg` and `translation` role values, so an inline
+     * `x-roman` span is not a pronunciation lane to it — it is an untimed lyric
+     * span. Reported beside the head count so a device log separates the two.
+     */
+    fun inlineRomanizationSpans(ttml: String): Int =
+        inlineRomanSpan.findAll(ttml).count()
 
     private fun words(inner: String): List<AppleTtmlWord> = timedSpan.findAll(inner)
         .mapNotNull { span ->

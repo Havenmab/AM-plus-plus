@@ -7,12 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pure-JVM coverage for the timing-keyed translation overlay the native-model
- * delivery reads through. The store is the fork's port of HLE's
- * `AppleNativeOnlineTranslationStore`, reduced to the translation half under the
- * Apple-only pronunciation policy: one overlay for the active track, sanitized
- * on write, looked up by timing and text, never readable across tracks, and
- * never carrying a provider's romanization.
+ * Pure-JVM coverage for the timing-keyed lane overlay the native-model delivery
+ * reads through. The store is the fork's port of HLE's
+ * `AppleNativeOnlineTranslationStore`: one overlay for the active track,
+ * sanitized on write, looked up by timing and text, and never readable across
+ * tracks. It carries the online translation lane and the displayed document's own
+ * romanization, which the host serves only for a supplement track.
  */
 class NativeLyricOverlayStoreTest {
 
@@ -50,18 +50,21 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
-    fun `a provider romanization is never stored`() {
+    fun `the displayed document's romanization is stored beside the translation`() {
         val store = NativeLyricOverlayStore()
 
-        // A pronunciation-only body has no lane to store at all.
-        assertFalse(
+        // A pronunciation-only body is a real lane now: it is the custom
+        // document's own romanization, which the app's model does not surface.
+        assertTrue(
             store.update(
                 songId = "77",
                 lines = listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")),
             ),
         )
-        assertNull(store.currentSongId())
-        // A body with both lanes keeps only the translation.
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertTrue(store.hasPronunciation("77"))
+        assertNull(store.translation("77", 1_000L, 2_000L, "君の名は"))
+        // A body with both lanes keeps both.
         assertTrue(
             store.update(
                 songId = "77",
@@ -71,6 +74,28 @@ class NativeLyricOverlayStoreTest {
             ),
         )
         assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+    }
+
+    @Test
+    fun `a published displayed document carries both lanes for its own track`() {
+        val store = NativeLyricOverlayStore()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">你的名字</text></translation></translations>
+            <transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="1.0" end="2.0">Kimi no na wa</span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="1.0" end="2.0" itunes:key="L1"><span begin="1.0" end="2.0">君の名は</span></p></div></body></tt>
+        """.trimIndent()
+
+        assertTrue(store.publishDisplayed(songId = 77L, ttml = ttml))
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("displayed", store.pronunciationSource("77"))
+        // Another track can never read it.
+        assertNull(store.pronunciation("88", 1_000L, 2_000L, "君の名は"))
+        assertFalse(store.hasPronunciation("88"))
     }
 
     @Test

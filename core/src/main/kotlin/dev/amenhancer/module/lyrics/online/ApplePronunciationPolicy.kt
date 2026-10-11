@@ -9,18 +9,23 @@ package dev.amenhancer.module.lyrics.online
  * `LyricsWord`. The line-level `getHtmlPronunciationLineText` that the earlier
  * PRs override is therefore never rendered on those songs.
  *
- * This policy is **Apple-only**. The third-party romanization lane has been
- * removed from the product, so the word decision has exactly two outcomes:
+ * Apple's own lanes always win. The module's own displayed document — a custom
+ * (supplement) track this app itself parsed — is the one other source, and it is
+ * only ever used to fill a line Apple left empty, so the word decision has three
+ * outcomes:
  *
  *  - `OFFICIAL` — Apple's own word vector carries a sanitized romanization whose
  *    word begins align with the main line; the native vector itself is returned;
- *  - `HIDDEN` — Apple published nothing usable for the line; an empty container
- *    is returned so no third-party text can ever be rendered on Apple's words.
+ *  - `MAIN_LINE_TIMING` — Apple published no usable word vector for the line but
+ *    a text lane exists (Apple's own line text, or the supplement document's
+ *    romanization): Apple's **main** word vector is returned and the text is
+ *    distributed over it by a one-shot render plan, so every rendered word is a
+ *    native `LyricsWord` of the line and no synthetic word is ever created;
+ *  - `HIDDEN` — neither lane has anything usable; an empty container is returned
+ *    so no text can be rendered on Apple's words.
  *
- * HLE's `MAIN_LINE_TIMING` track (Apple's words carrying a text lane) can no
- * longer be produced. [displaySegments] and [hasCompatibleOfficialWordTiming] are
- * retained as the pure halves of the (now unreachable) main-timing render-plan
- * plumbing, so the Apple-only rule stays JVM-covered by
+ * [displaySegments] and [hasCompatibleOfficialWordTiming] are the pure halves of
+ * that alignment, so the rule stays JVM-covered by
  * [ApplePronunciationPolicyTest].
  */
 object ApplePronunciationPolicy {
@@ -29,30 +34,80 @@ object ApplePronunciationPolicy {
     fun nonNullDisplayText(text: String?): String = text.orEmpty()
 
     /**
-     * Apple's own aligned word vector is `OFFICIAL`; everything else is `HIDDEN`.
-     * There is no third-party branch: `hasOnlinePronunciation` is gone.
+     * HLE's `wordTrack`: Apple's own aligned word vector wins; otherwise an
+     * available text lane is rendered on the native main words; otherwise
+     * nothing is shown.
      */
-    fun wordTrack(hasValidOfficialPronunciation: Boolean): ApplePronunciationWordTrack =
-        if (hasValidOfficialPronunciation) {
-            ApplePronunciationWordTrack.OFFICIAL
-        } else {
-            ApplePronunciationWordTrack.HIDDEN
-        }
+    fun wordTrack(
+        hasValidOfficialPronunciation: Boolean,
+        hasOnlinePronunciation: Boolean = false,
+    ): ApplePronunciationWordTrack = when {
+        hasValidOfficialPronunciation -> ApplePronunciationWordTrack.OFFICIAL
+        hasOnlinePronunciation -> ApplePronunciationWordTrack.MAIN_LINE_TIMING
+        else -> ApplePronunciationWordTrack.HIDDEN
+    }
 
     /**
-     * The word getter's decision, Apple-only.
+     * The Apple-first planner.
      *
-     * [officialWordVectorText] is Apple's own romanization read from the word
-     * vector (HLE's `nativeRawWordVectorText`) and [officialWordsCompatible] is
-     * [hasCompatibleOfficialWordTiming]. Both must hold for `OFFICIAL`; otherwise
-     * the line is `HIDDEN`, never filled from a provider.
+     * An aligned Apple word vector is Apple data on its own and always wins
+     * (`OFFICIAL`), whether or not Apple also left a line-level text. Otherwise
+     * Apple's own line text is preferred over the supplied supplement text for
+     * the main-timing render plan, so the module's romanization can only fill
+     * what Apple leaves empty. An Apple word vector whose timeline does **not**
+     * align is not usable as a text lane and stays `HIDDEN` rather than being
+     * re-timed onto the main words — Apple's own lane is never displaced by a
+     * guess.
+     *
+     * [pronunciation] is the text a `MAIN_LINE_TIMING` render plan must
+     * distribute; it is null for `OFFICIAL` (the native vector itself is
+     * returned) and `HIDDEN`.
+     */
+    fun planPronunciationWords(
+        officialLineText: String?,
+        officialWordVectorText: String?,
+        onlineText: String?,
+        officialWordsCompatible: Boolean,
+    ): ApplePronunciationWordPlan {
+        val alignedAppleWords = officialWordVectorText != null && officialWordsCompatible
+        if (alignedAppleWords) {
+            return ApplePronunciationWordPlan(
+                track = ApplePronunciationWordTrack.OFFICIAL,
+                pronunciation = null,
+                source = ApplePronunciationTextSource.APPLE,
+            )
+        }
+        val appleText = officialLineText
+        val text = appleText ?: onlineText
+        return ApplePronunciationWordPlan(
+            track = if (text == null) {
+                ApplePronunciationWordTrack.HIDDEN
+            } else {
+                ApplePronunciationWordTrack.MAIN_LINE_TIMING
+            },
+            pronunciation = text,
+            source = when {
+                appleText != null -> ApplePronunciationTextSource.APPLE
+                text != null -> ApplePronunciationTextSource.ONLINE
+                else -> ApplePronunciationTextSource.NONE
+            },
+        )
+    }
+
+    /**
+     * The word getter's track for a line whose only possible source is Apple's
+     * own aligned word vector (no line/supplement text lane). Kept so the
+     * Apple-only callers and their JVM coverage stay valid.
      */
     fun planPronunciationWords(
         officialWordVectorText: String?,
         officialWordsCompatible: Boolean,
-    ): ApplePronunciationWordTrack = wordTrack(
-        hasValidOfficialPronunciation = officialWordVectorText != null && officialWordsCompatible,
-    )
+    ): ApplePronunciationWordTrack = planPronunciationWords(
+        officialLineText = null,
+        officialWordVectorText = officialWordVectorText,
+        onlineText = null,
+        officialWordsCompatible = officialWordsCompatible,
+    ).track
 
     /**
      * Apple Music 6.5.0 uses the pronunciation word begin as an exact lookup key
@@ -135,11 +190,35 @@ object ApplePronunciationPolicy {
 }
 
 /**
- * The Apple-only word track, printed verbatim in the word diagnostic. HLE's
- * `MAIN_LINE_TIMING` is deliberately absent: the third-party text lane it
- * carried no longer exists.
+ * The word track, printed verbatim in the word diagnostic. `MAIN_LINE_TIMING`
+ * is the fallback lane: a text lane (Apple's own or the supplement document's)
+ * rendered on Apple's **main** word vector, never a synthesized word.
  */
 enum class ApplePronunciationWordTrack {
     OFFICIAL,
+    MAIN_LINE_TIMING,
     HIDDEN,
 }
+
+/**
+ * Which lane supplied the text a `MAIN_LINE_TIMING` render plan distributes.
+ * Printed as `mainTiming=` in the `pronunciation-words` diagnostic: `apple` is
+ * Apple's own line text or unaligned word text, `online` is the module's own
+ * displayed document, `none` means neither lane had anything for the line.
+ */
+enum class ApplePronunciationTextSource(val token: String) {
+    APPLE("apple"),
+    ONLINE("online"),
+    NONE("none"),
+}
+
+/**
+ * One [ApplePronunciationPolicy.planPronunciationWords] result: the word track,
+ * the text to distribute when the track is `MAIN_LINE_TIMING`, and which lane
+ * that text came from. Pure, so the Apple-first rule is JVM-tested.
+ */
+data class ApplePronunciationWordPlan(
+    val track: ApplePronunciationWordTrack,
+    val pronunciation: String?,
+    val source: ApplePronunciationTextSource,
+)

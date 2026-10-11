@@ -391,12 +391,14 @@ class AppleMusic700NativeLyricsProfileTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
         // Task-4 diagnostics: the next log must carry the decision inputs, not
-        // only the winning track. `mainTiming` is gone with the third-party text
-        // lane it described.
+        // only the winning track. `mainTiming` names the lane that supplied a
+        // main-timing render plan (Apple's own line/word text or the module's
+        // displayed document).
         assertTrue(hooks.contains("officialWords=\$officialWords"))
         assertTrue(hooks.contains("compat=\$officialWordsCompatible"))
-        assertFalse(hooks.contains("mainTiming=\${mainTimingSource.token}"))
-        assertFalse(hooks.contains("ApplePronunciationTextSource"))
+        assertTrue(hooks.contains("mainTiming=\${mainTimingSource.token}"))
+        assertTrue(hooks.contains("ApplePronunciationTextSource"))
+        assertTrue(hooks.contains("renderPlan=\$renderPlanRegistered"))
         assertTrue(hooks.contains("selected=\${track.name}"))
 
         // Late-word self-correction, mirroring the lane-ready trigger: the first

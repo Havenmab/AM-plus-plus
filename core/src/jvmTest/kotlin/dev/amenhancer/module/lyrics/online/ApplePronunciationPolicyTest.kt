@@ -12,8 +12,8 @@ import org.junit.Test
  * These are pure JVM tests: the host hook only resolves Apple's members and
  * calls in here, so the device-facing rule (`wordTrack`, the official/main-word
  * compatibility test and the romanization-to-word alignment) is pinned without
- * a device. The third-party text lane is gone: the policy has exactly two
- * outcomes, `OFFICIAL` and `HIDDEN`.
+ * a device. Apple's own lanes always win; the module's displayed-document lane
+ * only ever fills a line Apple left empty, on Apple's main word timing.
  */
 class ApplePronunciationPolicyTest {
 
@@ -59,18 +59,60 @@ class ApplePronunciationPolicyTest {
     }
 
     @Test
-    fun `wordTrack has no third-party branch`() {
+    fun `an available text lane is rendered on the main timing`() {
+        // Apple supplied no usable vector, but the module's own displayed
+        // document carries romanization for the line: the main-timing track
+        // renders that text on Apple's existing words.
+        val plan = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = null,
+            officialWordVectorText = null,
+            onlineText = "ki mi no na wa",
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.MAIN_LINE_TIMING, plan.track)
+        assertEquals("ki mi no na wa", plan.pronunciation)
+        assertEquals(ApplePronunciationTextSource.ONLINE, plan.source)
+        // Apple's own line text is preferred over the module's when both exist.
+        val appleText = ApplePronunciationPolicy.planPronunciationWords(
+            officialLineText = "ki mi no na wa",
+            officialWordVectorText = null,
+            onlineText = "online text",
+            officialWordsCompatible = false,
+        )
+        assertEquals(ApplePronunciationWordTrack.MAIN_LINE_TIMING, appleText.track)
+        assertEquals("ki mi no na wa", appleText.pronunciation)
+        assertEquals(ApplePronunciationTextSource.APPLE, appleText.source)
+        // Nothing at all stays HIDDEN.
+        assertEquals(
+            ApplePronunciationWordTrack.HIDDEN,
+            ApplePronunciationPolicy.planPronunciationWords(
+                officialLineText = null,
+                officialWordVectorText = null,
+                onlineText = null,
+                officialWordsCompatible = false,
+            ).track,
+        )
+    }
+
+    @Test
+    fun `wordTrack has the Apple, main-timing and hidden branches`() {
         assertEquals(
             ApplePronunciationWordTrack.OFFICIAL,
             ApplePronunciationPolicy.wordTrack(hasValidOfficialPronunciation = true),
         )
         assertEquals(
+            ApplePronunciationWordTrack.MAIN_LINE_TIMING,
+            ApplePronunciationPolicy.wordTrack(
+                hasValidOfficialPronunciation = false,
+                hasOnlinePronunciation = true,
+            ),
+        )
+        assertEquals(
             ApplePronunciationWordTrack.HIDDEN,
             ApplePronunciationPolicy.wordTrack(hasValidOfficialPronunciation = false),
         )
-        // The removed HLE third-party track can never be produced.
         assertEquals(
-            listOf("OFFICIAL", "HIDDEN"),
+            listOf("OFFICIAL", "MAIN_LINE_TIMING", "HIDDEN"),
             ApplePronunciationWordTrack.entries.map { it.name },
         )
     }

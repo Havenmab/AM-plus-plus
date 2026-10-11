@@ -494,7 +494,9 @@ class AmllTtmlFormatConverterTest {
 
         assertEquals(1, Regex("""<transliterations>""").findAll(result.ttml).count())
         assertFalse(result.ttml.contains("<text for=\"L1\">R1</text>"))
-        assertTrue(result.ttml.substringAfter("<body").contains("<span ttm:role=\"x-roman\">R1</span>"))
+        // The native parser has no `x-roman` role, so the redundant body copy is
+        // dropped rather than left in the line as an untimed lyric span.
+        assertFalse(result.ttml.substringAfter("<body").contains("x-roman"))
         assertTrue(result.ttml.contains("<text for=\"L1\">T1</text>"))
     }
 
@@ -748,9 +750,9 @@ class AmllTtmlFormatConverterTest {
 
         assertTrue(result.converted)
         assertTrue(result.ttml.contains("<transliteration xml:lang=\"ja-Latn\"><text for=\"L1\">ki</text>"))
-        // The declared track still wins over the duplicate inline lane, which is
-        // therefore left in the body rather than migrated a second time.
-        assertTrue(result.ttml.substringAfter("<body").contains("x-roman"))
+        // The declared track wins over the duplicate inline lane, and the native
+        // parser does not know the inline role, so the body copy is dropped.
+        assertFalse(result.ttml.substringAfter("<body").contains("x-roman"))
     }
 
     @Test

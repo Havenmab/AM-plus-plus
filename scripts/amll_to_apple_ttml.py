@@ -494,10 +494,15 @@ def collect_line(
                     translation = auxiliary_text(ttml, child)
                 edits.append(removal(ttml, child, line.content_start))
         elif role == ROLE_ROMAN:
-            if not declared.transliterations:
-                if roman is None:
-                    roman = auxiliary_text(ttml, child)
-                edits.append(removal(ttml, child, line.content_start))
+            # The app's native parser knows only ``x-bg`` and ``translation``
+            # role values, so an inline ``x-roman`` span is never a pronunciation
+            # lane to it: on a Word-timed body it is one more untimed lyric span
+            # and corrupts the line's word vector. A declared head track is
+            # authoritative, so the redundant body copy is dropped; an undeclared
+            # one is still migrated into the head as before.
+            if not declared.transliterations and roman is None:
+                roman = auxiliary_text(ttml, child)
+            edits.append(removal(ttml, child, line.content_start))
         elif role == ROLE_BACKGROUND:
             nested = child_elements(ttml, child)
             removals: list[Edit] = []
@@ -509,10 +514,9 @@ def collect_line(
                             background_translation = auxiliary_text(ttml, span)
                         removals.append(removal(ttml, span, child.content_start))
                 elif nested_role == ROLE_ROMAN:
-                    if not declared.transliterations:
-                        if background_roman is None:
-                            background_roman = auxiliary_text(ttml, span)
-                        removals.append(removal(ttml, span, child.content_start))
+                    if not declared.transliterations and background_roman is None:
+                        background_roman = auxiliary_text(ttml, span)
+                    removals.append(removal(ttml, span, child.content_start))
             edits.extend(background_edits(ttml, line, children, child, nested, removals))
 
     translations.append(TrackEntry(key, translation, background_translation))
@@ -1134,11 +1138,16 @@ def _selftest() -> int:
         result = to_apple_format(declared_and_inline).ttml
         assert result.count("<transliterations>") == 1
         assert '<text for="L1">R1</text>' not in result
-        assert '<span ttm:role="x-roman">R1</span>' in result.split("<body", 1)[1]
+        # A declared romanization track is authoritative: the redundant inline
+        # `x-roman` span is dropped from the body because the native parser does
+        # not know the role and would read it as an untimed lyric span.
+        assert "x-roman" not in result
+        assert "x-roman" not in result.split("<body", 1)[1]
+        # The translation kind is undeclared, so its inline span is still migrated.
         assert '<text for="L1">T1</text>' in result
         return True
 
-    checks.append(("a declared kind keeps its inline spans", check_declared_and_inline))
+    checks.append(("a declared romanization kind drops its inline spans", check_declared_and_inline))
 
     def check_mixed_is_idempotent() -> bool:
         mixed = textwrap.dedent(

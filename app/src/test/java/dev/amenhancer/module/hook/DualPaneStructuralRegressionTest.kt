@@ -123,23 +123,27 @@ class DualPaneStructuralRegressionTest {
     }
 
     @Test
-    fun `applies AMLL artwork size and title gap to the native left pane`() {
+    fun `sizes artwork from progress width and centers it above metadata`() {
         assertTrue(source.contains("private const val ARTWORK_CONTAINER = \"artwork_container\""))
         assertTrue(source.contains("private const val METADATA_BARRIER_TOP = \"metadata_barrier_top\""))
         assertTrue(source.contains("installTabletArtworkLayout(playerRoot, playerHost)"))
-        assertTrue(source.contains("TabletArtworkLayoutPolicy.resolve("))
-        assertTrue(source.contains("nativeSizeByArtwork[artwork]"))
+        assertTrue(source.contains("TabletArtworkLayoutPolicy.forProgress("))
+        assertTrue(source.contains("progressWidthPx = progress.width.toFloat()"))
+        assertFalse(source.contains("nativeSizeByArtwork"))
         assertTrue(source.contains("val statusBarInsetTopPx = playerRoot.rootWindowInsets?.systemWindowInsetTop"))
         assertTrue(source.contains("windowRootLocation[1] + statusBarInsetTopPx"))
         assertTrue(source.contains("val availableHeightPx = (barrierLocation[1] - intervalTopPx).toFloat()"))
         assertTrue(source.contains("val desiredArtworkTopPx = intervalTopPx + layout.edgeGapPx"))
-        assertTrue(source.contains("artwork.translationY += artworkDeltaPx"))
-        assertTrue(source.contains("params.topMargin = 0"))
-        assertTrue(source.contains("params.bottomMargin = 0"))
-        assertTrue(source.contains("params.setObject(\"dimensionRatio\", null)"))
-        assertTrue(source.contains("params.setInt(\"topToTop\", PARENT_ID)"))
-        assertTrue(source.contains("params.setInt(\"topToBottom\", -1)"))
-        assertTrue(source.contains("nativeSizePx = nativeSizePx.toFloat()"))
+        assertTrue(source.contains(".set(artwork.translationY + artworkDeltaPx)"))
+        assertTrue(source.contains("progressContent.boundsIn(parent, progress)"))
+        assertTrue(source.contains("progressBounds.left, parent.width - progressBounds.right"))
+        assertTrue(source.contains("artworkLayoutLease(artwork) }.apply(sizePx, 0,"))
+        assertTrue(source.contains("width.set(sizePx); height.set(sizePx); top.set(topMarginPx); bottom.set(0)"))
+        assertTrue(source.contains("val values = listOf(0, -1, -1, -1)"))
+        assertTrue(source.contains("listOf(\"topToTop\", \"topToBottom\", \"bottomToTop\", \"bottomToBottom\")"))
+        assertTrue(source.contains("anchorProperties.forEachIndexed { index, property -> property.set(values[index]) }"))
+        assertTrue(source.contains("ratio.set(null)"))
+        assertTrue(source.contains("owned.asReversed().forEach { it.close() }"))
     }
 
     @Test
@@ -377,7 +381,8 @@ class DualPaneStructuralRegressionTest {
     fun `mirrors modified landscape lyrics chrome suppression`() {
         assertTrue(source.contains("installLandscapeLyricsChromeHook"))
         assertTrue(source.contains("AppleMusicSymbols.LyricsChromeAnimate"))
-        assertTrue(source.contains("ModernXposedRuntime.callMethod(fragment, \"f2\") as? View"))
+        assertTrue(source.contains("CachedMethods.exact(lyricsFragmentClass, \"f2\")"))
+        assertTrue(source.contains("chromeGetter.invoke(fragment) as? View"))
         assertTrue(source.contains("suppressed duplicate lyrics pane chrome"))
         assertTrue(source.contains("param.result = null"))
     }
@@ -396,7 +401,7 @@ class DualPaneStructuralRegressionTest {
             }
         })
         assertTrue(source.contains("lowerBoundary.getInt(bounds) - controlsHeight"))
-        assertTrue(source.contains("ModernXposedRuntime.callMethod(recycler, \"S\")"))
+        assertTrue(source.contains("CachedMethods.exact(recycler.javaClass, \"S\").invoke(recycler)"))
         assertTrue(source.contains("corrected landscape lyrics metrics"))
     }
 

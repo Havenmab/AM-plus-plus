@@ -1,107 +1,313 @@
-# 后续版本适配入口
+# Apple Music 宿主适配手册
 
-版本资料集中在 `host-applemusic/src/main/resources/host-profiles/`。每个精确包名/版本名/版本号只有一份 JSON；`index.json` 控制旧引擎的候选顺序。生产入口、玻璃资格、蜂窝资格、静态脚本都读取这里。`host-applemusic/src/test/resources/baseline/` 是 97c4b69 导出的冻结快照，不随普通重构更新。
+本手册供维护者为一个具体 Apple Music 构建建立、维护和验收 AM++ 接入。适配对象是包名、versionName 和 versionCode 组成的精确版本组合；正式版、beta 和同名的不同构建分别处理。手册覆盖当前 Activity、Fragment 两类宿主，并作为后续版本的统一流程。
 
-新版本逐项填写 [宿主版本适配清单](host-adaptation-checklist.md)，覆盖附属运行依赖、布局/包含资源和数据绑定。成员匹配、构建与真机验收分别记录。
+配套文档：[适配清单](host-adaptation-checklist.md)用于核对工作是否完整，[功能保全与验收矩阵](feature-preservation.md)定义功能行为和人工场景。本手册描述当前架构与适配方法；单次任务的排查过程、代码改动和构建日志保存在任务记录中。
 
-## 模块边界
+## 1. 适用范围与版本登记
 
-| 模块 | 内容 | 禁止依赖 |
+版本资料位于 `host-applemusic/src/main/resources/host-profiles/`。支持范围由 `index.json`、精确 profile 的 `productionEnabled` 和能力标志共同确定。
+
+| Apple Music 版本 | versionCode | 页面族 | 生产入口 | 玻璃 / 蜂窝入口 | 独立 Fragment 恢复 |
+|---|---:|---|---|---|---|
+| 6.5.0 | 1580 | `legacy-activity` | 未启用，仅作参考 | 均未启用 | 不适用 |
+| 6.5.1 | 1583 | `legacy-activity` | 已启用 | 均未启用 | 不适用 |
+| 6.5.2 | 1586 | `legacy-activity` | 已启用 | 均已登记 | 不适用 |
+| 6.5.3 | 1599 | `legacy-activity` | 已启用 | 均已登记 | 不适用 |
+| 7.0.0-beta | 1606 | `fragment-content` | 已启用 | 均已登记 | 已登记 |
+| 7.0.0-beta | 1609 | `fragment-content` | 已启用 | 均已登记 | 已登记 |
+
+所有组合的包名均为 `com.apple.android.music`。“已启用”表示允许模块接入该构建，不表示全部功能已经通过当前代码的真机验收。功能还受设置、Android API 和设备形态限制；实际验收状态见功能矩阵。
+
+当前的 6.x 路径指已登记的 6.5.x 构建，7.x 路径指已登记的 7.0 beta 构建。其他 6.x、7.x、正式版或相邻 beta 均需独立分析。版本号大小和主版本号不能代替页面族识别。
+
+`AppleMusicHostProfiles.find` 按版本名、版本号定位文件，并校验包名；生产资格另检查 `productionEnabled`。资料文件名使用 `<versionName>-<versionCode>.json`。同一组合只能登记一次。索引顺序还影响旧 HLE 引擎的已审核候选，适配时应保留现有条目的相对顺序。
+
+## 2. 架构与修改位置
+
+| 模块 | 职责 | 适配时的边界 |
 |---|---|---|
-| core | schema、配置/歌词/字体事务、网络来源、缓存、布局和会话策略 | Android、宿主反射、libxposed、玻璃 |
-| host-api | 能力安装结果、配置读取、歌曲身份、可关闭订阅、导航/mini/player 区域 | 混淆成员、反射类型、宿主 AndroidX、渲染器 |
-| hook-runtime | libxposed 包装和注册作用域 | app、宿主实现、玻璃 |
-| host-applemusic | 两套旧解析引擎、DexKit、native TTML、双栏、设置入口和元数据接入 | app、glass |
-| app | APK 入口、装配、存储、业务开关、设置 View、玻璃会话呈现 | 功能/页面自行解析宿主成员 |
-| glass / backdrop | 材质呈现和固定上游源码 | Apple Music 版本白名单 |
-| plugin-api | 独立插件 SDK，入口/生命周期/Hook/存储接口 | 项目内部模块、libxposed、Apple Music 私有符号 |
-| plugin-runtime | ZIP 导入、动态加载、状态与冲突分析 | app、host-applemusic、宿主版本 profile |
+| `core` | 配置、歌词与字体业务、来源、缓存、布局和会话策略 | 不引入 Android、宿主反射或 Xposed 依赖 |
+| `host-api` | 宿主能力、歌曲身份、区域接口、配置读取、安装结果和可关闭订阅 | 不暴露混淆成员、反射类型或宿主 AndroidX 实现 |
+| `hook-runtime` | Xposed 接入、注册作用域、通用调用缓存 | 不承载 Apple Music 版本策略或业务页面 |
+| `host-applemusic` | profile、符号解析、原生歌词、设置、播放器、导航和元数据接入 | 所有 Apple Music 私有成员和页面族差异集中于此 |
+| `app` | 功能装配、配置存储、设置界面、歌词服务与玻璃会话 | 通过宿主接口使用能力，不自行寻找混淆成员 |
+| `glass` / `backdrop` | 材质、采样和呈现 | 不管理 Apple Music 版本资格 |
+| `plugin-api` / `plugin-runtime` | 插件 SDK、导入、加载、生命周期和冲突分析 | 不随单个宿主构建改变公共协议 |
 
-`AppleMusicHostFactory` 是 app 装配宿主实现的入口。设置页接收 `SettingsViewBridge`/`SettingsActivityMatcher`，不直接依赖 Apple Music 工厂。自动歌词源、发布器与存储仍由 app 注入，宿主模块不会反向读取 app 的内容管理器。
+宿主装配入口为 `AppleMusicHostFactory`，按当前精确 profile 的 `family` 选择设置、双栏、蜂窝和视频处理路径。只发生混淆变化时，优先修改版本数据；调用形式、生命周期或布局语义变化时，修改对应宿主适配层。
 
-## 普通混淆变化
+内部接入遵循三类职责：
 
-1. 先保存实际安装包来源、二进制 Manifest、全部 DEX/split 和资源证据，区分“类仍存在”和“实际活跃路径”。包哈希仅在用户要求时计算。
-2. 新建精确 tuple JSON，填写 `indexed`、`hookTargets`、运行时成员、资源、能力、页面族和 `verification`。完整描述符优先于只记录名字。
-3. 新 profile 默认 `ambiguityPolicy=reject-ambiguous`，不得复制旧 `legacyFirstMatchExceptions`。契约和回退实现留在 Kotlin，数据不能执行代码。
-4. `productionEnabled` 保持 false，先给新 tuple 增加解析、错误签名、歧义、继承、缓存重校验和类加载器测试。
-5. 运行 `python scripts/verify-profile-data.py`、`python scripts/verify-architecture.py` 和 `python scripts/verify-host-profile.py PACKAGE --version-name NAME --version-code CODE --glass`。静态脚本直接核对二进制 Manifest，参数不能伪造宿主版本。APKS/XAPK 收集所有 split DEX 和布局。
-6. 执行全模块测试、Lint、构建，再按功能保全矩阵进行旧版本回归和新版本真机验收。用户明确要求适配精确 beta 时，可以在开发分支为用户测试启用该 tuple；运行时验收状态必须独立记录，不能将静态通过写为真机通过。其他版本仍需独立取证。
+- **Contract**：解析并校验成员、资源及相互类型关系，持有缓存句柄。
+- **Runtime / Coordinator**：注册 Hook、管理活动宿主和能力状态。
+- **Session / Binding**：管理具体视图、监听器、延迟任务和属性恢复。
 
-旧 HLE 引擎的“版本名或版本号匹配”和已审核候选回退暂时保留，外层生产门禁始终精确匹配 tuple。不要直接收紧旧引擎后把未验证的旧功能失效当作正常重构。
+业务开关、缓存规则和歌词来源逻辑不应因混淆名字变化而重写。新页面族需要单独的能力工厂，不能默认归入已有路径。
 
-## 页面架构变化 / 7.x
+## 3. 版本资料与成员契约
 
-`PlayerSurfacePort` 分别提供导航、mini 和播放器区域及导航位置。`LegacyChromeHostBinding` 接现有 Activity；`FragmentPlayerSurfaceAdapter` 按 view 身份和配置 revision 创建/销毁会话。FragmentContainerView 的限制通过 `restrictedPlayerContainer` 明确表达；模块视图挂入允许的 sibling/普通容器，不能直接往受限容器塞 View。
+### 3.1 profile 的主要区域
 
-`HostViewSessionController` 关闭旧会话后才发布新会话；旧 owner 的延迟 destroy 不能关闭新 owner。`OwnedHostProperty` 只恢复模块仍拥有的最后写入；原生暂停封面 scale、后续 alpha/translation 写入保留。旧 SONG/QUEUE 语义维持，不以新导航替换播放器状态。
-
-工厂按当前精确 profile 的 `fragment-content` 页面族分派 settings2、双栏与 Fragment 玻璃。平板使用顶部导航和独立底部 mini 的原生边界，抽屉保留原生交互；玻璃不依赖双栏开关。布局和渐变字段只从当前 tuple 读取。历史 research 夹具继续留在测试目录；正式版和其他 beta 必须独立取证，不能自动沿用相邻版本资格。运行时验收按 [功能保全矩阵](feature-preservation.md) 记录，静态匹配与构建成功不能代替真机通过。
-
-`FragmentDualPaneContract` 从当前 profile 的 `fragmentDualPane` 缓存播放器、Fragment 事务、封面和歌词可用性成员；`FragmentLyricsRuntimeContract` 从 `fragmentLyricsRuntime` 缓存 binding、度量和行监听的注册/清理成员。`FragmentChromeContract` 从 `fragmentChrome.members` 解析导航、BottomSheet、进度、生命周期和 mini 启动的完整描述符，`FragmentChromeInventory` 要求必需角色齐全，并检查返回值/参数/接收者是否符合调用语义。mini 显示方法的实例或静态调用形式由准确成员描述符决定。旧标量别名为兼容保留，运行时成员以 `members` 为准。旧版本 indexed/HLE 映射和候选顺序保持不变。
-
-双栏先经 `FragmentDualPanePreflight` 解析代码维护的 `FragmentDualPaneInventory` 全部必需角色，包括视频listener/浏览器/尺寸字段、karaoke holder/binding、歌词生命周期及可选歌曲栏布局。`FragmentProfileMembers` 一次缓存全部声明的完整描述符和构造器，汇总组/角色错误；预检完成后才注册Hook，部分注册失败仍关闭作用域。`verify-host-profile.py` 的离线覆盖也包含这些辅助契约。
-
-歌曲栏适配分为 `FragmentTabletSongLayoutContract`（只读成员及资源）、`FragmentTabletSongLayoutRuntime`（Hook和活动绑定）、`FragmentTabletSongLayoutSession`（视图与属性生命周期）。使用 `OwnedHostProperty` 恢复属性，Barrier数组转为值相等的List参与所有权判断；使用 `HostViewSessionController` 按视图和配置替换会话。`songLayoutPolicy` 及六项 `layoutReview` 必须显式填写：采用原生布局或保留既有列布局关系的决定以实际布局和数据绑定对照为依据，并保持原生播放/暂停缩放和视频策略。
-
-## 平板双栏与媒体组件
-
-当前实现入口为 `FragmentTabletDualPaneCoordinator` / `FragmentTabletDualPaneSession`，媒体组件位于 `hook/tabletmedia/`。门禁仍是精确宿主 tuple、双栏设置开启、`screenWidthDp >= 600`、横屏及原生 `useNavigationDrawer`；不要把这些改动直接推广到其他版本或手机。
-
-### 最终布局规则
-
-- SONG/QUEUE 控制区使用原布局参数的 `matchConstraintPercentHeight = 0.25f`。这是容器内比例，不是整屏高度；保留原生字体、播放图标尺寸、padding 和封面缩放。混淆 `androidx.constraintlayout.widget.ConstraintLayout$b` 的高度比例字段为 `S`，guideline begin 为 `a`；修改和恢复原 params，不用通用构造器复制，避免丢失原生约束。
-- 左侧 SONG/QUEUE 分区占播放器宽度 45%，右侧歌词分区占 55%；两栏留白在各自分区内扣除。Activity 的分隔 guideline 和 Fragment 的左右容器共用 `TabletDualPaneLayoutPolicy` 比例；Fragment 关闭歌词按当前进度条实际内容范围移至整屏中央，不把不对称的 host 矩形或分隔线当成居中目标。
-- 双栏标题行和进度条左侧总留白为 55dp，右侧到分隔线为 7dp。当前歌词行文字起点距分隔线 48dp（右栏 16dp、行 margin 20dp、文字 padding 12dp），因此控件右边界到歌词文字的布局间距为 55dp；高亮缩放和字形可影响可见像素。Activity 和 Fragment 共用 `TabletDualPaneLayoutPolicy`：外层 song host 左 23dp/右 0dp，内部左 32dp/右 7dp。`TabletSongContentInsets` 以视图会话拥有原生 metadata end guideline、末端图标 padding 和进度条容器的 end padding，在原生绑定后重应用并在退出时恢复；不要把容器的 32dp 留白再次加到 seekbar 子控件上。
-- 静态封面的基准正方形边长跟随进度条实际内容宽度，水平中心跟随该内容范围。封面和整个音量控件共用 `TabletProgressContent` 选择原生 progress、读取两侧 padding；`TabletArtworkLayoutPolicy.forProgress` 将边长限制为“实际进度宽度和封面上方可用高度的较小值”。窗口、布局和原生 padding 改变后重新计算，不再缓存首次宽度；上方高度不足时封面小于进度条并居中。`TabletArtworkLayoutLease` 使用 `OwnedHostProperty` 只恢复模块仍拥有的尺寸、边距、水平/纵向约束及比例，不覆盖其他原生参数。
-- 原生播放按钮默认按整个 `player_controls` 居中；不对称留白会让它与进度条、无损标识及封面错开。`TabletSongContentInsets` 将 `play_pause` 的 start/end margin 对齐实际进度条内容边界，上一首/下一首继续通过原生约束跟随播放按钮；整个点击区域和水波纹随布局移动，原生图标尺寸、间距及垂直位置保持。SONG/QUEUE 和普通/直播进度区域均按当前内容计算，退出时只恢复模块仍拥有的水平边距。无损/杜比/卡拉 OK 标识继续使用原生进度条容器的居中约束。
-- Fragment 封面会话通过预检缓存的 `videoMode` / `sizeAnimation` 判断 native 视频或尺寸动画；视频接管时释放模块几何，尺寸动画期间暂缓调整。SONG/QUEUE 切换和 sheet 拖动期间保留原生过渡；不写封面 scale，因此暂停或拖动进度时可见封面仍按原生比例缩小。旧 Activity 接入沿用其原生视频表面及居中路径，使用同一宽度和高度策略。
-- 绘制前修正封面布局参数时，当前帧已完成测量。Fragment 和旧 Activity 的封面接入只有在模块拥有的尺寸/边距/约束实际改变时请求新布局并延后该帧，避免切歌或元数据更新先画出旧位置/大小、下一帧才恢复。几何稳定后正常绘制；原生尺寸动画、视频和队列过渡仍使用各自的接管规则。此时序修正需要通过快速切歌、不同元数据高度、暂停/播放及视频切换分别验收。
-- 不对称留白需要覆盖原生数据绑定的重新写入。Fragment 的 `executeBinding`／`bindingRoot` 是当前 profile 的必需成员（已取证的 `ViewDataBinding.m()V`／`d:View`），安装时缓存，绑定完成后只处理当前左播放器子树。末端 padding 和播放按钮 margin 在测量前统一恢复到模块值；按钮居中读取容器即将生效的内容范围，不能继续拿尚未重测的 progress 子控件宽度。绘制前若组件几何仍有变化，先完成新布局；已有音量与代理按钮在普通重新布局期间保留上次有效位置，不因 `isLayoutRequested` 隐藏一帧。只延后绘制无法替代这条绑定接入。
-- 原生底部歌词、队列、输出动作设为 `INVISIBLE`，保留布局尺寸并关闭点击，取消待处理输入、清除按压及水波纹状态；原本 `GONE` 的装饰保持 `GONE`，退出双栏恢复原生可见性。不能只用透明度隐藏，否则音量条下方仍可能触发原生输出按钮的按压反馈。音量条占用原 footer，连同两端图标，总宽度对齐原生进度条的内容边界；内部可见轨道保留每侧 40dp 的图标空间。优先移动音量行或把空白触摸高度从 44dp 压到 24dp，保留 24dp 图标。音量条触摸区域与播放/进度控件仍保留 4dp 净间距；可用宽度不超过 80dp 或高度不足 24dp 时音量条无法放入。
-- 不添加左下角输出按钮；原生输出动作继续隐藏。音量正常中心保持比原 footer 中心高 6dp，删除输出按钮不调整音量及其他组件的位置。
-- 右下歌词/队列代理使用原生 drawable、selector、tint 和状态样式，44dp 点击区域、8dp 间隔、底部 12dp。队列点击/长按交回原生控件；歌词点击执行双栏展开/关闭。翻译按钮保留原生；不新增随机/循环按钮。原生三颗播放图标保持默认大小，仅将水波纹半径设为图标最大半径外加 8dp，并使用白色 20% 不透明度；关闭组件恢复原 drawable。
-- 原生 pane `onViewCreated` 就准备比例、图标和隐藏 footer；每次 update 在切页快速返回之前再次隐藏所有保留 pane 的 footer，避免首次打开延后生效或 SONG/QUEUE 交叉淡入时闪出旧按钮。歌词渐变视口不额外预留底部按钮高度。
-
-媒体资源从打包的 `tablet-media/` 读取，APK 内资源读取由 `AppleMusicHostProfiles.openTabletMediaAsset` 处理；来源见根目录 `THIRD_PARTY_NOTICES.md`。profile 中保留了导入播放模式代码的 `tablet-playback-*` 调用契约，不能据此认定当前 UI 启用了随机/循环按钮。`invocationOnly` 允许抽象接口方法参与调用验证；Hook 目标仍不能是抽象、bridge 或 synthetic 方法。
-
-### 当前歌曲歌词可用性
-
-`FragmentTabletLyricsAvailability` 每次读取当前歌曲并使用原生规则：歌词资格成立，且网络许可或离线歌词至少一项成立。歌词资格包含原生订阅资格及普通/自定义歌词判断。不要只读取保留控件的 `isEnabled`、右栏是否可见或旧歌词文本：原生 binding 的 forced-open 标志可在换歌后继续保持启用，造成无歌词歌曲显示上一首歌词。
-
-| 原生契约 | profile 角色与校验要求 |
+| 区域 | 应记录的内容 |
 |---|---|
-| 当前歌曲 | `currentItem` 字段，记录声明 owner 和类型；非静态，值需实现原生播放对象接口 |
-| 歌词资格 | `supportsLyrics` 方法，记录实际 owner；参数为当前播放对象，返回 boolean，并核对 static 形态 |
-| 网络许可 | `online` 方法，参数为 Context，返回 boolean，并核对 static 形态 |
-| 离线歌词 | `offlineLyrics` 方法，返回 boolean；非静态接口调用须标记 invocationOnly |
+| 身份与资格 | `id`、`packageName`、`versionName`、`versionCode`、`family`、`productionEnabled`、`profileRevision` |
+| `capabilities` | 玻璃、蜂窝、收起拦截、播放器恢复等独立资格 |
+| `indexed` | 类、方法、字段映射；支持精确契约的路径还填写 `methodContracts` / `fieldContracts` |
+| `hookTargets` | HLE Hook 入口、签名约束、调用方约束及 `runtimeMemberNames` |
+| `settings` / `chrome` | 设置入口、原生设置模型、导航和播放器资源或旧宿主契约 |
+| `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
+| `catalogQueryRenames` | 实际目录查询 owner 与方法映射，配合完整签名和调用路径核对 |
+| Fragment 专用区域 | 双栏、歌词运行时、逐字宽度、视频接力、chrome 和恢复所需契约 |
+| `verification` | 离线检查需要的 DEX 描述符、字段类型、资源名和辅助接口证据 |
+| `evidence` / `knownDegradations` | 来源、证据状态、运行时确认范围及已知能力缺口 |
+| 匹配策略 | `ambiguityPolicy` 和历史 `legacyFirstMatchExceptions` |
 
-这四项纳入 JSON 的 `fragmentDualPane` 字段/方法契约，由 `FragmentDualPaneContract` 提前解析和校验；每个新版本分别记录准确声明。当前歌曲缺失或查询失败时代理禁用并关闭右栏；可用性恢复只重新打开自动关闭的右栏，手动关闭的状态保持。
+JSON 描述宿主事实，不承载可执行逻辑。参数变换、回退条件、线程和生命周期策略由 Kotlin 实现。profile schema 当前为 1，应用配置 schema 当前为 15。
 
-### 封面与下半区动画
+### 3.2 完整描述符与语义核对
 
-关闭歌词时，SONG 和 QUEUE 共用居中的左 host，保留列宽。歌词开关和自动可用性变化使用 280ms 平移/淡入淡出；切换 SONG/QUEUE 不清空手动关闭状态或重置居中位置。
+| 成员 | 必须核对 |
+|---|---|
+| 方法 | 实际声明 owner、名字、参数顺序和完整类型、返回类型、static、抽象/bridge/synthetic 属性 |
+| 字段 | 实际声明 owner、名字、完整类型、实例归属和被读写的含义 |
+| 构造器 | owner、完整参数类型与顺序、创建对象的实际用途 |
+| 接口调用 | 返回对象实现关系、实际声明接口、调用形式；必要时使用 `invocationOnly` |
+| Hook 目标 | 可 Hook 的具体实现，及它是否位于实际活跃调用路径 |
+| 资源 | 名称、类型、限定符、实际取值、包含布局、运行时父容器和参数类型 |
 
-播放器展开/收起时，下半区保持最终横坐标，继续使用原生显现过程；只有封面按原生 slide 移动。`TabletLyricsPaneMotion` 令 `C = centeredOffset * 歌词关闭动画比例`，左 host 保持原生 X 加 `C`，选中的封面在原生 X 上补偿 `-C * (1 - slide)`，所以封面净新增位移为 `C * slide`。不要用 95% 阈值清零位移，也不要把整个 host 乘 slide，否则分别产生封面横跳和下半区从左侧滑入。
+“类存在”“参数个数相同”和“成员能反射调用”均不足以证明正确适配。混淆类名可在新包中承担其他职责；旧方法名也可能仍存在，却接收另一种模型。应沿调用方、返回对象和后续读写核对完整链路。
 
-封面沿用 profile 的 `nativeCover` 原生 selector，在 `coverFrame` 前置回调释放上一帧 X 补偿，原生计算完后再合成；回调 owner 通过 `callbackOwner` 字段读取。准确参数、返回类型和调用形式由当前版本契约校验。保留原生 scale、Y、暂停比例和视频内容，重复 pre-draw 不累计补偿，换 pane 或释放会话时恢复模块仍拥有的原生 X。
+继承成员记录实际声明 owner。抽象接口可作为带 `invocationOnly` 的调用契约，不能作为新增 Hook 目标。数组、primitive、可空对象和实例/静态调用不能相互替代。
 
-相关自动回归包括 `TabletSongLayoutTest`、`TabletNativeControlRowsTest`、`TabletComponentGeometryTest`、`TabletComponentStartupTest`、`TabletNativeActionStyleTest`、`TabletTransportRippleTest`、`FragmentTabletLyricsAvailabilityTest` 和 `TabletLyricsPaneMotionTest`。覆盖混淆 params、保留 pane 首帧、短窗口 footer、旧歌词/旧按钮、SONG/QUEUE 切换、双向/反向拖动和补偿恢复；完整真机场景见 [功能保全与验收矩阵](feature-preservation.md#平板双栏补充验收)，自动通过不能替代该验收。
+### 3.3 两类解析路径
 
-## 热路径与安装
+`IndexedTargetSymbolResolver` 为每个符号缓存解析结果，包括缺失和歧义。已声明的精确方法或字段契约不匹配时返回缺失；稳定名和结构回退是否允许，由该符号的策略决定。必需成员不能通过另一个相似符号补齐。
 
-冷启动顺序维持：精确版本 → 配置迁移/绑定 → DPI → 资源回调 → Application 后功能 → 设置入口。资源基础设施失败停止后续安装；目标缺失只降级对应能力。
+HLE 的 `AppleMusicHookProfiles` 将 JSON 转为兼容引擎的候选。Fragment 档案使用严格候选；旧 Activity 档案保留既有版本匹配和已审核回退顺序。外层生产门禁始终精确匹配版本组合。
 
-Hook 注册先处于 preparing，必要目标全部成功后 activate；失败 close 后已注册回调变为原生透传。不依赖框架提供可靠 unhook。原生歌词缓存持有不透明句柄，JavaCPP 地址/liveness 与 Adam ID 校验留在宿主适配器，进入当前 profile 的原生歌词注入入口前才解包。
+新档案采用 `reject-ambiguous`。历史首个匹配例外只适用于原有已审核目标，不能作为新版本的默认策略。若发现两个候选，应补充类型、调用关系或契约，无法唯一确定时降级对应能力。
 
-Chrome ID、字段、方法在绑定时缓存；布局变化显式失效视图缓存。slide/alpha 回调不扫描 DEX 或发现反射成员。文件、网络、TTML parse 继续在后台。字体 Hook 已安装和字体实际加载分别报告。
+## 4. 每个版本的适配流程
 
-HLE 元数据通过 `HleMetadataInstallation` 汇总各表面的安装结果。`AppleHookRegistrar.stageInstallation` 先 preparing，再启用完整的一组专用 Hooker；失败组关闭后原生透传。可选子组独立降级，父组失败会关闭子组，运行时追加的资料库属性 getter 继承所属 entity 组的作用域。内层自行处理安装异常时必须调用 `reportInstallationFailure`；整次安装遇到未处理异常时关闭所有已安装组。能力使用既有 Active/Degraded 类型报告，不能只记日志后返回全部安装成功。
+### 4.1 确认安装包与代码基线
 
-玻璃的封面就绪状态由当前 `FragmentTabletDualPaneCoordinator` / session 提供；停用的 Fragment wrapper/artwork 实现已经删除，恢复 ID/tag 保持稳定。旧接入的句柄缓存按 owner/name/完整签名区分；需要保留历史匹配的地方显式使用 `CachedMethods.callLegacy`，保留原候选顺序和 fallback，不能将这条路径用于新 Fragment profile。
+1. 从实际 base APK 的二进制 Manifest 确认包名、versionName、versionCode；包文件名及外层清单只作辅助。
+2. 清点 base、全部配置或功能 split、各 DEX 和资源来源。不能假定 DEX 仅位于 base。
+3. 记录代码基线、拟复用的页面族及对照宿主。保存可回溯的源码位置、描述符和资源证据。
+4. 明确工作范围：源码分析、静态检查、构建及人工功能验收分别安排。包哈希只在明确要求时计算。
+5. 保存当前代码与必要测试产物，以便对照和回退。
 
-## 验证与回滚
+Java 反编译用于理解调用链，成员声明与完整签名以 DEX/smali 为准。工具生成的类型推断、命名修复以及大小写冲突后的文件名不是宿主原始类名；嵌套类、接口和泛型擦除后的实际类型按字节码记录。资源反编译还需核对限定符和实际包含关系。
 
-`./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :app:assembleRelease`，CI 另运行架构/profile/玻璃参考源码校验。配置 schema 15、键、文件 ID、ZIP、目录、DB/cache namespace 不变，代码阶段回滚无需反向数据迁移。
+### 4.2 建立完整接入清单
 
-源码契约覆盖拆分后整个职责组件；实际行为测试仍执行原夹具。不可通过删断言、更新冻结快照或加入猜测候选消除失败。
+从工厂、能力入口和实际调用链展开，覆盖设置、歌曲身份、自定义/自动歌词、模糊、CJK、字体、名称修正、手机/平板玻璃、双栏、视频与背景、蜂窝及 DPI。
+
+每项都记录“直接 Hook 入口”和“回调继续使用的附属成员”。附属成员包括 binding、holder、getter、listener、列表、Fragment 事务、浏览器接口和模型字段。没有变化的契约也应有当前安装包依据。
+
+### 4.3 建立档案并实现接入
+
+1. 建立精确 tuple JSON，开发期保持 `productionEnabled=false`。
+2. 按实际页面族填写通用区域和该族必需区域；从相邻构建取模板时逐项重新核对。
+3. 将新依赖同时加入 profile、代码维护的必需角色清单和适配清单。
+4. 调整 Contract、Runtime、Session 中发生变化的调用或生命周期；同一能力不同时维护一份固定旧版本映射和一份新映射。
+5. 缓存成员与资源，处理失败和恢复。缺失目标应明确报告能力状态。
+6. 对照全部布局限定符和生成 binding，确认原生重绑定、尺寸动画和异步回调不会覆盖模块布局规则。
+
+### 4.4 检查、登记与交付
+
+静态核对和源码检查用于发现成员与资料缺口；APK 构建用于确认可以生成交付物；人工验收用于确认具体功能和设备场景。三者分别记录。
+
+完成接入后登记到 `index.json`。为明确请求的用户测试启用精确 tuple 时，保留尚未完成的运行时验收状态。相邻构建和未登记版本仍不获得资格。
+
+交付至少包括精确 profile、必要宿主接入、当前通用文档、可安装 APK、能力缺口和按版本填写的验收结果。发布、推送和 PR 依任务授权单独处理。
+
+## 5. 6.x Activity 页面族
+
+当前 6.5.x 使用 `legacy-activity`。主要入口为 `AppleMusicDualPaneTarget`、`DualPaneShell` / `ConstraintLayoutPane`、`LegacyChromeHostBinding` 和旧设置桥。
+
+| 接入域 | 每个构建应核对 |
+|---|---|
+| Activity 与播放器 | PlayerActivity 根视图、BottomSheet、控制器初始化/创建/选择 pane、原生枚举和状态访问器 |
+| 双栏资源 | 主播放器布局、左右 host、ConstraintLayout 字段、歌词 sheet、导航高度与收起边界 |
+| 歌词同步 | Fragment binding、RecyclerView、渐变、度量、行词回调及监听清理 |
+| 旧 chrome | 导航 holder、导航切页、mini、展开进度、拖动与采样区域 |
+| 设置 | PreferenceFragment、PreferenceScreen、设置行 key/标题/摘要、生命周期及 Activity 结果桥 |
+| 视频规则 | 既有 Editorial URL 处理范围、预览及 Music Video 的原生行为 |
+| 名称修正 | HLE 模型与 binding、Epoxy、资料库、主页等全部显示表面 |
+
+旧宿主的 AndroidX 参数类可能经过重新打包和字段混淆。应依据实际字段类型和原生使用位置确认映射，不能直接采用另一构建的字段名，也不能用模块自带 AndroidX 对象替换宿主对象。
+
+旧路径的布局安装、原生状态选择及已审核候选回退属于兼容语义。调整通用接入时，需对 1583、1586、1599 分别列出回归项。已有冻结夹具位于 `host-applemusic/src/test/resources/baseline/`；普通适配不能以更新夹具消除行为差异。
+
+1583 的玻璃和蜂窝资格保持关闭。1586、1599 的 `staticCollapsedIntercept` 是独立资格，不能扩展到其他构建。1599 已登记的操作表元数据和主页封面连续性降级应单独列出。
+
+## 6. 7.x Fragment 页面族
+
+当前 7.0 beta 使用 `fragment-content`。播放器、页面导航与 mini 的生命周期由 Fragment 接入；不能套用旧 Activity 的 holder、设置或事务模型。
+
+### 6.1 必需契约
+
+| 区域 | 代码入口 | 完整性要求 |
+|---|---|---|
+| `fragmentDualPane` | `FragmentDualPaneContract` | 主播放器状态、Fragment/Manager/事务、pane LiveData、封面 callback、BottomSheet、歌词可用性及 binding 完成接入 |
+| `fragmentLyricsRuntime` | `FragmentLyricsRuntimeContract` / `BetaLyricsPaneRuntime` | 生命周期、binding/附属容器、RecyclerView、度量、行监听注册与清理 |
+| `fragmentKaraokeWidth` | `FragmentKaraokeWidthContract` | adapter、缓存宽度、holder、item、binding 与 flexbox |
+| `fragmentTabletVideoHandoff` | `FragmentTabletVideoContract` / `FragmentTabletVideoHandoff` | 元数据 listener、视频尺寸/原生 resize 入口、静态基准/目标尺寸、TextureView、浏览器接口、模式和动画字段 |
+| `fragmentDualPane.songLayout` | 歌曲栏 Contract / Runtime / Session | 明确需要覆盖布局时的参数、Guideline、Barrier、binding 与 padding setter |
+| `fragmentChrome.members` | `FragmentChromeContract` / `FragmentChromeInventory` | 导航、菜单、LiveData、进度、生命周期、BottomSheet 和 mini 启动 |
+| `indexed` 与 `playerRecovery` | `FragmentPlayerRecoveryContract` | 封面、尺寸基准、背景、进入/共享动画及销毁恢复的精确契约 |
+| `settings` | Fragment 原生设置工厂及模型契约 | ViewModel、原生行模型、构造器、callback、Compose 入口及结果归属 |
+
+`FragmentDualPanePreflight` 按 `FragmentDualPaneInventory` 解析双栏及附属组，再校验成员间的类型关系。JSON 少写必需角色会导致预检失败。chrome 和播放器恢复分别完成自己的必需契约解析，不能把双栏预检成功当作其他能力完整。
+
+`songLayoutPolicy` 显式选择 `native` 或 `1606-column`。后者是现有列布局策略的标识，所有成员仍从当前版本 profile 读取。`native` 不携带布局覆盖；`1606-column` 必须提供 `songLayout`。新增布局策略需要代码和契约共同实现。
+
+`layoutReview` 的六个字段必须有当前构建证据：`artwork`、`metadata`、`controls`、`progress`、`binding`、`restoration`。填写证据说明已经做过对照，不表示真机通过。
+
+### 6.2 Fragment 生命周期与容器
+
+`FragmentTabletDualPaneCoordinator` 管理控制器，`FragmentTabletDualPaneSession` 管理单个播放器视图。Fragment view 重建、配置变化和 controller 销毁分别处理。保存状态期间的事务应延后；恢复中的歌词 host 保持可测量，不能在事务提交前折成无效宽度。
+
+右栏运行时 ID 和 Fragment 恢复 tag 属于持久恢复约定。其历史命名不影响作用，不能随版本号改名。SONG / QUEUE 使用原生状态和选择方法，独立歌词放在右栏。
+
+`PlayerSurfacePort` 及其 Fragment 适配提供导航、mini 和播放器区域。模块视图只挂入允许的普通容器或 sibling；受限的 FragmentContainerView 不接受任意模块 View。
+
+### 6.3 导航、mini 与设置
+
+手机使用原生底导航与 mini 边界；平板使用顶部导航和独立底部 mini。平板 Fragment 玻璃与双栏开关独立。导航模型、三个 getter、选择 callback、重复点击、搜索及抽屉逐项核对，不能只找一个签名相似的方法。
+
+mini 启动恢复需同时满足原生登录判断及当前播放对象存在。显示方法可能为实例调用，也可能是静态的 `(owner, boolean)`；按当前描述符及调用标识处理。重试和延迟回调确认 owner / view 仍有效，销毁后停止。
+
+Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去重、点击与文件选择结果归属。构造器中的 artwork 类型、callback 和 Unit 不应借用其他构建的类型。
+
+## 7. 各功能的适配要点
+
+| 功能 | 必须保持的业务与接入规则 |
+|---|---|
+| 当前歌曲身份 | 元数据转换器、当前 item 和歌曲 ID 对应实际播放对象；异步结果再次核对当前歌曲 |
+| 自定义歌词 | 原生 TTML 解析、有效指针检查、普通/无官方歌词歌曲、多 ID、禁用优先级、异步重应用和重复注入抑制 |
+| 自动补全 | 既有触发条件、来源顺序、手动/禁用优先级、代次控制、重试和缓存策略；切歌后旧结果不能注入 |
+| 模糊与 CJK | 原生行词事件、焦点/滚动暂停恢复、前景文本、合并高亮及动画结束清理；保留宿主位移 |
+| 字体 | TTF/OTF、后台加载、重试、行词一致、视图重建和原字体恢复；区分 Hook 安装与字体就绪 |
+| 名称修正 | 原地区/cn/jp 模式、原名与标识证据、目录查询、离线及持久缓存、显示优先级；各表面单独安装与报告 |
+| 玻璃 | Android API、精确资格、导航/mini 区域、采样、触摸、展开过渡和属性恢复；材质准备完成后接管原生呈现 |
+| 蜂窝入口 | 精确能力资格、原生登录/类别逻辑、availability 接入和默认开关；不使无资格构建自动支持 |
+| DPI 与数据 | 仅宿主范围、冷启动和配置重建、失败失活；配置键、文件 ID、目录、SQLite、缓存 namespace 和 ZIP 格式保全 |
+| 视频与背景 | 页面族自己的原生视频策略、尺寸/比例、暂停缩放、表面切换、shader/背景清理和后台恢复 |
+
+名称修正至少覆盖播放器、队列、历史、操作表、最近搜索、资料库、专辑、歌单、艺术家和主页。除目标方法外，还需核对模型绑定、Epoxy holder、LiveData、辅助 getter 和实际封面加载路径。一个表面成功不能代表整项能力成功。
+
+目录查询需核对实际接口、请求结构和后续返回路径；Compose/LiveData 需核对当前类型别名及真实参数类型。名称相同或反射调用成功不足以确认它们仍服务于同一表面。
+
+旧 Activity Editorial 处理和 Fragment 原生视频策略分别保留。停用的全局目录语言功能及未启用的播放模式 UI 不因新增档案自动获得启用。
+
+## 8. 平板布局与视频尺寸
+
+### 8.1 资格与基础布局
+
+双栏使用既有门禁：精确版本、开关、横屏、宽度至少 600dp，以及原生 `useNavigationDrawer`。同时核对 DPI 覆盖和多窗口对有效宽度的影响。
+
+当前共享呈现规则如下：
+
+| 项目 | 布局要求 |
+|---|---|
+| 分区 | 名义分隔位置为播放器宽度的 45%，歌词视口位于右侧 55% 分区 |
+| 左侧留白 | 标题/进度内容到屏幕左边缘 50dp |
+| 右侧留白 | 标题/进度内容右端到歌词正文起点 50dp |
+| 歌词留白 | 歌词自己的 margin、padding 和右侧边界沿用原生 |
+| 左栏对齐 | 标题、进度、音质标识、播放按钮和封面使用一致的水平中心 |
+| Fragment 控制区 | SONG / QUEUE 控制区为原生容器高度的 25% |
+| 音量 | Fragment 的整个控件含两端图标与进度内容等宽，轨道内部每侧保留40dp图标空间 |
+| Fragment footer | 被替代的原生动作保留布局但不可见且不接收输入，模块音量及右下代理使用当前有效位置 |
+| Fragment 代理 | 歌词/队列代理沿用原生 drawable、selector、tint及动作，44dp点击区域、8dp间隔、底部12dp |
+| 播放反馈 | 原生图标尺寸保持，Fragment水波纹为图标最大半径外加8dp、白色20%不透明度 |
+| 原生动作 | SONG / QUEUE、播放、搜索、抽屉和队列操作保留原生语义 |
+
+50dp 的右侧测量终点是歌词正文，不是名义分隔线。对当前原生布局，歌词起点为分隔线加 48dp（host 16dp、行 margin 20dp、文字 padding 12dp）；原生播放器内部左右各 32dp，外层各 18dp。左 host 宽度为 `0.45 × 播放器宽度 + 48dp - 2 × 18dp`。这是可见内容间距，不能据此声称两个实际 View 宽度严格为 45% / 55%。
+
+计算时先将 dp 按当前宿主密度换算为像素，再计算容器和整像素边界；窗口宽度来自当前播放器区域。
+
+新宿主需重新核对这些内部尺寸及资源限定符，再由共享布局策略计算容器。普通/逐字、静态、翻译、背景、间奏和 credits 行应分别检查；字体、高亮比例和字形边界会影响可见像素。
+
+7.x 媒体组件位于 `hook/tabletmedia/`。旧 Activity 路径共用列宽和封面策略，并保留自己的原生控制组件；不能把 Fragment 的附加音量、代理按钮或动画接入直接视为 6.x 功能。
+
+Fragment 音量行中心比原生 footer 中心高6dp，与播放/进度区域保留4dp净间距；短窗口优先调整行位置或压缩触摸空白，24dp图标保持。原生被替代动作使用 INVISIBLE 保留约束，并关闭点击、取消待处理输入及按压反馈；原本 GONE 的装饰保持 GONE。关闭会话恢复仍由模块拥有的属性。歌词渐变视口不额外预留底部代理高度。
+
+### 8.2 完整布局和数据绑定
+
+布局核对必须覆盖所有有效的 `layout`、`layout-land`、宽度限定符、dimen/integer/bool，以及递归 include。资源名称相同也可能取到不同值。
+
+特别检查：
+
+- 封面 Guideline、ratio、上下锚点、实际 inset 和元数据 Barrier。
+- 标题/副标题/合作信息/更多按钮的边界及是否依赖封面宽度。
+- 进度和直播进度的容器 padding、音质标识、播放按钮及 footer 约束。
+- generated binding 是否在换歌、播放状态变化或异步加载后重写 padding、尺寸和可见性。
+- adapter 首次绑定是否早于右栏测量，以及逐字有效宽度是否从正确视口初始化。
+
+反射与资源在安装或视图绑定阶段解析。Fragment 的原生 binding 完成接入只处理当前播放器子树，在测量前准备控制区和 footer。尺寸修改后应完成新布局再绘制；普通重新布局期间，已经放置的模块控件保留有效状态。
+
+### 8.3 封面、视频与恢复
+
+静态封面基准为实际进度内容宽度与上方可用高度的较小值，并在该区域居中。尺寸由当前测量重新计算，封面可因高度限制小于进度宽度。原生暂停 scale、sheet scale/Y、队列和共享过渡分别保留。
+
+视频需要分别核对外层 `artwork_container`、内层 card、静态图、TextureView、尺寸基准和目标尺寸。静态转视频、视频转静态、视频转视频、静态转静态必须独立验收。
+
+当前 Fragment 双栏由视图会话维护普通/视频共用的外框和静态尺寸基准。进入视频模式不释放双栏外框；原生 image/TextureView 继续负责视频比例和渐变。`FragmentTabletVideoHandoff` 在原生尺寸计算和 resize 前通过 Coordinator 准备当前会话的基准，视频目标按其比例适配该外框，静态目标使用同一基准。`staticBaseline`、`targetSize` 和 `resize` 均为当前精确 profile 的必需角色。
+
+`FragmentPlayerArtworkRecovery` 优先读取当前双栏会话的目标尺寸；视图尚未完成重测时，也不使用旧的测量值覆盖新基准。外框修改请求布局，并在布局完成后绘制。会话退出、视图更换和销毁时按属性所有权恢复；进入/共享过渡、sheet 进度及非双栏状态仍使用各自的原生边界。
+
+原生视频尺寸回调可能经过临时零尺寸，再进入有效尺寸；生成视频宽高比的函数还可能读取缓存的静态基准。每个新构建应追踪这条完整路径，检查外框、基准和目标是否一致。原生内部比例/渐变动画和模块外框变化分别判断；动画期间的写入、让权和恢复也要明确到具体 View 及生效时机。
+
+播放器恢复、双栏尺寸和视频接力可能处理不同层级的 View。应列出每个写入者，确认不会交替恢复和覆盖同一参数。视频表面接力必须确认当前 owner、视图和播放状态；仅凭旧纹理仍可见不能认定它属于当前歌曲。
+
+关闭歌词后的居中、右栏可用性与封面 sheet 补偿只适用于对应 Fragment 会话。原生 callback 执行前释放上一帧补偿，执行后合成当前帧；不累计 X，不覆盖原生 scale/Y，SONG / QUEUE 切换保留手动关闭状态。
+
+## 9. 安装、降级与资源所有权
+
+安装顺序为精确版本识别、配置迁移/绑定、DPI、资源回调、Application 后功能、设置入口。资源基础设施失败应停止依赖它的安装；单个能力目标缺失由该能力报告。
+
+新增 Hook 使用 `HookRegistrationScope`：注册阶段为 preparing，必需项成功后 activate，失败或退出 close。关闭后的回调保持原生透传；不依赖框架一定提供可用的 unhook。
+
+HLE 使用 `HleMetadataInstallation` 和 `AppleHookRegistrar.stageInstallation` 按表面分组。可选子组单独降级，父组失效关闭其子组；后续加入的 getter 继承所属组。已捕获的内层安装错误仍须上报，不能仅记日志后把整项能力报告为成功。
+
+`HostViewSessionController` 以视图身份和配置 revision 管理会话，先关闭旧会话再发布新会话。`OwnedHostProperty` 仅恢复模块仍拥有的最后写入，原生后续写入保留。每个 listener、observer、animation listener 和延迟任务明确所属会话及清理时机。
+
+成员调用缓存按 owner、完整签名及类加载器身份组织；旧路径明确采用历史兼容调用时保留原候选语义。slide、pre-draw、歌词高亮和逐字动画不扫描 DEX、不发现新反射成员。网络、文件读取和 TTML 处理沿用后台业务路径。
+
+## 10. 检查、验收与回退
+
+### 10.1 证据阶段
+
+| 阶段 | 能证明什么 | 不能替代什么 |
+|---|---|---|
+| 安装包/源码分析 | 版本身份、成员描述符、调用关系、资源与布局决定 | 当前设备的实际触发和显示 |
+| 静态工具 | 工具覆盖范围内的数据/契约一致性 | 所有辅助路径、资源取值和运行表现 |
+| APK 构建 | 可生成本次代码的安装包 | Hook 实际安装、视觉和功能正确性 |
+| 能力状态 | 当前进程中安装、降级、未支持或失败的结果 | 全部场景和旧版本回归 |
+| 人工验收 | 指定版本、设备、设置和操作下的结果 | 未执行场景及其他版本 |
+
+`productionEnabled` 与 `runtimeVerified` 分别维护。局部场景确认不能把整个档案改为运行时验证完成；没有对应字段或证据也不能推断为通过。
+
+### 10.2 工具与执行范围
+
+现有辅助入口包括 `scripts/verify-profile-data.py`、`scripts/verify-architecture.py` 和 `scripts/verify-host-profile.py`。按证据缺口和当次任务范围选择，工具说明见 [scripts 文档](../scripts/README.md)。
+
+宿主静态脚本读取二进制 base Manifest，并收集包内 split 的 DEX 与布局名；显式版本参数必须与真实 Manifest 一致。开发期未启用的 profile 可通过 `--profile` 提供。静态匹配结果应同时记录脚本覆盖不到的语义依赖。
+
+项目默认由使用者执行功能验收，不主动操作设备或运行功能脚本、全量测试、哈希验证。既有测试夹具供获授权的检查和 CI 使用；仅文档修改不需要构建 APK。构建交付物时选择任务需要的 Gradle 构建目标，记录产物与实际结果。
+
+### 10.3 完成条件与回退
+
+一个构建的适配记录应能回答：
+
+1. 精确身份、页面族和能力资格是否明确。
+2. 所有功能和附属契约是否有证据，缺口是否可报告。
+3. 资源、binding、视频与恢复是否已按实际路径核对。
+4. 配置、数据和插件接口是否保持兼容。
+5. 构建、人工场景与旧版本回归分别完成到哪一步。
+6. 出现问题时能否停用该 tuple 或能力，并恢复原生行为。
+
+回退通过停用新版本登记及撤销对应接入实现完成。保持配置 schema、键、文件 ID、数据库/缓存 namespace 和 ZIP 格式时，无需反向数据迁移；涉及数据格式变化的工作必须另行定义迁移和回退，不能作为普通混淆适配附带处理。

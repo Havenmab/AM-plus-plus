@@ -12,6 +12,8 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import java.util.IdentityHashMap
 import dev.amenhancer.module.host.HostViewSessionController
+import dev.amenhancer.module.host.OwnedHostProperty
+import android.util.Size
 
 /** Native fragments and media callbacks remain native; presentation composes around their layout. */
 internal class FragmentTabletDualPaneSession(val controller: Any, val root: ViewGroup,
@@ -63,6 +65,11 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
     private var artworkContainer: View? = null
     private var metadataBarrier: View? = null
     private var artworkLease: TabletArtworkLayoutLease? = null
+    private var artworkBase: Size? = null
+    private var baselineOwner: Any? = null
+    private var baselineLease: OwnedHostProperty<Size>? = null
+    private var preparingNativeSize = false
+    private var artworkLayoutPending = false
     private var songFragment: Any? = null
     private var songLayoutRestore: (() -> Unit)? = null
     private val songLayoutSessions = songRuntime?.let { runtime ->
@@ -151,22 +158,24 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
     private fun layoutPanes(width: Int) {
         if (!installed || width <= 0) return
         val dualPane = FragmentTabletDualPaneCoordinator.eligible(root.context)
-        val songWidth = if (dualPane) TabletDualPaneLayoutPolicy.songColumnWidth(width) else width
-        val leftGap = (TabletDualPaneLayoutPolicy.SONG_HOST_SIDE_MARGIN_DP * root.resources.displayMetrics.density).toInt()
-        val endGap = (TabletDualPaneLayoutPolicy.SONG_HOST_END_MARGIN_DP * root.resources.displayMetrics.density).toInt()
-        val rightGap = (16 * root.resources.displayMetrics.density).toInt()
-        setPaneLayout(songHost, (songWidth - leftGap - endGap).coerceAtLeast(1), leftGap, -1, endGap)
+        val density = root.resources.displayMetrics.density
+        val sideGap = (TabletDualPaneLayoutPolicy.SONG_HOST_SIDE_MARGIN_DP * density).toInt()
+        val lyricsInset = (TabletDualPaneLayoutPolicy.LYRICS_TEXT_START_INSET_DP * density).toInt()
+        val songWidth = if (dualPane) TabletDualPaneLayoutPolicy.songHostWidth(width, sideGap, lyricsInset)
+            else (width - 2 * sideGap).coerceAtLeast(1)
+        val rightGap = (16 * density).toInt()
+        setPaneLayout(songHost, songWidth, sideGap, -1)
         // Android restores the saved right Fragment before the queued removal commits.
         // Keep a real viewport during that hand-off instead of collapsing it to 1px.
         setPaneLayout(right, FragmentDualPanePolicy.rightPaneWidth(width, dualPane, rightGap), rightGap, Gravity.RIGHT)
     }
 
-    private fun setPaneLayout(view: View, width: Int, gap: Int, gravity: Int, endGap: Int = gap) {
+    private fun setPaneLayout(view: View, width: Int, gap: Int, gravity: Int) {
         val current = view.layoutParams as? FrameLayout.LayoutParams
         if (current?.width == width && current.height == ViewGroup.LayoutParams.MATCH_PARENT &&
-            current.leftMargin == gap && current.rightMargin == endGap && current.gravity == gravity) return
+            current.leftMargin == gap && current.rightMargin == gap && current.gravity == gravity) return
         view.layoutParams = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT, gravity).apply {
-            leftMargin = gap; rightMargin = endGap
+            leftMargin = gap; rightMargin = gap
         }
     }
 
@@ -188,6 +197,13 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
             if (!FragmentTabletDualPaneCoordinator.eligible(root.context)) {
                 root.post { restore() }
                 return true
+            }
+            if (artworkLayoutPending) {
+                if (artworkContainer?.isLayoutRequested == true) {
+                    root.requestLayout(); root.postInvalidateOnAnimation()
+                    return false
+                }
+                artworkLayoutPending = false
             }
             // A completed rebound can omit the last slide(1); trust the native settled state.
             if (behaviorField.get(controller)?.let { behaviorState.getInt(it) == 3 } == true) slide = 1f
@@ -255,6 +271,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
             if (artworkContainer !== artwork.parent) {
                 songLayoutRestore?.invoke(); songLayoutRestore = null
                 artworkLease?.close(); artworkLease = null
+                releaseArtworkBaseline()
                 artworkContainer?.removeOnLayoutChangeListener(artworkListener)
                 (artworkContainer?.parent as? View)?.removeOnLayoutChangeListener(artworkListener)
                 metadataBarrier?.removeOnLayoutChangeListener(artworkListener)
@@ -330,7 +347,36 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         songBaselineLease = null
     }
 
-    private fun styleArtwork(): Boolean {
+    /** Match native child sizes to the slot without changing video aspect, scale or fade. */
+    fun prepareNativeArtworkSize(fragment: Any): Size? {
+        if (!installed || closing || destroyed || !canTransformSong()) return null
+        val view = video.getView.invoke(fragment) as? View ?: return null
+        val container = find(view, "artwork_container") ?: return null
+        if (container.parent == null || video.getParent.invoke(fragment) !== controller) return null
+        if (container !== find(songHost, "artwork_container")) return null
+        songFragment = fragment
+        if (!preparingNativeSize && (slide <= .001f || slide >= .999f)) {
+            preparingNativeSize = true
+            try {
+                if (styleArtwork(prepareNativeSize = true)) {
+                    root.requestLayout(); root.postInvalidateOnAnimation()
+                }
+            } finally { preparingNativeSize = false }
+        }
+        return artworkBase?.takeIf { baselineOwner === fragment }
+    }
+
+    fun artworkSize(view: View): Size? = artworkBase?.takeIf {
+        installed && !closing && !destroyed && canTransformSong() && view === cover && view.parent === artworkContainer
+    }
+
+    private fun releaseArtworkBaseline() {
+        baselineLease?.close(); baselineLease = null
+        baselineOwner = null; artworkBase = null
+        artworkLayoutPending = false
+    }
+
+    private fun styleArtwork(prepareNativeSize: Boolean = false): Boolean {
         if (!canTransformSong()) return false
         trackArtworkLayout() ?: return false
         val artwork = artworkContainer ?: find(songHost, "artwork_container")?.also { view ->
@@ -343,12 +389,9 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         } ?: fragment("SONG")?.takeIf { fragment -> video.song.isInstance(fragment) &&
             (video.getView.invoke(fragment) as? View)?.let { find(it, "artwork_container") === artwork } == true
         }?.also { songFragment = it } ?: return false
-        if (video.videoMode.getBoolean(song)) {
-            // Native video ratios own this slot until the native static mode returns.
-            artworkLease?.close(); artworkLease = null
-            return false
-        }
-        if ((video.sizeAnimation.get(song) as? android.animation.Animator)?.isRunning == true) return false
+        // The outer slot remains stable across static/video mode. Only the native
+        // image/TextureView compositor owns video aspect and its resize animation.
+        if (!prepareNativeSize && (video.sizeAnimation.get(song) as? android.animation.Animator)?.isRunning == true) return false
         val barrier = metadataBarrier ?: find(songHost, "metadata_barrier_top")?.also {
             metadataBarrier = it; it.addOnLayoutChangeListener(artworkListener)
         } ?: return false
@@ -386,7 +429,23 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         // Native i.d uses layout rectangles, which exclude ancestor translations. Put the
         // resting cover position in its constraints so the native mini endpoint includes it.
         val lease = artworkLease ?: ConstraintLayoutPane.artworkLayoutLease(artwork).also { artworkLease = it }
-        return lease.apply(size, topMargin, progressBounds.left, artworkParent.width - progressBounds.right)
+        val changed = lease.apply(size, topMargin, progressBounds.left, artworkParent.width - progressBounds.right)
+        val base = Size(size, size)
+        val baseChanged = artworkBase != base || baselineOwner !== song
+        if (baselineOwner !== song) {
+            releaseArtworkBaseline()
+            baselineOwner = song
+            baselineLease = OwnedHostProperty({ video.staticBaseline.get(song) as Size }, { video.staticBaseline.set(song, it) })
+        }
+        artworkBase = base
+        if (baseChanged || video.staticBaseline.get(song) != base) checkNotNull(baselineLease).set(base)
+        if (changed) artworkLayoutPending = true
+        if (baseChanged && !prepareNativeSize && video.videoMode.getBoolean(song)) {
+            (video.targetSize.get(song) as? Size)?.takeIf { it.width > 0 && it.height > 0 }?.let {
+                video.resize.invoke(song, true, tabletVideoSize(base, it))
+            }
+        }
+        return changed
     }
 
     private fun layoutTop(ancestor: ViewGroup, view: View): Int {
@@ -442,6 +501,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         hidden.forEach { (view, visibility) -> view.visibility = visibility }; hidden.clear()
         margins.forEach { (view, top) -> (view.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.topMargin = top; view.layoutParams = it } }; margins.clear()
         artworkLease?.close(); artworkLease = null
+        releaseArtworkBaseline()
         restoreSongLayout()
         cover = null; artworkContainer = null; metadataBarrier = null
         songFragment = null; rightRoot = null; chrome = emptyList()
@@ -460,6 +520,7 @@ internal class FragmentTabletDualPaneSession(val controller: Any, val root: View
         paneMotion.close()
         songLayoutRestore?.invoke(); songLayoutRestore = null
         artworkLease?.close(); artworkLease = null; songFragment = null
+        releaseArtworkBaseline()
         restoreSongLayout()
         hidden.clear(); margins.clear(); cover = null
     }

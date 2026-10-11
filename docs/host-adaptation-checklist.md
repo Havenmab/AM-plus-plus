@@ -1,76 +1,208 @@
 # 宿主版本适配清单
 
-每次适配都按本清单逐项填写证据和结果。架构与检查入口用于减少遗漏，不能证明未知版本必然兼容。源码/DEX匹配、构建成功、用户真机验收分别记录；当次执行记录放入任务计划，通用文档只维护流程和行为规则。
+每个精确构建独立使用本清单，包括复用已有页面族的构建。填写结果时区分“已核对”“未确认”“不适用”“已知降级”；不适用须注明 profile 资格或页面族依据。一个版本的结果不能代替另一个版本。
 
-## 身份、基线和验证范围
+流程和实现边界见 [宿主适配手册](host-adaptation-guide.md)，功能语义和人工场景见 [功能保全与验收矩阵](feature-preservation.md)。单次执行记录保存在任务记录中，本文件作为可重复使用的模板。
 
-- [ ] 从实际base Manifest记录包名、versionName、versionCode，明确所有split DEX/资源来源。
-- [ ] 记录代码基线和上一支持版本，对照其原生实现及模块变换；旧混淆类仍存在不能证明其职责相同。
-- [ ] 明确用户授权范围，区分源码分析、静态检查、APK构建和功能测试；功能由用户手动测试，设备操作和哈希检查须有明确授权。
-- [ ] 逐项确认schema、键、字体/歌词文件ID、DB/cache namespace、ZIP格式和插件接口是否变化。
+## 1. 构建身份与工作范围
 
-## 功能及附属依赖
+| 项目 | 本构建填写内容 |
+|---|---|
+| 精确身份 | 包名 / versionName / versionCode；二进制 Manifest 来源 |
+| 安装包 | 格式、base、split 列表、DEX 和资源所在位置 |
+| 代码基线 | 分支或提交、已有未提交工作、可回退代码和产物 |
+| 对照宿主 | 对照构建及其页面族；复用的契约和独立分析范围 |
+| 档案 | JSON 文件名、id、profileRevision、索引位置 |
+| 页面族 | `legacy-activity` / `fragment-content` / 需新建的页面族 |
+| 能力边界 | productionEnabled、glass、cellular、staticCollapsedIntercept、playerRecovery 等 |
+| 证据范围 | 源码/DEX、资源、静态检查、构建、人工验收分别到哪一步 |
+| 执行范围 | 所需源码分析、构建和使用者手动场景；其他检查是否有明确安排 |
+| 数据约束 | 配置 schema、键、文件 ID、目录、数据库、缓存、ZIP 和插件接口 |
 
-每行填写完整owner/name/参数/返回类型/static或字段类型，以及实际调用来源。没有变化也注明依据，未确认的项不得写成通过。
+- [ ] 身份由实际 base Manifest 确认，外层清单和传入参数与其一致。
+- [ ] 全部 DEX 与资源 split 已纳入分析，未假定 base 包含所有内容。
+- [ ] 正式版、beta、同名不同 versionCode 分别建档。
+- [ ] 未把旧混淆类仍然存在视为调用路径未变。
+- [ ] profile 使用宿主原始类型与描述符，未复制反编译工具修复的类名、推断类型或冲突文件名。
+- [ ] 当前支持构建与参考构建的资格已区分；已有不支持项和降级已记录。
+- [ ] 默认不执行设备、功能脚本、全量测试或哈希检查；功能由使用者手动验收。
 
-| 功能 | 必须追踪的接入及附属依赖 | 本版本证据/决定 | 静态状态 | 用户验收 |
+## 2. 版本数据与解析
+
+### 2.1 profile 完整性
+
+- [ ] 包名、版本名、版本号、文件名和唯一 id 对应同一组合。
+- [ ] 页面族来自实际入口和布局，工厂已具备该族的能力实现。
+- [ ] indexed、HLE hookTargets、运行时辅助成员和资源均有当前包的依据。
+- [ ] 方法填写声明 owner、完整参数/返回类型和 static；字段填写 owner、类型和归属。
+- [ ] 构造器、继承成员、接口返回关系、数组和 primitive 分别核对。
+- [ ] Hook 目标为可用具体实现；抽象调用契约按需要注明 invocationOnly。
+- [ ] 新档案使用 reject-ambiguous，未复制历史首个匹配例外。
+- [ ] 旧 HLE 候选条目顺序和兼容语义保持；新 Fragment 契约使用当前精确档案。
+- [ ] 开发期生产资格保持未启用；用户测试启用和运行时验收状态分别记录。
+- [ ] verification、evidence、knownDegradations 与已取得证据一致。
+- [ ] 源码、描述符和资源证据可追溯，引用的文档或位置有效。
+- [ ] 索引只登记一次，既有条目的相对顺序保持。
+
+### 2.2 逐成员证据模板
+
+| 功能 / 角色 | 完整成员或资源 | 当前调用来源 / 含义 | 解析与调用决定 | 状态 |
 |---|---|---|---|---|
-| 播放器入口/恢复 | Main/Pane生命周期、当前pane、BottomSheet、封面selector/动画/baseline、背景 | 待填写 | 待确认 | 待确认 |
-| 平板双栏 | 主状态、Fragment/Manager/事务、独立歌词、封面回调、可用性、视频接力和浏览器getter | 待填写 | 待确认 | 待确认 |
-| 歌词面板/逐字宽度 | binding、辅助容器、RecyclerView listener注册/清理、同步度量、adapter/holder/flexbox | 待填写 | 待确认 | 待确认 |
-| 自定义/自动歌词 | 当前歌曲、元数据转换/发布、TTML注入、异步重应用、重复抑制和优先级 | 待填写 | 待确认 | 待确认 |
-| 模糊/CJK/字体 | 行/词事件、前景文本、合并高亮、动画结束、字体绑定/恢复 | 待填写 | 待确认 | 待确认 |
-| 手机/平板玻璃 | 导航模型/getter/选择、mini登录/显示、展开回调、采样/准备/恢复和容器限制 | 待填写 | 待确认 | 待确认 |
-| 名称/元数据表面 | 播放器/队列/历史/操作表/搜索/资料库/专辑/歌单/艺术家/主页、Epoxy/Compose状态 | 待填写 | 待确认 | 待确认 |
-| 设置/蜂窝/DPI/数据 | 设置构造/绑定、蜂窝登录规则、DPI重建、文件和数据兼容 | 待填写 | 待确认 | 待确认 |
+| 待填写 | owner、签名或资源名及限定符 | 调用者、返回对象、原生读写位置 | 精确解析 / 允许的回退 / 调用形式 | 已核对 / 未确认 / 不适用 |
 
-## Fragment必需契约
+每个直接 Hook 入口继续展开其辅助成员。入口本身匹配不能代替 binding、getter、holder、listener、模型字段或清理方法匹配。
 
-`FragmentDualPaneInventory` 是代码维护的必需角色清单。`FragmentDualPanePreflight` 先解析所有组，再开始Hook注册；JSON少写必需角色也会失败。错误按 `section.methods/fields/constructors.role` 给出，并保留完整异常日志。
+## 3. 每项功能与辅助依赖
 
-| 组 | 覆盖内容 |
+| 功能 | 必须核对的接入链路 | 源码/包证据 | 能力状态 | 人工验收 |
+|---|---|---|---|---|
+| 设置入口 | Activity/Fragment、Preference 或原生模型、分类与去重、callback、结果桥和 SAF 归属 | 待填写 | 待填写 | 待填写 |
+| 当前歌曲 | 当前 item 字段、元数据参数、转换器、ID/多 ID、发布器与异步代次 | 待填写 | 待填写 | 待填写 |
+| 自定义歌词 | 原生 parser、SongInfoPtr、注入入口、资格、禁用优先级、缓存、完成后重应用 | 待填写 | 待填写 | 待填写 |
+| 自动补全 | 触发条件、来源顺序、manual/disabled 优先级、切歌、重试、离线与缓存 | 待填写 | 待填写 | 待填写 |
+| 歌词面板 | binding、附属容器、RecyclerView、adapter、行监听、同步度量和渐变 | 待填写 | 待填写 | 待填写 |
+| 逐字与 CJK | holder/binding/flexbox、有效宽度缓存、前景文本、动画/合并高亮及结束清理 | 待填写 | 待填写 | 待填写 |
+| 模糊与字体 | 行词事件、滚动/焦点、暂停恢复、后台字体加载、资源行、视图重建和原样恢复 | 待填写 | 待填写 | 待填写 |
+| 平板双栏 | 控制器、状态、SONG/QUEUE、独立歌词、事务、可用性、栏宽、封面和恢复 | 待填写 | 待填写 | 待填写 |
+| 手机玻璃 | 底导航、mini、原生选择、搜索、手势、sheet、采样和材质就绪 | 待填写 | 待填写 | 待填写 |
+| 平板玻璃 | 该页面族的导航/mini 形态、抽屉、单栏/双栏资格、旋转和底部边界 | 待填写 | 待填写 | 待填写 |
+| 视频与封面 | 模式、尺寸入口、静态基准/目标、外框/card/image/TextureView、表面和视频来源 | 待填写 | 待填写 | 待填写 |
+| 背景与恢复 | 封面来源、shader/paint、挂载/销毁、后台、暂停和共享动画 | 待填写 | 待填写 | 待填写 |
+| 元数据基础 | 原地区/cn/jp、原名/ISRC/ID、目录接口、缓存与优先级 | 待填写 | 待填写 | 待填写 |
+| 蜂窝入口 | 精确能力、原生登录与类别、availability、开关及安装归属 | 待填写 | 待填写 | 待填写 |
+| DPI / 数据 | 有效配置、冷启动、文件/SQLite/cache/ZIP、事务和配置迁移 | 待填写 | 待填写 | 待填写 |
+| 插件兼容 | 公共 SDK、加载/存储/生命周期、业务与宿主私有接口隔离 | 待填写 | 待填写 | 待填写 |
+
+### 名称修正表面清单
+
+| 表面 | 直接入口与运行时成员 | 原生显示 / 操作保全 | 安装及降级结果 |
+|---|---|---|---|
+| 播放器 | 待填写 | 待填写 | 待填写 |
+| 队列 | 待填写 | 待填写 | 待填写 |
+| 历史 | 待填写 | 待填写 | 待填写 |
+| 操作表 | 待填写 | 待填写 | 待填写 |
+| 最近搜索 | 待填写 | 待填写 | 待填写 |
+| 资料库 | 待填写 | 待填写 | 待填写 |
+| 专辑 | 待填写 | 待填写 | 待填写 |
+| 歌单 | 待填写 | 待填写 | 待填写 |
+| 艺术家 | 待填写 | 待填写 | 待填写 |
+| 主页 / 封面连续性 | 待填写 | 待填写 | 待填写 |
+
+- [ ] Epoxy holder、模型绑定、Compose/LiveData 和辅助 getter 已跟随当前版本核对。
+- [ ] 每个表面独立报告结果，可选子组缺失不会伪装成整项成功。
+- [ ] 原生点击、菜单、跳页和封面加载语义保留。
+- [ ] 已知降级与新回归分开记录，没有扩大匹配范围以绕过歧义。
+
+## 4. Activity 页面族检查
+
+仅在实际选择 legacy-activity 时填写。Fragment 构建标记本节不适用。
+
+- [ ] PlayerActivity 根视图、导航 holder、BottomSheet 和收起边界匹配。
+- [ ] 控制器 initialize / createView / selectPane 的参数与原生状态语义一致。
+- [ ] DualPaneState / 状态访问器使用原生 SONG、QUEUE 和独立歌词路径。
+- [ ] 主布局、歌词 sheet、横屏资源与导航高度均按实际宿主核对。
+- [ ] 宿主 ConstraintLayout 参数类型和混淆字段有独立依据。
+- [ ] 左栏宽度变化完成布局后再绘制，歌词视口与原生行内留白保持。
+- [ ] 旧 chrome 的玻璃资格和 staticCollapsedIntercept 资格分别核对。
+- [ ] Preference 设置行 key、标题/摘要、添加方法和结果桥匹配。
+- [ ] Editorial 处理范围、预览和 Music Video 保持原有语义。
+- [ ] 1583、1586、1599 的候选顺序、能力边界和既有降级分别保全。
+
+## 5. Fragment 页面族检查
+
+仅在实际选择 fragment-content 时填写。Activity 构建标记本节不适用。
+
+| 区域 | 应具备的契约 |
 |---|---|
-| fragmentDualPane | 主播放器、Fragment事务、封面回调、四项歌词可用性、原生binding完成方法/root字段和事务构造器 |
-| fragmentLyricsRuntime | 歌词生命周期、binding、同步度量、行监听接口和注册/清理 |
-| fragmentKaraokeWidth | adapter绑定、缓存宽度、holder binding/item和flexbox |
-| fragmentTabletVideoHandoff | 元数据listener、视频尺寸/视图、接口浏览器getter和返回对象字段 |
-| fragmentDualPane.songLayout | 显式选择布局适配时所需的ConstraintLayout参数、Guideline构造器、Barrier和binding setter |
-| fragmentChrome.members | 导航/菜单/LiveData、BottomSheet、进度、生命周期、blur与mini启动；由FragmentChromeInventory在玻璃安装前完整解析，并校验调用语义 |
+| fragmentDualPane | 主状态、事务、pane、BottomSheet、封面 callback、歌词四项规则、binding 完成接入 |
+| fragmentLyricsRuntime | 生命周期、binding/附属容器、RecyclerView、度量、行监听注册与清理 |
+| fragmentKaraokeWidth | adapter 绑定/宽度、holder item/binding、flexbox |
+| fragmentTabletVideoHandoff | metadata listener、模式/动画、updateSize/resize、staticBaseline/targetSize、TextureView、浏览器及视频 size 对象 |
+| fragmentDualPane.songLayout | 覆盖布局时的参数、构造器、Guideline、Barrier 和 binding setter |
+| fragmentChrome.members | 导航模型/getter/callback、菜单、LiveData、BottomSheet、生命周期与 mini |
+| indexed + playerRecovery | 原生封面/card/image、尺寸基准/目标、背景、进入/共享动画和销毁 |
+| settings | ViewModel、分类/action/artwork/callback 构造与字段、Compose、结果归属 |
 
-- [ ] 新运行依赖同时加入角色清单、profile和适配记录；数据只描述成员，策略实现留在Kotlin。
-- [ ] `songLayoutPolicy` 明确选择 `native` 或 `1606-column`，不得通过缺少section默默选择布局。
-- [ ] 继承/接口方法记录实际声明owner；抽象接口仅作为 `invocationOnly` 调用，Hook目标不能是abstract/bridge/synthetic。
-- [ ] 安装时缓存反射，绑定时缓存资源/视图；slide、逐字动画和度量回调使用缓存成员。
+- [ ] FragmentDualPaneInventory 的必需角色完整，preflight 先于 Hook 注册。
+- [ ] FragmentChromeInventory 和恢复契约分别解析，没有借用双栏成功状态。
+- [ ] owner、返回值、参数、静态/实例调用、声明接口关系均通过语义核对。
+- [ ] songLayoutPolicy 显式填写 native 或1606-column；覆盖策略有 songLayout 契约。
+- [ ] layoutReview 六项都有当前构建证据。
+- [ ] stable host ID / 恢复 tag 与保存状态兼容。
+- [ ] 状态保存期间延后事务，恢复中的右栏仍可测量并能初始化逐字宽度。
+- [ ] 每个 view 重建得到新会话，旧 owner 延迟回调不能操作新 view。
+- [ ] 模块 View 挂入允许的容器，FragmentContainerView 限制明确。
+- [ ] 手机底导航、平板顶导航、抽屉和独立 mini 各自核对。
+- [ ] mini 登录与当前对象规则保留，显示方法按准确静态/实例形式调用。
+- [ ] 玻璃开关与双栏开关的资格独立，材质就绪时序和失败恢复明确。
 
-## 完整布局和数据绑定
+## 6. 资源、binding 与布局检查
 
-`fragmentDualPane.layoutReview` 六项证据不能为空。文字记录表示完成了对照，不能代替设备结果。
-
-| 项目 | 对照内容 |
+| 证据项 | 当前构建的填写要求 |
 |---|---|
-| artwork | 所有限定符布局、guideline/inset、尺寸/比例约束、实际测量和native缩放/video模式 |
-| artwork sizing | 基准边长与实际 progress 内容宽度共用解析；可用高度不足时限制正方形；窗口/旋转/padding 更新后重新计算；保留暂停缩放、视频和尺寸动画；退出时仅恢复模块所有的几何 |
-| metadata | 标题/副标题/合作信息/更多按钮的独立边界、锚点、margin/padding、Barrier引用/margin |
-| controls | 整栏或封面宽度、控制区高度、进度/播放/footer约束、图标和触摸区域 |
-| progress | 进度/音量内容边界、dimens/integers、seekbar/live-radio包含布局 |
-| binding | 递归include的生成binding、重绑定setter、换歌/播放状态再次写入的margin/padding/显隐 |
-| restoration | 关闭、旋转、SONG/QUEUE、换歌、销毁/重建、旧owner延迟回调和属性所有权 |
+| artwork | 所有有效限定符、Guideline/inset、ratio、锚点、card、image、TextureView、实际尺寸与原生缩放 |
+| metadata | 标题/副标题/合作信息/更多按钮边界、Barrier 引用和 margin |
+| controls | 容器宽度/高度、播放/进度/footer 约束、图标和触摸区域 |
+| progress | 普通/直播进度、padding、音质标识；Fragment 整个音量控件与内容边界 |
+| binding | 递归 include、生成 binding、setter、换歌/播放状态重写、尺寸与显隐 |
+| restoration | 关闭、旋转、重建、切歌、SONG/QUEUE、动画、后台和属性所有权 |
 
-- [ ] 资源名相同但值/限定符是否变化；窗口缩成双栏后是否重复计算间距。
-- [ ] 主布局和递归include是否变化；一次调整是否被binding再次覆盖，必要时接入当前视图的原生setter。
-- [ ] 不对称padding和播放按钮居中在binding完成后、测量前是否一起生效；勿用尚未重测的子控件宽度计算下一次布局。普通重新布局时已显示的模块控件是否因isLayoutRequested隐藏一帧，切歌是否同时出现封面与footer跳动/闪动。
-- [ ] 模块视图只加入允许的普通容器；恢复时只恢复仍由模块拥有的属性。
+- [ ] 资源按名称解析，数字 ID 未跨构建复制。
+- [ ] dimen/integer/bool 和所有限定符取值已核对，资源名相同不代表尺寸相同。
+- [ ] 左侧 50dp 以屏幕边缘、右侧 50dp 以歌词正文起点为边界。
+- [ ] 名义45%/55%分区与实际 host 宽度区分，原生内部尺寸变化重新参与计算。
+- [ ] 标题、进度、音质标识、播放按钮和封面同心；歌词自身左右留白保全。
+- [ ] 普通/逐字/翻译/背景/静态/间奏/credits 行分别核对，高亮绘制空间充足。
+- [ ] 歌词宽度在正确视口初始化，旋转或重建没有沿用旧 adapter 几何。
+- [ ] binding 完成后在测量前准备当前子树；几何变更完成布局后绘制。
+- [ ] 普通 relayout 不隐藏已经放置的音量/代理控件。
+- [ ] 父容器的 module 属性、原生可见性和触摸状态均能按所有权恢复。
 
-## 架构和交付
+### 视频专项检查
 
-- [ ] Contract只持有成员/资源；Runtime注册Hook并管理活动绑定；Session管理单个视图生命周期。
-- [ ] 属性恢复复用OwnedHostProperty；视图/配置替换复用HostViewSessionController，创建失败不发布部分会话。
-- [ ] 宿主反射留在host-applemusic，app通过能力接口装配；core/SDK不泄漏宿主实现。
-- [ ] 必需检查失败关闭对应注册作用域，日志写明失败组/角色；记录恢复原生播放的路径。
-- [ ] HLE专用Hooker通过stageInstallation分组，内层安装异常同时上报作用域；独立子组、晚注册成员与安装状态汇总不遗漏。
-- [ ] 玻璃读取当前双栏会话的封面就绪状态，不依赖停用实现；旧反射缓存包括完整参数/argument-type签名、空值和失败查询，历史候选顺序不变。
-- [ ] 静态检查覆盖声明的辅助成员/构造器。verify-host-profile.py已扩展上述Fragment组；执行须符合本轮授权范围。
-- [ ] 构建交付APK，旧映射/候选顺序保留，新tuple精确匹配。
-- [ ] runtimeVerified保持false到用户验收；只勾选明确确认的场景，其余写待验收。
+| 场景 | 尺寸与比例 | 位置 / 外框 | 表面 / 渐变 | 结果 |
+|---|---|---|---|---|
+| 普通→普通 | 待填写 | 待填写 | 待填写 | 待填写 |
+| 普通→视频 | 待填写 | 待填写 | 待填写 | 待填写 |
+| 视频→普通 | 待填写 | 待填写 | 待填写 | 待填写 |
+| 视频→视频，相同比例 | 待填写 | 待填写 | 待填写 | 待填写 |
+| 视频→视频，不同比例 | 待填写 | 待填写 | 待填写 | 待填写 |
 
-行为标准和通用人工验收场景参照 [功能保全矩阵](feature-preservation.md)。
+- [ ] 外框/card/image/TextureView 和静态尺寸基准分别列出写入者。
+- [ ] 临时零视频尺寸与最终有效尺寸的原生路径已追踪。
+- [ ] 静态基准、目标尺寸与当前外框一致，原生视频比例变化和额外往返分开判断。
+- [ ] Fragment 双栏普通/视频共用外框，进入视频时保持其几何；原生尺寸入口在计算前使用当前会话基准。
+- [ ] 原生 resize、静态基准和目标字段为当前 profile 的准确必需契约；恢复代码不以旧测量覆盖新目标。
+- [ ] videoMode / sizeAnimation 的让权、恢复和绘制时序明确。
+- [ ] 旧纹理接力、异步视频准备及连续切歌确认当前 owner / view / item。
+- [ ] 暂停缩放、原生 scale/Y、sheet 与共享动画保全。
+
+## 7. 安装、生命周期与失败处理
+
+- [ ] 依赖在安装或绑定时解析，逐帧/滑动/逐字回调不扫描 DEX 或发现反射成员。
+- [ ] 新注册作用域 preparing→active→closed 的条件明确，失败后的回调原生透传。
+- [ ] HLE 表面及可选子组独立报告；父组关闭能撤销子组和后续 getter。
+- [ ] 监听器、observer、动画监听和延迟任务具有会话归属及清理入口。
+- [ ] view/config 更换先关闭旧会话，创建失败不发布半初始化状态。
+- [ ] 属性恢复仅恢复仍由模块拥有的值，保留后续原生写入。
+- [ ] 文件、网络、字体和 TTML 使用已有后台路径。
+- [ ] 不支持、目标缺失、歧义和运行时失败均可报告，不影响原生播放。
+
+## 8. 检查、人工验收与交付
+
+| 阶段 | 实际执行内容及结果 | 未覆盖项 |
+|---|---|---|
+| 安装包/源码分析 | 待填写 | 待填写 |
+| 所需静态检查 | 待填写；未执行时注明 | 待填写 |
+| APK 构建 | 目标、产物、构建结果 | 待填写 |
+| Hook 能力状态 | 按能力/表面记录 | 待填写 |
+| 使用者人工验收 | 按版本、设备与场景记录 | 待填写 |
+| 已支持版本回归 | 逐构建填写 | 待填写 |
+
+- [ ] 人工验收参照完整功能矩阵，记录设置、歌曲类型和操作。
+- [ ] 核对冷启动、后台、旋转/多窗口、切歌、无歌词、视频及SONG/QUEUE组合。
+- [ ] 既有生产 tuple 分别列出结果；未执行不填通过。
+- [ ] profileEnabled / runtimeVerified 与实际阶段一致，局部确认不升级为整档案通过。
+- [ ] 配置 schema、键、文件 ID、数据库/缓存 namespace、ZIP 和插件公共接口保持。
+- [ ] 适配资料、通用文档、安装包、缺口与回退方式齐全。
+- [ ] 新 tuple 停用和原生恢复路径明确，旧档案/冻结基线没有被无依据改写。

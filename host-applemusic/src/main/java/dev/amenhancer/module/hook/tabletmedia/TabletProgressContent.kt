@@ -19,15 +19,6 @@ internal class TabletProgressContent(private val find: (View, String) -> View?) 
         listOf("seek_bar_controls", "live_radio_container").asSequence()
             .mapNotNull { visibleContainer(parent, it, requireShown) }.firstOrNull()
 
-    /** A match-parent track's next bounds after native/container padding changes. */
-    fun layoutBoundsIn(parent: ViewGroup): Rect? {
-        val container = container(parent) ?: return null
-        val track = find(container, "progress")?.takeIf { it.visibility == View.VISIBLE }
-        return boundsIn(parent, Bounds(container,
-            container.paddingLeft + (track?.paddingLeft ?: 0),
-            container.width - container.paddingRight - (track?.paddingRight ?: 0)))
-    }
-
     private fun visibleContainer(parent: View, name: String, requireShown: Boolean): View? {
         val first = find(parent, name) ?: return null
         fun ready(view: View) = view.width > 0 && view.height > 0 &&

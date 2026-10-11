@@ -1,8 +1,10 @@
-# Device QA scripts
+# Repository checks and build helpers
 
-The device scripts are optional regressions used while adapting Apple Music 6.5.0. Other repository checks and build helpers are described below.
+This directory contains host profile checks, build helpers and optional device regressions.
+Use the [host adaptation guide](../docs/host-adaptation-guide.md) for the per-build workflow.
+Functional acceptance is manual by default; run device scripts only when explicitly requested.
 
-## Requirements
+## Device script requirements
 
 - PowerShell 7 and ADB
 - An unlocked device with Apple Music and the module installed
@@ -21,9 +23,10 @@ $env:ANDROID_SERIAL = "your-device-serial"
 
 ## Host profile verification (no device required)
 
-`verify-host-profile.py` is a read-only DEX check of the exact host profile. It takes the original
-XAPK (or a bare base APK) and verifies every class/method/field the AM++ version profile pins,
-including the phone liquid-glass seams with `--glass`:
+`verify-host-profile.py` is a read-only DEX check of an exact host profile. It reads the original
+APK or split APK container (APKM, XAPK or APKS), including DEX files in the splits. It checks
+the members recorded for static verification and the exact contracts described below;
+`--glass` additionally selects the recorded glass seams.
 
 For Fragment builds, verification also covers all declared method/field/constructor descriptors
 in the dual-pane, lyrics runtime, karaoke width, video handoff and optional song-layout sections.
@@ -37,7 +40,9 @@ python scripts\verify-host-profile.py "apple-music-6-5-3.xapk" --version-name 6.
 python scripts\verify-host-profile.py "Apple+Music_6.5.2_APKPure.xapk" --glass
 ```
 
-The version tuple comes from `manifest.json` when the XAPK ships one; otherwise pass it explicitly.
+The version tuple comes from the binary AndroidManifest.xml in the base APK. Optional version
+arguments and an outer manifest.json must agree with that identity. Use `--profile PATH`
+to check an explicit development profile that has not been enabled or indexed yet.
 A PASS means the static evidence behind a profile still holds for that package; it does not prove
 runtime behaviour, resource IDs, container types or blur sampling.
 

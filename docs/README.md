@@ -1,12 +1,12 @@
 # 文档目录
 
-当前架构和新版本适配从 [宿主适配手册](host-adaptation-guide.md) 开始。
+Apple Music 每个精确构建的适配与维护从 [宿主适配手册](host-adaptation-guide.md) 开始。先确定版本和页面族，再按清单核对接入，最后按功能矩阵记录人工验收；流程同时覆盖 6.x Activity、7.x Fragment 及后续待适配构建。
 
 | 文档 | 内容 |
 |---|---|
-| [宿主适配手册](host-adaptation-guide.md) | 模块职责、统一 JSON profile、宿主接入、安装顺序与 7.x 接入边界 |
-| [宿主适配清单](host-adaptation-checklist.md) | 功能/附属依赖、必需契约、完整布局和数据绑定对照、架构与交付检查 |
-| [功能保全矩阵](feature-preservation.md) | 旧功能的保全语义、自动测试入口和待验收场景 |
+| [宿主适配手册](host-adaptation-guide.md) | 当前架构、逐版本流程、精确 profile、两类宿主契约、功能接入、布局/视频、安装与回退 |
+| [宿主适配清单](host-adaptation-checklist.md) | 每个构建可重复使用的身份、成员/辅助依赖、资源/binding、生命周期和交付检查模板 |
+| [功能保全矩阵](feature-preservation.md) | 各版本能力边界、功能行为、人工场景、已知降级与明确范围的验收结果 |
 | [TTML 格式说明](apple-music-ttml-format.md) | 手工歌词编写与转换时使用的格式约定 |
 | [插件开发手册](plugin-development.md) | SDK、ZIP 打包、独立开发、生命周期与冲突规则 |
 | [插件作者教程](plugin-author-guide.md) | 从零建工程、Hook/设置代码、打包导入、调试与版本适配 |

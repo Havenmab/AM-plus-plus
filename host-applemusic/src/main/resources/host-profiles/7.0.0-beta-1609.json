@@ -2732,6 +2732,16 @@
         "parameters": [],
         "returns": "z3.V",
         "static": false
+      },
+      "resize": {
+        "owner": "com.apple.android.music.player.fragment.m",
+        "name": "E1",
+        "parameters": [
+          "boolean",
+          "android.util.Size"
+        ],
+        "returns": "void",
+        "static": false
       }
     },
     "fields": {
@@ -2759,6 +2769,16 @@
         "owner": "z3.V",
         "name": "b",
         "type": "int"
+      },
+      "staticBaseline": {
+        "owner": "com.apple.android.music.player.fragment.PlayerSongViewFragment",
+        "name": "f0",
+        "type": "android.util.Size"
+      },
+      "targetSize": {
+        "owner": "com.apple.android.music.player.fragment.m",
+        "name": "Q",
+        "type": "android.util.Size"
       }
     }
   },

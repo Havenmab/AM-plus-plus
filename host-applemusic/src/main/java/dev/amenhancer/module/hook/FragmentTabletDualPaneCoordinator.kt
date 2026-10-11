@@ -170,6 +170,22 @@ internal object FragmentTabletDualPaneCoordinator {
     }
 
     fun onRestored(owner: Any) { roots[owner]?.post { reconcile(owner) } }
+    /** Native video size builders must read the current dual-pane base before sizing children. */
+    fun prepareNativeArtworkSize(fragment: Any): android.util.Size? {
+        if (!videoContract.song.isInstance(fragment)) return null
+        val owner = videoContract.getParent.invoke(fragment) ?: return null
+        val session = sessions[owner]?.takeIf {
+            it.installed && failed[owner] != true && eligible(it.root.context)
+        } ?: return null
+        var size: android.util.Size? = null
+        guarded(owner) { size = session.prepareNativeArtworkSize(fragment) }
+        return size
+    }
+
+    /** Recovery and native sizing share the owned slot, even before its new params remeasure. */
+    fun artworkSize(cover: View): android.util.Size? = sessions.values.firstNotNullOfOrNull { session ->
+        if (failed[session.controller] != true && eligible(session.root.context)) session.artworkSize(cover) else null
+    }
     fun active(player: View?): Boolean = sessions.values.any { it.installed && it.player === player && failed[it.controller] != true && eligible(it.root.context) }
     fun activeController(owner: Any): Boolean = sessions[owner]?.let {
         it.installed && failed[owner] != true && eligible(it.root.context)

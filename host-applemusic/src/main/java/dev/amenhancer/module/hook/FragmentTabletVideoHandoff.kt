@@ -35,9 +35,18 @@ internal class FragmentTabletVideoHandoff(private val native: FragmentTabletVide
         hook(updateSize, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val fragment = param.thisObject ?: return
+                FragmentTabletDualPaneCoordinator.prepareNativeArtworkSize(fragment)
                 calls.enter(fragment, ((param.args[1] as Int) <= 0 || (param.args[2] as Int) <= 0) && active(fragment))
             }
             override fun afterHookedMethod(param: MethodHookParam) { param.thisObject?.let(calls::leave) }
+        })
+        hook(native.resize, object : ModernMethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                val fragment = param.thisObject ?: return
+                val requested = param.args.getOrNull(1) as? android.util.Size ?: return
+                val base = FragmentTabletDualPaneCoordinator.prepareNativeArtworkSize(fragment) ?: return
+                param.args[1] = if (param.args.firstOrNull() == true) tabletVideoSize(base, requested) else base
+            }
         })
         hook(surfaceGetter, object : ModernMethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {

@@ -26,7 +26,6 @@ internal class TabletPlayerComponents(
     private fun id(name: String) = ids.getOrPut(name) { root.resources.getIdentifier(name, "id", root.context.packageName) }
     private fun find(parent: View, name: String): View? = id(name).takeIf { it != 0 }?.let { parent.findViewById(it) }
     private val progressContent = TabletProgressContent(::find)
-    private val contentInsets = TabletSongContentInsets(::find)
     private fun dp(value: Int) = (value * root.resources.displayMetrics.density).roundToInt()
     private data class Hidden(val alpha: Float, val visibility: Int, val clickable: Boolean, val accessibility: Int)
     private val hidden = IdentityHashMap<View, Hidden>()
@@ -101,14 +100,13 @@ internal class TabletPlayerComponents(
 
     /** Prepare retained panes before sheet opening or native shared-element capture. */
     fun prepare(start: View = songHost): Boolean {
-        var changed = contentInsets.prepare(start)
+        var changed = false
         val nativeGroups = groups(start)
         nativeGroups.maxByOrNull(::alpha)?.let {
             actionStyle.bind(lyrics, find(it, "player_lyrics") as? ImageView)
             actionStyle.bind(queue, find(it, "player_queue") as? ImageView)
         }
         nativeGroups.forEach {
-            if (contentInsets.prepare(it)) changed = true
             nativeActions(it).forEach(::hideSource)
             transportButtons(it).forEach(transportRipple::apply)
             if (prepareGroup(it)) changed = true
@@ -289,7 +287,6 @@ internal class TabletPlayerComponents(
         overlay.visibility = View.INVISIBLE; placed = false; volume.setPageVisible(false)
         hidden.keys.toList().forEach(::restoreSource); translations.keys.toList().forEach(::restoreTranslation)
         rows.close()
-        contentInsets.close()
         transportRipple.close()
         actionStyle.clear()
         lyricsSource = null; queueSource = null

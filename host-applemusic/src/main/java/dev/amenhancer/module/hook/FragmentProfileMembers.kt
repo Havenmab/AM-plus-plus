@@ -93,8 +93,8 @@ internal object FragmentDualPaneInventory {
     val karaoke = FragmentMemberRequirements(methods = setOf("bind"),
         fields = setOf("adapter", "width", "binding", "item", "flexbox"))
     val video = FragmentMemberRequirements(
-        methods = setOf("metadata", "updateSize", "surface", "getView", "parent", "browser", "videoSize"),
-        fields = setOf("owner", "videoMode", "sizeAnimation", "videoWidth", "videoHeight"),
+        methods = setOf("metadata", "updateSize", "resize", "surface", "getView", "parent", "browser", "videoSize"),
+        fields = setOf("owner", "videoMode", "sizeAnimation", "staticBaseline", "targetSize", "videoWidth", "videoHeight"),
     )
     val song = FragmentMemberRequirements(
         methods = setOf("barrierGetMargin", "barrierSetMargin", "barrierGetReferences", "barrierSetReferences", "bindingForView", "setSeekbarPadding"),

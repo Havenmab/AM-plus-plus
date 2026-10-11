@@ -10,7 +10,6 @@ import android.widget.FrameLayout
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.host.OwnedHostProperty
 import dev.amenhancer.module.hook.tabletmedia.TabletProgressContent
-import dev.amenhancer.module.hook.tabletmedia.TabletSongContentInsets
 import dev.amenhancer.host.applemusic.R
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -56,11 +55,6 @@ internal object DualPaneShell {
 internal object ConstraintLayoutPane {
     fun artworkLayoutLease(artwork: View): TabletArtworkLayoutLease =
         TabletArtworkLayoutLease(artwork, ::constraintField)
-
-    fun metadataEndGuideField(guide: View): Field =
-        checkNotNull(constraintField(guide.layoutParams.javaClass, "guideEnd")) { "metadata guideEnd missing" }.also {
-            check(it.type == Int::class.javaPrimitiveType)
-        }
 
     private const val BOTTOM_NAVIGATION_ROOT_STACKED = "bottom_navigation_root_stacked"
     private const val BOTTOM_NAVIGATION_ROOT_FLAT = "bottom_navigation_root_flat"
@@ -300,7 +294,8 @@ internal object ConstraintLayoutPane {
             },
         )
 
-        configureExistingPlayerHost(playerHost, splitId, layoutParamsClass)
+        configureExistingPlayerHost(playerHost, layoutParamsClass)
+        installPlayerColumnLayout(playerRoot, playerHost)
         val lyricsHost = FrameLayout(root.context).apply {
             id = View.generateViewId()
             contentDescription = "AM++ lyrics pane"
@@ -365,7 +360,6 @@ internal object ConstraintLayoutPane {
                 .takeIf { it != 0 }?.let { parent.findViewById<View>(it) }
         }
         val progressContent = TabletProgressContent(findContent)
-        val contentInsets = TabletSongContentInsets(findContent)
         val videoId = resources.getIdentifier("video_surface", "id", ModuleConstants.TARGET_PACKAGE)
         val imageId = resources.getIdentifier("artwork_image", "id", ModuleConstants.TARGET_PACKAGE)
         val layoutLeases = WeakHashMap<View, TabletArtworkLayoutLease>()
@@ -374,15 +368,10 @@ internal object ConstraintLayoutPane {
         fun release() {
             layoutLeases.values.toList().forEach { it.close() }; layoutLeases.clear()
             translations.values.toList().forEach { it.close() }; translations.clear()
-            contentInsets.close()
         }
         fun apply(): Boolean {
             artworkLayoutChanged = false
             if (!TabletModeQualifier.isEligible(playerRoot.context)) { release(); return true }
-            contentInsets.prepare(playerHost)
-            (playerHost as? ViewGroup)?.let { host ->
-                repeat(host.childCount) { contentInsets.prepare(host.getChildAt(it)) }
-            }
             val artwork = playerHost.findViewById<View>(artworkId) ?: return false
             val barrier = playerHost.findViewById<View>(barrierId) ?: return false
             val parent = artwork.parent as? ViewGroup ?: return false
@@ -771,18 +760,19 @@ internal object ConstraintLayoutPane {
 
     private fun configureExistingPlayerHost(
         playerHost: View,
-        splitId: Int,
         layoutParamsClass: Class<*>,
     ) {
         val params = playerHost.layoutParams as? ViewGroup.MarginLayoutParams
             ?: error("player_fragments_host does not use MarginLayoutParams")
         check(layoutParamsClass.isInstance(params))
-        params.width = 0
+        // A fixed measured width lets the symmetric player extend through the
+        // native lyrics drawing gutter, without changing the lyrics viewport.
+        params.width = 1
         params.height = 0
         params.setInt("leftToLeft", PARENT_ID)
-        params.setInt("rightToLeft", splitId)
+        params.setInt("rightToLeft", -1)
         params.setInt("startToStart", PARENT_ID)
-        params.setInt("endToStart", splitId)
+        params.setInt("endToStart", -1)
         params.setInt("leftToRight", -1)
         params.setInt("rightToRight", -1)
         params.setInt("startToEnd", -1)
@@ -790,9 +780,49 @@ internal object ConstraintLayoutPane {
         params.setInt("topToTop", PARENT_ID)
         params.setInt("bottomToBottom", PARENT_ID)
         setHorizontalMargins(params, dp(playerHost.context, TabletDualPaneLayoutPolicy.SONG_HOST_SIDE_MARGIN_DP))
-        params.rightMargin = dp(playerHost.context, TabletDualPaneLayoutPolicy.SONG_HOST_END_MARGIN_DP)
-        params.marginEnd = params.rightMargin
         playerHost.layoutParams = params
+    }
+
+    /** Shared visible geometry; only defer a draw while a changed column settles. */
+    private fun installPlayerColumnLayout(playerRoot: ViewGroup, playerHost: View) {
+        val sideGap = dp(playerHost.context, TabletDualPaneLayoutPolicy.SONG_HOST_SIDE_MARGIN_DP)
+        val lyricsInset = dp(playerHost.context, TabletDualPaneLayoutPolicy.LYRICS_TEXT_START_INSET_DP)
+        var pendingLayout = false
+        fun apply(): Boolean {
+            if (playerRoot.width <= 0 || !TabletModeQualifier.isEligible(playerRoot.context)) return false
+            val width = TabletDualPaneLayoutPolicy.songHostWidth(playerRoot.width, sideGap, lyricsInset)
+            val params = playerHost.layoutParams
+            if (params.width == width) return false
+            params.width = width
+            playerHost.layoutParams = params
+            pendingLayout = true
+            return true
+        }
+        val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
+        val preDrawListener = ViewTreeObserver.OnPreDrawListener {
+            val changed = apply()
+            if (changed || pendingLayout && playerHost.isLayoutRequested) {
+                playerRoot.requestLayout()
+                playerRoot.postInvalidateOnAnimation()
+                false
+            } else { pendingLayout = false; true }
+        }
+        var tree: ViewTreeObserver? = null
+        fun stop() {
+            tree?.takeIf { it.isAlive }?.removeOnPreDrawListener(preDrawListener)
+            tree = null
+        }
+        fun start() {
+            stop()
+            playerRoot.viewTreeObserver.also { it.addOnPreDrawListener(preDrawListener); tree = it }
+        }
+        playerRoot.addOnLayoutChangeListener(layoutListener)
+        playerRoot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = start()
+            override fun onViewDetachedFromWindow(view: View) = stop()
+        })
+        apply()
+        if (playerRoot.isAttachedToWindow) start()
     }
 
     /**

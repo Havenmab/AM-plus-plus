@@ -24,7 +24,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: gradle
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -36,6 +35,7 @@ jobs:
         run: |
           python3 scripts/verify-architecture.py
           python3 scripts/verify-profile-data.py
+          python3 -m unittest discover -s scripts/tests
 
       - name: Prepare release signing
         if: github.event_name != 'pull_request'
@@ -44,10 +44,28 @@ jobs:
         run: |
           printf '%s' "$AMPP_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$AMPP_RELEASE_STORE_FILE"
 
-      - name: Build independent plugin example and SDK
+      - name: Fingerprint independent plugin example and SDK
+        id: plugin-inputs
+        run: echo "key=$(python3 scripts/build-plugin-example.py --cache-key)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache independent plugin example and SDK
+        id: plugin-cache
+        uses: actions/cache@v4
+        with:
+          path: build/plugin-example
+          # Exact inputs only; a partial match could contain an outdated SDK or fixture.
+          key: ${{ runner.os }}-${{ runner.arch }}-plugin-example-v1-${{ steps.plugin-inputs.outputs.key }}
+
+      - name: Build or reuse independent plugin example and SDK
         run: |
           chmod +x gradlew
-          python3 scripts/build-plugin-example.py
+          if [ "${{ steps.plugin-cache.outputs.cache-hit }}" != 'true' ] || \
+             [ ! -s build/plugin-example/basic-plugin.zip ] || \
+             [ ! -s build/plugin-example/ampp-plugin-api-v1.jar ]; then
+            python3 scripts/build-plugin-example.py
+          else
+            echo 'Reusing independent plugin example and SDK for matching inputs.'
+          fi
 
       - name: Build and test release
         if: github.event_name != 'pull_request'

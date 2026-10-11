@@ -140,6 +140,40 @@ class AppleLyricTtmlReaderTest {
         assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationKeys("not ttml"))
     }
 
+    /**
+     * A Word-timed head entry carries one `<span begin end>` per lyric word (AMLL
+     * writes them inline as `x-roman`, which the converter migrates verbatim).
+     * The line string stays the concatenation for the line-lane fallback; the word
+     * getter needs the timed slices, which the old reader flattened away.
+     */
+    @Test
+    fun `reads a head transliteration entry's timed word slices`() {
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">""" +
+                """<head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">""" +
+                """<transliterations><transliteration xml:lang="ja-Latn">""" +
+                """<text for="L1"><span begin="1.000" end="1.500">ishou</span>""" +
+                """<span begin="1.500" end="1.700">ni</span></text>""" +
+                """</transliteration></transliterations>""" +
+                """</iTunesMetadata></metadata></head>""" +
+                """<body><div><p begin="1.000" end="1.700" itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">衣装</span>""" +
+                """<span begin="1.500" end="1.700">に</span></p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals("ishouni", line.romanization)
+        assertEquals(
+            listOf(1_000L to "ishou", 1_500L to "ni"),
+            line.romanizationSpans.map { it.begin to it.text },
+        )
+        assertEquals(listOf(1_500L, 1_700L), line.romanizationSpans.map { it.end })
+        // A line-level entry (WORD_DOCUMENT's `<text for="L1">haro</text>`) keeps
+        // no slices: there is no word-level lane to match.
+        assertTrue(AppleLyricTtmlReader.read(WORD_DOCUMENT).first().romanizationSpans.isEmpty())
+    }
+
     private companion object {
         val WORD_DOCUMENT = """
             <?xml version='1.0' encoding='utf-8'?>

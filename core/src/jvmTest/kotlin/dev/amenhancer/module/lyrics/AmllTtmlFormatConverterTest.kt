@@ -68,12 +68,13 @@ class AmllTtmlFormatConverterTest {
     }
 
     @Test
-    fun `the root is marked word timed with the pinned lyric language`() {
+    fun `the root is marked word timed with the script inferred from the body`() {
         val result = AmllTtmlFormatConverter.toAppleFormat(amllFormat)
         val root = result.ttml.substringBefore('>')
 
         assertTrue(root.contains("""itunes:timing="Word""""))
-        assertTrue(root.contains("""xml:lang="ko""""))
+        // No declared language and a Latin body: the neutral tag, never `ko`.
+        assertTrue(root.contains("""xml:lang="und""""))
     }
 
     @Test
@@ -91,7 +92,7 @@ class AmllTtmlFormatConverterTest {
         val root = result.ttml.substringBefore('>')
 
         assertTrue(root.contains("""itunes:timing="Line""""))
-        assertTrue(root.contains("""xml:lang="ko""""))
+        assertTrue(root.contains("""xml:lang="und""""))
     }
 
     @Test
@@ -111,7 +112,9 @@ class AmllTtmlFormatConverterTest {
         assertEquals(1, Regex("""itunes:timing""").findAll(root).count())
         assertEquals(1, Regex("""xml:lang""").findAll(root).count())
         assertTrue(root.contains("""itunes:timing="Word""""))
-        assertTrue(root.contains("""xml:lang="ko""""))
+        // The document's own declaration is the lyrics language, not the old
+        // hardcoded `ko`.
+        assertTrue(root.contains("""xml:lang="ja""""))
     }
 
     @Test
@@ -133,6 +136,34 @@ class AmllTtmlFormatConverterTest {
                     "<span begin=\"0.0\" end=\"0.5\">ro</span>" +
                     "<span begin=\"0.5\" end=\"1.0\">ma</span>" +
                     "</text>",
+            ),
+        )
+    }
+
+    @Test
+    fun `a Japanese body names the root language and keeps the word slices`() {
+        // The reported メタモリボン shape: no root xml:lang, kana lyrics and a
+        // word-timed x-roman. The root must be `ja`, not the old hardcoded `ko`,
+        // and the migrated head entry must keep its per-word spans and timings.
+        val japanese = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="0.5">何</span><span begin="0.5" end="1.0">し</span>
+            <span ttm:role="x-roman"><span begin="0.0" end="0.5">nani</span><span begin="0.5" end="1.0">shi</span></span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(japanese)
+        val root = result.ttml.substringBefore('>')
+
+        assertTrue(root.contains("""xml:lang="ja""""))
+        assertTrue(
+            result.ttml.contains(
+                "<transliterations><transliteration xml:lang=\"ja-Latn\">" +
+                    "<text for=\"L1\"><span begin=\"0.0\" end=\"0.5\">nani</span>" +
+                    "<span begin=\"0.5\" end=\"1.0\">shi</span></text>" +
+                    "</transliteration></transliterations>",
             ),
         )
     }
@@ -456,7 +487,8 @@ class AmllTtmlFormatConverterTest {
             ),
         )
         assertFalse(result.ttml.substringAfter("<body").contains("x-translation"))
-        assertTrue(result.ttml.substringBefore('>').contains("""xml:lang="ko""""))
+        // No declared language and a Latin body: the neutral root tag.
+        assertTrue(result.ttml.substringBefore('>').contains("""xml:lang="und""""))
     }
 
     @Test
@@ -569,7 +601,7 @@ class AmllTtmlFormatConverterTest {
         assertFalse(result.ttml.contains("<iTunesMetadata"))
         assertFalse(result.ttml.contains("xmlns=\"\""))
         assertTrue(result.ttml.substringBefore('>').contains("""itunes:timing="Word""""))
-        assertTrue(result.ttml.substringBefore('>').contains("""xml:lang="ko""""))
+        assertTrue(result.ttml.substringBefore('>').contains("""xml:lang="und""""))
     }
 
     @Test
@@ -618,7 +650,7 @@ class AmllTtmlFormatConverterTest {
 
             assertFalse(result.ttml.contains("<iTunesMetadata"))
             assertTrue(result.ttml.startsWith("<tt "))
-            assertTrue(result.ttml.contains("""xml:lang="ko""""))
+            assertTrue(result.ttml.contains("""xml:lang="und""""))
         }
     }
 

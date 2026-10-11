@@ -71,17 +71,19 @@ data class TtmlFormatConversion(
  * line when it starts ahead of the first lyric syllable, because Apple places
  * the highlight in document order.
  *
- * The root is pinned rather than carried over. Android's TTML parser renders a
- * translation and a transliteration together only when the lyrics are Korean, so
- * the root is marked `ko` and translations `zh-Hans`; because only one track of
- * each kind survives that constraint, the first translation and first
- * romanization of each line win. The transliterations tag is not pinned: the lane
- * exists in the model only under the language the song's own romanization is
- * named by, so it follows the document's lyrics language (see above). The root
- * also gets the `itunes:timing` Apple expects — `Word` when the body carries
- * timed syllables, `Line` otherwise. AMLL's `xmlns=""` on `<metadata>` and
- * `<div>` goes too: it drops the lyric subtree out of the TTML namespace,
- * leaving Apple no lines.
+ * The root language is resolved per song, not pinned. The document's own
+ * `xml:lang`, else the caller's explicit language, names the **lyrics** language;
+ * only a document that names none falls back to the script the body is written
+ * in (kana → `ja`, Hangul → `ko`, Han → `zh`), and a body with no decisive script
+ * keeps the neutral `und`. The old hardcoded `ko` named a language the song was
+ * not in, so a Japanese document could advertise a Korean root beside its own
+ * `ja-Latn` lane. Translations keep `zh-Hans`; because only one track of each
+ * kind survives that constraint, the first translation and first romanization of
+ * each line win. The transliterations tag follows the same lyrics language (see
+ * above). The root also gets the `itunes:timing` Apple expects — `Word` when the
+ * body carries timed syllables, `Line` otherwise. AMLL's `xmlns=""` on
+ * `<metadata>` and `<div>` goes too: it drops the lyric subtree out of the TTML
+ * namespace, leaving Apple no lines.
  *
  * The rewrite is textual on purpose: whitespace between `<span>` tags carries
  * word separation, and a DOM round-trip would not preserve it. Only markup is
@@ -94,8 +96,6 @@ object AmllTtmlFormatConverter {
     private const val ROLE_ROMAN = "x-roman"
     private const val ROLE_BACKGROUND = "x-bg"
 
-    /** Pinned so Apple Music on Android renders both auxiliary tracks. */
-    private const val LYRIC_LANGUAGE = "ko"
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
 
     /** How Apple labels a translation meant to be shown under the lyric. */
@@ -144,11 +144,13 @@ object AmllTtmlFormatConverter {
         // unsupported (or no) language falls back to the script its lyrics are
         // written in, and only an undeterminable one keeps the neutral tag.
         val writtenLanguage = transliterationLanguage(ttml, lyricLanguage)
+        val rootLanguage = lyricsLanguage(ttml, lyricLanguage)
         val migrated = migrateAuxiliaryTracks(ttml, declared, writtenLanguage, unnamed)
         val body = nextElement(migrated, "body", 0)
         val result = normalizeTags(
             migrated,
             wordTimed = body != null && hasTimedSpan(migrated, body),
+            language = rootLanguage,
         )
         return TtmlFormatConversion(
             ttml = result,
@@ -175,6 +177,23 @@ object AmllTtmlFormatConverter {
     /** The root `<tt>`'s own `xml:lang`, which AMLL uses for the lyric language. */
     private fun documentLanguage(ttml: String): String? =
         nextElement(ttml, "tt", 0)?.let { attribute(it.attributes, LANGUAGE_ATTRIBUTE) }
+
+    /**
+     * The language the root `<tt xml:lang>` is written with: the caller's
+     * explicit language, else the document's own declaration, else the script the
+     * body is actually written in (kana → `ja`, Hangul → `ko`, Han → `zh`).
+     *
+     * The root names the **lyrics** language, not the transliteration tag, so a
+     * declared language is preserved even when it is outside HLE's romanization
+     * set (an English song still declares `en`). Only a document that names none
+     * and whose body has no decisive script falls back to the neutral `und` — the
+     * old hardcoded `ko` named a language the song was not in.
+     */
+    private fun lyricsLanguage(ttml: String, declared: String?): String {
+        val explicit = declared?.trim()?.takeIf(String::isNotEmpty)
+        val root = documentLanguage(ttml)?.trim()?.takeIf(String::isNotEmpty)
+        return explicit ?: root ?: inferredLyricsLanguage(ttml)
+    }
 
     /**
      * The language the **body's** lyric text is written in, from the first
@@ -525,7 +544,7 @@ object AmllTtmlFormatConverter {
      * Declares the timing mode and lyric language on the root and drops the
      * empty default namespace override from every other element.
      */
-    private fun normalizeTags(ttml: String, wordTimed: Boolean): String {
+    private fun normalizeTags(ttml: String, wordTimed: Boolean, language: String): String {
         val output = StringBuilder(ttml.length)
         var index = 0
         var rootSeen = false
@@ -552,7 +571,7 @@ object AmllTtmlFormatConverter {
                 when {
                     !rootSeen && isElement(ttml, open, "tt") -> {
                         rootSeen = true
-                        withRootAttributes(tag, wordTimed)
+                        withRootAttributes(tag, wordTimed, language)
                     }
                     tag.startsWith("</") -> tag
                     else -> EMPTY_DEFAULT_NAMESPACE.replace(tag, "")
@@ -563,10 +582,10 @@ object AmllTtmlFormatConverter {
         return output.toString()
     }
 
-    private fun withRootAttributes(tag: String, wordTimed: Boolean): String {
+    private fun withRootAttributes(tag: String, wordTimed: Boolean, language: String): String {
         val insertAt = if (tag.endsWith("/>")) tag.length - 2 else tag.length - 1
         // Both attributes are authoritative here, so any inherited value is
-        // dropped before the pinned one is appended.
+        // dropped before the resolved one is appended.
         var head = tag.substring(0, insertAt)
         head = LANGUAGE_ATTRIBUTE.replace(head, "")
         head = TIMING_ATTRIBUTE_VALUE.replace(head, "")
@@ -575,7 +594,7 @@ object AmllTtmlFormatConverter {
                 append(" xmlns:itunes=\"").append(ITUNES_NAMESPACE).append('"')
             }
             append(" itunes:timing=\"").append(if (wordTimed) "Word" else "Line").append('"')
-            append(" xml:lang=\"").append(LYRIC_LANGUAGE).append('"')
+            append(" xml:lang=\"").append(language).append('"')
         }
         return head.trimEnd() + additions + tag.substring(insertAt)
     }

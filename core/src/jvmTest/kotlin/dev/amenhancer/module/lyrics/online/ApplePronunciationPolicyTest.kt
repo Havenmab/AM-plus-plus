@@ -162,68 +162,117 @@ class ApplePronunciationPolicyTest {
     }
 
     @Test
-    fun `displaySegments weights East Asian words by character count`() {
-        // HLE's own example: 4 native words must carry 5 Cantonese syllables, so
-        // 潇洒 counts twice and the later syllables stay aligned.
+    fun `matches each Japanese word to its own timed transliteration span`() {
+        // 衣装に仕掛けてる, kanji words with a kana particle: the document times
+        // one span per lyric word, so every word carries its own romaji — never
+        // the whole line on the last word (the reported pile-up).
         assertEquals(
-            listOf("siu1 sa2", "dik1", "fong3", "pei3"),
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "siu1 sa2 dik1 fong3 pei3",
-                mainWordTexts = listOf("潇洒", "的", "放", "屁"),
+            listOf(
+                PronunciationWordMatch(wordIndex = 0, text = "ishou"),
+                PronunciationWordMatch(wordIndex = 1, text = "ni"),
+                PronunciationWordMatch(wordIndex = 2, text = "shikake"),
+                PronunciationWordMatch(wordIndex = 3, text = "teru"),
+            ),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(
+                    PronunciationWordTiming(1_000L, 1_500L),
+                    PronunciationWordTiming(1_500L, 1_700L),
+                    PronunciationWordTiming(1_700L, 2_300L),
+                    PronunciationWordTiming(2_300L, 2_800L),
+                ),
+                spans = listOf(
+                    NativePronunciationSpan(1_000L, 1_500L, "ishou"),
+                    NativePronunciationSpan(1_500L, 1_700L, "ni"),
+                    NativePronunciationSpan(1_700L, 2_300L, "shikake"),
+                    NativePronunciationSpan(2_300L, 2_800L, "teru"),
+                ),
             ),
         )
     }
 
     @Test
-    fun `displaySegments gives non-East-Asian words one unit each`() {
+    fun `concatenates several finer spans owned by one word`() {
+        // The document may time the romanization finer than the lyric words: the
+        // word owns both slices and shows them together, in document order.
         assertEquals(
-            listOf("hello", "world"),
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "hello world",
-                mainWordTexts = listOf("hello", "world"),
-            ),
-        )
-        assertEquals(
-            listOf("ab", "cd"),
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "ab cd",
-                mainWordTexts = listOf("ab", "cd"),
-            ),
-        )
-    }
-
-    @Test
-    fun `displaySegments strips HTML before counting and falls back when unmeasurable`() {
-        assertEquals(
-            listOf("a", "b", "c"),
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "a b c",
-                mainWordTexts = listOf("<b>潇</b>", "洒", "的"),
-            ),
-        )
-        // No word carries a letter or digit: every word gets one unit, which
-        // distributes the tokens as evenly as HLE can.
-        assertEquals(
-            listOf("a", "b"),
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "a b",
-                mainWordTexts = listOf("—", "·"),
+            listOf(PronunciationWordMatch(wordIndex = 0, text = "roma")),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(PronunciationWordTiming(0L, 1_000L)),
+                spans = listOf(
+                    NativePronunciationSpan(0L, 500L, "ro"),
+                    NativePronunciationSpan(500L, 1_000L, "ma"),
+                ),
             ),
         )
     }
 
     @Test
-    fun `displaySegments is empty when there is nothing to align`() {
+    fun `a span that crosses a word boundary is never duplicated`() {
+        // A line- or group-level span belongs to no single word: it is dropped,
+        // so a whole-line string can neither pile onto one word nor repeat on all.
+        assertEquals(
+            emptyList<PronunciationWordMatch>(),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(
+                    PronunciationWordTiming(1_000L, 1_500L),
+                    PronunciationWordTiming(1_500L, 2_000L),
+                ),
+                spans = listOf(NativePronunciationSpan(1_000L, 2_000L, "ishouni")),
+            ),
+        )
+    }
+
+    @Test
+    fun `an unmatched word keeps its own text and is absent from the result`() {
+        // Only the particle has a span; its neighbours must not borrow it.
+        assertEquals(
+            listOf(PronunciationWordMatch(wordIndex = 1, text = "ni")),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(
+                    PronunciationWordTiming(1_000L, 1_500L),
+                    PronunciationWordTiming(1_500L, 1_700L),
+                    PronunciationWordTiming(1_700L, 2_300L),
+                ),
+                spans = listOf(NativePronunciationSpan(1_500L, 1_700L, "ni")),
+            ),
+        )
+    }
+
+    @Test
+    fun `a full-width leading space is normalized away`() {
+        // U+3000 survives `String.trim` and `\s`; the span text must still reach
+        // the word with no stray edge space (the reported 糸一つほどけば case).
+        assertEquals(
+            listOf(PronunciationWordMatch(wordIndex = 0, text = "itohitotsu")),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(PronunciationWordTiming(1_000L, 2_000L)),
+                spans = listOf(
+                    NativePronunciationSpan(1_000L, 2_000L, "\u3000itohitotsu\u3000"),
+                ),
+            ),
+        )
+        // A span with nothing but spaces (NBSP included) matches no word.
+        assertEquals(
+            emptyList<PronunciationWordMatch>(),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(PronunciationWordTiming(1_000L, 2_000L)),
+                spans = listOf(NativePronunciationSpan(1_000L, 2_000L, " \u00A0 ")),
+            ),
+        )
+    }
+
+    @Test
+    fun `there is nothing to match without words or spans`() {
         assertTrue(
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "a b",
-                mainWordTexts = emptyList(),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = emptyList(),
+                spans = listOf(NativePronunciationSpan(0L, 1_000L, "a")),
             ).isEmpty(),
         )
         assertTrue(
-            ApplePronunciationPolicy.displaySegments(
-                pronunciation = "   ",
-                mainWordTexts = listOf("潇洒"),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                words = listOf(PronunciationWordTiming(0L, 1_000L)),
+                spans = emptyList(),
             ).isEmpty(),
         )
     }

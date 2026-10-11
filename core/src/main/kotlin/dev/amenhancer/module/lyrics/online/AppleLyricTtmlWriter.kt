@@ -16,6 +16,13 @@ data class AppleTtmlLine(
     val translation: String? = null,
     val backgroundTranslation: String? = null,
     val romanization: String? = null,
+    /**
+     * The line's timed romanization slices: the `<span begin end>` children of
+     * the head `<text for>` entry, in document order. A Word-timed document
+     * carries one per lyric word; [romanization] is their concatenation, kept for
+     * the line-lane fallback only.
+     */
+    val romanizationSpans: List<AppleTtmlWord> = emptyList(),
 )
 
 /**

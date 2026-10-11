@@ -366,11 +366,13 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
-        // The HLE policy decides the track and aligns the romanization. The host
+        // The HLE policy decides the track and matches the displayed document's
+        // own timed transliteration spans to each native word by time. The host
         // now calls the Apple-first planner (which itself calls `wordTrack`), so
         // Apple's own word vector wins even when Apple left the line text empty.
         assertTrue(hooks.contains("ApplePronunciationPolicy.planPronunciationWords("))
-        assertTrue(hooks.contains("ApplePronunciationPolicy.displaySegments("))
+        assertTrue(hooks.contains("ApplePronunciationPolicy.matchPronunciationSpans("))
+        assertFalse(hooks.contains("ApplePronunciationPolicy.displaySegments("))
         // The render plan is consumed by the app's own word-render adapter, and
         // the vector type comes from the profile, never a guessed signature.
         assertTrue(hooks.contains("LYRICS_WORD_RENDER_ADAPTER"))
@@ -379,10 +381,13 @@ class AppleMusic700NativeLyricsProfileTest {
         // No synthesized native word: the adapter dereferences the parent line.
         assertFalse(hooks.contains("LyricsWordPtr"))
         assertFalse(hooks.contains("pushBack("))
-        // The next device log must prove the app asks for word-level data.
+        // The next device log must prove the app asks for word-level data and
+        // that the per-word spans landed one-to-one.
         assertTrue(hooks.contains("online-translation pronunciation-words"))
         assertTrue(hooks.contains("track=\${track.name}"))
         assertTrue(hooks.contains("words=\${vectorSize(resolved)}"))
+        assertTrue(hooks.contains("online-translation pronunciation-word-spans"))
+        assertTrue(hooks.contains("spans=\${spans.size} matched=\${matches.size}"))
     }
 
     @Test

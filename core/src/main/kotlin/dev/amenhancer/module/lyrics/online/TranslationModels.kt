@@ -43,6 +43,18 @@ class LyricMetadata(private val backing: Map<String, String?> = emptyMap()) :
 fun lyricMetadataOf(vararg entries: Pair<String, String?>): LyricMetadata =
     LyricMetadata(linkedMapOf(*entries))
 
+/**
+ * One timed romanization slice of a displayed document's transliteration lane:
+ * the text of a head `<transliteration>` entry's `<span begin end>` (an AMLL
+ * inline `x-roman` span the converter migrated verbatim). A Word-timed song's
+ * romanization lives here, one span per lyric word — never as one line string.
+ */
+data class NativePronunciationSpan(
+    val begin: Long,
+    val end: Long,
+    val text: String,
+)
+
 /** The song's own (Apple) line, before/after online enrichment. */
 data class NativeLyricLine(
     val begin: Long = 0L,
@@ -52,6 +64,12 @@ data class NativeLyricLine(
     val translation: String? = null,
     val translationWords: List<LyricsWord>? = null,
     val roma: String? = null,
+    /**
+     * The line's own timed romanization slices, when the source document carries
+     * them. [roma] remains the line-level concatenation for the line-lane
+     * fallback; this is the per-word lane the word getter matches against.
+     */
+    val romaSpans: List<NativePronunciationSpan> = emptyList(),
     val isAlignedRight: Boolean = false,
     val metadata: LyricMetadata? = null,
 )

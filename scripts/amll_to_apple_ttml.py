@@ -41,8 +41,8 @@ ROLE_TRANSLATION = "x-translation"
 ROLE_ROMAN = "x-roman"
 ROLE_BACKGROUND = "x-bg"
 
-# Pinned so Apple Music on Android renders both auxiliary tracks.
-LYRIC_LANGUAGE = "ko"
+# Translations keep Apple's subtitle language; the root lyrics language is
+# resolved per song (see ``lyrics_language``), never pinned.
 TRANSLATION_LANGUAGE = "zh-Hans"
 
 # The <transliteration> tag kept when no lyrics language can be determined.
@@ -303,11 +303,13 @@ def to_apple_format(ttml: str, lyric_language: str | None = None) -> TtmlFormatC
         # Apple's own document and nothing, the root included, is rewritten.
         return TtmlFormatConversion(ttml, False)
     written_language = transliteration_language(ttml, lyric_language)
+    root_language = lyrics_language(ttml, lyric_language)
     migrated = migrate_auxiliary_tracks(ttml, declared, written_language, unnamed)
     body = next_element(migrated, "body", 0)
     result = normalize_tags(
         migrated,
         word_timed=body is not None and has_timed_span(migrated, body),
+        language=root_language,
     )
     return TtmlFormatConversion(result, result != ttml)
 
@@ -365,6 +367,25 @@ def transliteration_language_tag(lyrics_language: str | None) -> str:
 def document_language(ttml: str) -> str | None:
     root = next_element(ttml, "tt", 0)
     return None if root is None else attribute(root.attributes, LANGUAGE_ATTRIBUTE)
+
+
+def lyrics_language(ttml: str, declared: str | None = None) -> str:
+    """
+    The language the root ``<tt xml:lang>`` is written with: the caller's explicit
+    language, else the document's own declaration, else the script the body is
+    actually written in. The root names the **lyrics** language, not the
+    transliteration tag, so a declared language is preserved even outside HLE's
+    romanization set; only a document that names none and whose body has no
+    decisive script keeps the neutral ``und`` (the old hardcoded ``ko`` named a
+    language the song was not in).
+    """
+    explicit = (declared or "").strip()
+    if explicit:
+        return explicit
+    root = (document_language(ttml) or "").strip()
+    if root:
+        return root
+    return inferred_lyrics_language(ttml)
 
 
 def inferred_lyrics_language(ttml: str) -> str:
@@ -693,10 +714,10 @@ def removal(ttml: str, element: Element, lower_bound: int) -> Edit:
 # --- Root / tag normalization -----------------------------------------
 
 
-def normalize_tags(ttml: str, word_timed: bool) -> str:
+def normalize_tags(ttml: str, word_timed: bool, language: str) -> str:
     """
-    Declares the timing mode and lyric language on the root and drops the
-    empty default namespace override from every other element.
+    Declares the timing mode and resolved lyric language on the root and drops
+    the empty default namespace override from every other element.
     """
     output: list[str] = []
     index = 0
@@ -719,7 +740,7 @@ def normalize_tags(ttml: str, word_timed: bool) -> str:
         tag = ttml[open_ : end + 1]
         if not root_seen and is_element(ttml, open_, "tt"):
             root_seen = True
-            output.append(with_root_attributes(tag, word_timed))
+            output.append(with_root_attributes(tag, word_timed, language))
         elif tag.startswith("</"):
             output.append(tag)
         else:
@@ -728,10 +749,10 @@ def normalize_tags(ttml: str, word_timed: bool) -> str:
     return "".join(output)
 
 
-def with_root_attributes(tag: str, word_timed: bool) -> str:
+def with_root_attributes(tag: str, word_timed: bool, language: str) -> str:
     insert_at = len(tag) - 2 if tag.endswith("/>") else len(tag) - 1
     # Both attributes are authoritative here, so any inherited value is
-    # dropped before the pinned one is appended.
+    # dropped before the resolved one is appended.
     head = tag[:insert_at]
     head = LANGUAGE_ATTRIBUTE.sub("", head)
     head = TIMING_ATTRIBUTE_VALUE.sub("", head)
@@ -739,7 +760,7 @@ def with_root_attributes(tag: str, word_timed: bool) -> str:
     if not ITUNES_DECLARATION.search(head):
         additions.append(f' xmlns:itunes="{ITUNES_NAMESPACE}"')
     additions.append(f' itunes:timing="{"Word" if word_timed else "Line"}"')
-    additions.append(f' xml:lang="{LYRIC_LANGUAGE}"')
+    additions.append(f' xml:lang="{language}"')
     return head.rstrip() + "".join(additions) + tag[insert_at:]
 
 
@@ -937,7 +958,7 @@ def _selftest() -> int:
         assert '<span begin="00:01.000" end="00:01.500">aa</span>' in body
         root = result.ttml.split(">", 1)[0]
         assert 'itunes:timing="Word"' in root
-        assert 'xml:lang="ko"' in root
+        assert 'xml:lang="und"' in root
         assert 'xmlns=""' not in result.ttml
         assert "</span> <span begin=\"00:01.500\"" in result.ttml
         return True
@@ -957,7 +978,7 @@ def _selftest() -> int:
         )
         root = to_apple_format(line_timed).ttml.split(">", 1)[0]
         assert 'itunes:timing="Line"' in root
-        assert 'xml:lang="ko"' in root
+        assert 'xml:lang="und"' in root
         return True
 
     checks.append(("no timed spans means line timing", check_line_timed))
@@ -977,10 +998,37 @@ def _selftest() -> int:
         assert root.count("itunes:timing") == 1
         assert root.count("xml:lang") == 1
         assert 'itunes:timing="Word"' in root
-        assert 'xml:lang="ko"' in root
+        assert 'xml:lang="ja"' in root
         return True
 
-    checks.append(("pinned root attributes replace inherited ones", check_declared_replaced_not_duplicated))
+    checks.append(("root attributes replace inherited ones with the resolved language", check_declared_replaced_not_duplicated))
+
+    def check_japanese_root_language() -> bool:
+        # The reported メタモリボン shape: no root xml:lang, kana lyrics and a
+        # word-timed x-roman. The root must be `ja`, not the old hardcoded `ko`,
+        # and the head entry must keep its per-word spans.
+        japanese = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="0.5">何</span><span begin="0.5" end="1.0">し</span>
+            <span ttm:role="x-roman"><span begin="0.0" end="0.5">nani</span><span begin="0.5" end="1.0">shi</span></span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(japanese)
+        root = result.ttml.split(">", 1)[0]
+        assert 'xml:lang="ja"' in root
+        assert (
+            '<transliterations><transliteration xml:lang="ja-Latn">'
+            '<text for="L1"><span begin="0.0" end="0.5">nani</span>'
+            '<span begin="0.5" end="1.0">shi</span></text>'
+            "</transliteration></transliterations>" in result.ttml
+        )
+        return True
+
+    checks.append(("a Japanese body names the root language and keeps the word slices", check_japanese_root_language))
 
     def check_gapped_placeholder() -> bool:
         gapped = textwrap.dedent(
@@ -1213,7 +1261,7 @@ def _selftest() -> int:
         assert 'xmlns=""' not in result.ttml
         root = result.ttml.split(">", 1)[0]
         assert 'itunes:timing="Word"' in root
-        assert 'xml:lang="ko"' in root
+        assert 'xml:lang="und"' in root
         return True
 
     checks.append(("plain document still gets the root attributes", check_plain_root))
@@ -1298,7 +1346,7 @@ def _selftest() -> int:
             result = to_apple_format(malformed)
             assert "<iTunesMetadata" not in result.ttml
             assert result.ttml.startswith("<tt ")
-            assert 'xml:lang="ko"' in result.ttml
+            assert 'xml:lang="und"' in result.ttml
         return True
 
     checks.append(("malformed and empty input never throws", check_malformed_never_throws))

@@ -45,6 +45,7 @@ object AppleLyricTtmlReader {
     fun read(ttml: String): List<AppleTtmlLine> = runCatching {
         val translations = lane(ttml, translationsBlock)
         val transliterations = lane(ttml, transliterationsBlock)
+        val transliterationSpans = laneSpans(ttml)
         paragraph.findAll(ttml).mapIndexed { index, match ->
             val attributes = match.groupValues[1]
             val inner = match.groupValues[2]
@@ -65,6 +66,7 @@ object AppleLyricTtmlReader {
                 words = words,
                 translation = translations[key],
                 romanization = transliterations[key],
+                romanizationSpans = transliterationSpans[key].orEmpty(),
             )
         }.toList()
     }.getOrDefault(emptyList())
@@ -113,7 +115,10 @@ object AppleLyricTtmlReader {
     fun inlineRomanizationSpans(ttml: String): Int =
         inlineRomanSpan.findAll(ttml).count()
 
-    private fun words(inner: String): List<AppleTtmlWord> = timedSpan.findAll(inner)
+    private fun words(inner: String): List<AppleTtmlWord> = timedSpans(inner)
+
+    /** The timed `<span begin end>` slices of one fragment, in document order. */
+    private fun timedSpans(inner: String): List<AppleTtmlWord> = timedSpan.findAll(inner)
         .mapNotNull { span ->
             val attributes = span.groupValues[1]
             val begin = clockMs(beginAttribute.findAttribute(attributes))
@@ -137,6 +142,27 @@ object AppleLyricTtmlReader {
                 ?: return@forEach
             val text = textOf(element.groupValues[2])
             if (text.isNotEmpty()) entries.putIfAbsent(key, text)
+        }
+        return entries
+    }
+
+    /**
+     * Maps `itunes:key` to the **timed slices** of its head `<transliteration>`
+     * `<text for>` entry. A Word-timed document carries one `<span begin end>`
+     * per lyric word, so this is the per-word romanization the word getter
+     * matches against; an entry whose text is one untimed line yields no slices
+     * and keeps only the [lane] concatenation for the line-lane fallback.
+     */
+    private fun laneSpans(ttml: String): Map<String, List<AppleTtmlWord>> {
+        val content = transliterationsBlock.find(ttml)?.groupValues?.get(1)
+            ?: return emptyMap()
+        val entries = LinkedHashMap<String, List<AppleTtmlWord>>()
+        textElement.findAll(content).forEach { element ->
+            val key = forAttribute.findAttribute(element.groupValues[1])
+                ?.takeIf(String::isNotBlank)
+                ?: return@forEach
+            val spans = timedSpans(element.groupValues[2])
+            if (spans.isNotEmpty()) entries.putIfAbsent(key, spans)
         }
         return entries
     }

@@ -99,6 +99,34 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `a published document keeps its per-word transliteration spans`() {
+        val store = NativeLyricOverlayStore()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="1.0" end="1.5">ishou</span><span begin="1.5" end="1.7">ni</span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="1.0" end="1.7" itunes:key="L1"><span begin="1.0" end="1.5">衣装</span><span begin="1.5" end="1.7">に</span></p></div></body></tt>
+        """.trimIndent()
+
+        assertTrue(store.publishDisplayed(songId = 77L, ttml = ttml))
+        // The line-lane fallback keeps the concatenation...
+        assertEquals("ishouni", store.pronunciation("77", 1_000L, 1_700L, "衣装に"))
+        // ...while the word getter matches the document's own timed slices.
+        assertEquals(
+            listOf(
+                NativePronunciationSpan(1_000L, 1_500L, "ishou"),
+                NativePronunciationSpan(1_500L, 1_700L, "ni"),
+            ),
+            store.pronunciationSpans("77", 1_000L, 1_700L, "衣装に"),
+        )
+        // A line-level document yields no word-level slices.
+        assertTrue(
+            store.pronunciationSpans("77", 3_000L, 4_000L, "君の名は").isEmpty(),
+        )
+    }
+
+    @Test
     fun `a timing with a single entry still answers when Apple re-normalizes the text`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

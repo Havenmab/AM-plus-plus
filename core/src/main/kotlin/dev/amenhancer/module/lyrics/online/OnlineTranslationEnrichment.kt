@@ -215,6 +215,9 @@ object OnlineTranslationEnrichment {
         text = line.text,
         translation = line.translation,
         roma = line.romanization,
+        romaSpans = line.romanizationSpans.map { span ->
+            NativePronunciationSpan(begin = span.begin, end = span.end, text = span.text)
+        },
     )
 
     /** Turns one candidate into a selector entry, or null when it adds no translation. */

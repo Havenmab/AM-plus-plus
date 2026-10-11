@@ -32,7 +32,16 @@ class NativeLyricOverlayStore {
     private data class LineKey(val timing: TimingKey, val text: String)
 
     /** The lanes stored for one line. */
-    data class Content(val translation: String?, val pronunciation: String? = null)
+    data class Content(
+        val translation: String?,
+        val pronunciation: String? = null,
+        /**
+         * The line's own timed romanization slices. A Word-timed document's
+         * pronunciation is these spans, one per lyric word — [pronunciation] is
+         * only their concatenation for the line-lane fallback.
+         */
+        val pronunciationSpans: List<NativePronunciationSpan> = emptyList(),
+    )
 
     private data class Entry(val text: String, val content: Content)
 
@@ -73,8 +82,13 @@ class NativeLyricOverlayStore {
             val content = Content(
                 translation = OnlineTranslationContentPolicy.sanitize(line.translation),
                 pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
+                pronunciationSpans = line.romaSpans.filter { it.text.isNotBlank() },
             )
-            if (content.translation == null && content.pronunciation == null) {
+            if (
+                content.translation == null &&
+                content.pronunciation == null &&
+                content.pronunciationSpans.isEmpty()
+            ) {
                 return@mapNotNull null
             }
             LineKey(TimingKey(line.begin, line.end), normalizeText(line.text)) to content
@@ -89,7 +103,9 @@ class NativeLyricOverlayStore {
             ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
-            hasPronunciation = entries.any { it.second.pronunciation != null },
+            hasPronunciation = entries.any {
+                it.second.pronunciation != null || it.second.pronunciationSpans.isNotEmpty()
+            },
             pronunciationSource = pronunciationSource,
         )
         if (overlay == next) return false
@@ -155,6 +171,19 @@ class NativeLyricOverlayStore {
     fun pronunciation(songId: String?, begin: Long, end: Long, text: String?): String? =
         content(songId, begin, end, text)?.pronunciation
 
+    /**
+     * The line's own timed romanization slices for [begin]/[end]/[text]. The word
+     * getter matches each main word against these by time; an empty list means the
+     * line has no word-level lane (only [pronunciation], the line-lane fallback).
+     */
+    fun pronunciationSpans(
+        songId: String?,
+        begin: Long,
+        end: Long,
+        text: String?,
+    ): List<NativePronunciationSpan> =
+        content(songId, begin, end, text)?.pronunciationSpans.orEmpty()
+
     private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? {
         val current = overlay ?: return null
         if (songId.isNullOrBlank() || current.songId != songId) return null
@@ -201,6 +230,13 @@ object DisplayedLyricPublication {
                 text = line.text,
                 translation = line.translation,
                 roma = line.romanization,
+                romaSpans = line.romanizationSpans.map { span ->
+                    NativePronunciationSpan(
+                        begin = span.begin,
+                        end = span.end,
+                        text = span.text,
+                    )
+                },
             )
         }
 }

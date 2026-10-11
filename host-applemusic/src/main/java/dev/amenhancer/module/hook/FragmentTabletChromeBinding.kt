@@ -34,13 +34,9 @@ internal class FragmentTabletChromeBinding(
     private var writing = false
     private var navigationReady = false
     private var miniReady = false
-    private val behaviorNames = contract.names.getJSONObject("phone").getJSONObject("behavior")
-    private val peekField = FragmentChromeContract.field(contract.playerBehavior.type,
-        behaviorNames.getString("peekField"), java.lang.Integer.TYPE)
-    private val autoPeekField = FragmentChromeContract.field(contract.playerBehavior.type,
-        behaviorNames.getString("autoPeekField"), java.lang.Boolean.TYPE)
-    private val writePeek = FragmentChromeContract.method(contract.playerBehavior.type,
-        behaviorNames.getString("peekMethod"), java.lang.Integer.TYPE, java.lang.Boolean.TYPE)
+    private val peekField = contract.peek
+    private val autoPeekField = contract.autoPeek
+    private val writePeek = contract.writePeek
     private val nativeGapId = root.resources.getIdentifier(
         contract.names.getJSONObject("tablet").getString("miniBottomGapDimension"), "dimen", root.context.packageName,
     ).also { check(it != 0) { "Native tablet mini bottom spacing missing" } }

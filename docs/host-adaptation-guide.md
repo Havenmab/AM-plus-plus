@@ -2,6 +2,8 @@
 
 版本资料集中在 `host-applemusic/src/main/resources/host-profiles/`。每个精确包名/版本名/版本号只有一份 JSON；`index.json` 控制旧引擎的候选顺序。生产入口、玻璃资格、蜂窝资格、静态脚本都读取这里。`host-applemusic/src/test/resources/baseline/` 是 97c4b69 导出的冻结快照，不随普通重构更新。
 
+新版本逐项填写 [宿主版本适配清单](host-adaptation-checklist.md)，覆盖附属运行依赖、布局/包含资源和数据绑定。成员匹配、构建与真机验收分别记录。
+
 ## 模块边界
 
 | 模块 | 内容 | 禁止依赖 |
@@ -19,7 +21,7 @@
 
 ## 普通混淆变化
 
-1. 先保存实际安装包 SHA-256、二进制 Manifest、全部 DEX/split 和资源证据，区分“类仍存在”和“实际活跃路径”。
+1. 先保存实际安装包来源、二进制 Manifest、全部 DEX/split 和资源证据，区分“类仍存在”和“实际活跃路径”。包哈希仅在用户要求时计算。
 2. 新建精确 tuple JSON，填写 `indexed`、`hookTargets`、运行时成员、资源、能力、页面族和 `verification`。完整描述符优先于只记录名字。
 3. 新 profile 默认 `ambiguityPolicy=reject-ambiguous`，不得复制旧 `legacyFirstMatchExceptions`。契约和回退实现留在 Kotlin，数据不能执行代码。
 4. `productionEnabled` 保持 false，先给新 tuple 增加解析、错误签名、歧义、继承、缓存重校验和类加载器测试。
@@ -34,16 +36,29 @@
 
 `HostViewSessionController` 关闭旧会话后才发布新会话；旧 owner 的延迟 destroy 不能关闭新 owner。`OwnedHostProperty` 只恢复模块仍拥有的最后写入；原生暂停封面 scale、后续 alpha/translation 写入保留。旧 SONG/QUEUE 语义维持，不以新导航替换播放器状态。
 
-7.0.0-beta/1606 已新增精确生产 profile，为用户测试启用；历史 research 夹具继续留在测试目录。工厂按 `fragment-content` 分派 settings2、双栏与 Fragment 玻璃。新平板使用顶部导航和独立底部 mini 的原生边界，抽屉保留原生交互；玻璃不依赖双栏开关。新布局和渐变字段只从当前 tuple 读取。700 适配过程记录已从当前目录移除，可从 Git 历史查阅；真机验收仍需逐项确认。正式版和其他 beta 必须重新取证。此前实验 APK 没有整体合并。
+工厂按当前精确 profile 的 `fragment-content` 页面族分派 settings2、双栏与 Fragment 玻璃。平板使用顶部导航和独立底部 mini 的原生边界，抽屉保留原生交互；玻璃不依赖双栏开关。布局和渐变字段只从当前 tuple 读取。历史 research 夹具继续留在测试目录；正式版和其他 beta 必须独立取证，不能自动沿用相邻版本资格。运行时验收按 [功能保全矩阵](feature-preservation.md) 记录，静态匹配与构建成功不能代替真机通过。
 
-## 1606 平板双栏与媒体组件
+`FragmentDualPaneContract` 从当前 profile 的 `fragmentDualPane` 缓存播放器、Fragment 事务、封面和歌词可用性成员；`FragmentLyricsRuntimeContract` 从 `fragmentLyricsRuntime` 缓存 binding、度量和行监听的注册/清理成员。`FragmentChromeContract` 从 `fragmentChrome.members` 解析导航、BottomSheet、进度、生命周期和 mini 启动的完整描述符，`FragmentChromeInventory` 要求必需角色齐全，并检查返回值/参数/接收者是否符合调用语义。mini 显示方法的实例或静态调用形式由准确成员描述符决定。旧标量别名为兼容保留，运行时成员以 `members` 为准。旧版本 indexed/HLE 映射和候选顺序保持不变。
+
+双栏先经 `FragmentDualPanePreflight` 解析代码维护的 `FragmentDualPaneInventory` 全部必需角色，包括视频listener/浏览器/尺寸字段、karaoke holder/binding、歌词生命周期及可选歌曲栏布局。`FragmentProfileMembers` 一次缓存全部声明的完整描述符和构造器，汇总组/角色错误；预检完成后才注册Hook，部分注册失败仍关闭作用域。`verify-host-profile.py` 的离线覆盖也包含这些辅助契约。
+
+歌曲栏适配分为 `FragmentTabletSongLayoutContract`（只读成员及资源）、`FragmentTabletSongLayoutRuntime`（Hook和活动绑定）、`FragmentTabletSongLayoutSession`（视图与属性生命周期）。使用 `OwnedHostProperty` 恢复属性，Barrier数组转为值相等的List参与所有权判断；使用 `HostViewSessionController` 按视图和配置替换会话。`songLayoutPolicy` 及六项 `layoutReview` 必须显式填写：采用原生布局或保留既有列布局关系的决定以实际布局和数据绑定对照为依据，并保持原生播放/暂停缩放和视频策略。
+
+## 平板双栏与媒体组件
 
 当前实现入口为 `FragmentTabletDualPaneCoordinator` / `FragmentTabletDualPaneSession`，媒体组件位于 `hook/tabletmedia/`。门禁仍是精确宿主 tuple、双栏设置开启、`screenWidthDp >= 600`、横屏及原生 `useNavigationDrawer`；不要把这些改动直接推广到其他版本或手机。
 
 ### 最终布局规则
 
-- SONG/QUEUE 控制区使用原布局参数的 `matchConstraintPercentHeight = 0.25f`。这是容器内比例，不是整屏高度；保留原生 metadata 缩进、字体、播放图标尺寸、padding 和封面尺寸。混淆 `androidx.constraintlayout.widget.ConstraintLayout$b` 的高度比例字段为 `S`，guideline begin 为 `a`；修改和恢复原 params，不用通用构造器复制，避免丢失原生约束。
-- 原生底部歌词、队列、输出动作设为 `INVISIBLE`，保留布局尺寸并关闭点击，取消待处理输入、清除按压及水波纹状态；原本 `GONE` 的装饰保持 `GONE`，退出双栏恢复原生可见性。不能只用透明度隐藏，否则音量条下方仍可能触发原生输出按钮的按压反馈。音量条占用原 footer，连同两端图标，总宽度对齐原生进度条的内容边界；优先移动音量行或把空白触摸高度从 44dp 压到 24dp，保留 24dp 图标。音量条触摸区域与播放/进度控件仍保留 4dp 净间距；可用宽度不超过 80dp 或高度不足 24dp 时音量条无法放入。
+- SONG/QUEUE 控制区使用原布局参数的 `matchConstraintPercentHeight = 0.25f`。这是容器内比例，不是整屏高度；保留原生字体、播放图标尺寸、padding 和封面缩放。混淆 `androidx.constraintlayout.widget.ConstraintLayout$b` 的高度比例字段为 `S`，guideline begin 为 `a`；修改和恢复原 params，不用通用构造器复制，避免丢失原生约束。
+- 左侧 SONG/QUEUE 分区占播放器宽度 45%，右侧歌词分区占 55%；两栏留白在各自分区内扣除。Activity 的分隔 guideline 和 Fragment 的左右容器共用 `TabletDualPaneLayoutPolicy` 比例；Fragment 关闭歌词按当前进度条实际内容范围移至整屏中央，不把不对称的 host 矩形或分隔线当成居中目标。
+- 双栏标题行和进度条左侧总留白为 55dp，右侧到分隔线为 7dp。当前歌词行文字起点距分隔线 48dp（右栏 16dp、行 margin 20dp、文字 padding 12dp），因此控件右边界到歌词文字的布局间距为 55dp；高亮缩放和字形可影响可见像素。Activity 和 Fragment 共用 `TabletDualPaneLayoutPolicy`：外层 song host 左 23dp/右 0dp，内部左 32dp/右 7dp。`TabletSongContentInsets` 以视图会话拥有原生 metadata end guideline、末端图标 padding 和进度条容器的 end padding，在原生绑定后重应用并在退出时恢复；不要把容器的 32dp 留白再次加到 seekbar 子控件上。
+- 静态封面的基准正方形边长跟随进度条实际内容宽度，水平中心跟随该内容范围。封面和整个音量控件共用 `TabletProgressContent` 选择原生 progress、读取两侧 padding；`TabletArtworkLayoutPolicy.forProgress` 将边长限制为“实际进度宽度和封面上方可用高度的较小值”。窗口、布局和原生 padding 改变后重新计算，不再缓存首次宽度；上方高度不足时封面小于进度条并居中。`TabletArtworkLayoutLease` 使用 `OwnedHostProperty` 只恢复模块仍拥有的尺寸、边距、水平/纵向约束及比例，不覆盖其他原生参数。
+- 原生播放按钮默认按整个 `player_controls` 居中；不对称留白会让它与进度条、无损标识及封面错开。`TabletSongContentInsets` 将 `play_pause` 的 start/end margin 对齐实际进度条内容边界，上一首/下一首继续通过原生约束跟随播放按钮；整个点击区域和水波纹随布局移动，原生图标尺寸、间距及垂直位置保持。SONG/QUEUE 和普通/直播进度区域均按当前内容计算，退出时只恢复模块仍拥有的水平边距。无损/杜比/卡拉 OK 标识继续使用原生进度条容器的居中约束。
+- Fragment 封面会话通过预检缓存的 `videoMode` / `sizeAnimation` 判断 native 视频或尺寸动画；视频接管时释放模块几何，尺寸动画期间暂缓调整。SONG/QUEUE 切换和 sheet 拖动期间保留原生过渡；不写封面 scale，因此暂停或拖动进度时可见封面仍按原生比例缩小。旧 Activity 接入沿用其原生视频表面及居中路径，使用同一宽度和高度策略。
+- 绘制前修正封面布局参数时，当前帧已完成测量。Fragment 和旧 Activity 的封面接入只有在模块拥有的尺寸/边距/约束实际改变时请求新布局并延后该帧，避免切歌或元数据更新先画出旧位置/大小、下一帧才恢复。几何稳定后正常绘制；原生尺寸动画、视频和队列过渡仍使用各自的接管规则。此时序修正需要通过快速切歌、不同元数据高度、暂停/播放及视频切换分别验收。
+- 不对称留白需要覆盖原生数据绑定的重新写入。Fragment 的 `executeBinding`／`bindingRoot` 是当前 profile 的必需成员（已取证的 `ViewDataBinding.m()V`／`d:View`），安装时缓存，绑定完成后只处理当前左播放器子树。末端 padding 和播放按钮 margin 在测量前统一恢复到模块值；按钮居中读取容器即将生效的内容范围，不能继续拿尚未重测的 progress 子控件宽度。绘制前若组件几何仍有变化，先完成新布局；已有音量与代理按钮在普通重新布局期间保留上次有效位置，不因 `isLayoutRequested` 隐藏一帧。只延后绘制无法替代这条绑定接入。
+- 原生底部歌词、队列、输出动作设为 `INVISIBLE`，保留布局尺寸并关闭点击，取消待处理输入、清除按压及水波纹状态；原本 `GONE` 的装饰保持 `GONE`，退出双栏恢复原生可见性。不能只用透明度隐藏，否则音量条下方仍可能触发原生输出按钮的按压反馈。音量条占用原 footer，连同两端图标，总宽度对齐原生进度条的内容边界；内部可见轨道保留每侧 40dp 的图标空间。优先移动音量行或把空白触摸高度从 44dp 压到 24dp，保留 24dp 图标。音量条触摸区域与播放/进度控件仍保留 4dp 净间距；可用宽度不超过 80dp 或高度不足 24dp 时音量条无法放入。
 - 不添加左下角输出按钮；原生输出动作继续隐藏。音量正常中心保持比原 footer 中心高 6dp，删除输出按钮不调整音量及其他组件的位置。
 - 右下歌词/队列代理使用原生 drawable、selector、tint 和状态样式，44dp 点击区域、8dp 间隔、底部 12dp。队列点击/长按交回原生控件；歌词点击执行双栏展开/关闭。翻译按钮保留原生；不新增随机/循环按钮。原生三颗播放图标保持默认大小，仅将水波纹半径设为图标最大半径外加 8dp，并使用白色 20% 不透明度；关闭组件恢复原 drawable。
 - 原生 pane `onViewCreated` 就准备比例、图标和隐藏 footer；每次 update 在切页快速返回之前再次隐藏所有保留 pane 的 footer，避免首次打开延后生效或 SONG/QUEUE 交叉淡入时闪出旧按钮。歌词渐变视口不额外预留底部按钮高度。
@@ -52,16 +67,16 @@
 
 ### 当前歌曲歌词可用性
 
-`FragmentTabletLyricsAvailability` 每次读取当前歌曲并使用原生规则：`i1.i(currentItem) && (fc.d.c(context) || currentItem.hasOfflineLyrics())`。`i1.i` 包含原生订阅资格及普通/自定义歌词判断，`fc.d.c` 使用原生网络许可。不要只读取保留控件的 `isEnabled`、右栏是否可见或旧歌词文本：原生 binding 的 forced-open 标志可在换歌后继续保持启用，造成无歌词歌曲显示上一首歌词。
+`FragmentTabletLyricsAvailability` 每次读取当前歌曲并使用原生规则：歌词资格成立，且网络许可或离线歌词至少一项成立。歌词资格包含原生订阅资格及普通/自定义歌词判断。不要只读取保留控件的 `isEnabled`、右栏是否可见或旧歌词文本：原生 binding 的 forced-open 标志可在换歌后继续保持启用，造成无歌词歌曲显示上一首歌词。
 
-| 原生契约 | 完整成员与类型 |
+| 原生契约 | profile 角色与校验要求 |
 |---|---|
-| 当前歌曲 | `com.apple.android.music.player.fragment.PlayerMainFragment.M : com.apple.android.music.model.BaseContentItem`，非静态；值需实现 `PlaybackItem` |
-| 歌词资格 | `com.apple.android.music.player.i1.i(com.apple.android.music.model.PlaybackItem) : boolean`，静态 |
-| 网络许可 | `fc.d.c(android.content.Context) : boolean`，静态 |
-| 离线歌词 | `com.apple.android.music.model.PlaybackItem.hasOfflineLyrics() : boolean`，非静态接口调用 |
+| 当前歌曲 | `currentItem` 字段，记录声明 owner 和类型；非静态，值需实现原生播放对象接口 |
+| 歌词资格 | `supportsLyrics` 方法，记录实际 owner；参数为当前播放对象，返回 boolean，并核对 static 形态 |
+| 网络许可 | `online` 方法，参数为 Context，返回 boolean，并核对 static 形态 |
+| 离线歌词 | `offlineLyrics` 方法，返回 boolean；非静态接口调用须标记 invocationOnly |
 
-这四项目前在 `FragmentTabletLyricsAvailability.native` 中解析和校验类型，尚未纳入 JSON 的 `indexed` 契约；适配下一 tuple 时必须单独核对实际 DEX，不能仅复制 profile 或把 profile 静态通过当作这些成员已验证。当前歌曲缺失或查询失败时代理禁用并关闭右栏；可用性恢复只重新打开自动关闭的右栏，手动关闭的状态保持。
+这四项纳入 JSON 的 `fragmentDualPane` 字段/方法契约，由 `FragmentDualPaneContract` 提前解析和校验；每个新版本分别记录准确声明。当前歌曲缺失或查询失败时代理禁用并关闭右栏；可用性恢复只重新打开自动关闭的右栏，手动关闭的状态保持。
 
 ### 封面与下半区动画
 
@@ -69,17 +84,21 @@
 
 播放器展开/收起时，下半区保持最终横坐标，继续使用原生显现过程；只有封面按原生 slide 移动。`TabletLyricsPaneMotion` 令 `C = centeredOffset * 歌词关闭动画比例`，左 host 保持原生 X 加 `C`，选中的封面在原生 X 上补偿 `-C * (1 - slide)`，所以封面净新增位移为 `C * slide`。不要用 95% 阈值清零位移，也不要把整个 host 乘 slide，否则分别产生封面横跳和下半区从左侧滑入。
 
-封面沿用原生 selector `PlayerMainFragment.f1(PlayerMainFragment) : android.view.View`（静态）。在 `PlayerMainFragment$i.d(float) : void` 的前置回调释放上一帧 X 补偿，原生计算完后再合成；owner 字段是 `h : PlayerMainFragment`。保留原生 scale、Y、暂停比例和视频内容，重复 pre-draw 不累计补偿，换 pane 或释放会话时恢复模块仍拥有的原生 X。
+封面沿用 profile 的 `nativeCover` 原生 selector，在 `coverFrame` 前置回调释放上一帧 X 补偿，原生计算完后再合成；回调 owner 通过 `callbackOwner` 字段读取。准确参数、返回类型和调用形式由当前版本契约校验。保留原生 scale、Y、暂停比例和视频内容，重复 pre-draw 不累计补偿，换 pane 或释放会话时恢复模块仍拥有的原生 X。
 
-相关自动回归包括 `TabletSongLayoutTest`、`TabletNativeControlRowsTest`、`TabletComponentGeometryTest`、`TabletComponentStartupTest`、`TabletNativeActionStyleTest`、`TabletTransportRippleTest`、`FragmentTabletLyricsAvailabilityTest` 和 `TabletLyricsPaneMotionTest`。覆盖混淆 params、保留 pane 首帧、短窗口 footer、旧歌词/旧按钮、SONG/QUEUE 切换、双向/反向拖动和补偿恢复；完整真机场景见 [功能保全与验收矩阵](feature-preservation.md#1606-平板双栏补充验收)，自动通过不能替代该验收。
+相关自动回归包括 `TabletSongLayoutTest`、`TabletNativeControlRowsTest`、`TabletComponentGeometryTest`、`TabletComponentStartupTest`、`TabletNativeActionStyleTest`、`TabletTransportRippleTest`、`FragmentTabletLyricsAvailabilityTest` 和 `TabletLyricsPaneMotionTest`。覆盖混淆 params、保留 pane 首帧、短窗口 footer、旧歌词/旧按钮、SONG/QUEUE 切换、双向/反向拖动和补偿恢复；完整真机场景见 [功能保全与验收矩阵](feature-preservation.md#平板双栏补充验收)，自动通过不能替代该验收。
 
 ## 热路径与安装
 
 冷启动顺序维持：精确版本 → 配置迁移/绑定 → DPI → 资源回调 → Application 后功能 → 设置入口。资源基础设施失败停止后续安装；目标缺失只降级对应能力。
 
-Hook 注册先处于 preparing，必要目标全部成功后 activate；失败 close 后已注册回调变为原生透传。不依赖框架提供可靠 unhook。原生歌词缓存持有不透明句柄，JavaCPP 地址/liveness 与 Adam ID 校验留在宿主适配器，进入 I2（旧版）或 w2（1606）前才解包。
+Hook 注册先处于 preparing，必要目标全部成功后 activate；失败 close 后已注册回调变为原生透传。不依赖框架提供可靠 unhook。原生歌词缓存持有不透明句柄，JavaCPP 地址/liveness 与 Adam ID 校验留在宿主适配器，进入当前 profile 的原生歌词注入入口前才解包。
 
 Chrome ID、字段、方法在绑定时缓存；布局变化显式失效视图缓存。slide/alpha 回调不扫描 DEX 或发现反射成员。文件、网络、TTML parse 继续在后台。字体 Hook 已安装和字体实际加载分别报告。
+
+HLE 元数据通过 `HleMetadataInstallation` 汇总各表面的安装结果。`AppleHookRegistrar.stageInstallation` 先 preparing，再启用完整的一组专用 Hooker；失败组关闭后原生透传。可选子组独立降级，父组失败会关闭子组，运行时追加的资料库属性 getter 继承所属 entity 组的作用域。内层自行处理安装异常时必须调用 `reportInstallationFailure`；整次安装遇到未处理异常时关闭所有已安装组。能力使用既有 Active/Degraded 类型报告，不能只记日志后返回全部安装成功。
+
+玻璃的封面就绪状态由当前 `FragmentTabletDualPaneCoordinator` / session 提供；停用的 Fragment wrapper/artwork 实现已经删除，恢复 ID/tag 保持稳定。旧接入的句柄缓存按 owner/name/完整签名区分；需要保留历史匹配的地方显式使用 `CachedMethods.callLegacy`，保留原候选顺序和 fallback，不能将这条路径用于新 Fragment profile。
 
 ## 验证与回滚
 

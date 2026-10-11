@@ -33,7 +33,7 @@ object FragmentChromeFactory {
         val callbacks = IdentityHashMap<Any, IdentityHashMap<Any, Any>>()
         // Native slide events can precede the Fragment view's deferred glass mount.
         val playerProgress = java.util.WeakHashMap<Any, Float>()
-        val activityOf = FragmentChromeContract.method(contract.content, "getActivity")
+        val activityOf = contract.activityOf
         fun destroy(owner: Any) {
             val root = bindings.root(owner)
             val mounted = bindings.hasBinding(owner)
@@ -91,8 +91,7 @@ object FragmentChromeFactory {
             check(ModernXposedRuntime.hookMethod(method, callback, scope)) { "Fragment chrome hook failed: $method" }
         }
         try {
-            hook(FragmentChromeContract.method(contract.content, "onCreateView", LayoutInflater::class.java,
-                ViewGroup::class.java, Bundle::class.java), object : ModernMethodHook() {
+            hook(contract.createView, object : ModernMethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (param.throwable != null) return
                     val owner = param.thisObject ?: return
@@ -100,7 +99,7 @@ object FragmentChromeFactory {
                     runCatching { prepare(owner, root) }.onFailure { fail(owner, it, root) }
                 }
             })
-            hook(FragmentChromeContract.method(contract.content, "onViewCreated", View::class.java, Bundle::class.java),
+            hook(contract.viewCreated,
                 object : ModernMethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         if (param.throwable != null) return
@@ -110,7 +109,7 @@ object FragmentChromeFactory {
                         runCatching { prepare(owner, root) }.onFailure { fail(owner, it, root) }
                     }
                 })
-            hook(FragmentChromeContract.method(contract.content, "onDestroyView"), object : ModernMethodHook() {
+            hook(contract.destroyView, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     param.thisObject?.takeIf(contract.content::isInstance)?.let(::destroy)
                 }
@@ -193,7 +192,6 @@ object FragmentChromeFactory {
                     bindings.values.firstNotNullOfOrNull { it.phoneChrome?.padding(view) }?.let { param.args[3] = it }
                 }
             })
-            val phoneBehavior = contract.names.getJSONObject("phone").getJSONObject("behavior")
             hook(contract.tabletMiniMargins, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val view = param.args[0] as View
@@ -202,8 +200,7 @@ object FragmentChromeFactory {
                         ?.let { param.args[2] = it.toFloat() }
                 }
             })
-            hook(FragmentChromeContract.method(contract.playerBehavior.type, phoneBehavior.getString("peekMethod"),
-                java.lang.Integer.TYPE, java.lang.Boolean.TYPE), object : ModernMethodHook() {
+            hook(contract.writePeek, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val owner = param.thisObject ?: return
                     bindings.values.firstNotNullOfOrNull {

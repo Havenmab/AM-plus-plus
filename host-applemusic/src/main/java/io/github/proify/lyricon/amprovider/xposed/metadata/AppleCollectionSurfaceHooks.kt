@@ -153,6 +153,7 @@ internal class AppleCollectionSurfaceHooks(
         val resolvedClasses = runCatching {
             runtime.hookResolver.resolveClasses(AppleMusicHookPoint.COLLECTION_SURFACE_CLASSES)
         }.getOrElse {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 详情页运行时类解析失败", it)
             return
         }
@@ -293,7 +294,7 @@ internal class AppleCollectionSurfaceHooks(
         controllerClass: Class<*>,
         controllerTarget: AppleMusicHookTarget,
         directHeaderClass: Class<*>,
-    ) {
+    ) = runtime.hookRegistrar.stageInstallation("hle.AppleCollectionSurfaceHooks.installAlbumHooks") {
         runCatching {
             val buildMethod = controllerClass.declaredMethods.singleOrNull { method ->
                 val parameterTypes = method.parameterTypes
@@ -403,6 +404,7 @@ internal class AppleCollectionSurfaceHooks(
                     "directHeader=${directHeaderClass.name}, tracks=${trackBuildMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 专辑页实时元数据 Hook 安装失败", it)
         }
     }
@@ -412,7 +414,7 @@ internal class AppleCollectionSurfaceHooks(
         mediaEntityClass: Class<*>,
         controllerClass: Class<*>,
         controllerTarget: AppleMusicHookTarget,
-    ) {
+    ) = runtime.hookRegistrar.stageInstallation("hle.AppleCollectionSurfaceHooks.installPlaylistHooks") {
         runCatching {
             val buildItemMethod = AppleReflection.findMethod(
                 controllerClass,
@@ -452,6 +454,7 @@ internal class AppleCollectionSurfaceHooks(
                     "buildItem=${buildItemMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 歌单页实时元数据 Hook 安装失败", it)
         }
     }
@@ -462,7 +465,7 @@ internal class AppleCollectionSurfaceHooks(
         playlistRowClass: Class<*>,
         playlistRowTarget: AppleMusicHookTarget,
         mediaEntityTarget: AppleMusicHookTarget,
-    ) {
+    ) = runtime.hookRegistrar.stageInstallation("hle.AppleCollectionSurfaceHooks.installFinalBindingHook") {
         runCatching {
             val resolvedBind = runtime.hookResolver.resolveMethod(AppleMusicHookPoint.EPOXY_FINAL_BIND)
             val bindMethod = resolvedBind.method
@@ -532,6 +535,7 @@ internal class AppleCollectionSurfaceHooks(
                     "fallback=${resolvedBind.compatibilityFallback}, collectionModels=3"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 详情页最终绑定 Hook 安装失败", it)
         }
     }
@@ -541,7 +545,9 @@ internal class AppleCollectionSurfaceHooks(
         controllerTarget: AppleMusicHookTarget,
         recyclerClass: Class<*>,
     ) {
-        pageControllerClasses.add(controllerClass)
+        if (pageControllerClasses.add(controllerClass)) {
+            runtime.hookRegistrar.onInstallationClose { pageControllerClasses.remove(controllerClass) }
+        }
         val attachedMethod = AppleReflection.findMethod(
             controllerClass,
             controllerTarget.runtimeMemberName(
@@ -557,6 +563,7 @@ internal class AppleCollectionSurfaceHooks(
             parameterTypes = listOf(recyclerClass),
         )
         if (pageLifecycleHookedMethods.add(attachedMethod)) {
+            runtime.hookRegistrar.onInstallationClose { pageLifecycleHookedMethods.remove(attachedMethod) }
             runtime.hookRegistrar.installHook(attachedMethod, after = { chain, _ ->
                 val owner = chain.thisObject ?: return@installHook
                 if (pageControllerClasses.none { it.isInstance(owner) }) return@installHook
@@ -565,6 +572,7 @@ internal class AppleCollectionSurfaceHooks(
             })
         }
         if (pageLifecycleHookedMethods.add(detachedMethod)) {
+            runtime.hookRegistrar.onInstallationClose { pageLifecycleHookedMethods.remove(detachedMethod) }
             runtime.hookRegistrar.installHook(detachedMethod, before = { chain ->
                 val owner = chain.thisObject ?: return@installHook
                 if (pageControllerClasses.any { it.isInstance(owner) }) {

@@ -20,11 +20,15 @@ import io.github.proify.lyricon.amprovider.xposed.internal.ScopedCallbackHook
 import java.lang.reflect.Executable
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import dev.amenhancer.module.hook.HookRegistrationScope
 
 internal class AppleHookRegistrar(
     private val module: XposedModule,
 ) {
     private val activeModuleId = ThreadLocal<String?>()
+    private val installation = ThreadLocal<AppleHookInstallGroup?>()
     private val callbackTracer = AppleHookCallbackTracer(
         withModule = { moduleId, block -> withModule(moduleId, block) },
         onFirstCallback = { moduleId, executable ->
@@ -43,6 +47,39 @@ internal class AppleHookRegistrar(
             if (previous == null) activeModuleId.remove() else activeModuleId.set(previous)
         }
     }
+
+    /** Specialized Hookers keep their semantics; only activation is staged here. */
+    fun stageInstallation(moduleId: String, parent: AppleHookInstallGroup? = installation.get(), block: () -> Unit): AppleHookInstallGroup {
+        val group = AppleHookInstallGroup(moduleId, parent)
+        parent?.children?.add(group)
+        parent?.scope?.onClose(group.scope::close)
+        if (group.scope.isClosed) {
+            group.failures += "Installation owner is closed"
+            return group
+        }
+        val previous = installation.get()
+        installation.set(group)
+        try {
+            withModule(moduleId) { block() }
+        } catch (error: Throwable) {
+            group.fail(error)
+            ProviderLogger.error("Apple Music Hook group unavailable: $moduleId", error)
+        } finally {
+            if (previous == null) installation.remove() else installation.set(previous)
+        }
+        if (group.failures.isEmpty() && group.installedCount == 0) {
+            group.failures += "No usable hook target was installed"
+        }
+        if (group.failures.isEmpty()) group.scope.activate() else group.scope.close()
+        return group
+    }
+
+    /** An installer that handles its own exception still invalidates its staged group. */
+    fun reportInstallationFailure(error: Throwable) { installation.get()?.fail(error) }
+
+    fun onInstallationClose(action: () -> Unit) { installation.get()?.scope?.onClose(action) }
+
+    fun currentInstallation(): AppleHookInstallGroup? = installation.get()
 
     fun installHook(
         executable: Executable,
@@ -80,12 +117,32 @@ internal class AppleHookRegistrar(
     private fun installHooker(executable: Executable, hooker: Hooker) {
         runCatching { module.deoptimize(executable) }
         val moduleId = activeModuleId.get() ?: "unscoped"
-        module.hook(executable).intercept(
-            if (BuildConfig.DEBUG) callbackTracer.wrap(moduleId, executable, hooker) else hooker
-        )
+        val group = installation.get()
+        val delegate = if (BuildConfig.DEBUG) callbackTracer.wrap(moduleId, executable, hooker) else hooker
+        module.hook(executable).intercept { chain ->
+            if (group != null && !group.isActive) chain.proceed() else delegate.intercept(chain)
+        }
+        group?.recordHook()
         AppleMusicDexKitWatchdog.hookInstalled(executable)
-        dev.amenhancer.module.hook.HookRegistrations.register("AM++ HLE: $moduleId", true, target = executable)
+        val record = dev.amenhancer.module.hook.HookRegistrations.register("AM++ HLE: $moduleId", true,
+            target = executable, retained = { group == null || !group.scope.isClosed })
+        group?.scope?.onClose(record::close)
     }
+}
+
+/** Child helpers can degrade independently; a failed parent revokes all of its children. */
+internal class AppleHookInstallGroup(val name: String, private val parent: AppleHookInstallGroup?) {
+    val scope = HookRegistrationScope()
+    val failures = CopyOnWriteArrayList<String>()
+    val children = CopyOnWriteArrayList<AppleHookInstallGroup>()
+    private val directHookCount = AtomicInteger()
+    fun recordHook() { directHookCount.incrementAndGet() }
+    val installedCount: Int get() = directHookCount.get() + children.filter { !it.scope.isClosed }.sumOf { it.installedCount }
+    val isActive: Boolean get() = scope.isActive && (parent?.isActive != false)
+    fun fail(error: Throwable) { failures += "${error.javaClass.simpleName}: ${error.message.orEmpty()}" }
+    fun failedGroups(): List<String> =
+        (if (failures.isEmpty()) emptyList() else listOf("$name (${failures.distinct().joinToString("; ")})")) +
+            children.flatMap(AppleHookInstallGroup::failedGroups)
 }
 
 internal class AppleHookCallbackTracer(

@@ -25,6 +25,13 @@ $env:ANDROID_SERIAL = "your-device-serial"
 XAPK (or a bare base APK) and verifies every class/method/field the AM++ version profile pins,
 including the phone liquid-glass seams with `--glass`:
 
+For Fragment builds, verification also covers all declared method/field/constructor descriptors
+in the dual-pane, lyrics runtime, karaoke width, video handoff and optional song-layout sections.
+Layout policy and the six comparison-evidence fields must be explicit. Installation additionally
+checks the code-owned required-role inventory before registering any hook; an omitted JSON role
+cannot silently disable a dependency. Use [the adaptation checklist](../docs/host-adaptation-checklist.md)
+to record helper call paths, layout/include differences and native data-binding writes.
+
 ```powershell
 python scripts\verify-host-profile.py "apple-music-6-5-3.xapk" --version-name 6.5.3 --version-code 1599 --glass
 python scripts\verify-host-profile.py "Apple+Music_6.5.2_APKPure.xapk" --glass

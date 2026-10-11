@@ -137,10 +137,10 @@ internal class LyricsTypefaceSession : LyricsTypefaceResourceBinding {
         reportReadiness()
     }
 
-    fun attachToFragment(fragment: Any, recyclerClass: Class<*>) {
+    fun attachToFragment(fragment: Any, recyclerClass: Class<*>, recyclerGetter: java.lang.reflect.Method) {
         if (!active) return
         val recycler = runCatching {
-            ModernXposedRuntime.callMethod(fragment, "getRecyclerView") as? ViewGroup
+            recyclerGetter.invoke(fragment) as? ViewGroup
         }.getOrNull() ?: return
         if (!recyclerClass.isInstance(recycler)) return
         applyToLyricsLayout(recycler)

@@ -2,6 +2,7 @@ package dev.amenhancer.module.hook
 
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
+import java.util.concurrent.ConcurrentHashMap
 
 internal const val DUAL_PANE_SONG_STATE = "SONG"
 internal const val DUAL_PANE_LYRICS_STATE = "LYRICS"
@@ -14,7 +15,17 @@ internal fun dualPaneDebug(message: String) {
     android.util.Log.e("AMENH-LIVE", line)
 }
 
-internal fun dualPaneField(type: Class<*>, name: String): Field? {
+private data class LegacyFieldKey(val owner: Class<*>, val name: String)
+private data class LegacyFieldLookup(val field: Field?)
+private val legacyFields = ConcurrentHashMap<LegacyFieldKey, LegacyFieldLookup>()
+private val legacyDeclaredFields = ConcurrentHashMap<Class<*>, List<Field>>()
+
+internal fun dualPaneField(type: Class<*>, name: String): Field? =
+    legacyFields.computeIfAbsent(LegacyFieldKey(type, name)) {
+        LegacyFieldLookup(resolveDualPaneField(type, name))
+    }.field
+
+private fun resolveDualPaneField(type: Class<*>, name: String): Field? {
     var current: Class<*>? = type
     while (true) {
         val candidate = current ?: return null
@@ -31,7 +42,7 @@ internal fun dualPaneFieldByType(type: Class<*>, predicate: (Field) -> Boolean):
     var current: Class<*>? = type
     while (true) {
         val candidate = current ?: return null
-        candidate.declaredFields
+        legacyDeclaredFields.computeIfAbsent(candidate) { it.declaredFields.toList() }
             .firstOrNull { field -> !Modifier.isStatic(field.modifiers) && predicate(field) }
             ?.let {
                 it.isAccessible = true

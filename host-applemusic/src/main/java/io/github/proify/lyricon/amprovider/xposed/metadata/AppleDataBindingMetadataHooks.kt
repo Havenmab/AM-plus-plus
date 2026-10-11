@@ -307,6 +307,7 @@ internal class AppleDataBindingMetadataHooks(
                     "subtitleVariable=$subtitleVariableId, constructor=true"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             invalidateAllMethod = null
             executePendingBindingsMethod = null
             setVariableMethod = null
@@ -429,6 +430,7 @@ internal class AppleDataBindingMetadataHooks(
                     "class=${bindMethod.declaringClass.name}, method=${bindMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music RecyclerView 通用元数据绑定 Hook 安装失败", it)
         }
     }

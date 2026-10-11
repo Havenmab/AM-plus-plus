@@ -11,6 +11,14 @@ data class TabletArtworkLayout(
  * the native cover fits in that interval.
  */
 object TabletArtworkLayoutPolicy {
+    /** Resting square follows the measured progress track, capped by the space above metadata. */
+    fun forProgress(availableHeightPx: Float, progressWidthPx: Float): TabletArtworkLayout? {
+        if (!availableHeightPx.isFinite() || !progressWidthPx.isFinite() ||
+            availableHeightPx <= 0f || progressWidthPx <= 0f) return null
+        val size = minOf(availableHeightPx, progressWidthPx)
+        return TabletArtworkLayout(size, (availableHeightPx - size) / 2f)
+    }
+
     /** All positions are local to player_root; insets are resolved against its expanded viewport. */
     fun nativeTopMarginInPlayer(
         hostTopPx: Float,

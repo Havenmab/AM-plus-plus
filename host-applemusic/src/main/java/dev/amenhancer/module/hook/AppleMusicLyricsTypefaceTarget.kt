@@ -40,13 +40,16 @@ internal class AppleMusicLyricsTypefaceTarget(
             ?: return TargetCapabilityInstall.Degraded(
                 "PlayerLyricsViewFragment.onResume was not found",
             )
+        val recyclerGetter = runCatching { CachedMethods.exact(fragmentClass, "getRecyclerView") }.getOrElse {
+            return TargetCapabilityInstall.Degraded("Lyrics recycler getter unavailable: ${it.message}")
+        }
         val hooks = ModernXposedRuntime.hookAllMethods(
             resumeOwner,
             "onResume",
             object : ModernMethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val owner = param.thisObject?.takeIf(fragmentClass::isInstance) ?: return
-                    session.attachToFragment(owner, recyclerClass)
+                    session.attachToFragment(owner, recyclerClass, recyclerGetter)
                 }
             },
             registration,

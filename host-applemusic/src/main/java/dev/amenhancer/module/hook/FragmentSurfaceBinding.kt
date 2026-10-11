@@ -56,8 +56,7 @@ internal class FragmentSurfaceBinding(
     private val tree = root.viewTreeObserver
     private val layout = ViewTreeObserver.OnGlobalLayoutListener { resolveMini() }
     private val miniStartup = if (placement == NavigationPlacement.TOP && miniBlur != null)
-        FragmentTabletMiniStartup(owner, root, miniBlur, contract.content.classLoader!!, contract.content,
-            contract.names.getJSONObject("tablet").getJSONObject("startup")) else null
+        FragmentTabletMiniStartup(owner, root, miniBlur, contract) else null
     override val tabletChrome: FragmentTabletChromeBinding? by lazy {
         if (placement != NavigationPlacement.TOP) null else FragmentTabletChromeBinding(root, { region ->
             when (region) {
@@ -107,7 +106,7 @@ internal class FragmentSurfaceBinding(
 
     override fun regions() = PlayerRegions(nav, placement, mini, sheet, true)
     override fun snapshot(): FragmentPlayerSurfaceSnapshot {
-        // Native state changes can call d(F) directly, without an onSlide b(View,F) callback.
+        // Native state changes can update progress directly, without an onSlide callback.
         playerIdentity?.let { player -> contract.playerSlide.get(player)?.let { callback ->
             val nativeProgress = contract.slideProgress.getFloat(callback)
             val expanded = contract.playerBehavior.get(player)?.let { contract.behaviorState.getInt(it) == 3 } == true
@@ -169,7 +168,7 @@ internal class FragmentSurfaceBinding(
             val factor = materialExpansion.coerceIn(0f, 1f)
             playerBackground?.let { alphas.getValue(it).scale(factor) }
             playerMotion?.let { alphas.getValue(it).scale(motionAlpha.coerceIn(0f, 1f)) }
-            val readyCover = FragmentDualPaneViewMount.state(materialParent?.parent as? View)?.artwork?.coverReady() == true
+            val readyCover = FragmentTabletDualPaneCoordinator.coverReady(materialParent)
             playerContent?.let { alphas.getValue(it).scale(if (expansion > 0f && readyCover) 1f else factor) }
             materialParent?.let { player ->
                 if (factor < 1f) {

@@ -3,7 +3,6 @@ package dev.amenhancer.module.hook
 import android.util.Log
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Executable
-import java.lang.reflect.Method
 
 abstract class ModernMethodHook {
     open fun beforeHookedMethod(param: MethodHookParam) = Unit
@@ -46,6 +45,7 @@ object ModernXposedRuntime {
     private var module: XposedModule? = null
 
     fun attach(module: XposedModule) {
+        CachedMethods.clear()
         this.module = module
     }
 
@@ -86,11 +86,9 @@ object ModernXposedRuntime {
             .onEach { hookMethod(it, callback, scope) }
             .toSet()
 
+    /** Compatibility entry point; new native adapters resolve explicit member contracts. */
     fun callMethod(receiver: Any, name: String, vararg args: Any?): Any? {
-        val method = findCompatibleMethod(receiver.javaClass, name, args)
-            ?: throw NoSuchMethodException("${receiver.javaClass.name}#$name(${args.size})")
-        method.isAccessible = true
-        return method.invoke(receiver, *args)
+        return CachedMethods.callLegacy(receiver, name, *args)
     }
 
     fun log(message: String, error: Throwable? = null) {
@@ -108,32 +106,4 @@ object ModernXposedRuntime {
         }
     }
 
-    private fun findCompatibleMethod(type: Class<*>, name: String, args: Array<out Any?>): Method? {
-        var current: Class<*>? = type
-        while (current != null) {
-            current.declaredMethods.firstOrNull { method ->
-                method.name == name &&
-                    method.parameterTypes.size == args.size &&
-                    method.parameterTypes.indices.all { index -> compatible(method.parameterTypes[index], args[index]) }
-            }?.let { return it }
-            current = current.superclass
-        }
-        return null
-    }
-
-    private fun compatible(parameter: Class<*>, value: Any?): Boolean {
-        if (value == null) return !parameter.isPrimitive
-        val boxed = when (parameter) {
-            java.lang.Boolean.TYPE -> java.lang.Boolean::class.java
-            java.lang.Byte.TYPE -> java.lang.Byte::class.java
-            java.lang.Character.TYPE -> java.lang.Character::class.java
-            java.lang.Short.TYPE -> java.lang.Short::class.java
-            java.lang.Integer.TYPE -> java.lang.Integer::class.java
-            java.lang.Long.TYPE -> java.lang.Long::class.java
-            java.lang.Float.TYPE -> java.lang.Float::class.java
-            java.lang.Double.TYPE -> java.lang.Double::class.java
-            else -> parameter
-        }
-        return boxed.isInstance(value)
-    }
 }

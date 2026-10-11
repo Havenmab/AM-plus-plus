@@ -25,6 +25,7 @@ internal class HleMetadataSurfaceBridge(
     internal val configuredContentUiLanguage: Int,
     internal val restoreOriginalMetadata: Boolean,
     internal val profileId: String,
+    private val installation: HleMetadataInstallation,
 ) {
     internal val traceSequence = AtomicLong(0L)
     internal val registry = AppleInAppMetadataRegistry()
@@ -480,9 +481,7 @@ internal class HleMetadataSurfaceBridge(
     internal fun createHostAdapters(): HostAdapters = createMetadataHostAdapters()
 
     internal fun installSafely(name: String, block: () -> Unit) {
-        runCatching(block).onFailure {
-            ProviderLogger.error("HLE $name surface hook unavailable", it)
-        }
+        installation.install(name, block)
     }
 
     internal fun currentIdentity(): ActivePlaybackMediaIdentity = ActivePlaybackMediaIdentity(

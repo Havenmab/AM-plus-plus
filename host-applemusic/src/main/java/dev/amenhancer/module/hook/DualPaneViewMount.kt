@@ -8,6 +8,9 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import dev.amenhancer.module.ModuleConstants
+import dev.amenhancer.module.host.OwnedHostProperty
+import dev.amenhancer.module.hook.tabletmedia.TabletProgressContent
+import dev.amenhancer.module.hook.tabletmedia.TabletSongContentInsets
 import dev.amenhancer.host.applemusic.R
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -51,6 +54,14 @@ internal object DualPaneShell {
  * class loader, and the module must not package or shadow its own copy.
  */
 internal object ConstraintLayoutPane {
+    fun artworkLayoutLease(artwork: View): TabletArtworkLayoutLease =
+        TabletArtworkLayoutLease(artwork, ::constraintField)
+
+    fun metadataEndGuideField(guide: View): Field =
+        checkNotNull(constraintField(guide.layoutParams.javaClass, "guideEnd")) { "metadata guideEnd missing" }.also {
+            check(it.type == Int::class.javaPrimitiveType)
+        }
+
     private const val BOTTOM_NAVIGATION_ROOT_STACKED = "bottom_navigation_root_stacked"
     private const val BOTTOM_NAVIGATION_ROOT_FLAT = "bottom_navigation_root_flat"
     private const val BOTTOM_NAVIGATION_TABS = "bottom_navigation_tabs_frame"
@@ -90,6 +101,7 @@ internal object ConstraintLayoutPane {
     private const val TARGET_650_LAYOUT_PARAMS = "androidx.constraintlayout.widget.ConstraintLayout\$b"
     private val TARGET_650_FIELD_NAMES = mapOf(
         "guideBegin" to "a",
+        "guideEnd" to "b",
         "guidePercent" to "c",
         "leftToLeft" to "h",
         "leftToRight" to "g",
@@ -284,7 +296,7 @@ internal object ConstraintLayoutPane {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
                 setInt("orientation", 1)
-                setFloat("guidePercent", 0.5f)
+                setFloat("guidePercent", TabletDualPaneLayoutPolicy.SONG_WIDTH_FRACTION)
             },
         )
 
@@ -327,13 +339,14 @@ internal object ConstraintLayoutPane {
     }
 
     /**
-     * Keep Apple's native cover size, but center it in the vertical interval
-     * from the left pane top to Apple's metadata barrier (the title row).
+     * Follow the actual progress width, capped by the interval above metadata,
+     * without taking ownership of native card scale or video content.
      */
     private fun installTabletArtworkLayout(
         playerRoot: ViewGroup,
         playerHost: View,
     ): (() -> Unit)? {
+        val resources = playerRoot.resources
         val artworkId = playerRoot.resources.getIdentifier(
             ARTWORK_CONTAINER,
             "id",
@@ -346,16 +359,44 @@ internal object ConstraintLayoutPane {
             ModuleConstants.TARGET_PACKAGE,
         )
         if (barrierId == 0) return null
-        val nativeSizeByArtwork = WeakHashMap<View, Int>()
+        val progressIds = HashMap<String, Int>()
+        val findContent: (View, String) -> View? = { parent, name ->
+            progressIds.getOrPut(name) { resources.getIdentifier(name, "id", ModuleConstants.TARGET_PACKAGE) }
+                .takeIf { it != 0 }?.let { parent.findViewById<View>(it) }
+        }
+        val progressContent = TabletProgressContent(findContent)
+        val contentInsets = TabletSongContentInsets(findContent)
+        val videoId = resources.getIdentifier("video_surface", "id", ModuleConstants.TARGET_PACKAGE)
+        val imageId = resources.getIdentifier("artwork_image", "id", ModuleConstants.TARGET_PACKAGE)
+        val layoutLeases = WeakHashMap<View, TabletArtworkLayoutLease>()
+        val translations = WeakHashMap<View, OwnedHostProperty<Float>>()
+        var artworkLayoutChanged = false
+        fun release() {
+            layoutLeases.values.toList().forEach { it.close() }; layoutLeases.clear()
+            translations.values.toList().forEach { it.close() }; translations.clear()
+            contentInsets.close()
+        }
         fun apply(): Boolean {
-            if (!TabletModeQualifier.isEligible(playerRoot.context)) return true
+            artworkLayoutChanged = false
+            if (!TabletModeQualifier.isEligible(playerRoot.context)) { release(); return true }
+            contentInsets.prepare(playerHost)
+            (playerHost as? ViewGroup)?.let { host ->
+                repeat(host.childCount) { contentInsets.prepare(host.getChildAt(it)) }
+            }
             val artwork = playerHost.findViewById<View>(artworkId) ?: return false
             val barrier = playerHost.findViewById<View>(barrierId) ?: return false
             val parent = artwork.parent as? ViewGroup ?: return false
             if (parent.width <= 0 || parent.height <= 0 || artwork.width <= 0) return false
-            val nativeSizePx = nativeSizeByArtwork[artwork]
-                ?: artwork.width.takeIf { it > 0 }?.also { nativeSizeByArtwork[artwork] = it }
-                ?: return false
+            layoutLeases.keys.toList().filter { it !== artwork }.forEach {
+                layoutLeases.remove(it)?.close(); translations.remove(it)?.close()
+            }
+            val video = if (videoId != 0) artwork.findViewById<View>(videoId) else null
+            val image = if (imageId != 0) artwork.findViewById<View>(imageId) else null
+            if (video?.isShown == true && video.alpha >= .99f && image?.alpha?.let { it <= .01f } == true) {
+                layoutLeases.remove(artwork)?.close(); translations.remove(artwork)?.close()
+                return true
+            }
+            val progress = progressContent.resolve(playerHost) ?: return false
             val hostLocation = IntArray(2)
             val windowRootLocation = IntArray(2)
             val artworkLocation = IntArray(2)
@@ -374,9 +415,9 @@ internal object ConstraintLayoutPane {
                 windowRootLocation[1] + statusBarInsetTopPx,
             )
             val availableHeightPx = (barrierLocation[1] - intervalTopPx).toFloat()
-            val layout = TabletArtworkLayoutPolicy.resolve(
+            val layout = TabletArtworkLayoutPolicy.forProgress(
                 availableHeightPx = availableHeightPx,
-                nativeSizePx = nativeSizePx.toFloat(),
+                progressWidthPx = progress.width.toFloat(),
             ) ?: return false
             val params = artwork.layoutParams as? ViewGroup.MarginLayoutParams ?: return true
             if (constraintField(params.javaClass, "startToStart") == null) return true
@@ -384,27 +425,42 @@ internal object ConstraintLayoutPane {
             val desiredArtworkTopPx = intervalTopPx + layout.edgeGapPx
             val artworkDeltaPx = desiredArtworkTopPx - artworkLocation[1]
             if (kotlin.math.abs(artworkDeltaPx) > 0.5f) {
-                artwork.translationY += artworkDeltaPx
+                translations.getOrPut(artwork) {
+                    OwnedHostProperty({ artwork.translationY }, { artwork.translationY = it })
+                }.set(artwork.translationY + artworkDeltaPx)
             }
-            val alreadyApplied =
-                params.width == sizePx &&
-                    params.height == sizePx &&
-                    params.topMargin == 0 &&
-                    params.bottomMargin == 0 &&
-                    constraintField(params.javaClass, "topToTop")?.getInt(params) == PARENT_ID &&
-                    constraintField(params.javaClass, "topToBottom")?.getInt(params) == -1
-            if (alreadyApplied) return true
-            params.width = sizePx
-            params.height = sizePx
-            params.topMargin = 0
-            params.bottomMargin = 0
-            params.setObject("dimensionRatio", null)
-            params.setInt("topToTop", PARENT_ID)
-            params.setInt("topToBottom", -1)
-            artwork.layoutParams = params
-            artwork.requestLayout()
+            val progressBounds = progressContent.boundsIn(parent, progress)
+            artworkLayoutChanged = layoutLeases.getOrPut(artwork) { artworkLayoutLease(artwork) }.apply(sizePx, 0,
+                progressBounds.left, parent.width - progressBounds.right)
             return true
         }
+        // Padding/media updates can change the track without changing the host's bounds.
+        var liveTree: ViewTreeObserver? = null
+        val liveSizing = ViewTreeObserver.OnPreDrawListener {
+            runCatching {
+                apply()
+                if (artworkLayoutChanged) {
+                    playerRoot.requestLayout()
+                    playerRoot.postInvalidateOnAnimation()
+                }
+                !artworkLayoutChanged
+            }.onFailure { dualPaneDebug("tablet artwork sizing failed: $it") }.getOrDefault(true)
+        }
+        fun stopLiveSizing() {
+            liveTree?.takeIf { it.isAlive }?.removeOnPreDrawListener(liveSizing)
+            liveTree = null
+        }
+        fun startLiveSizing() {
+            stopLiveSizing()
+            if (playerRoot.isAttachedToWindow) playerRoot.viewTreeObserver.also {
+                it.addOnPreDrawListener(liveSizing); liveTree = it
+            }
+        }
+        playerRoot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = startLiveSizing()
+            override fun onViewDetachedFromWindow(view: View) { stopLiveSizing(); release() }
+        })
+        startLiveSizing()
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
         playerRoot.addOnLayoutChangeListener(listener)
         (playerHost.parent as? View)
@@ -733,7 +789,9 @@ internal object ConstraintLayoutPane {
         params.setInt("endToEnd", -1)
         params.setInt("topToTop", PARENT_ID)
         params.setInt("bottomToBottom", PARENT_ID)
-        setHorizontalMargins(params, dp(playerHost.context, 48))
+        setHorizontalMargins(params, dp(playerHost.context, TabletDualPaneLayoutPolicy.SONG_HOST_SIDE_MARGIN_DP))
+        params.rightMargin = dp(playerHost.context, TabletDualPaneLayoutPolicy.SONG_HOST_END_MARGIN_DP)
+        params.marginEnd = params.rightMargin
         playerHost.layoutParams = params
     }
 

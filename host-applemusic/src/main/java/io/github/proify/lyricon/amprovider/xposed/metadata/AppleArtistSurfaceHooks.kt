@@ -229,6 +229,7 @@ internal class AppleArtistSurfaceHooks(
                     "builder=${buildMethod.name}, binder=${modelBindMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 歌手页歌曲排行元数据 Hook 安装失败", it)
         }
     }
@@ -380,6 +381,7 @@ internal class AppleArtistSurfaceHooks(
                     "builder=${buildMethod.name}, binder=${headerBindMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 歌手页标题实时元数据 Hook 安装失败", it)
         }
     }
@@ -558,7 +560,7 @@ internal class AppleArtistSurfaceHooks(
     private fun installGenericProfileBuildHooks(
         baseController: ResolvedAppleMusicHookClass,
         mediaEntity: ResolvedAppleMusicHookClass,
-    ) {
+    ) = runtime.hookRegistrar.stageInstallation("hle.AppleArtistSurfaceHooks.installGenericProfileBuildHooks") {
         runCatching {
             val baseClass = runCatching {
                 runtime.classLoader.loadClass(
@@ -617,6 +619,7 @@ internal class AppleArtistSurfaceHooks(
                 ProviderLogger.info("Apple Music GenericProfile top-songs relationship Hook 已安装: method=${populateMethod.name}")
             }
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music GenericProfile 歌曲排行预取 Hook 安装失败", it)
         }
     }
@@ -705,7 +708,7 @@ internal class AppleArtistSurfaceHooks(
     private fun installPageLifecycle(
         controller: ResolvedAppleMusicHookClass,
         recyclerClass: Class<*>,
-    ) {
+    ) = runtime.hookRegistrar.stageInstallation("hle.AppleArtistSurfaceHooks.installPageLifecycle") {
         runCatching {
             val attached = AppleReflection.findMethod(
                 controller.clazz,
@@ -733,6 +736,7 @@ internal class AppleArtistSurfaceHooks(
             })
             ProviderLogger.info("Apple Music 歌手页元数据页面边界 Hook 已安装")
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 歌手页元数据页面边界 Hook 安装失败", it)
         }
     }
@@ -936,6 +940,7 @@ internal class AppleArtistSurfaceHooks(
                         ) resolvedArtistClasses = classes
                     }
             }.onFailure {
+                runtime.hookRegistrar.reportInstallationFailure(it)
                 ProviderLogger.error("Apple Music 歌手页运行时类解析失败", it)
             }.getOrNull()
         }

@@ -88,6 +88,7 @@ internal class AppleContentItemMetadataHooks(
                 "Apple Music 内容项 title/artist/album 模型 Hook 已安装"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 内容项元数据 Hook 安装失败", it)
         }
     }

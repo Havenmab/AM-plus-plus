@@ -133,6 +133,61 @@ def find_method(classes, owner, signature):
     return None
 
 
+def verify_fragment_contracts(document, classes, failures):
+    """Cover declared helper/binding/constructor dependencies as well as indexed hooks."""
+    if document.get('family') != 'fragment-content':
+        return 0
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z',
+                 'double': 'D', 'byte': 'B', 'short': 'S', 'char': 'C'}
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+    sections = {name: document.get(name) for name in (
+        'fragmentDualPane', 'fragmentLyricsRuntime', 'fragmentKaraokeWidth', 'fragmentTabletVideoHandoff')}
+    sections['fragmentChrome.members'] = (document.get('fragmentChrome') or {}).get('members')
+    main = sections.get('fragmentDualPane') or {}
+    policy = main.get('songLayoutPolicy')
+    if policy == '1606-column':
+        sections['fragmentDualPane.songLayout'] = main.get('songLayout')
+    elif policy != 'native' or 'songLayout' in main:
+        failures.append('fragmentDualPane.songLayoutPolicy: select an explicit, consistent layout policy')
+    for role in ('artwork', 'metadata', 'controls', 'progress', 'binding', 'restoration'):
+        if not str(main.get('layoutReview', {}).get(role, '')).strip():
+            failures.append(f'fragmentDualPane.layoutReview.{role}: missing comparison evidence')
+    checks = 0
+    for section, data in sections.items():
+        if not isinstance(data, dict) or not data.get('methods') or not data.get('fields'):
+            failures.append(f'{section}: missing complete member inventory')
+            continue
+        for group in ('methods', 'fields', 'constructors'):
+            for role, contract in data.get(group, {}).items():
+                checks += 1
+                try:
+                    if section == 'fragmentChrome.members' and group == 'methods' and role == 'activityTouch':
+                        # This public framework method is absent from the application's DEX.
+                        if contract != dict(owner='android.app.Activity', name='dispatchTouchEvent',
+                                            parameters=['android.view.MotionEvent'], returns='boolean', static=False):
+                            failures.append(f'{section}.{group}.{role}: invalid framework descriptor')
+                        continue
+                    native = classes.get(descriptor(contract['owner']), {})
+                    if group == 'fields':
+                        valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                                 and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+                    else:
+                        name = '<init>' if group == 'constructors' else contract['name']
+                        returns = 'V' if group == 'constructors' else descriptor(contract['returns'])
+                        signature = name + '(' + ''.join(map(descriptor, contract['parameters'])) + ')' + returns
+                        flags = native.get('method_access', {}).get(signature)
+                        forbidden = 0x40 | 0x1000 | (0 if contract.get('invocationOnly') else 0x400)
+                        valid = (flags is not None and not flags & forbidden
+                                 and bool(flags & 8) == contract.get('static', False))
+                    if not valid:
+                        failures.append(f'{section}.{group}.{role}: invalid exact descriptor {contract}')
+                except (KeyError, TypeError, AttributeError) as error:
+                    failures.append(f'{section}.{group}.{role}: incomplete descriptor ({error})')
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path, help="APK, XAPK or APKS (all DEX splits are checked)")
@@ -211,6 +266,7 @@ def main():
             if candidate.is_file():
                 document = json.loads(candidate.read_text(encoding="utf-8"))
         if document:
+            checks += verify_fragment_contracts(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',
                              'double':'D','byte':'B','short':'S','char':'C'}

@@ -419,6 +419,7 @@ internal class AppleMediaApiMetadataCoordinator(
                     "setData=${setDataMethod.name}, bound=${onModelBoundMethod.name}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 最近搜索元数据 Hook 安装失败", it)
         }
     }

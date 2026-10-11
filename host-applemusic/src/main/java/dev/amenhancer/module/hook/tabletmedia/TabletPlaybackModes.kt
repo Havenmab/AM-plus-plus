@@ -4,12 +4,14 @@ import android.os.Looper
 import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
 import java.lang.reflect.Modifier
 
-/** Native queue commands/getters from the media plugin's verified 1606 descriptors. */
+/** Native queue commands/getters from this owner's exact host profile. */
 internal class TabletPlaybackModes(private val owner: Any) {
     data class State(val shuffle: Boolean? = null, val repeat: Int? = null,
         val canShuffle: Boolean = false, val canRepeat: Boolean = false)
     private val loader = owner.javaClass.classLoader!!
-    private val indexed = checkNotNull(AppleMusicHostProfiles.find("com.apple.android.music", "7.0.0-beta", 1606))
+    private val build = dev.amenhancer.module.hook.targetBuild(checkNotNull(
+        dev.amenhancer.module.hook.CachedMethods.exact(owner.javaClass, "getContext").invoke(owner) as? android.content.Context))
+    private val indexed = checkNotNull(AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
         .document.getJSONObject("indexed")
     private fun type(name: String): Class<*> = when (name) {
         "void" -> Void.TYPE; "boolean" -> java.lang.Boolean.TYPE; "int" -> Integer.TYPE

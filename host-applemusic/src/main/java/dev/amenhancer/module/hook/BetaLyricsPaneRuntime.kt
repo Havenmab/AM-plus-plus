@@ -1,7 +1,5 @@
 package dev.amenhancer.module.hook
 
-import android.os.Bundle
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -12,30 +10,19 @@ import java.util.WeakHashMap
 import kotlin.math.abs
 
 /** Scoped to the independent right fragment. Phone/fullscreen lyrics keep their native controls. */
-internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private val fields: LyricsLayoutFieldProfile,
-    private val karaoke: FragmentKaraokeWidthContract) {
+internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>,
+    private val karaoke: FragmentKaraokeWidthContract, private val native: FragmentLyricsRuntimeContract) {
     private val sessions = WeakHashMap<Any, Session>()
-    private val create = lyricsClass.getDeclaredMethod("onCreateView", LayoutInflater::class.java, ViewGroup::class.java, Bundle::class.java)
-    private val resume = lyricsClass.getDeclaredMethod("onResume")
-    private val destroy = lyricsClass.getDeclaredMethod("onDestroyView")
-    private val metrics = lyricsClass.getDeclaredMethod("W1")
-    private val chrome = checkNotNull(lyricsClass.superclass).getDeclaredMethod("N1", Int::class.javaPrimitiveType, IntArray::class.java)
+    private val create = native.createView
+    private val resume = native.resume
+    private val destroy = native.destroyView
+    private val metrics = native.metrics
+    private val chrome = native.chrome
 
     fun validate() {
         check(lyricsClass.name == "com.apple.android.music.player.fragment.PlayerLyricsViewFragment")
         check(metrics.returnType == Boolean::class.javaPrimitiveType)
-        val binding = checkNotNull(dualPaneField(lyricsClass, fields.binding)).type
-        check(binding.name == "q8.Y4")
-        listOf(fields.container, fields.recycler, fields.gradients, "a0", "k0").forEach { checkNotNull(dualPaneField(binding, it)) }
-        fields.synchronizedMetrics.forEach { field ->
-            val metricClass = checkNotNull(dualPaneField(lyricsClass, field)).type
-            listOf("a", "b", "c").forEach { check(dualPaneField(metricClass, it)?.type == Int::class.javaPrimitiveType) }
-        }
-        val recycler = checkNotNull(dualPaneField(binding, fields.recycler)).type
-        val listener = Class.forName("androidx.recyclerview.widget.RecyclerView\$p", false, recycler.classLoader)
-        recycler.getDeclaredMethod("h", listener)
-        check(listener.isInterface)
-        checkNotNull(dualPaneField(recycler, "k0"))
+        check(native.bindingField.declaringClass == lyricsClass && create.declaringClass == lyricsClass)
     }
 
     fun install(registration: HookRegistrationScope) {
@@ -74,7 +61,7 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val fragment = param.thisObject ?: return
                 if (!lyricsClass.isInstance(fragment) || !dedicated(fragment)) return
-                val root = runCatching { ModernXposedRuntime.callMethod(fragment, "getView") as? View }.getOrNull() ?: return
+                val root = runCatching { native.getView.invoke(fragment) as? View }.getOrNull() ?: return
                 if (!TabletModeQualifier.isEligible(root.context)) return
                 hideChrome(root)
                 param.result = null
@@ -89,7 +76,7 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
     }
 
     private fun dedicated(fragment: Any): Boolean = runCatching {
-        ModernXposedRuntime.callMethod(fragment, "getId") == FragmentDualPanePolicy.RIGHT_HOST_ID
+        native.fragmentId.invoke(fragment) == FragmentDualPanePolicy.RIGHT_HOST_ID
     }.getOrDefault(false)
 
     private fun hideChrome(root: View) {
@@ -102,10 +89,10 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
     private inner class Session(fragment: Any, root: View) : AutoCloseable {
         private val fragmentRef = WeakReference(fragment)
         private val rootRef = WeakReference(root)
-        private val binding = checkNotNull(dualPaneField(fragment.javaClass, fields.binding)?.get(fragment))
-        private val container = checkNotNull(dualPaneField(binding.javaClass, fields.container)?.get(binding) as? View)
-        private val recycler = checkNotNull(dualPaneField(binding.javaClass, fields.recycler)?.get(binding) as? ViewGroup)
-        private val gradients = checkNotNull(dualPaneField(binding.javaClass, fields.gradients)?.get(binding) as? View)
+        private val binding = checkNotNull(native.bindingField.get(fragment))
+        private val container = checkNotNull(native.container.get(binding) as? View)
+        private val recycler = checkNotNull(native.recycler.get(binding) as? ViewGroup)
+        private val gradients = checkNotNull(native.gradients.get(binding) as? View)
         private var closed = false
         private var posted = false
         private var listener: Any? = null
@@ -120,18 +107,17 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
             if (TabletModeQualifier.isEligible(root.context)) RightLyricsPaneLayout.apply(root)
             container.addOnLayoutChangeListener(layout)
             recycler.addOnLayoutChangeListener(rowLayout)
-            val listenerClass = Class.forName("androidx.recyclerview.widget.RecyclerView\$p", false, recycler.javaClass.classLoader)
+            val listenerClass = native.listener
             val proxy = Proxy.newProxyInstance(listenerClass.classLoader, arrayOf(listenerClass)) { proxy, method, args ->
                 when (method.name) {
-                    // 1606 p.d(View) is attach; p.b(View) is detach.
-                    "d" -> { (args?.firstOrNull() as? View)?.let(::applyRow); null }
+                    native.attachMethod -> { (args?.firstOrNull() as? View)?.let(::applyRow); null }
                     "equals" -> proxy === args?.firstOrNull()
                     "hashCode" -> System.identityHashCode(proxy)
-                    "toString" -> "AM++1606LyricRows"
+                    "toString" -> "AM++FragmentLyricRows"
                     else -> null
                 }
             }
-            ModernXposedRuntime.callMethod(recycler, "h", proxy)
+            native.registerListener.invoke(recycler, proxy)
             listener = proxy
             schedule()
         }
@@ -156,23 +142,23 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
             // Its native width contract must hold until onDestroyView, in either orientation.
             if (closed) return
             karaoke.initialize(adapter, row, recycler.width)?.let { width ->
-                ModernXposedRuntime.log("1606 right lyrics: initialized cached-row karaoke width=$width viewport=${recycler.width}")
+                ModernXposedRuntime.log("Fragment right lyrics: initialized cached-row karaoke width=$width viewport=${recycler.width}")
             }
         }
 
         fun correctMetrics() {
             if (closed || !TabletModeQualifier.isEligible(container.context) || container.height <= 0) return
             val fragment = fragmentRef.get() ?: return
-            val controls = runCatching { ModernXposedRuntime.callMethod(fragment, "S1") as? View }.getOrNull()
-            val sync = checkNotNull(dualPaneField(fragment.javaClass, fields.synchronizedMetrics.first())?.get(fragment))
-            val offset = checkNotNull(dualPaneField(sync.javaClass, "a"))
+            val controls = runCatching { native.controls.invoke(fragment) as? View }.getOrNull()
+            val sync = checkNotNull(native.synchronizedMetrics.first().get(fragment))
+            val offset = native.metricOffset
             offset.setInt(sync, TabletLyricAnchorPolicy.highlightOffset(offset.getInt(sync), container.height))
-            fields.synchronizedMetrics.forEach { name ->
-                val bounds = checkNotNull(dualPaneField(fragment.javaClass, name)?.get(fragment))
-                val end = checkNotNull(dualPaneField(bounds.javaClass, "c"))
+            native.synchronizedMetrics.forEach { field ->
+                val bounds = checkNotNull(field.get(fragment))
+                val end = native.metricEnd
                 end.setInt(bounds, (end.getInt(bounds) - (controls?.height ?: 0)).coerceAtLeast(0))
             }
-            ModernXposedRuntime.callMethod(recycler, "S")
+            native.refresh.invoke(recycler)
             RightLyricsPaneLayout.reapplyVerticalGradientEdges(gradients)
         }
 
@@ -211,13 +197,13 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>, private 
             container.removeCallbacks(update)
             container.removeOnLayoutChangeListener(layout)
             recycler.removeOnLayoutChangeListener(rowLayout)
-            // No public remove method survives R8 in 1606; remove only our identity from its native list.
-            (dualPaneField(recycler.javaClass, "k0")?.get(recycler) as? MutableList<*>)?.remove(listener)
+            // Remove only our identity from the exact profile's native listener list.
+            (native.listenerList.get(recycler) as? MutableList<*>)?.remove(listener)
             listener = null
         }
     }
 
     private inline fun guarded(action: () -> Unit) {
-        runCatching(action).onFailure { ModernXposedRuntime.log("1606 right lyrics layout failed", it) }
+        runCatching(action).onFailure { ModernXposedRuntime.log("Fragment right lyrics layout failed", it) }
     }
 }

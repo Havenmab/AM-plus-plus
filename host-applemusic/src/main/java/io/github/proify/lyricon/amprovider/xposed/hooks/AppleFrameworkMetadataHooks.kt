@@ -112,6 +112,7 @@ internal class AppleFrameworkMetadataHooks(
             }
             ProviderLogger.info("Apple MediaSession 元数据 Hook 已安装")
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple MediaSession 元数据 Hook 安装失败", it)
         }
     }
@@ -144,6 +145,7 @@ internal class AppleFrameworkMetadataHooks(
             }
             ProviderLogger.info("Apple MediaSession 队列 Hook 已安装")
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple MediaSession 队列 Hook 安装失败", it)
         }
     }
@@ -173,6 +175,7 @@ internal class AppleFrameworkMetadataHooks(
             }
             ProviderLogger.info("Apple Music 媒体通知元数据及点击入口 Hook 已安装")
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 媒体通知元数据及点击入口 Hook 安装失败", it)
         }
     }

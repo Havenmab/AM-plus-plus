@@ -232,13 +232,14 @@ internal object AppleMusicHookContracts {
         AppleMusicHookPoint.COMPOSE_OBSERVE_AS_STATE to AllOfContract(
             RequireNonBridgeMethod(),
             // observeAsState reads a LiveData. Apple Music ships LiveData obfuscated: the class
-            // is androidx.lifecycle.G on 6.5.0-6.5.3 and keeps getValue, observe and
+            // is androidx.lifecycle.G on 6.5.x/1606 and H on 1609, and keeps getValue, observe and
             // observeForever while MutableLiveData keeps its own name, so both the library name
             // and the verified host alias are accepted. Unknown hosts stay rejected.
             RequireParameterType(
                 0,
                 "androidx.lifecycle.LiveData",
                 "androidx.lifecycle.G",
+                "androidx.lifecycle.H",
             ),
         ),
         AppleMusicHookPoint.LIBRARY_EPOXY_BUILD to AllOfContract(

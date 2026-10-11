@@ -10,6 +10,7 @@ internal class TabletLyricsPaneMotion(
     private val parent: ViewGroup, private val left: View, private val right: View,
     private val invalidate: () -> Unit,
     private val artwork: (() -> View?)? = null,
+    private val contentSpan: (() -> Pair<Int, Int>?)? = null,
 ) : AutoCloseable {
     private val leftX = left.translationX
     private val rightX = right.translationX
@@ -54,7 +55,9 @@ internal class TabletLyricsPaneMotion(
         render()
     }
     private fun render() {
-        val offset = TabletComponentGeometry.centeredOffset(parent.width, left.left, left.width) ?: 0f
+        val span = contentSpan?.invoke()
+        val offset = TabletComponentGeometry.centeredOffset(parent.width,
+            left.left + (span?.first ?: 0), span?.second ?: left.width) ?: 0f
         val centered = offset * fraction
         left.translationX = leftX + centered
         right.translationX = rightX + right.width * .12f * fraction

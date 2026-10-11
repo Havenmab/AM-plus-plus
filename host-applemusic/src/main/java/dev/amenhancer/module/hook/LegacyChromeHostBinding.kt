@@ -24,7 +24,12 @@ internal class LegacyChromeHostBinding(private val activity: Activity) : ChromeH
     private val views = HashMap<ChromeResource, View?>()
     private var configuration = android.content.res.Configuration(activity.resources.configuration)
     private var dimensions = readDimensions()
-    private val methods = HashMap<Pair<Class<*>,String>,Method>()
+    private data class MethodKey(val owner: Class<*>, val name: String, val parameters: List<Class<*>>)
+    private val methods = HashMap<MethodKey,Method>()
+    private val behaviorFields by lazy {
+        generateSequence(activity.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }.toList()
+    }
     private val nav = profile.getJSONObject("navigation")
     private val behavior = profile.getJSONObject("behavior")
     private val viewTypes = profile.getJSONObject("views")
@@ -54,8 +59,7 @@ internal class LegacyChromeHostBinding(private val activity: Activity) : ChromeH
         .associateWith { role -> resourceId(role).takeIf { it!=0 }?.let(activity.resources::getDimensionPixelSize) ?: 0 }
     override fun dimension(role: ChromeResource): Int = dimensions[role] ?: 0
     override fun playerBehavior(preferPlayerRuntime: Boolean): Any? {
-        val fields=generateSequence(activity.javaClass as Class<*>?) { it.superclass }
-            .flatMap { it.declaredFields.asSequence() }.toList()
+        val fields = behaviorFields
         val preferred=if (preferPlayerRuntime) fields.asSequence().mapNotNull { field ->
             runCatching { field.isAccessible=true; field.get(activity) }.getOrNull()
         }.firstOrNull { it.javaClass.name.contains(behavior.getString("runtimeTypeToken")) } else null
@@ -73,7 +77,8 @@ internal class LegacyChromeHostBinding(private val activity: Activity) : ChromeH
     override fun sheetSnapshot(owner: Any)=NativeSheetSnapshot(stateField.getInt(owner),collapsedField.getInt(owner),
         (expandedMethod.invoke(owner) as Number).toInt())
     override fun writePeek(owner: Any,height: Int) {
-        methods.getValue(owner.javaClass to behavior.getString("peekMethod")).invoke(owner,height,false)
+        methods.getValue(MethodKey(owner.javaClass, behavior.getString("peekMethod"),
+            listOf(Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!))).invoke(owner,height,false)
     }
     override fun navigation(view: View)=NativeNavigationSnapshot(
         method(view.javaClass,nav.getString("menuMethod")).invoke(view) as Menu,
@@ -88,7 +93,7 @@ internal class LegacyChromeHostBinding(private val activity: Activity) : ChromeH
     override fun isPagerPageHost(view: View): Boolean=
         (view.parent as? View)?.javaClass?.name == viewTypes.getString("pagerType")
     private fun method(type: Class<*>,name: String,vararg parameters: Class<*>): Method =
-        methods.getOrPut(type to name) {
+        methods.getOrPut(MethodKey(type, name, parameters.toList())) {
             generateSequence(type as Class<*>?) { it.superclass }.firstNotNullOfOrNull {
                 runCatching { it.getDeclaredMethod(name,*parameters).apply { isAccessible=true } }.getOrNull()
             } ?: throw NoSuchMethodException("${type.name}#$name")

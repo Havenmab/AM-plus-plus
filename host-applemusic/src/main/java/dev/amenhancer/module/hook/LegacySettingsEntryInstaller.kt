@@ -98,6 +98,7 @@ internal class LegacySettingsEntryInstaller(context: android.content.Context) {
         val settingsFragmentClass = runCatching {
             targetClassLoader.loadClass(SETTINGS_FRAGMENT_NAME)
         }.getOrNull() ?: return
+        val activityGetter = runCatching { CachedMethods.exact(settingsFragmentClass, "getActivity") }.getOrNull() ?: return
         val preferenceSetupMethod = EmbeddedSettingsFragmentMethodResolver.findPreferenceSetup(
             settingsFragmentClass,
         )
@@ -118,7 +119,7 @@ internal class LegacySettingsEntryInstaller(context: android.content.Context) {
                         val fragment = param.thisObject ?: return
                         if (!settingsFragmentClass.isInstance(fragment)) return
                         val activity = runCatching {
-                            ModernXposedRuntime.callMethod(fragment, "getActivity") as? Activity
+                            activityGetter.invoke(fragment) as? Activity
                         }.getOrNull() ?: return
                         when {
                             method.toGenericString() == preferenceSetupSignature ->

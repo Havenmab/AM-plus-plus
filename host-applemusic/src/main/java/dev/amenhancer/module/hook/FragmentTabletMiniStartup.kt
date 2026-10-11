@@ -2,22 +2,21 @@ package dev.amenhancer.module.hook
 
 import android.view.View
 import android.view.ViewGroup
-import org.json.JSONObject
+import java.lang.reflect.Modifier
 
 /** Re-evaluates the native startup predicate after the restored queue/account becomes ready. */
 internal class FragmentTabletMiniStartup(
     private val owner: Any,
     private val root: ViewGroup,
     private val material: View,
-    loader: ClassLoader,
-    content: Class<*>,
-    names: JSONObject,
+    contract: FragmentChromeContract,
 ) : Runnable, AutoCloseable {
-    private val browser = resolveFragmentNativeBrowserGetter(content)
-    private val item = FragmentChromeContract.method(browser.returnType, names.getString("currentItemMethod"))
-    private val loggedIn = FragmentChromeContract.method(loader.loadClass(names.getString("accountClass")), names.getString("accountReadyMethod"))
-    private val show = FragmentChromeContract.method(content, names.getString("visibilityMethod"), java.lang.Boolean.TYPE)
-    private val view = FragmentChromeContract.method(content, "getView")
+    private val browser = contract.browser
+    private val item = contract.currentItem
+    private val loggedIn = contract.accountReady
+    private val show = contract.miniVisible
+    private val visibilityStatic = Modifier.isStatic(show.modifiers)
+    private val view = contract.view
     private var attempts = 0
     private var closed = false
 
@@ -29,7 +28,7 @@ internal class FragmentTabletMiniStartup(
             val readyAccount = loggedIn.invoke(null) == true
             val currentItem = browser.invoke(owner)?.let { item.invoke(it) != null } == true
             if (readyAccount && currentItem) {
-                show.invoke(owner, true)
+                if (visibilityStatic) show.invoke(null, owner, true) else show.invoke(owner, true)
                 ModernXposedRuntime.log("7.0 tablet mini startup: restored native visibility after account/queue ready")
                 return
             }

@@ -25,6 +25,7 @@ internal class TabletPlayerComponents(
     private val ids = HashMap<String, Int>()
     private fun id(name: String) = ids.getOrPut(name) { root.resources.getIdentifier(name, "id", root.context.packageName) }
     private fun find(parent: View, name: String): View? = id(name).takeIf { it != 0 }?.let { parent.findViewById(it) }
+    private val progressContent = TabletProgressContent(::find)
     private fun dp(value: Int) = (value * root.resources.displayMetrics.density).roundToInt()
     private data class Hidden(val alpha: Float, val visibility: Int, val clickable: Boolean, val accessibility: Int)
     private val hidden = IdentityHashMap<View, Hidden>()
@@ -87,6 +88,12 @@ internal class TabletPlayerComponents(
     }
     private fun controls(): ViewGroup? = groups(songHost).filter { it.isShown && it.height > 0 }
         .maxByOrNull(::alpha)
+    fun restingContentSpan(): Pair<Int, Int>? {
+        val group = controls() ?: return null
+        val progress = progressContent.resolve(group, requireShown = true) ?: return null
+        val bounds = progressContent.boundsIn(songHost, progress)
+        return bounds.left to bounds.width()
+    }
     /** Current-item state overrides retained controls, which can still describe the previous song. */
     fun lyricsAvailable(): Boolean? = currentLyricsAvailability?.let { it() == true }
         ?: controls()?.let { find(it, "player_lyrics")?.isEnabled }
@@ -188,7 +195,14 @@ internal class TabletPlayerComponents(
         val next = find(group, "next_fast_forward") ?: return
         val nativeLyrics = find(group, "player_lyrics") ?: return
         val nativeQueue = find(group, "player_queue") ?: return
-        if (group.isLayoutRequested) { overlay.visibility = View.INVISIBLE; return }
+        if (group.isLayoutRequested) {
+            // Keep the last measured controls while native media rebinds. Hiding
+            // an already-placed overlay for one traversal makes every song flash.
+            if (!placed || !visible) overlay.visibility = View.INVISIBLE
+            else { overlay.alpha = alpha(group); overlay.visibility = View.VISIBLE }
+            volume.setPageVisible(visible && expansion >= .999f && placed && volume.visibility == View.VISIBLE)
+            return
+        }
         val progress = listOf("seek_bar_controls", "live_radio_container").mapNotNull { find(group, it) }
             .firstOrNull { it.isShown && it.height > 0 } ?: return
         root.getLocationInWindow(origin)
@@ -223,10 +237,10 @@ internal class TabletPlayerComponents(
             val a = location(nativeLyrics); val b = location(nativeQueue)
             place(lyrics, a.first, footerTop, size, size); place(queue, b.first, footerTop, size, size)
         }
-        val nativeProgress = find(progress, "progress")?.takeIf { it.isShown && it.width > 0 } ?: progress
-        val progressAt = location(nativeProgress)
-        val progressLeft = progressAt.first + nativeProgress.paddingLeft
-        val progressRight = progressAt.first + nativeProgress.width - nativeProgress.paddingRight
+        val progressBounds = progressContent.bounds(progress) ?: return
+        val progressAt = location(progressBounds.view)
+        val progressLeft = progressAt.first + progressBounds.start
+        val progressRight = progressAt.first + progressBounds.end
         // The invisible native actions retain their dimensions and constraints:
         // Preserve the volume row's existing 4dp + 2dp lift.
         val nativeFooterAt = location(nativeLyrics)

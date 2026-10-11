@@ -3,28 +3,23 @@ package dev.amenhancer.module.hook
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
-import org.json.JSONObject
 
 /** Reaches Apple's static-mode compositor after an Editorial listener has been cleared. */
-internal class FragmentTabletVideoHandoff(loader: ClassLoader, names: JSONObject) {
-    private val song = loader.loadClass(names.getString("songClass"))
-    private val base = loader.loadClass(names.getString("baseClass"))
-    private val listener = loader.loadClass(names.getString("listenerClass"))
-    private val owner = FragmentChromeContract.field(listener, names.getString("listenerOwner"), song)
-    private val metadata = FragmentChromeContract.method(listener, "onMediaMetadataChanged", loader.loadClass("z3.w"))
-    private val updateSize = FragmentChromeContract.method(base, names.getString("videoSizeMethod"),
-        java.lang.Float.TYPE, java.lang.Integer.TYPE, java.lang.Integer.TYPE)
-    private val surfaceGetter = FragmentChromeContract.method(song, names.getString("surfaceGetter"))
-        .also { check(it.returnType == TextureView::class.java) }
-    private val videoMode = FragmentChromeContract.field(base, names.getString("videoModeField"), java.lang.Boolean.TYPE)
-    private val getView = FragmentChromeContract.method(song, "getView")
-    private val getParent = FragmentChromeContract.method(song, "getParentFragment")
-    private val getBrowser = resolveFragmentNativeBrowserGetter(song)
-    private val getVideoSize = FragmentChromeContract.method(getBrowser.returnType, "O")
-    private val videoWidth = FragmentChromeContract.field(getVideoSize.returnType, "a", java.lang.Integer.TYPE)
-    private val videoHeight = FragmentChromeContract.field(getVideoSize.returnType, "b", java.lang.Integer.TYPE)
-    private val surfaceName = names.getString("surfaceResource")
-    private val imageName = names.getString("imageResource")
+internal class FragmentTabletVideoHandoff(private val native: FragmentTabletVideoContract) {
+    private val song = native.song
+    private val owner = native.owner
+    private val metadata = native.metadata
+    private val updateSize = native.updateSize
+    private val surfaceGetter = native.surfaceGetter
+    private val videoMode = native.videoMode
+    private val getView = native.getView
+    private val getParent = native.getParent
+    private val getBrowser = native.getBrowser
+    private val getVideoSize = native.getVideoSize
+    private val videoWidth = native.videoWidth
+    private val videoHeight = native.videoHeight
+    private val surfaceName = native.surfaceName
+    private val imageName = native.imageName
     private val calls = FragmentTabletVideoCallScope()
 
     private fun active(fragment: Any): Boolean = song.isInstance(fragment) &&
@@ -40,9 +35,18 @@ internal class FragmentTabletVideoHandoff(loader: ClassLoader, names: JSONObject
         hook(updateSize, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val fragment = param.thisObject ?: return
+                FragmentTabletDualPaneCoordinator.prepareNativeArtworkSize(fragment)
                 calls.enter(fragment, ((param.args[1] as Int) <= 0 || (param.args[2] as Int) <= 0) && active(fragment))
             }
             override fun afterHookedMethod(param: MethodHookParam) { param.thisObject?.let(calls::leave) }
+        })
+        hook(native.resize, object : ModernMethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                val fragment = param.thisObject ?: return
+                val requested = param.args.getOrNull(1) as? android.util.Size ?: return
+                val base = FragmentTabletDualPaneCoordinator.prepareNativeArtworkSize(fragment) ?: return
+                param.args[1] = if (param.args.firstOrNull() == true) tabletVideoSize(base, requested) else base
+            }
         })
         hook(surfaceGetter, object : ModernMethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {

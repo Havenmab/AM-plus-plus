@@ -293,6 +293,14 @@ object NativeLyricModelPolicy {
         RomanizationPolicy.isLatinLanguageTag(language)
 
     /**
+     * The neutral Latin tag used when the per-line probe proves a pronunciation
+     * exists but Apple advertised no language name for it. It is the tag the app
+     * is handed so it can reveal the track; the pronunciation **text** is always
+     * Apple's own getter output ([probeConfirmedPronunciationLanguage]).
+     */
+    const val FALLBACK_PRONUNCIATION_LANGUAGE = "und-Latn"
+
+    /**
      * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.
      * The late-lane trigger fires when this key *changes*, so:
      *
@@ -506,7 +514,11 @@ object NativeLyricModelPolicy {
      *  4. a line whose pronunciation getter already returns romanization
      *     ([hasOfficialLineProbe]) — HLE's per-call `hasValidOfficialRomanization`,
      *     which is the only evidence a partially-populated official document
-     *     offers.
+     *     offers. Apple exposed the **text** but advertised no language name for
+     *     it, so a neutral Latin tag is synthesized
+     *     ([probeConfirmedPronunciationLanguage]) purely to let the app light its
+     *     pronunciation track up. The content is still Apple's own getter output —
+     *     this is not a third-party transliteration lane.
      *
      * [NONE][PronunciationLaneSource.NONE] means the payload must not be
      * dispatched: without one of these an empty pronunciation row would appear.
@@ -519,6 +531,7 @@ object NativeLyricModelPolicy {
         selectedLane: String?,
         advertisedLane: String?,
         hasOfficialLineProbe: Boolean,
+        systemLyricsLanguage: String? = null,
     ): PronunciationPayloadLane = when {
         stateOfficialLane.isOfficialLane() ->
             PronunciationPayloadLane(
@@ -541,7 +554,7 @@ object NativeLyricModelPolicy {
         hasOfficialLineProbe ->
             PronunciationPayloadLane(
                 confirmed = true,
-                language = null,
+                language = probeConfirmedPronunciationLanguage(systemLyricsLanguage),
                 source = PronunciationLaneSource.LINE_PROBE,
             )
         else ->
@@ -551,6 +564,24 @@ object NativeLyricModelPolicy {
                 source = PronunciationLaneSource.NONE,
             )
     }
+
+    /**
+     * The neutral Latin tag handed to the app when the per-line probe proves a
+     * pronunciation exists but Apple advertised no language name for it
+     * ([pronunciationPayloadLane]'s `line-probe` branch).
+     *
+     * This is HLE's `thirdPartyPronunciationFallbackLanguage()` **semantics**,
+     * reduced to the Apple-only policy: the *content* is never third-party — it is
+     * the app's own `getHtmlPronunciationLineText` — and this tag only names the
+     * track so the app can reveal it. The system lyrics language is reused when it
+     * is already a Latin tag (so the selected track matches what the app expects),
+     * else the neutral [FALLBACK_PRONUNCIATION_LANGUAGE]. The tag only ever
+     * confirms a payload when the probe actually read text, so it cannot invent an
+     * empty pronunciation row.
+     */
+    fun probeConfirmedPronunciationLanguage(systemLyricsLanguage: String?): String =
+        systemLyricsLanguage?.takeIf { isOfficialPronunciationLanguage(it) }
+            ?: FALLBACK_PRONUNCIATION_LANGUAGE
 
     private fun String?.isOfficialLane(): Boolean =
         this != null && isOfficialPronunciationLanguage(this)

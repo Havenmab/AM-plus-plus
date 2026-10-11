@@ -122,17 +122,28 @@ import java.util.concurrent.ConcurrentHashMap
  *    (`PresentationRefreshState.sameLaneRefresh`); the build gate never consumes
  *    the edge because it only reads [pronunciationLaneRevision].
  *  - The custom-lyrics half of that report is the fifth trigger: a module
- *    supplement document carries its **own** `<transliterations>` lane, the build
- *    gate deliberately skips a supplement pointer, and the completion feed's
+ *    supplement document carries its **own** pronunciation text, the build gate
+ *    deliberately skips a supplement pointer, and the completion feed's
  *    post-overlay ask only runs when the enricher actually published a merged
  *    document (a document that already carries its translation publishes none).
- *    [onOfficialLaneConfirmed] therefore asks when our **own** selection is the
- *    thing that confirmed the lane (`selection=apple reason=apple-lane`), tagged
- *    `trigger=lane-confirmed`, and [onPronunciationLaneReady] admits a supplement
- *    for the app's own advertisement/probe edge. Both ask for a **payload-only**
- *    refresh ([performPresentationRefresh]): the custom document is already
+ *    Three things can therefore reach the payload for a supplement, all
+ *    **payload-only** ([performPresentationRefresh]: the document is already
  *    installed, so the heavy re-present/rebind is skipped while the app's own
- *    pronunciation payload still runs last. A supplement that confirms no lane is
+ *    pronunciation payload still runs last):
+ *      * the build ask itself ([requestPresentationRefreshAfterBuild] runs the
+ *        payload before its `detail=supplement` early return), so the very first
+ *        frame can set `n1.e`;
+ *      * [onOfficialLaneConfirmed], when our **own** selection is what confirmed
+ *        the lane (`selection=apple reason=apple-lane`), tagged
+ *        `trigger=lane-confirmed`;
+ *      * [onPronunciationLaneReady], which admits a supplement for the app's own
+ *        advertisement/probe edge.
+ *    The payload lane is resolved from the model actually presenting the lyrics
+ *    ([NativeLyricModelPolicy.pronunciationPayloadLane]): a lane Apple advertised
+ *    or we selected, or — when Apple exposed the **text** but named no language —
+ *    a synthesized neutral Latin tag ([probeConfirmedPronunciationLanguage],
+ *    HLE's `thirdPartyPronunciationFallbackLanguage()` semantics; the content
+ *    stays Apple's own getter output). A supplement that confirms no lane is
  *    unchanged (`payload=skipped(custom-no-lane)`).
  *  - Apple's own **word** vector is the only word-level source: a word-timing
  *    line whose line-level `getHtmlPronunciationLineText` Apple left empty used
@@ -284,6 +295,16 @@ internal class AppleNativeLyricModelHooks(
 
     @Volatile
     private var selectedPronunciationLanguage: String? = null
+
+    /**
+     * The model for which the probe-confirmed neutral Latin tag
+     * ([NativeLyricModelPolicy.probeConfirmedPronunciationLanguage]) was already
+     * handed to `setPronunciation`. One attempt per model bounds a tag Apple
+     * rejects, so a per-read retry cannot spam the native setter. Reset on a track
+     * change.
+     */
+    @Volatile
+    private var probeFallbackAttemptedFor: java.lang.ref.WeakReference<Any>? = null
 
     @Volatile
     private var selectedTranslationSong: java.lang.ref.WeakReference<Any>? = null
@@ -944,7 +965,29 @@ internal class AppleNativeLyricModelHooks(
             reload = reloadIntent(state, shouldRefresh),
             trigger = PresentationRefreshTrigger.BUILD.token,
         )
-        if (!shouldRefresh) return
+        if (!shouldRefresh) {
+            // The supplement skip exists to avoid Apple's track refresh (the
+            // I2/reload twitch), not to skip the payload. When the custom model
+            // already exposes Apple's own pronunciation text (or a lane) and the
+            // user wants it, the guaranteed payload replay is exactly what the
+            // first frame needs — the only other path was the backgrounding the
+            // user reported. `performPresentationRefresh` treats a supplement
+            // build ask as payload-only: no `w2`, no rebind, payload last. An ask
+            // that is already pending (the same state, or a preserved
+            // custom-overlay ask that does the full refresh) is left alone.
+            if (pendingPresentationRefresh == null &&
+                !sourceIsApple &&
+                officialPronunciation &&
+                pronunciationSelected
+            ) {
+                pendingPresentationRefresh = state
+                adapterRetryAttempts = 0
+                mainHandler.post {
+                    performPresentationRefresh(state, PresentationRefreshTrigger.BUILD)
+                }
+            }
+            return
+        }
 
         pendingPresentationRefresh = state
         adapterRetryAttempts = 0
@@ -1477,7 +1520,18 @@ internal class AppleNativeLyricModelHooks(
                     pronunciationSelected = state.pronunciationSelected,
                 )
             }
-            PresentationRefreshTrigger.BUILD,
+            PresentationRefreshTrigger.BUILD -> if (!state.sourceIsApple) {
+                // A supplement's build ask is its payload-only lane replay.
+                NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_LANE
+            } else {
+                NativeLyricModelPolicy.presentationRefreshReason(
+                    sourceIsApple = state.sourceIsApple,
+                    hasValidOfficialPronunciation = state.officialPronunciation,
+                    hasOnlineTranslation = state.onlineTranslation,
+                    hasOnlinePronunciation = state.onlinePronunciation,
+                    pronunciationSelected = state.pronunciationSelected,
+                )
+            }
             PresentationRefreshTrigger.PREFERENCE,
             PresentationRefreshTrigger.F2_RETRY -> NativeLyricModelPolicy.presentationRefreshReason(
                 sourceIsApple = state.sourceIsApple,
@@ -1699,6 +1753,10 @@ internal class AppleNativeLyricModelHooks(
                 selectedLane = selectedPronunciationLaneForCurrentSong(),
                 advertisedLane = advertisedPronunciationLaneForCurrentSong(songNative),
                 hasOfficialLineProbe = hasValidOfficialPronunciation(songNative),
+                // The probe-confirmed branch synthesizes a neutral Latin tag from
+                // this when Apple advertised no language name: the text is
+                // Apple's own, the tag only lets the app reveal the track.
+                systemLyricsLanguage = systemLyricsLanguage,
             )
         }.getOrElse { error ->
             log("online-translation presentation-refresh lane resolution failed: ${error.message}")
@@ -1941,6 +1999,7 @@ internal class AppleNativeLyricModelHooks(
             applePronunciationLanguages = emptyList()
             selectedPronunciationSong = null
             selectedPronunciationLanguage = null
+            probeFallbackAttemptedFor = null
             selectedTranslationSong = null
             selectedTranslationLanguage = null
             systemLyricsLanguage = null
@@ -2349,7 +2408,23 @@ internal class AppleNativeLyricModelHooks(
         // retry it.
         val appleLane = plan.selection == NativeLyricModelPolicy.PronunciationSelection.APPLE
         pronunciationSelectionOpen = !appleLane
-        val language = plan.language ?: return plan
+        // Apple exposed the pronunciation **text** (the per-line probe reads it)
+        // but advertised no language name for it. Hand the app the neutral Latin
+        // tag HLE's `thirdPartyPronunciationFallbackLanguage()` uses, purely so
+        // the pronunciation track can be revealed; the text stays Apple's own
+        // getter output, so this is not a third-party transliteration lane. One
+        // attempt per model, so a rejected tag is not retried on every read.
+        val probeFallback = plan.language == null &&
+            !mandarinHidden &&
+            probeFallbackAttemptedFor?.get() !== songNative &&
+            hasValidOfficialPronunciation(songNative)
+        val language = plan.language
+            ?: if (probeFallback) {
+                probeFallbackAttemptedFor = java.lang.ref.WeakReference(songNative)
+                NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(systemLyricsLanguage)
+            } else {
+                return plan
+            }
         if (
             language == selectedPronunciationLanguage &&
             selectedPronunciationSong?.get() === songNative
@@ -2374,7 +2449,9 @@ internal class AppleNativeLyricModelHooks(
                 selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
                 selectedPronunciationLanguage = language
                 if (appleLane) pronunciationSelectionOpen = false
-                confirmedLane = appleLane
+                // A probe-confirmed neutral tag is a confirmed lane too: the text
+                // exists (the probe read it), only the name was synthesized.
+                confirmedLane = appleLane || probeFallback
             } else {
                 pronunciationSelectionOpen = true
             }

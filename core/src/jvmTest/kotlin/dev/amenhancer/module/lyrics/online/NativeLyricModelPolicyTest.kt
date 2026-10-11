@@ -542,11 +542,13 @@ class NativeLyricModelPolicyTest {
         selectedLane: String? = null,
         advertisedLane: String? = null,
         probe: Boolean = false,
+        systemLyricsLanguage: String? = null,
     ) = NativeLyricModelPolicy.pronunciationPayloadLane(
         stateOfficialLane = stateLane,
         selectedLane = selectedLane,
         advertisedLane = advertisedLane,
         hasOfficialLineProbe = probe,
+        systemLyricsLanguage = systemLyricsLanguage,
     )
 
     /**
@@ -577,11 +579,27 @@ class NativeLyricModelPolicyTest {
         assertEquals("ko-Latn", advertised.language)
         assertEquals(PronunciationLaneSource.ADVERTISED_VECTOR, advertised.source)
 
-        // A partially-populated document: only the per-line probe confirms it.
+        // A partially-populated document: only the per-line probe confirms it, and
+        // the neutral Latin tag is synthesized from the system lyrics language.
         val probe = payloadLane(probe = true)
         assertTrue(probe.confirmed)
-        assertNull(probe.language)
+        assertEquals(NativeLyricModelPolicy.FALLBACK_PRONUNCIATION_LANGUAGE, probe.language)
+        assertEquals("und-Latn", probe.language)
         assertEquals(PronunciationLaneSource.LINE_PROBE, probe.source)
+
+        // The system lyrics language is reused when it is already a Latin tag, so
+        // the revealed track matches what the app expects; otherwise the neutral
+        // tag stands in. The text is always Apple's own getter output.
+        assertEquals("ja-Latn", payloadLane(probe = true, systemLyricsLanguage = "ja-Latn").language)
+        assertEquals("und-Latn", payloadLane(probe = true, systemLyricsLanguage = "ja").language)
+        assertEquals(
+            "und-Latn",
+            NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(null),
+        )
+        assertEquals(
+            "ko-Latn",
+            NativeLyricModelPolicy.probeConfirmedPronunciationLanguage("ko-Latn"),
+        )
     }
 
     @Test

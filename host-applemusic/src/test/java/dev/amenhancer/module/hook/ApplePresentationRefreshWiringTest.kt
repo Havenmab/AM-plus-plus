@@ -505,6 +505,7 @@ class ApplePresentationRefreshWiringTest {
             perform.contains("advertisedLane = advertisedPronunciationLaneForCurrentSong(songNative)"),
         )
         assertTrue(perform.contains("hasOfficialLineProbe = hasValidOfficialPronunciation(songNative)"))
+        assertTrue(perform.contains("systemLyricsLanguage = systemLyricsLanguage"))
         assertTrue(perform.contains("hasConfirmedOfficialLane = payloadLane.confirmed"))
         assertTrue(perform.contains("lane = payloadLane"))
         assertTrue(perform.contains("pronunciationSelected = state.pronunciationSelected"))
@@ -582,6 +583,32 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(
             hooks.contains("laneSource = lane?.source?.token ?: PronunciationLaneSource.NONE.token"),
         )
+        // The build ask itself must reach the payload for a supplement whose model
+        // already exposes Apple's pronunciation text: the only other trigger was
+        // the backgrounding the user reported. It stays payload-only (same
+        // `payloadOnly` rule), so no `w2`/rebind runs, but the payload replays.
+        assertTrue(hooks.contains("if (pendingPresentationRefresh == null &&"))
+        assertTrue(hooks.contains("!sourceIsApple &&"))
+        assertTrue(hooks.contains("officialPronunciation &&"))
+        val buildGate = hooks
+            .substringAfter("private fun requestPresentationRefreshAfterBuild(")
+            .substringBefore("private fun requestCustomOverlayPresentationRefresh(")
+        assertTrue(buildGate.contains("pendingPresentationRefresh = state"))
+        assertTrue(
+            buildGate.contains(
+                "performPresentationRefresh(state, PresentationRefreshTrigger.BUILD)",
+            ),
+        )
+        // The probe-confirmed neutral tag: synthesized only when the probe read
+        // text and Apple advertised no language, handed to `setPronunciation` once
+        // per model, and a confirmed lane when Apple accepts it.
+        assertTrue(hooks.contains("val probeFallback = plan.language == null &&"))
+        assertTrue(
+            hooks.contains("NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(systemLyricsLanguage)"),
+        )
+        assertTrue(hooks.contains("probeFallbackAttemptedFor = java.lang.ref.WeakReference(songNative)"))
+        assertTrue(hooks.contains("confirmedLane = appleLane || probeFallback"))
+        assertTrue(hooks.contains("probeFallbackAttemptedFor = null"))
     }
 
     @Test

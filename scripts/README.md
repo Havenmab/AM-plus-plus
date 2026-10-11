@@ -58,4 +58,7 @@ Related changes invalidate the cache; unrelated application source changes can r
 it. There is no partial-key restore, and either missing output causes a rebuild.
 
 Full tests, Lint, release assembly and signature verification remain in the workflow.
+Source-contract tests declare repository sources/build configuration as inputs, and
+plugin import tests declare the fixture ZIP contents, so changes invalidate their
+test results even when compiled class files or fixture paths stay unchanged.
 Run `python -m unittest discover -s scripts/tests` to check artifact cache invalidation.

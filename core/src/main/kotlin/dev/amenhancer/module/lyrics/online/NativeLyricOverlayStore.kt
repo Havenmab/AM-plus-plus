@@ -93,6 +93,15 @@ class NativeLyricOverlayStore {
         val translationSource: String?,
         val hasPronunciation: Boolean,
         val pronunciationSource: String?,
+        /**
+         * The `<transliteration xml:lang>` tags the published document carries,
+         * per song. The app's own `getPronunciationLanguages` can stay empty for a
+         * supplement document the module wrote, but its transliteration lane is
+         * real and the language tag is what the app's `setPronunciation` accepts;
+         * the toggle-availability fallback reads this so a confirmed supplement
+         * song is not left with a disabled romanization button.
+         */
+        val pronunciationLanguages: List<String> = emptyList(),
     )
 
     @Volatile
@@ -116,6 +125,7 @@ class NativeLyricOverlayStore {
         lines: List<NativeLyricLine>,
         translationSource: String? = null,
         pronunciationSource: String? = null,
+        pronunciationLanguages: List<String> = emptyList(),
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
         val entries = lines.mapNotNull { line ->
@@ -187,6 +197,7 @@ class NativeLyricOverlayStore {
                     it.second.background != null
             },
             pronunciationSource = pronunciationSource,
+            pronunciationLanguages = pronunciationLanguages.distinct(),
         )
         if (overlay == next) return false
         overlay = next
@@ -211,6 +222,10 @@ class NativeLyricOverlayStore {
             songId = songId.toString(),
             lines = DisplayedLyricPublication.lines(ttml),
             pronunciationSource = pronunciationSource,
+            // The document's own `<transliteration xml:lang>` tags: the lane the
+            // app's native parser keys the pronunciation by, which the toggle's
+            // availability needs when Apple's own advertisement stays empty.
+            pronunciationLanguages = AppleLyricTtmlReader.transliterationLanguages(ttml),
         )
     }
 
@@ -243,6 +258,17 @@ class NativeLyricOverlayStore {
 
     fun pronunciationSource(songId: String?): String? =
         overlay?.takeIf { it.songId == songId && it.hasPronunciation }?.pronunciationSource
+
+    /**
+     * The `<transliteration xml:lang>` tags the published document carries for
+     * [songId], in document order. Empty for another song or a document with no
+     * named lane. The app's toggle-availability fallback reads this when Apple's
+     * own `getPronunciationLanguages` does not advertise the supplement's lane.
+     */
+    fun pronunciationLanguages(songId: String?): List<String> =
+        overlay?.takeIf { it.songId == songId && it.hasPronunciation }
+            ?.pronunciationLanguages
+            .orEmpty()
 
     fun translation(songId: String?, begin: Long, end: Long, text: String?): String? =
         content(songId, begin, end, text)?.translation
@@ -592,6 +618,32 @@ object NativeLyricModelPolicy {
      */
     fun isOfficialPronunciationLanguage(language: String?): Boolean =
         RomanizationPolicy.isLatinLanguageTag(language)
+
+    /**
+     * The pronunciation lane the app's toggle may act on, Apple-first: Apple's own
+     * matched lane when there is one, otherwise the supplement document's own lane
+     * (only for a module supplement song, so an Apple-sourced track is never given
+     * a lane it did not advertise). Null when neither exists — the state that
+     * leaves the "show/hide romanization" button disabled.
+     */
+    fun pronunciationLaneFor(
+        appleLane: String?,
+        overlayLane: String?,
+        isSupplement: Boolean,
+    ): String? = appleLane ?: overlayLane?.takeIf { isSupplement }
+
+    /**
+     * Whether the romanization toggle has a lane to act on. Pure truth table:
+     * Apple's own lane ⇒ available; a module supplement with a published overlay
+     * lane ⇒ available; a supplement with none, or an Apple source with no lane,
+     * ⇒ not available. The user's own preference still gates whether the locked
+     * check is combined with it by the app (`t2`).
+     */
+    fun pronunciationAvailable(
+        appleLane: String?,
+        overlayLane: String?,
+        isSupplement: Boolean,
+    ): Boolean = pronunciationLaneFor(appleLane, overlayLane, isSupplement) != null
 
     /**
      * The neutral Latin tag used when no lyrics language can be determined for a

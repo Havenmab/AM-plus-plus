@@ -445,26 +445,39 @@ class ApplePresentationRefreshWiringTest {
             .substringAfter("private fun installPronunciationLanguageMatch(")
             .substringBefore("private fun installPronunciationPreferenceHook(")
         assertTrue(matchHook.contains("NativeLyricModelPolicy.selectLanguage("))
-        assertTrue(matchHook.contains("?: confirmedPronunciationLanguageForCurrentSong()"))
+        // Apple's own match first, then the lane already confirmed for this song —
+        // including the supplement document's own lane, without which the custom
+        // track's toggle would stay disabled.
+        assertTrue(matchHook.contains("val confirmed = pronunciationLaneForCurrentSong()"))
+        assertTrue(matchHook.contains("val lane = appleLane ?: confirmed?.language"))
+        assertTrue(matchHook.contains("param.result = lane"))
         // A Mandarin-hidden song still yields null: the hide branch runs first,
         // and the fallback can never resurrect it.
         assertTrue(matchHook.contains("param.result = null"))
-        val helper = hooks
-            .substringAfter("private fun confirmedPronunciationLanguageForCurrentSong(")
-            .substringBefore("private fun isMandarinHidden(")
+        // The lane resolution order: the accepted selection, Apple's advertisement
+        // for this same model, then the published supplement overlay lane.
+        val laneHelper = hooks
+            .substringAfter("private fun pronunciationLaneForCurrentSong(")
+            .substringBefore("private fun supplementOverlayPronunciationLanguage(")
+        assertTrue(laneHelper.contains("selectedPronunciationLaneForCurrentSong()"))
+        assertTrue(laneHelper.contains("advertisedPronunciationLaneForCurrentSong(songNative)"))
+        assertTrue(laneHelper.contains("supplementOverlayPronunciationLanguage()"))
         // Cross-song leakage guard: the model currently being delivered and the
-        // exact instance the native setter accepted. The selected-lane helper is
-        // extracted so the payload lane resolution can name `confirmed` as its
-        // source; the identity guard is the same, written as an early-out.
-        assertTrue(helper.contains("val songNative = songNativeRef?.get() ?: return null"))
-        assertTrue(helper.contains("if (!isCurrentSong(songNative)) return null"))
-        assertTrue(helper.contains("selectedPronunciationSong?.get() !== songNative"))
-        assertTrue(helper.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage(it)"))
-        // Only a lane we actually confirmed: the selected lane, else Apple's
-        // best-known advertisement for this same model.
-        assertTrue(helper.contains("NativeLyricModelPolicy.officialPronunciationLanguage("))
+        // exact instance the native setter accepted.
+        val selectedHelper = hooks
+            .substringAfter("private fun selectedPronunciationLaneForCurrentSong(")
+            .substringBefore("private fun advertisedPronunciationLaneForCurrentSong(")
+        assertTrue(selectedHelper.contains("val songNative = songNativeRef?.get() ?: return null"))
+        assertTrue(selectedHelper.contains("if (!isCurrentSong(songNative)) return null"))
+        assertTrue(selectedHelper.contains("selectedPronunciationSong?.get() !== songNative"))
+        assertTrue(selectedHelper.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage(it)"))
+        // Apple's best-known advertisement for this same model.
+        val advertisedHelper = hooks
+            .substringAfter("private fun advertisedPronunciationLaneForCurrentSong(")
+            .substringBefore("private fun isMandarinHidden(")
+        assertTrue(advertisedHelper.contains("NativeLyricModelPolicy.officialPronunciationLanguage("))
         assertTrue(
-            helper.contains(
+            advertisedHelper.contains(
                 "advertisedPronunciationLanguages(songPronunciationLanguages(songNative))",
             ),
         )

@@ -455,6 +455,35 @@ class AppleMusic700NativeLyricsProfileTest {
     }
 
     @Test
+    fun `the romanization toggle is available for a supplement with a published lane`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The app's toggle reads `t2 = matchToSystemLyricsScript(
+        // getPronunciationLanguages()) != null && pronunciationSelected`, and its
+        // own advertisement stays empty for a document the module wrote, so the
+        // hook must fall back to the lane the published overlay carries.
+        assertTrue(hooks.contains("private fun pronunciationLaneForCurrentSong("))
+        assertTrue(hooks.contains("private fun supplementOverlayPronunciationLanguage("))
+        assertTrue(hooks.contains("overlay.pronunciationLanguages(songId)"))
+        assertTrue(hooks.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage"))
+        assertTrue(hooks.contains("nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD]"))
+        // Apple-source songs keep their own behaviour: the overlay lane is only
+        // consulted for a supplement with a published pronunciation lane.
+        assertTrue(hooks.contains("supplementLaneAvailable(songId)"))
+        // The bounded per-song diagnostic names availability and its source.
+        assertTrue(
+            hooks.contains(
+                "online-translation pronunciation-toggle available=\$available source=\$source",
+            ),
+        )
+        assertTrue(hooks.contains("song=\$songId lang="))
+        assertTrue(hooks.contains("private fun reportPronunciationToggle("))
+        assertTrue(hooks.contains("MAX_PRONUNCIATION_TOGGLE_ROWS"))
+        assertTrue(hooks.contains("pronunciationToggleKeys.add("))
+    }
+
+    @Test
     fun `the displayed document's own p timing is the overlay's line key`() {
         val reader = projectFile(
             "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/AppleLyricTtmlReader.kt",

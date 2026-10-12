@@ -299,6 +299,18 @@ internal class AppleNativeLyricModelHooks(
     @Volatile
     private var backgroundHookRowsEmitted: Int = 0
 
+    /**
+     * De-duplicates the per-song `pronunciation-toggle` diagnostic: the app's
+     * "show/hide romanization" availability is computed on every
+     * `matchToSystemLyricsScript` call (`PlayerLyricsViewFragment.t2` and `F2`),
+     * so this records the resolved lane and where it came from once per song.
+     */
+    private val pronunciationToggleKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Toggle rows emitted per model generation before the cap. */
+    @Volatile
+    private var pronunciationToggleRowsEmitted: Int = 0
+
     /** True once at least one `LyricsWordVector -> ArrayMap` adapter method is hooked. */
     @Volatile
     private var wordRenderAdapterAvailable: Boolean = false
@@ -2321,14 +2333,62 @@ internal class AppleNativeLyricModelHooks(
      * written for the current model. A previous track's lane therefore cannot
      * leak into the next one, and a song with no confirmed lane yields null.
      */
-    private fun confirmedPronunciationLanguageForCurrentSong(): String? {
-        selectedPronunciationLaneForCurrentSong()?.let { return it }
-        val songNative = songNativeRef?.get() ?: return null
-        if (!isCurrentSong(songNative)) return null
-        // Apple's best-known advertisement for this model: the live read when it
-        // is non-empty, else the last non-empty one. The cache is per model and
-        // guarded by `isCurrentSong`, so it can only describe this song.
-        return advertisedPronunciationLaneForCurrentSong(songNative)
+    private fun confirmedPronunciationLanguageForCurrentSong(): String? =
+        pronunciationLaneForCurrentSong()?.language
+
+    /** A pronunciation lane for the current song plus where it was found. */
+    private data class CurrentPronunciationLane(val language: String, val source: String)
+
+    /**
+     * The best pronunciation lane for the model currently being delivered, with
+     * the evidence that produced it:
+     *
+     *  1. `selected` — the lane the module handed to `setPronunciation` and Apple
+     *     accepted ([selectedPronunciationLaneForCurrentSong]);
+     *  2. `apple` — Apple's own advertisement for this model;
+     *  3. `overlay` — the `<transliteration xml:lang>` lane of the supplement
+     *     document this module published ([supplementOverlayPronunciationLanguage]).
+     *
+     * The third branch is what the romanization toggle needs on a custom track:
+     * the app's `getPronunciationLanguages` can stay empty for a document the
+     * module wrote, so `PlayerLyricsViewFragment.t2` / `F2` would otherwise see
+     * `matchToSystemLyricsScript` return null and disable the button even though
+     * the lane is real and `setPronunciation` accepts it. It is per-song
+     * ([modelSongId] + the overlay's own gate) and fail-open.
+     */
+    private fun pronunciationLaneForCurrentSong(): CurrentPronunciationLane? {
+        selectedPronunciationLaneForCurrentSong()?.let {
+            return CurrentPronunciationLane(it, "selected")
+        }
+        val songNative = songNativeRef?.get()
+        if (songNative != null && isCurrentSong(songNative)) {
+            // Apple's best-known advertisement for this model: the live read when
+            // it is non-empty, else the last non-empty one. The cache is per model
+            // and guarded by `isCurrentSong`, so it can only describe this song.
+            advertisedPronunciationLaneForCurrentSong(songNative)?.let {
+                return CurrentPronunciationLane(it, "apple")
+            }
+        }
+        supplementOverlayPronunciationLanguage()?.let {
+            return CurrentPronunciationLane(it, "overlay")
+        }
+        return null
+    }
+
+    /**
+     * The supplement document's own pronunciation lane for the current model, or
+     * null for an Apple-sourced song / a song with no published overlay lane. The
+     * overlay keeps the `<transliteration xml:lang>` tags it read from the
+     * document, so this is exactly the lane Apple's `setPronunciation` can accept
+     * for the custom track.
+     */
+    private fun supplementOverlayPronunciationLanguage(): String? {
+        val id = modelSongId
+        if (id <= 0L) return null
+        val songId = id.toString()
+        if (!supplementLaneAvailable(songId)) return null
+        return overlay.pronunciationLanguages(songId)
+            .firstOrNull(NativeLyricModelPolicy::isOfficialPronunciationLanguage)
     }
 
     /**
@@ -3928,15 +3988,58 @@ internal class AppleNativeLyricModelHooks(
                         )
                     ) {
                         param.result = null
+                        reportPronunciationToggle(available = false, source = "hidden", language = null)
                         return@runCatching
                     }
-                    param.result = NativeLyricModelPolicy.selectLanguage(
+                    // Apple's own match first; then the lane this module already
+                    // confirmed for the model — its accepted selection, Apple's
+                    // advertisement, or the supplement document's own
+                    // `<transliteration xml:lang>` lane. Without the last branch
+                    // `PlayerLyricsViewFragment.t2` / `F2` see null on a custom
+                    // track (Apple's `getPronunciationLanguages` stays empty), so
+                    // the show/hide button is disabled even though the lane is real.
+                    val appleLane = NativeLyricModelPolicy.selectLanguage(
                         systemMatch = param.result as? String,
                         appleLanguages = appleLanguages,
-                    ) ?: confirmedPronunciationLanguageForCurrentSong()
+                    )
+                    val confirmed = pronunciationLaneForCurrentSong()
+                    val lane = appleLane ?: confirmed?.language
+                    val source = when {
+                        appleLane != null -> "apple"
+                        confirmed != null -> confirmed.source
+                        else -> "none"
+                    }
+                    param.result = lane
+                    reportPronunciationToggle(
+                        available = lane != null,
+                        source = source,
+                        language = lane,
+                    )
                 }
             }
         }, scope)
+    }
+
+    /**
+     * The per-song proof of the "show/hide romanization" button's availability:
+     *
+     * `online-translation pronunciation-toggle available=<true|false>
+     * source=<apple|selected|overlay|hidden|none> song=<id> lang=<lane|none>`
+     *
+     * `available` is the module's contribution to the app's own
+     * `t2 = matchToSystemLyricsScript(...) != null && pronunciationSelected`;
+     * `source` says whether Apple's own match, our accepted selection, the
+     * supplement overlay lane or nothing produced it. Emitted once per song.
+     */
+    private fun reportPronunciationToggle(available: Boolean, source: String, language: String?) {
+        if (pronunciationToggleRowsEmitted >= MAX_PRONUNCIATION_TOGGLE_ROWS) return
+        val songId = modelSongId
+        if (!pronunciationToggleKeys.add(songId.toString())) return
+        pronunciationToggleRowsEmitted += 1
+        log(
+            "online-translation pronunciation-toggle available=$available source=$source " +
+                "song=$songId lang=${language ?: "none"}",
+        )
     }
 
     /**
@@ -4222,6 +4325,13 @@ internal class AppleNativeLyricModelHooks(
          * `word-lane` so the four background hooks cannot flood the log.
          */
         const val MAX_BACKGROUND_HOOK_ROWS = 128
+
+        /**
+         * The bound on the per-song `pronunciation-toggle` diagnostic: one short
+         * line per song per model generation, so the toggle's availability and its
+         * source are always in the log without a per-frame flood.
+         */
+        const val MAX_PRONUNCIATION_TOGGLE_ROWS = 32
 
         /**
          * The fork's verified lyrics-RecyclerView accessor, used when the

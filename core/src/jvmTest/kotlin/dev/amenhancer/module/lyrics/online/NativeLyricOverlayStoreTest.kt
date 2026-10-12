@@ -212,6 +212,69 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `a published document keeps its transliteration tag for the toggle`() {
+        val store = NativeLyricOverlayStore()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="1.0" end="1.5">ishou</span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="1.0" end="1.7" itunes:key="L1"><span begin="1.0" end="1.5">衣装</span></p></div></body></tt>
+        """.trimIndent()
+
+        assertTrue(store.publishDisplayed(songId = 77L, ttml = ttml))
+        // The app's own getPronunciationLanguages can stay empty for a document the
+        // module wrote, so the toggle-availability fallback reads the lane the
+        // document itself declared.
+        assertEquals(listOf("ja-Latn"), store.pronunciationLanguages("77"))
+        assertEquals(emptyList<String>(), store.pronunciationLanguages("88"))
+        assertEquals(emptyList<String>(), store.pronunciationLanguages(null))
+    }
+
+    @Test
+    fun `the pronunciation toggle is available for a supplement with its own lane`() {
+        // Pure truth table the host hook mirrors: Apple's own lane always counts; a
+        // module supplement only counts when its overlay published a lane, so an
+        // Apple source is never given a lane it did not advertise.
+        assertTrue(
+            NativeLyricModelPolicy.pronunciationAvailable(
+                appleLane = "ja-Latn",
+                overlayLane = null,
+                isSupplement = false,
+            ),
+        )
+        assertTrue(
+            NativeLyricModelPolicy.pronunciationAvailable(
+                appleLane = null,
+                overlayLane = "ja-Latn",
+                isSupplement = true,
+            ),
+        )
+        assertFalse(
+            NativeLyricModelPolicy.pronunciationAvailable(
+                appleLane = null,
+                overlayLane = null,
+                isSupplement = true,
+            ),
+        )
+        assertFalse(
+            NativeLyricModelPolicy.pronunciationAvailable(
+                appleLane = null,
+                overlayLane = "ja-Latn",
+                isSupplement = false,
+            ),
+        )
+        assertEquals(
+            "ja-Latn",
+            NativeLyricModelPolicy.pronunciationLaneFor(
+                appleLane = null,
+                overlayLane = "ja-Latn",
+                isSupplement = true,
+            ),
+        )
+    }
+
+    @Test
     fun `a timing with a single entry still answers when Apple re-normalizes the text`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

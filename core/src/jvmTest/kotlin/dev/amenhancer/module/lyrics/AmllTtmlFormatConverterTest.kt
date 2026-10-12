@@ -428,6 +428,60 @@ class AmllTtmlFormatConverterTest {
     }
 
     @Test
+    fun `every romanization of a background group is kept in order`() {
+        // A background vocal whose reading is split across several `x-roman`
+        // spans, one per word. The old code kept only the first and dropped the
+        // rest; every span must now contribute, concatenated in document order.
+        val splitBackgroundRoman = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg"><span begin="1.0" end="2.0">(bb)</span>
+            <span ttm:role="x-roman"><span begin="1.0" end="1.5">bei</span></span>
+            <span ttm:role="x-roman"><span begin="1.5" end="2.0">jing</span></span></span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(splitBackgroundRoman)
+
+        assertTrue(
+            result.ttml.contains(
+                "<text for=\"L1\"> <span ttm:role=\"x-bg\">" +
+                    "(<span begin=\"1.0\" end=\"1.5\">bei</span>" +
+                    "<span begin=\"1.5\" end=\"2.0\">jing</span>)" +
+                    "</span></text>",
+            ),
+        )
+        // Both word slices survive, and neither copy is left in the body.
+        assertTrue(result.ttml.contains(">bei<"))
+        assertTrue(result.ttml.contains(">jing<"))
+        assertFalse(result.ttml.substringAfter("<body").contains("x-roman"))
+    }
+
+    @Test
+    fun `a single background romanization is carried over unchanged`() {
+        val singleBackgroundRoman = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg"><span begin="1.0" end="2.0">(bb)</span>
+            <span ttm:role="x-roman">beijing</span></span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(singleBackgroundRoman)
+
+        assertTrue(
+            result.ttml.contains(
+                "<text for=\"L1\"> <span ttm:role=\"x-bg\">(beijing)</span></text>",
+            ),
+        )
+        assertFalse(result.ttml.substringAfter("<body").contains("x-roman"))
+    }
+
+    @Test
     fun `empty default namespace overrides are dropped`() {
         val result = AmllTtmlFormatConverter.toAppleFormat(amllFormat)
 

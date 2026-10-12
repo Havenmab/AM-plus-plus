@@ -501,6 +501,9 @@ def collect_line(
     # Only one track of each kind survives the parser constraint, so the
     # first translation and first romanization of the line are kept. An
     # empty span is no translation, so a later non-empty one still counts.
+    # A background romanization is the exception: a background group may
+    # split one reading across several ``x-roman`` spans, so every one of
+    # them is kept, concatenated in document order.
     translation = None
     roman = None
     background_translation = None
@@ -535,8 +538,14 @@ def collect_line(
                             background_translation = auxiliary_text(ttml, span)
                         removals.append(removal(ttml, span, child.content_start))
                 elif nested_role == ROLE_ROMAN:
-                    if not declared.transliterations and background_roman is None:
-                        background_roman = auxiliary_text(ttml, span)
+                    # Every ``x-roman`` span of the group is kept, in document
+                    # order, so a reading split across several of them loses none
+                    # of its words. A blank span contributes nothing, exactly as
+                    # ``auxiliary_text`` treats every other extraction.
+                    if not declared.transliterations:
+                        span_text = auxiliary_text(ttml, span)
+                        if span_text is not None:
+                            background_roman = (background_roman or "") + span_text
                     removals.append(removal(ttml, span, child.content_start))
             edits.extend(background_edits(ttml, line, children, child, nested, removals))
 
@@ -1170,6 +1179,57 @@ def _selftest() -> int:
         return True
 
     checks.append(("early background vocal moves to the front", check_leading_background_moves))
+
+    def check_split_background_roman() -> bool:
+        # A background vocal whose reading is split across several ``x-roman``
+        # spans, one per word. The old port kept only the first and dropped the
+        # rest; every span must now contribute, concatenated in document order.
+        split_background_roman = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg"><span begin="1.0" end="2.0">(bb)</span>
+            <span ttm:role="x-roman"><span begin="1.0" end="1.5">bei</span></span>
+            <span ttm:role="x-roman"><span begin="1.5" end="2.0">jing</span></span></span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(split_background_roman).ttml
+        assert (
+            '<text for="L1"> <span ttm:role="x-bg">'
+            '(<span begin="1.0" end="1.5">bei</span>'
+            '<span begin="1.5" end="2.0">jing</span>)'
+            "</span></text>" in result
+        )
+        # Both word slices survive, and neither copy is left in the body.
+        assert ">bei<" in result and ">jing<" in result
+        assert "x-roman" not in result.split("<body", 1)[1]
+        return True
+
+    checks.append(("every romanization of a background group is kept", check_split_background_roman))
+
+    def check_single_background_roman() -> bool:
+        single_background_roman = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg"><span begin="1.0" end="2.0">(bb)</span>
+            <span ttm:role="x-roman">beijing</span></span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(single_background_roman).ttml
+        assert (
+            '<text for="L1"> <span ttm:role="x-bg">(beijing)</span></text>' in result
+        )
+        assert "x-roman" not in result.split("<body", 1)[1]
+        return True
+
+    checks.append(("a single background romanization is unchanged", check_single_background_roman))
 
     def check_declared_and_inline() -> bool:
         declared_and_inline = textwrap.dedent(

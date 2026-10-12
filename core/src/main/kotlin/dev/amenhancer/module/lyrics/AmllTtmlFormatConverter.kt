@@ -77,7 +77,9 @@ data class TtmlFormatConversion(
  * not in, so a Japanese document could advertise a Korean root beside its own
  * `ja-Latn` lane. Translations keep `zh-Hans`; because only one track of each
  * kind survives that constraint, the first translation and first romanization of
- * each line win. The transliterations tag follows the same lyrics language (see
+ * each line win — except inside a background group, where every `x-roman` span
+ * is kept and concatenated, so a reading split across words loses nothing. The
+ * transliterations tag follows the same lyrics language (see
  * above). The root also gets the `itunes:timing` Apple expects — `Word` when the
  * body carries timed syllables, `Line` otherwise. AMLL's `xmlns=""` on
  * `<metadata>` and `<div>` goes too: it drops the lyric subtree out of the TTML
@@ -369,6 +371,9 @@ object AmllTtmlFormatConverter {
         // Only one track of each kind survives the parser constraint, so the
         // first translation and first romanization of the line are kept. An
         // empty span is no translation, so a later non-empty one still counts.
+        // A background romanization is the exception: a background group may
+        // split one reading across several `x-roman` spans, so every one of
+        // them is kept, concatenated in document order.
         var translation: String? = null
         var roman: String? = null
         var backgroundTranslation: String? = null
@@ -407,8 +412,16 @@ object AmllTtmlFormatConverter {
                                 removals += removal(ttml, span, child.contentStart)
                             }
                             ROLE_ROMAN -> {
-                                if (!declared.transliterations && backgroundRoman == null) {
-                                    backgroundRoman = auxiliaryText(ttml, span)
+                                // Every `x-roman` span of the group is kept, in
+                                // document order, so a reading split across
+                                // several of them loses none of its words. A
+                                // blank span contributes nothing, exactly as
+                                // `auxiliaryText` treats every other extraction.
+                                if (!declared.transliterations) {
+                                    val text = auxiliaryText(ttml, span)
+                                    if (text != null) {
+                                        backgroundRoman = backgroundRoman.orEmpty() + text
+                                    }
                                 }
                                 removals += removal(ttml, span, child.contentStart)
                             }

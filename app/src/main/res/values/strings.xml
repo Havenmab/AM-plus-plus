@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name" translatable="false">AM++</string>
+    <string name="app_name" translatable="false">AM++ AMLL 测试</string>
     <string name="xposed_description">Apple Music enhancements: tablet dual-pane player, bidirectional lyric blur, custom lyrics and fonts, song title correction, and Liquid Glass navigation</string>
 </resources>

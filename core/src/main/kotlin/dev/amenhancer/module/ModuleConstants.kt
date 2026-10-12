@@ -1,7 +1,11 @@
 package dev.amenhancer.module
 
 object ModuleConstants {
-    const val MODULE_PACKAGE = "dev.amenhancer.module"
+    // This constant names *this* APK's package, used at runtime to resolve the
+    // module's own resources from the host process. It must track the
+    // applicationId (see app/build.gradle.kts) or the embedded settings UI
+    // would read resources out of the other, differently-id'd AM++ install.
+    const val MODULE_PACKAGE = "dev.amenhancer.module.amlltest"
     const val TARGET_PACKAGE = "com.apple.android.music"
     const val REMOTE_PREFERENCES_GROUP = "settings"
     const val CONFIG_SCHEMA_VERSION = 15

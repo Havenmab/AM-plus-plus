@@ -34,7 +34,10 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "dev.amenhancer.module"
+        // Test build: a distinct application id lets this APK sit side by side
+        // with the regular AM++ install. Keep `namespace` unchanged so Kotlin
+        // packages and the generated R/BuildConfig classes stay upstream-shaped.
+        applicationId = "dev.amenhancer.module.amlltest"
         minSdk = 26
         targetSdk = 37
         versionCode = 114

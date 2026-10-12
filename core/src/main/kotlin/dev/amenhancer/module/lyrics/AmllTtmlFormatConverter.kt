@@ -69,6 +69,15 @@ data class TtmlFormatConversion(
  * line when it starts ahead of the first lyric syllable, because Apple places
  * the highlight in document order.
  *
+ * Two shapes the AMLL database's axis tool left behind are normalized before
+ * anything reads the document: a `<p>` whose only word is bare text gets that
+ * word wrapped in a span carrying the line's own timing, and every `x-bg`
+ * wrapper is put in the canonical shape — role on the outer span with no timing
+ * there, the text and timing on an inner span. An already two-layer group loses
+ * the redundant timing on its wrapper, so the whole output is one shape. Both
+ * rewrites only touch a shape that is not yet canonical, so running the
+ * converter twice changes nothing the second time.
+ *
  * The root language is resolved per song, not pinned. The document's own
  * `xml:lang`, else the caller's explicit language, names the **lyrics** language;
  * only a document that names none falls back to the script the body is written
@@ -112,6 +121,7 @@ object AmllTtmlFormatConverter {
     private val LANGUAGE_ATTRIBUTE = attributePattern("xml:lang")
     private val KEY_ATTRIBUTE = attributePattern("itunes:key")
     private val BEGIN_ATTRIBUTE_VALUE = attributePattern("begin")
+    private val END_ATTRIBUTE_VALUE = attributePattern("end")
     private val TIMING_ATTRIBUTE_VALUE = attributePattern("itunes:timing")
     private val ITUNES_DECLARATION = attributePattern("xmlns:itunes")
     private val SPAN_TIMING =
@@ -125,37 +135,166 @@ object AmllTtmlFormatConverter {
 
     fun toAppleFormat(ttml: String, lyricLanguage: String? = null): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
+        // The AMLL database still carries shapes an axis tool left behind: a
+        // `<p>` whose only word is bare text, and `x-bg` groups whose
+        // role-carrying wrapper also holds the timing. Neither is the canonical
+        // shape the app reads, so they are normalized before anything else. The
+        // pass is idempotent and is the only source of the indices the rest of
+        // the rewrite uses.
+        val normalized = normalizeLegacyShapes(ttml)
         // Judged per kind, so a head that already declares one track does not
         // hide the other kind still sitting inline. An `<iTunesMetadata>` on its
         // own is no such signal: AMLL writes one to carry `<songwriters>`.
-        val declared = declaredTracks(ttml)
+        val declared = declaredTracks(normalized)
         // A declared `<transliterations>` block whose entries name no language is
         // still a rewrite: the native parser registers a pronunciation lane only
         // under the language its `<transliteration>` element carries, so an
         // unnamed block parses the romanization yet advertises no lane to select.
-        val unnamed = unnamedTransliterations(ttml)
+        val unnamed = unnamedTransliterations(normalized)
         // The head already speaks for every kind the body carries, so this is
-        // Apple's own document and nothing, the root included, is rewritten.
-        if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(ttml, declared)) {
-            return TtmlFormatConversion(ttml, false)
+        // Apple's own document and nothing, the root included, is rewritten —
+        // but a legacy shape normalized above is still a conversion.
+        if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(normalized, declared)) {
+            return TtmlFormatConversion(normalized, normalized != ttml)
         }
         // Read before `normalizeTags` pins the root: the source document's own
         // language is the song's lyrics language. A document that names an
         // unsupported (or no) language falls back to the script its lyrics are
         // written in, and only an undeterminable one keeps the neutral tag.
-        val writtenLanguage = transliterationLanguage(ttml, lyricLanguage)
-        val rootLanguage = lyricsLanguage(ttml, lyricLanguage)
-        val migrated = migrateAuxiliaryTracks(ttml, declared, writtenLanguage, unnamed)
-        val body = nextElement(migrated, "body", 0)
+        val writtenLanguage = transliterationLanguage(normalized, lyricLanguage)
+        val rootLanguage = lyricsLanguage(normalized, lyricLanguage)
+        val migrated = migrateAuxiliaryTracks(normalized, declared, writtenLanguage, unnamed)
+        // Migrating a line's only auxiliary span away can leave its lyric bare
+        // where the source hid it beside that span, so the shapes are normalized
+        // once more. The pass is idempotent, and this is what keeps the first
+        // run already canonical instead of leaving the wrap to a second run.
+        val canonical = normalizeLegacyShapes(migrated)
+        val body = nextElement(canonical, "body", 0)
         val result = normalizeTags(
-            migrated,
-            wordTimed = body != null && hasTimedSpan(migrated, body),
+            canonical,
+            wordTimed = body != null && hasTimedSpan(canonical, body),
             language = rootLanguage,
         )
         return TtmlFormatConversion(
             ttml = result,
             converted = result != ttml,
         )
+    }
+
+    /**
+     * Normalizes the shapes AMLL's axis tool left behind into the canonical ones
+     * the app reads:
+     *
+     *  - a `<p>` whose lyric is bare text (`<p …>Yeah</p>`) gets one inner
+     *    `<span>` carrying the line's own `begin` / `end`, so the single word the
+     *    line holds is timed. A `<p>` that already has child elements is
+     *    untouched.
+     *  - an `x-bg` wrapper is put in the canonical shape its corpus already
+     *    mostly uses: `ttm:role="x-bg"` on the outer span with **no timing
+     *    there**, and the text plus timing on an inner `<span>`. A single-layer
+     *    group (`<span ttm:role="x-bg" begin end>text</span>`) gets the inner
+     *    span it is missing, taking the outer's timing; an already two-layer
+     *    group keeps its inner spans and only loses the now-redundant `begin` /
+     *    `end` from the wrapper, so the whole output is one shape. Only the outer
+     *    `x-bg` wrapper is touched — a plain word or line span keeps its timing.
+     *
+     * The inner span deliberately takes the parent's `begin` / `end`: the
+     * per-word matching that consumes the converted document aligns a lane by
+     * span start and end, so the line's only word must carry the line's own
+     * extent — exactly the extent the two-layer groups give each of their words.
+     *
+     * Every rule fires only on a shape that is not yet canonical, so a second
+     * pass finds nothing to do and returns the document byte-for-byte. A
+     * background group with neither an inner element to lean on nor text and
+     * timing to move (blank text) is left as it is, so the wrapper's timing is
+     * never dropped on its own. The pass covers the whole document, so a legacy
+     * `x-bg` inside a declared translation or transliteration lane in the head
+     * is normalized by the same rule. A bare `<text>` entry in a head lane is
+     * canonical — Apple's line-by-line tracks are plain text — and is never
+     * wrapped.
+     */
+    private fun normalizeLegacyShapes(ttml: String): String {
+        val edits = mutableListOf<Edit>()
+        wrapBareLines(ttml, edits)
+        normalizeBackgroundSpans(ttml, edits)
+        return applyEdits(ttml, edits)
+    }
+
+    /** Gives a bare-text `<p>` the timed inner span it is missing. */
+    private fun wrapBareLines(ttml: String, edits: MutableList<Edit>) {
+        var cursor = 0
+        while (true) {
+            val line = nextElement(ttml, "p", cursor) ?: break
+            cursor = line.end
+            if (line.selfClosing) continue
+            if (childElements(ttml, line).isNotEmpty()) continue
+            val text = content(ttml, line)
+            if (text.isBlank()) continue
+            val begin = attribute(line.attributes, BEGIN_ATTRIBUTE_VALUE)
+            val end = attribute(line.attributes, END_ATTRIBUTE_VALUE)
+            if (begin == null && end == null) continue
+            edits += Edit(
+                line.contentStart,
+                line.contentEnd,
+                "<span${timingAttributes(begin, end)}>$text</span>",
+            )
+        }
+    }
+
+    /**
+     * Puts every `x-bg` wrapper into the canonical shape the app accepts: the
+     * role on the outer span and no timing there, the text and its timing on an
+     * inner span. A single-layer group gains the inner span it is missing; an
+     * already two-layer group only loses the redundant `begin` / `end` from its
+     * wrapper, because its inner spans already carry the timing the app reads.
+     * A plain word or line span is never touched.
+     */
+    private fun normalizeBackgroundSpans(ttml: String, edits: MutableList<Edit>) {
+        elementsNamed(ttml, "span").forEach { span ->
+            if (span.selfClosing) return@forEach
+            if (attribute(span.attributes, ROLE_ATTRIBUTE) != ROLE_BACKGROUND) return@forEach
+            val begin = attribute(span.attributes, BEGIN_ATTRIBUTE_VALUE)
+            val end = attribute(span.attributes, END_ATTRIBUTE_VALUE)
+            val openTag = ttml.substring(span.start, span.contentStart)
+            if (childElements(ttml, span).isNotEmpty()) {
+                // Inner spans already time the group, so the wrapper's own copy
+                // is redundant; drop only it and keep every other attribute.
+                if (begin == null && end == null) return@forEach
+                edits += Edit(span.start, span.contentStart, SPAN_TIMING.replace(openTag, ""))
+                return@forEach
+            }
+            // A wrapper with no inner span keeps its timing as the fallback when
+            // there is nothing to move into one.
+            val text = content(ttml, span)
+            if (text.isBlank()) return@forEach
+            if (begin == null && end == null) return@forEach
+            edits += Edit(
+                span.start,
+                span.end,
+                "${SPAN_TIMING.replace(openTag, "")}<span${timingAttributes(begin, end)}>$text</span></span>",
+            )
+        }
+    }
+
+    /** The `begin` / `end` attributes for a synthesized span, in that order. */
+    private fun timingAttributes(begin: String?, end: String?): String = buildString {
+        if (begin != null) append(" begin=\"").append(begin).append('"')
+        if (end != null) append(" end=\"").append(end).append('"')
+    }
+
+    /**
+     * Every [name] element in [text], in document order and including nested
+     * ones, so a legacy `x-bg` is found wherever it sits.
+     */
+    private fun elementsNamed(text: String, name: String): List<Element> {
+        val elements = mutableListOf<Element>()
+        var index = 0
+        while (true) {
+            val element = nextElement(text, name, index) ?: break
+            elements += element
+            index = if (element.selfClosing) element.end else element.contentStart
+        }
+        return elements
     }
 
     /**

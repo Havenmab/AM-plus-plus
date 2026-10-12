@@ -14,6 +14,12 @@ The rewrite is textual on purpose: whitespace between ``<span>`` tags carries
 word separation and a DOM round-trip would not preserve it. Only markup is
 examined; lyric text nodes are copied verbatim.
 
+Two shapes AMLL's axis tool left behind are normalized first and idempotently: a
+``<p>`` whose only word is bare text gets that word wrapped in a span carrying
+the line's own timing, and every ``x-bg`` wrapper is put in the canonical shape
+— role on the outer span with no timing there, the text and timing on an inner
+span.
+
 Usage:
     python amll_to_apple_ttml.py input.ttml [-o output.ttml] [--validate]
     python amll_to_apple_ttml.py --adam 1158609134 [-o output.ttml]
@@ -73,6 +79,7 @@ ROLE_ATTRIBUTE = _attribute_pattern("ttm:role")
 LANGUAGE_ATTRIBUTE = _attribute_pattern("xml:lang")
 KEY_ATTRIBUTE = _attribute_pattern("itunes:key")
 BEGIN_ATTRIBUTE_VALUE = _attribute_pattern("begin")
+END_ATTRIBUTE_VALUE = _attribute_pattern("end")
 TIMING_ATTRIBUTE_VALUE = _attribute_pattern("itunes:timing")
 ITUNES_DECLARATION = _attribute_pattern("xmlns:itunes")
 SPAN_TIMING = re.compile(
@@ -290,28 +297,146 @@ def clock_seconds(value: str | None) -> float | None:
 def to_apple_format(ttml: str, lyric_language: str | None = None) -> TtmlFormatConversion:
     if not ttml:
         return TtmlFormatConversion(ttml, False)
+    # AMLL's axis tool leaves two non-canonical shapes behind (see
+    # normalize_legacy_shapes). They are fixed first, so every later pass works
+    # from one set of element indices.
+    normalized = normalize_legacy_shapes(ttml)
     # Judged per kind, so a head that already declares one track does not
     # hide the other kind still sitting inline. An <iTunesMetadata> on its
     # own is no such signal: AMLL writes one to carry <songwriters>.
-    declared = declared_tracks(ttml)
+    declared = declared_tracks(normalized)
     # A declared <transliterations> block whose entries name no language is
     # still a rewrite: the native parser registers a pronunciation lane only
     # under the language its <transliteration> element carries.
-    unnamed = unnamed_transliterations(ttml)
-    if declared.any and not unnamed and not has_undeclared_inline_track(ttml, declared):
+    unnamed = unnamed_transliterations(normalized)
+    if declared.any and not unnamed and not has_undeclared_inline_track(normalized, declared):
         # The head already speaks for every kind the body carries, so this is
-        # Apple's own document and nothing, the root included, is rewritten.
-        return TtmlFormatConversion(ttml, False)
-    written_language = transliteration_language(ttml, lyric_language)
-    root_language = lyrics_language(ttml, lyric_language)
-    migrated = migrate_auxiliary_tracks(ttml, declared, written_language, unnamed)
-    body = next_element(migrated, "body", 0)
+        # Apple's own document and nothing, the root included, is rewritten —
+        # but a legacy shape normalized above is still a conversion.
+        return TtmlFormatConversion(normalized, normalized != ttml)
+    written_language = transliteration_language(normalized, lyric_language)
+    root_language = lyrics_language(normalized, lyric_language)
+    migrated = migrate_auxiliary_tracks(normalized, declared, written_language, unnamed)
+    # Migrating a line's only auxiliary span away can leave its lyric bare where
+    # the source hid it beside that span, so the shapes are normalized once more.
+    # The pass is idempotent, and this is what keeps the first run already
+    # canonical instead of leaving the wrap to a second run.
+    canonical = normalize_legacy_shapes(migrated)
+    body = next_element(canonical, "body", 0)
     result = normalize_tags(
-        migrated,
-        word_timed=body is not None and has_timed_span(migrated, body),
+        canonical,
+        word_timed=body is not None and has_timed_span(canonical, body),
         language=root_language,
     )
     return TtmlFormatConversion(result, result != ttml)
+
+
+def normalize_legacy_shapes(ttml: str) -> str:
+    """Normalize the shapes AMLL's axis tool left behind.
+
+    - a ``<p>`` whose lyric is bare text gets one inner ``<span>`` carrying the
+      line's own ``begin`` / ``end``, so the single word it holds is timed;
+    - every ``x-bg`` wrapper is put in the canonical shape: the role on the
+      outer span with no timing there, the text and timing on an inner span. A
+      single-layer group gains the inner span it is missing; an already
+      two-layer group only loses the redundant timing from its wrapper.
+
+    The synthesized inner span deliberately takes the parent's ``begin`` /
+    ``end``: the per-word matching that consumes the document aligns a lane by
+    span start and end, so the line's only word must carry the line's own
+    extent. Only the outer ``x-bg`` wrapper is touched — a plain word or line
+    span keeps its timing. Every rule fires only on a shape that is not yet
+    canonical, so a second pass is a no-op. A background group with neither an
+    inner element to lean on nor text and timing to move is left as it is. The
+    whole document is covered, so a legacy ``x-bg`` inside a declared head lane
+    is normalized too; a bare ``<text>`` entry is canonical and never wrapped.
+    """
+    edits: list[Edit] = []
+    wrap_bare_lines(ttml, edits)
+    normalize_background_spans(ttml, edits)
+    return apply_edits(ttml, edits)
+
+
+def wrap_bare_lines(ttml: str, edits: list[Edit]) -> None:
+    """Give a bare-text ``<p>`` the timed inner span it is missing."""
+    cursor = 0
+    while True:
+        line = next_element(ttml, "p", cursor)
+        if line is None:
+            break
+        cursor = line.end
+        if line.self_closing or child_elements(ttml, line):
+            continue
+        text = ttml[line.content_start : line.content_end]
+        if not text.strip():
+            continue
+        begin = attribute(line.attributes, BEGIN_ATTRIBUTE_VALUE)
+        end = attribute(line.attributes, END_ATTRIBUTE_VALUE)
+        if begin is None and end is None:
+            continue
+        edits.append(
+            Edit(
+                line.content_start,
+                line.content_end,
+                f"<span{timing_attributes(begin, end)}>{text}</span>",
+            )
+        )
+
+
+def normalize_background_spans(ttml: str, edits: list[Edit]) -> None:
+    """Put every ``x-bg`` wrapper in the canonical role-only, untimed shape."""
+    for span in elements_named(ttml, "span"):
+        if span.self_closing:
+            continue
+        if attribute(span.attributes, ROLE_ATTRIBUTE) != ROLE_BACKGROUND:
+            continue
+        begin = attribute(span.attributes, BEGIN_ATTRIBUTE_VALUE)
+        end = attribute(span.attributes, END_ATTRIBUTE_VALUE)
+        open_tag = ttml[span.start : span.content_start]
+        if child_elements(ttml, span):
+            # Inner spans already time the group, so the wrapper's own copy is
+            # redundant; drop only it and keep every other attribute.
+            if begin is None and end is None:
+                continue
+            edits.append(Edit(span.start, span.content_start, SPAN_TIMING.sub("", open_tag)))
+            continue
+        # A wrapper with no inner span keeps its timing as the fallback when
+        # there is nothing to move into one.
+        text = ttml[span.content_start : span.content_end]
+        if not text.strip():
+            continue
+        if begin is None and end is None:
+            continue
+        edits.append(
+            Edit(
+                span.start,
+                span.end,
+                f"{SPAN_TIMING.sub('', open_tag)}"
+                f"<span{timing_attributes(begin, end)}>{text}</span></span>",
+            )
+        )
+
+
+def timing_attributes(begin: str | None, end: str | None) -> str:
+    """The ``begin`` / ``end`` attributes for a synthesized span, in order."""
+    attributes = ""
+    if begin is not None:
+        attributes += f' begin="{begin}"'
+    if end is not None:
+        attributes += f' end="{end}"'
+    return attributes
+
+
+def elements_named(text: str, name: str) -> list[Element]:
+    """Every ``name`` element in ``text``, in document order, nested included."""
+    elements: list[Element] = []
+    index = 0
+    while True:
+        element = next_element(text, name, index)
+        if element is None:
+            return elements
+        elements.append(element)
+        index = element.end if element.self_closing else element.content_start
 
 
 def declared_tracks(ttml: str) -> DeclaredTracks:
@@ -975,12 +1100,14 @@ def _selftest() -> int:
     checks.append(("inline spans migrate into head tracks", check_inline_migration))
 
     def check_line_timed() -> bool:
+        # An untimed lyric span, because a bare-text line now takes a timed span
+        # of its own and is no longer a body without timed spans.
         line_timed = textwrap.dedent(
             """\
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
             <head><metadata xmlns=""/></head>
             <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1">
-            a line
+            <span>a line</span>
             <span ttm:role="x-translation">T1</span>
             </p></div></body></tt>
             """
@@ -991,6 +1118,27 @@ def _selftest() -> int:
         return True
 
     checks.append(("no timed spans means line timing", check_line_timed))
+
+    def check_head_track_does_not_time_body() -> bool:
+        # The body's lyric is an untimed span: a bare-text line would now take a
+        # timed span of its own, which is exactly what this check must not have.
+        timed_head_line_body = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration><text for="L1"><span begin="0.0" end="1.0">ro</span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span>aa</span> <span ttm:role="x-translation">T1</span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(timed_head_line_body)
+        assert result.converted
+        assert 'itunes:timing="Line"' in result.ttml.split(">", 1)[0]
+        return True
+
+    checks.append(("a timed head track does not time the body", check_head_track_does_not_time_body))
 
     def check_declared_replaced_not_duplicated() -> bool:
         declared = textwrap.dedent(
@@ -1230,6 +1378,174 @@ def _selftest() -> int:
         return True
 
     checks.append(("a single background romanization is unchanged", check_single_background_roman))
+
+    def check_bare_text_line() -> bool:
+        # The AMLL axis tool leaves a one-word line as bare text; the word must
+        # take the line's own extent so the per-word matcher can align it.
+        legacy_lines = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns="">
+            <p begin="00:23.038" end="00:24.843" ttm:agent="v1" itunes:key="L7">Yeah</p>
+            <p begin="00:25.000" end="00:26.000" itunes:key="L8"><span begin="00:25.000" end="00:26.000">Whoa</span></p>
+            </div></body></tt>
+            """
+        )
+        result = to_apple_format(legacy_lines)
+        assert result.converted
+        assert (
+            '<p begin="00:23.038" end="00:24.843" ttm:agent="v1" itunes:key="L7">'
+            '<span begin="00:23.038" end="00:24.843">Yeah</span></p>' in result.ttml
+        )
+        # A line that already carries a span is untouched.
+        assert (
+            '<p begin="00:25.000" end="00:26.000" itunes:key="L8">'
+            '<span begin="00:25.000" end="00:26.000">Whoa</span></p>' in result.ttml
+        )
+        return True
+
+    checks.append(("a bare text line gets its timed span", check_bare_text_line))
+
+    def check_background_wrapper_shape() -> bool:
+        # Single-layer: role outer, timing and text inner, outer untimed.
+        single_layer = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="2:32.000" end="2:34.000" itunes:key="L1">
+            <span begin="2:32.000" end="2:32.296">aa</span>
+            <span ttm:role="x-bg" begin="2:32.296" end="2:33.666">(Ooh)</span>
+            </p></div></body></tt>
+            """
+        )
+        body = to_apple_format(single_layer).ttml.split("<body", 1)[1]
+        assert (
+            '<span ttm:role="x-bg"><span begin="2:32.296" end="2:33.666">(Ooh)</span></span>'
+            in body
+        )
+        assert '<span ttm:role="x-bg" begin=' not in body
+        assert '<span ttm:role="x-bg" end=' not in body
+
+        # Two-layer: the redundant timing on the wrapper goes, inner spans stay.
+        two_layer = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg" begin="1.0" end="2.0"><span begin="1.0" end="1.5">(Al</span><span begin="1.5" end="2.0">right)</span></span>
+            </p></div></body></tt>
+            """
+        )
+        two_layer_body = to_apple_format(two_layer).ttml.split("<body", 1)[1]
+        assert (
+            '<span ttm:role="x-bg"><span begin="1.0" end="1.5">(Al</span>'
+            '<span begin="1.5" end="2.0">right)</span></span>' in two_layer_body
+        )
+        assert '<span ttm:role="x-bg" begin=' not in two_layer_body
+        return True
+
+    checks.append(("an x-bg wrapper is role-only and untimed", check_background_wrapper_shape))
+
+    def check_background_fallback_timing() -> bool:
+        # Nothing to move into an inner span, so the wrapper's own extent stays.
+        empty_background = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="2.0">aa</span>
+            <span ttm:role="x-bg" begin="1.0" end="2.0">   </span>
+            </p></div></body></tt>
+            """
+        )
+        assert '<span ttm:role="x-bg" begin="1.0" end="2.0">' in to_apple_format(
+            empty_background
+        ).ttml
+        return True
+
+    checks.append(("an empty x-bg keeps its fallback timing", check_background_fallback_timing))
+
+    def check_legacy_shapes_idempotent() -> bool:
+        legacy = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns="">
+            <p begin="0.0" end="2.0" itunes:key="L1">Yeah</p>
+            <p begin="2.0" end="4.0" itunes:key="L2">
+            <span begin="2.0" end="3.0">aa</span>
+            <span ttm:role="x-bg" begin="3.0" end="3.5">(Hey!)</span>
+            <span ttm:role="x-bg" begin="3.5" end="4.0"><span begin="3.5" end="3.75">(Ooh</span><span begin="3.75" end="4.0">!)</span></span>
+            </p></div></body></tt>
+            """
+        )
+        once = to_apple_format(legacy)
+        twice = to_apple_format(once.ttml)
+        assert once.converted
+        assert not twice.converted and twice.ttml == once.ttml
+        assert '<span begin="0.0" end="2.0">Yeah</span>' in once.ttml
+        assert (
+            '<span ttm:role="x-bg"><span begin="3.0" end="3.5">(Hey!)</span></span>' in once.ttml
+        )
+        assert (
+            '<span ttm:role="x-bg"><span begin="3.5" end="3.75">(Ooh</span>'
+            '<span begin="3.75" end="4.0">!)</span></span>' in once.ttml
+        )
+        assert '<span ttm:role="x-bg"><span ttm:role="x-bg">' not in once.ttml
+        assert '<span ttm:role="x-bg" begin=' not in once.ttml.split("<body", 1)[1]
+        return True
+
+    checks.append(("the legacy shapes normalize idempotently", check_legacy_shapes_idempotent))
+
+    def check_exposed_bare_line() -> bool:
+        # The source hid the lyric beside the auxiliary span, so the first run
+        # must already emit the wrapped shape rather than leaving it to a second.
+        hidden_lyric = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1"><span ttm:role="x-translation" xml:lang="zh-CN">T1</span>Yeah</p></div></body></tt>
+            """
+        )
+        once = to_apple_format(hidden_lyric)
+        twice = to_apple_format(once.ttml)
+        assert once.converted
+        assert not twice.converted and twice.ttml == once.ttml
+        assert (
+            '<p begin="0.0" end="1.0" itunes:key="L1">'
+            '<span begin="0.0" end="1.0">Yeah</span></p>' in once.ttml
+        )
+        return True
+
+    checks.append(("a line exposed bare by migration is wrapped", check_exposed_bare_line))
+
+    def check_head_lane_background() -> bool:
+        head_lane = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">T1<span ttm:role="x-bg" begin="0.5" end="1.0">(BT)</span></text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span></p></div></body></tt>
+            """
+        )
+        result = to_apple_format(head_lane)
+        assert result.converted
+        assert (
+            '<text for="L1">T1<span ttm:role="x-bg">'
+            '<span begin="0.5" end="1.0">(BT)</span></span></text>' in result.ttml
+        )
+        # A converter-written lane entry is canonical and left alone.
+        canonical = head_lane.replace(
+            '<span ttm:role="x-bg" begin="0.5" end="1.0">(BT)</span>',
+            '<span ttm:role="x-bg">(BT)</span>',
+        )
+        assert not to_apple_format(canonical).converted
+        return True
+
+    checks.append(("a head lane background is normalized too", check_head_lane_background))
 
     def check_declared_and_inline() -> bool:
         declared_and_inline = textwrap.dedent(

@@ -79,11 +79,13 @@ class AmllTtmlFormatConverterTest {
 
     @Test
     fun `a document without timed spans is marked line timed`() {
+        // An untimed lyric span, because a bare-text line now takes a timed span
+        // of its own and is no longer a body without timed spans.
         val lineTimed = """
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
             <head><metadata xmlns=""/></head>
             <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1">
-            a line
+            <span>a line</span>
             <span ttm:role="x-translation">T1</span>
             </p></div></body></tt>
         """.trimIndent()
@@ -482,6 +484,198 @@ class AmllTtmlFormatConverterTest {
     }
 
     @Test
+    fun `a bare text line gets one span spanning the whole line`() {
+        val legacyLines = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns="">
+            <p begin="00:23.038" end="00:24.843" ttm:agent="v1" itunes:key="L7">Yeah</p>
+            <p begin="00:25.000" end="00:26.000" itunes:key="L8"><span begin="00:25.000" end="00:26.000">Whoa</span></p>
+            </div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(legacyLines)
+
+        assertTrue(result.converted)
+        // The word takes the line's own extent: that is what the per-word
+        // matcher aligns a lane against.
+        assertTrue(
+            result.ttml.contains(
+                "<p begin=\"00:23.038\" end=\"00:24.843\" ttm:agent=\"v1\" itunes:key=\"L7\">" +
+                    "<span begin=\"00:23.038\" end=\"00:24.843\">Yeah</span></p>",
+            ),
+        )
+        // A line that already carries a span is untouched.
+        assertTrue(
+            result.ttml.contains(
+                "<p begin=\"00:25.000\" end=\"00:26.000\" itunes:key=\"L8\">" +
+                    "<span begin=\"00:25.000\" end=\"00:26.000\">Whoa</span></p>",
+            ),
+        )
+    }
+
+    @Test
+    fun `a single layer background vocal gains an untimed outer span`() {
+        val singleLayer = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="2:32.000" end="2:34.000" itunes:key="L1">
+            <span begin="2:32.000" end="2:32.296">aa</span>
+            <span ttm:role="x-bg" begin="2:32.296" end="2:33.666">(Ooh)</span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(singleLayer)
+        val body = result.ttml.substringAfter("<body")
+
+        // Outer span: role only. Inner span: the timing and the text.
+        assertTrue(
+            body.contains(
+                "<span ttm:role=\"x-bg\"><span begin=\"2:32.296\" end=\"2:33.666\">(Ooh)</span></span>",
+            ),
+        )
+        assertFalse(body.contains("<span ttm:role=\"x-bg\" begin="))
+        assertFalse(body.contains("<span ttm:role=\"x-bg\" end="))
+    }
+
+    @Test
+    fun `a two layer background vocal loses the timing on its outer span`() {
+        val twoLayer = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-bg" begin="1.0" end="2.0"><span begin="1.0" end="1.5">(Al</span><span begin="1.5" end="2.0">right)</span></span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(twoLayer)
+        val body = result.ttml.substringAfter("<body")
+
+        // The inner syllables keep their timing; the redundant outer copy goes.
+        assertTrue(
+            body.contains(
+                "<span ttm:role=\"x-bg\"><span begin=\"1.0\" end=\"1.5\">(Al</span>" +
+                    "<span begin=\"1.5\" end=\"2.0\">right)</span></span>",
+            ),
+        )
+        assertFalse(body.contains("<span ttm:role=\"x-bg\" begin="))
+    }
+
+    @Test
+    fun `the background wrapper keeps a timing it has nowhere to move`() {
+        // Nothing to wrap, so the outer timing is the group's only extent and
+        // stays as the fallback rather than being dropped.
+        val emptyBackground = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="2.0" itunes:key="L1">
+            <span begin="0.0" end="2.0">aa</span>
+            <span ttm:role="x-bg" begin="1.0" end="2.0">   </span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(emptyBackground)
+
+        assertTrue(
+            result.ttml.contains("<span ttm:role=\"x-bg\" begin=\"1.0\" end=\"2.0\">"),
+        )
+    }
+
+    @Test
+    fun `the legacy background shape is normalized idempotently`() {
+        val legacy = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns="">
+            <p begin="0.0" end="2.0" itunes:key="L1">Yeah</p>
+            <p begin="2.0" end="4.0" itunes:key="L2">
+            <span begin="2.0" end="3.0">aa</span>
+            <span ttm:role="x-bg" begin="3.0" end="3.5">(Hey!)</span>
+            <span ttm:role="x-bg" begin="3.5" end="4.0"><span begin="3.5" end="3.75">(Ooh</span><span begin="3.75" end="4.0">!)</span></span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val once = AmllTtmlFormatConverter.toAppleFormat(legacy)
+        val twice = AmllTtmlFormatConverter.toAppleFormat(once.ttml)
+
+        assertTrue(once.converted)
+        assertFalse(twice.converted)
+        assertEquals(once.ttml, twice.ttml)
+        assertTrue(once.ttml.contains("<span begin=\"0.0\" end=\"2.0\">Yeah</span>"))
+        assertTrue(
+            once.ttml.contains(
+                "<span ttm:role=\"x-bg\"><span begin=\"3.0\" end=\"3.5\">(Hey!)</span></span>",
+            ),
+        )
+        assertTrue(
+            once.ttml.contains(
+                "<span ttm:role=\"x-bg\"><span begin=\"3.5\" end=\"3.75\">(Ooh</span>" +
+                    "<span begin=\"3.75\" end=\"4.0\">!)</span></span>",
+            ),
+        )
+        // Never a second wrapper.
+        assertFalse(once.ttml.contains("<span ttm:role=\"x-bg\"><span ttm:role=\"x-bg\">"))
+        assertFalse(once.ttml.substringAfter("<body").contains("<span ttm:role=\"x-bg\" begin="))
+    }
+
+    @Test
+    fun `a line left bare by its migrated translation is wrapped too`() {
+        // The source hid the lyric beside the auxiliary span, so the first run
+        // must already emit the wrapped shape rather than leaving it to a second.
+        val hiddenLyric = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div xmlns=""><p begin="0.0" end="1.0" itunes:key="L1"><span ttm:role="x-translation" xml:lang="zh-CN">T1</span>Yeah</p></div></body></tt>
+        """.trimIndent()
+
+        val once = AmllTtmlFormatConverter.toAppleFormat(hiddenLyric)
+        val twice = AmllTtmlFormatConverter.toAppleFormat(once.ttml)
+
+        assertTrue(once.converted)
+        assertFalse(twice.converted)
+        assertEquals(once.ttml, twice.ttml)
+        assertTrue(
+            once.ttml.contains(
+                "<p begin=\"0.0\" end=\"1.0\" itunes:key=\"L1\">" +
+                    "<span begin=\"0.0\" end=\"1.0\">Yeah</span></p>",
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy background span in a declared head lane is normalized too`() {
+        val headLane = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">T1<span ttm:role="x-bg" begin="0.5" end="1.0">(BT)</span></text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span></p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(headLane)
+
+        assertTrue(result.converted)
+        assertTrue(
+            result.ttml.contains(
+                "<text for=\"L1\">T1<span ttm:role=\"x-bg\">" +
+                    "<span begin=\"0.5\" end=\"1.0\">(BT)</span></span></text>",
+            ),
+        )
+        // A converter-written lane entry stays canonical and untouched.
+        val canonical = AmllTtmlFormatConverter.toAppleFormat(
+            """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">T1<span ttm:role="x-bg">(BT)</span></text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span></p></div></body></tt>
+            """.trimIndent(),
+        )
+        assertFalse(canonical.converted)
+    }
+
+    @Test
     fun `empty default namespace overrides are dropped`() {
         val result = AmllTtmlFormatConverter.toAppleFormat(amllFormat)
 
@@ -774,13 +968,15 @@ class AmllTtmlFormatConverterTest {
 
     @Test
     fun `timed spans only in a migrated head track keep a line timed body`() {
+        // The body's lyric is an untimed span: a bare-text line would now take a
+        // timed span of its own, which is exactly what this test must not have.
         val timedHeadLineBody = """
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
             <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
             <transliterations><transliteration><text for="L1"><span begin="0.0" end="1.0">ro</span></text></transliteration></transliterations>
             </iTunesMetadata></metadata></head>
             <body><div><p begin="0.0" end="1.0" itunes:key="L1">
-            aa <span ttm:role="x-translation">T1</span>
+            <span>aa</span> <span ttm:role="x-translation">T1</span>
             </p></div></body></tt>
         """.trimIndent()
 

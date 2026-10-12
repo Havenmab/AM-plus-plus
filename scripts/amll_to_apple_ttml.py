@@ -318,10 +318,11 @@ def to_apple_format(ttml: str, lyric_language: str | None = None) -> TtmlFormatC
     root_language = lyrics_language(normalized, lyric_language)
     migrated = migrate_auxiliary_tracks(normalized, declared, written_language, unnamed)
     # Migrating a line's only auxiliary span away can leave its lyric bare where
-    # the source hid it beside that span, so the shapes are normalized once more.
-    # The pass is idempotent, and this is what keeps the first run already
-    # canonical instead of leaving the wrap to a second run.
-    canonical = normalize_legacy_shapes(migrated)
+    # the source hid it beside that span, so the body's lines are wrapped once
+    # more. This pass is deliberately body-only: a head lane is a
+    # ``<text for=…>`` entry, not a body ``<p>``, and must never be given a span
+    # — the app reads its translation text verbatim.
+    canonical = wrap_exposed_bare_lines(migrated)
     body = next_element(canonical, "body", 0)
     result = normalize_tags(
         canonical,
@@ -348,8 +349,9 @@ def normalize_legacy_shapes(ttml: str) -> str:
     span keeps its timing. Every rule fires only on a shape that is not yet
     canonical, so a second pass is a no-op. A background group with neither an
     inner element to lean on nor text and timing to move is left as it is. The
-    whole document is covered, so a legacy ``x-bg`` inside a declared head lane
-    is normalized too; a bare ``<text>`` entry is canonical and never wrapped.
+    ``x-bg`` rule covers the whole document, so a legacy ``x-bg`` inside a
+    declared head lane is normalized too; the line rule is confined to the body,
+    and a ``<text for=…>`` head entry is never wrapped.
     """
     edits: list[Edit] = []
     wrap_bare_lines(ttml, edits)
@@ -357,12 +359,33 @@ def normalize_legacy_shapes(ttml: str) -> str:
     return apply_edits(ttml, edits)
 
 
+def wrap_exposed_bare_lines(ttml: str) -> str:
+    """Wrap the bare-text **body** lines migration exposed, and nothing else.
+
+    Only the body is scanned: the head lanes this runs after are already
+    canonical, and a ``<translations>`` / ``<transliterations>`` entry is a
+    ``<text for=…>``, not a body ``<p>``. Wrapping one would hand the app a span
+    where it expects the translation text itself, which is precisely the failure
+    mode this pass must not have.
+    """
+    edits: list[Edit] = []
+    wrap_bare_lines(ttml, edits)
+    return apply_edits(ttml, edits)
+
+
 def wrap_bare_lines(ttml: str, edits: list[Edit]) -> None:
-    """Give a bare-text ``<p>`` the timed inner span it is missing."""
-    cursor = 0
+    """Give a bare-text ``<p>`` in the **body** the timed span it is missing.
+
+    The head is out of scope: no head lane holds a ``<p>``, and none may be
+    wrapped even if a document carried one there.
+    """
+    body = next_element(ttml, "body", 0)
+    if body is None:
+        return
+    cursor = body.content_start
     while True:
         line = next_element(ttml, "p", cursor)
-        if line is None:
+        if line is None or line.end > body.content_end:
             break
         cursor = line.end
         if line.self_closing or child_elements(ttml, line):
@@ -514,14 +537,25 @@ def lyrics_language(ttml: str, declared: str | None = None) -> str:
 
 
 def inferred_lyrics_language(ttml: str) -> str:
-    """The language the body's own lyric text is written in; ``und`` when unclear."""
+    """The language the body's own **lyric text** is written in; ``und`` when unclear.
+
+    Only the lyrics are read. An ``x-translation`` span holds the translation and
+    an ``x-roman`` span the romanization, and neither names the language the song
+    is sung in. Reading them is what made an English song whose only Han sits in
+    its Chinese translation declare ``zh`` — the same primary language as its own
+    ``zh-Hans`` translation lane, which the app then declines to offer, because a
+    Chinese song needs no Chinese translation. A body with no decisive script is
+    ``und``.
+    """
     import unicodedata
 
     body = next_element(ttml, "body", 0)
     if body is None:
         return "und"
+    parts: list[str] = []
+    append_lyric_text(ttml, body.content_start, body.content_end, parts)
     has_han = False
-    for character in ttml[body.content_start : body.content_end]:
+    for character in "".join(parts):
         name = unicodedata.name(character, "")
         if name.startswith("HIRAGANA") or name.startswith("KATAKANA"):
             return "ja"
@@ -530,6 +564,40 @@ def inferred_lyrics_language(ttml: str) -> str:
         if name.startswith("CJK UNIFIED IDEOGRAPH") or name.startswith("CJK COMPATIBILITY IDEOGRAPH"):
             has_han = True
     return "zh" if has_han else "und"
+
+
+def append_lyric_text(ttml: str, from_: int, to: int, out: list[str]) -> None:
+    """Append the lyric text of ``[from_, to)`` to ``out``.
+
+    The content of every translation and romanization span is left out, as is
+    every tag, comment and attribute value. A background vocal (``x-bg``) is a
+    lyric and is read; an auxiliary span nested inside it is still skipped.
+    """
+    index = from_
+    while index < to:
+        open_ = ttml.find("<", index)
+        if open_ < 0 or open_ >= to:
+            out.append(ttml[index:to])
+            return
+        out.append(ttml[index:open_])
+        literal = literal_end(ttml, open_)
+        if literal > 0:
+            if ttml.startswith("<![CDATA[", open_) and literal >= open_ + len("<![CDATA[") + len("]]>"):
+                out.append(ttml[open_ + len("<![CDATA[") : literal - len("]]>")])
+            index = literal
+            continue
+        end = tag_end(ttml, open_)
+        if end < 0:
+            return
+        name = element_name(ttml, open_, end)
+        child = parse_element(ttml, name, open_, end) if name else None
+        if child is None:
+            index = end + 1
+            continue
+        role = attribute(child.attributes, ROLE_ATTRIBUTE)
+        if role not in (ROLE_TRANSLATION, ROLE_ROMAN):
+            append_lyric_text(ttml, child.content_start, child.content_end, out)
+        index = child.end
 
 
 def has_undeclared_inline_track(ttml: str, declared: DeclaredTracks) -> bool:
@@ -1140,6 +1208,47 @@ def _selftest() -> int:
 
     checks.append(("a timed head track does not time the body", check_head_track_does_not_time_body))
 
+    def check_translation_never_names_lyrics() -> bool:
+        # Apple reads the root xml:lang as the song's language and withholds a
+        # translation that matches it, so an English song whose only Han sits in
+        # its own inline Chinese translation must not declare zh.
+        translated_english = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">It feels like a perfect night</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">这夜晚完美得刚好</span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(translated_english)
+        root = result.ttml.split(">", 1)[0]
+        assert 'xml:lang="zh"' not in root
+        assert 'xml:lang="und"' in root
+        assert '<text for="L1">这夜晚完美得刚好</text>' in result.ttml
+
+        # The exclusion must not break the real inference: kana still decides.
+        translated_japanese = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="0.5">何</span><span begin="0.5" end="1.0">し</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">什么</span>
+            <span ttm:role="x-roman">nani shi</span>
+            </p></div></body></tt>
+            """
+        )
+        japanese = to_apple_format(translated_japanese).ttml
+        assert 'xml:lang="ja"' in japanese.split(">", 1)[0]
+        assert '<transliteration xml:lang="ja-Latn">' in japanese
+        return True
+
+    checks.append(
+        ("a translation never names the lyrics language", check_translation_never_names_lyrics)
+    )
+
     def check_declared_replaced_not_duplicated() -> bool:
         declared = textwrap.dedent(
             """\
@@ -1546,6 +1655,54 @@ def _selftest() -> int:
         return True
 
     checks.append(("a head lane background is normalized too", check_head_lane_background))
+
+    def check_declared_translation_lane_untouched() -> bool:
+        # The injection-path shape: a translations lane already in the head while
+        # the body still has an undeclared romanization, so migration and the
+        # post-migration pass both run beside that lane. Its `<text for=…>`
+        # bodies are read verbatim by the app and must never be given a span.
+        declared_lane = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">译文一</text><text for="L2"><span ttm:role="x-bg">(合)</span></text><text for="L3">译文三</text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-roman">R1</span></p>
+            <p begin="1.0" end="2.0" itunes:key="L2"><span ttm:role="x-roman">R2</span>hidden</p>
+            <p begin="2.0" end="3.0" itunes:key="L3">bare</p>
+            </div></body></tt>
+            """
+        )
+        result = to_apple_format(declared_lane)
+        head = result.ttml.split("<body", 1)[0]
+        assert (
+            "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">"
+            "<text for=\"L1\">译文一</text>"
+            "<text for=\"L2\"><span ttm:role=\"x-bg\">(合)</span></text>"
+            "<text for=\"L3\">译文三</text>"
+            "</translation></translations>" in head
+        )
+        assert '<text for="L1"><span' not in head
+        assert '<text for="L3"><span' not in head
+        # The undeclared romanization still migrates, and the body lines
+        # migration exposed are wrapped as the body rule says.
+        assert "<transliterations><transliteration" in head
+        assert (
+            '<p begin="1.0" end="2.0" itunes:key="L2">'
+            '<span begin="1.0" end="2.0">hidden</span></p>' in result.ttml
+        )
+        assert (
+            '<p begin="2.0" end="3.0" itunes:key="L3">'
+            '<span begin="2.0" end="3.0">bare</span></p>' in result.ttml
+        )
+        twice = to_apple_format(result.ttml)
+        assert not twice.converted and twice.ttml == result.ttml
+        return True
+
+    checks.append(
+        ("a declared translation lane keeps its text", check_declared_translation_lane_untouched)
+    )
 
     def check_declared_and_inline() -> bool:
         declared_and_inline = textwrap.dedent(

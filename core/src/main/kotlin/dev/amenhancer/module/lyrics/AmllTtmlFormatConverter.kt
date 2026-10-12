@@ -116,6 +116,10 @@ object AmllTtmlFormatConverter {
     /** Stands in for a line the track has no text for, keeping the entry there. */
     private const val ABSENT_TEXT = " "
 
+    /** A CDATA section's delimiters, whose inner text is lyric text like any other. */
+    private const val CDATA_OPEN = "<![CDATA["
+    private const val CDATA_CLOSE = "]]>"
+
     private val EMPTY_DEFAULT_NAMESPACE = Regex("""\s+xmlns\s*=\s*(?:""|'')""")
     private val ROLE_ATTRIBUTE = attributePattern("ttm:role")
     private val LANGUAGE_ATTRIBUTE = attributePattern("xml:lang")
@@ -165,10 +169,11 @@ object AmllTtmlFormatConverter {
         val rootLanguage = lyricsLanguage(normalized, lyricLanguage)
         val migrated = migrateAuxiliaryTracks(normalized, declared, writtenLanguage, unnamed)
         // Migrating a line's only auxiliary span away can leave its lyric bare
-        // where the source hid it beside that span, so the shapes are normalized
-        // once more. The pass is idempotent, and this is what keeps the first
-        // run already canonical instead of leaving the wrap to a second run.
-        val canonical = normalizeLegacyShapes(migrated)
+        // where the source hid it beside that span, so the body's lines are
+        // wrapped once more. This pass is deliberately body-only: a head lane is
+        // a `<text for=…>` entry, not a body `<p>`, and must never be given a
+        // span — the app reads its translation text verbatim.
+        val canonical = wrapExposedBareLines(migrated)
         val body = nextElement(canonical, "body", 0)
         val result = normalizeTags(
             canonical,
@@ -207,11 +212,10 @@ object AmllTtmlFormatConverter {
      * pass finds nothing to do and returns the document byte-for-byte. A
      * background group with neither an inner element to lean on nor text and
      * timing to move (blank text) is left as it is, so the wrapper's timing is
-     * never dropped on its own. The pass covers the whole document, so a legacy
-     * `x-bg` inside a declared translation or transliteration lane in the head
-     * is normalized by the same rule. A bare `<text>` entry in a head lane is
-     * canonical — Apple's line-by-line tracks are plain text — and is never
-     * wrapped.
+     * never dropped on its own. The `x-bg` rule covers the whole document, so a
+     * legacy `x-bg` inside a declared translation or transliteration lane in the
+     * head is normalized by it; the line rule is confined to the body, and a
+     * `<text for=…>` head entry is never wrapped.
      */
     private fun normalizeLegacyShapes(ttml: String): String {
         val edits = mutableListOf<Edit>()
@@ -220,11 +224,32 @@ object AmllTtmlFormatConverter {
         return applyEdits(ttml, edits)
     }
 
-    /** Gives a bare-text `<p>` the timed inner span it is missing. */
+    /**
+     * Wraps the bare-text **body** lines migration exposed, and nothing else.
+     *
+     * Only the body is scanned: the head lanes this runs after are already
+     * canonical, and a `<translations>` / `<transliterations>` entry is a
+     * `<text for=…>`, not a body `<p>`. Wrapping one would hand the app a span
+     * where it expects the translation text itself, which is precisely the
+     * failure mode this pass must not have.
+     */
+    private fun wrapExposedBareLines(ttml: String): String {
+        val edits = mutableListOf<Edit>()
+        wrapBareLines(ttml, edits)
+        return applyEdits(ttml, edits)
+    }
+
+    /**
+     * Gives a bare-text `<p>` in the **body** the timed inner span it is missing.
+     * The head is out of scope: no head lane holds a `<p>`, and none may be
+     * wrapped even if a document carried one there.
+     */
     private fun wrapBareLines(ttml: String, edits: MutableList<Edit>) {
-        var cursor = 0
+        val body = nextElement(ttml, "body", 0) ?: return
+        var cursor = body.contentStart
         while (true) {
             val line = nextElement(ttml, "p", cursor) ?: break
+            if (line.end > body.contentEnd) break
             cursor = line.end
             if (line.selfClosing) continue
             if (childElements(ttml, line).isNotEmpty()) continue
@@ -320,7 +345,9 @@ object AmllTtmlFormatConverter {
     /**
      * The language the root `<tt xml:lang>` is written with: the caller's
      * explicit language, else the document's own declaration, else the script the
-     * body is actually written in (kana → `ja`, Hangul → `ko`, Han → `zh`).
+     * body's **lyrics** are actually written in (kana → `ja`, Hangul → `ko`, Han
+     * → `zh`). The auxiliary lanes are not read, so the song's own language can
+     * never be taken from a translation or a romanization.
      *
      * The root names the **lyrics** language, not the transliteration tag, so a
      * declared language is preserved even when it is outside HLE's romanization
@@ -335,18 +362,29 @@ object AmllTtmlFormatConverter {
     }
 
     /**
-     * The language the **body's** lyric text is written in, from the first
+     * The language the **body's lyric text** is written in, from the first
      * script-bearing code point that is not Latin: kana is decisive for Japanese
      * even beside the Han it shares, Hangul for Korean, and bare Han for Chinese.
-     * Only the body is examined, so a `zh-Hans` translation in the head cannot
-     * name the lyrics. Anything else (including a purely Latin body) is `und`.
+     *
+     * Only the lyrics are read. The content of an `x-translation` span is the
+     * translation and of an `x-roman` span the romanization, and neither names
+     * the language the song is sung in. Reading them is what made an English
+     * song whose only Han sits in its Chinese translation declare `zh` — the
+     * same primary language as its own `zh-Hans` translation lane, which the app
+     * then declines to offer, because a Chinese song needs no Chinese
+     * translation. Disregarding the auxiliary lanes keeps the root on the
+     * language of the lyrics (here `und`, a Latin body), so the translation lane
+     * is never named by the song's own language. A body with no decisive script
+     * is `und`.
      */
     private fun inferredLyricsLanguage(ttml: String): String {
         val body = nextElement(ttml, "body", 0) ?: return "und"
+        val lyrics = StringBuilder()
+        appendLyricText(ttml, body.contentStart, body.contentEnd, lyrics)
         var hasHan = false
-        var index = body.contentStart
-        while (index < body.contentEnd) {
-            val codePoint = ttml.codePointAt(index)
+        var index = 0
+        while (index < lyrics.length) {
+            val codePoint = lyrics.codePointAt(index)
             when (Character.UnicodeScript.of(codePoint)) {
                 Character.UnicodeScript.HIRAGANA,
                 Character.UnicodeScript.KATAKANA,
@@ -358,6 +396,47 @@ object AmllTtmlFormatConverter {
             index += Character.charCount(codePoint)
         }
         return if (hasHan) "zh" else "und"
+    }
+
+    /**
+     * Appends the lyric text of `[from, to)` to [out], leaving out the content of
+     * every translation and romanization span and every tag, comment and
+     * attribute value. A background vocal (`x-bg`) is a lyric and is read; an
+     * auxiliary span nested inside it is still skipped.
+     */
+    private fun appendLyricText(ttml: String, from: Int, to: Int, out: StringBuilder) {
+        var index = from
+        while (index < to) {
+            val open = ttml.indexOf('<', index)
+            if (open < 0 || open >= to) {
+                out.append(ttml, index, to)
+                return
+            }
+            out.append(ttml, index, open)
+            val literal = literalEnd(ttml, open)
+            if (literal > 0) {
+                if (ttml.startsWith(CDATA_OPEN, open) &&
+                    literal >= open + CDATA_OPEN.length + CDATA_CLOSE.length
+                ) {
+                    out.append(ttml, open + CDATA_OPEN.length, literal - CDATA_CLOSE.length)
+                }
+                index = literal
+                continue
+            }
+            val end = tagEnd(ttml, open)
+            if (end < 0) return
+            val name = elementName(ttml, open, end)
+            val child = name?.let { parseElement(ttml, it, open, end) }
+            if (child == null) {
+                index = end + 1
+                continue
+            }
+            val role = attribute(child.attributes, ROLE_ATTRIBUTE)
+            if (role != ROLE_TRANSLATION && role != ROLE_ROMAN) {
+                appendLyricText(ttml, child.contentStart, child.contentEnd, out)
+            }
+            index = child.end
+        }
     }
 
     private fun declaredTracks(ttml: String) = DeclaredTracks(

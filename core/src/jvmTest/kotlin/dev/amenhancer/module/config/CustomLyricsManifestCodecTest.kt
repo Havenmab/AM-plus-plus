@@ -68,6 +68,21 @@ class CustomLyricsManifestCodecTest {
     }
 
     @Test
+    fun `the user owned flag round trips and defaults off for old payloads`() {
+        val owned = entry.copy(userEdited = true)
+
+        val decoded = CustomLyricsManifestCodec.decode(
+            CustomLyricsManifestCodec.encode(CustomLyricsManifest(listOf(owned))),
+        )
+
+        assertEquals(listOf(owned), decoded.entries)
+        // A payload written before the flag existed is still updatable: only a
+        // user edit set after this point owns the document.
+        val legacyV2 = """{"version":2,"entries":[{"appleMusicId":42,"displayName":"Old","fileId":"lyrics_old","sizeBytes":42,"sha256":"0cba697d61a21fb62408b2411aa2152d1bc24cc2414d2bd162f70e04d20c5e53","source":"amll-ttml-db","enabled":true}]}"""
+        assertEquals(false, CustomLyricsManifestCodec.decode(legacyV2).entries.single().userEdited)
+    }
+
+    @Test
     fun `decodeStrict accepts legacy v1 and current v2 payloads but nothing else`() {
         val v1 = """{"version":1,"entries":[{"appleMusicId":42,"displayName":"Old","fileId":"lyrics_old","sizeBytes":42,"sha256":"0cba697d61a21fb62408b2411aa2152d1bc24cc2414d2bd162f70e04d20c5e53","source":"manual","enabled":true}]}"""
 

@@ -53,6 +53,10 @@ class AppleLyricTtmlLaneInjectorTest {
         assertEquals(1, Regex("""<translations>""").findAll(ttml).count())
         assertEquals(2, Regex("""<text for=""").findAll(ttml).count())
         assertTrue(ttml.contains("<text for=\"L1\">很高兴见到你，你去过哪里？</text>"))
+        // L2's lyric carries an `x-bg` background ("Ooh yeah") and the provider
+        // line inlines it ("Got Ooh yeah baby"). The matcher must align against the
+        // line's full text while the lane stays keyed by the native main-only text,
+        // or the background would silently drop L2's translation.
         assertTrue(ttml.contains("<text for=\"L2\">得到了，噢耶，宝贝</text>"))
     }
 

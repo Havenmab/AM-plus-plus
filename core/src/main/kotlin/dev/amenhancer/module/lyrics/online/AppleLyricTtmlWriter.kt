@@ -34,6 +34,14 @@ data class AppleTtmlLine(
     val backgroundWords: List<AppleTtmlWord> = emptyList(),
     val backgroundRomanization: String? = null,
     val backgroundRomanizationSpans: List<AppleTtmlWord> = emptyList(),
+    /**
+     * The line's lyric **with** its background in document order — what the
+     * online translation matcher aligns against, because a provider line usually
+     * inlines the background ("Got Ooh yeah baby") while the native line's own
+     * [text] is the lyric only. Never a lane key and never rendered: [text] stays
+     * the main-only value the app's getters and the overlay row are keyed by.
+     */
+    val fullText: String = text,
 )
 
 /**

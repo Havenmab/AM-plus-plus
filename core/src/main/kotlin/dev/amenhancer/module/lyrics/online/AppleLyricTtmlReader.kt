@@ -102,6 +102,11 @@ object AppleLyricTtmlReader {
                 backgroundRomanization = transliteration?.background,
                 backgroundWords = timedSpans(backgroundInner),
                 backgroundRomanizationSpans = spans?.background.orEmpty(),
+                // The lyric plus its background in document order: the online
+                // matcher aligns a provider line that inlines the background
+                // against this, while `text` above stays the main-only value the
+                // native line and the overlay row are keyed by.
+                fullText = textOf(inner),
             )
         }.toList()
     }.getOrDefault(emptyList())

@@ -94,7 +94,14 @@ object OnlineTranslationEnrichment {
         diagnostic: (String) -> Unit = {},
     ): Outcome? {
         val baseLines = AppleLyricTtmlReader.read(ttml)
-        val song = NativeLyricDocument(lyrics = baseLines.map(::nativeLine))
+        // The matcher aligns a provider line that inlines the background
+        // ("Got Ooh yeah baby") against the lyric **plus** its `x-bg` vocal, so
+        // matching uses [AppleTtmlLine.fullText]; the merged lanes and
+        // `Outcome.lines` below keep the main-only [AppleTtmlLine.text] the
+        // native line and the overlay row are keyed by.
+        val song = NativeLyricDocument(
+            lyrics = baseLines.map { line -> nativeLine(line).copy(text = line.fullText) },
+        )
         val lines = song.lyrics.orEmpty()
         val document = TtmlTimingPolicy.metadataOf(ttml)
         // A plain-text Apple document has no usable per-line timing; the matcher

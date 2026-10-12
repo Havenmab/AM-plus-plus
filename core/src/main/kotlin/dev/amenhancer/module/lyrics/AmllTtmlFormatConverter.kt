@@ -116,6 +116,10 @@ object AmllTtmlFormatConverter {
     /** Stands in for a line the track has no text for, keeping the entry there. */
     private const val ABSENT_TEXT = " "
 
+    /** A CDATA section's delimiters, whose inner text is lyric text like any other. */
+    private const val CDATA_OPEN = "<![CDATA["
+    private const val CDATA_CLOSE = "]]>"
+
     private val EMPTY_DEFAULT_NAMESPACE = Regex("""\s+xmlns\s*=\s*(?:""|'')""")
     private val ROLE_ATTRIBUTE = attributePattern("ttm:role")
     private val LANGUAGE_ATTRIBUTE = attributePattern("xml:lang")
@@ -341,7 +345,9 @@ object AmllTtmlFormatConverter {
     /**
      * The language the root `<tt xml:lang>` is written with: the caller's
      * explicit language, else the document's own declaration, else the script the
-     * body is actually written in (kana → `ja`, Hangul → `ko`, Han → `zh`).
+     * body's **lyrics** are actually written in (kana → `ja`, Hangul → `ko`, Han
+     * → `zh`). The auxiliary lanes are not read, so the song's own language can
+     * never be taken from a translation or a romanization.
      *
      * The root names the **lyrics** language, not the transliteration tag, so a
      * declared language is preserved even when it is outside HLE's romanization
@@ -356,18 +362,29 @@ object AmllTtmlFormatConverter {
     }
 
     /**
-     * The language the **body's** lyric text is written in, from the first
+     * The language the **body's lyric text** is written in, from the first
      * script-bearing code point that is not Latin: kana is decisive for Japanese
      * even beside the Han it shares, Hangul for Korean, and bare Han for Chinese.
-     * Only the body is examined, so a `zh-Hans` translation in the head cannot
-     * name the lyrics. Anything else (including a purely Latin body) is `und`.
+     *
+     * Only the lyrics are read. The content of an `x-translation` span is the
+     * translation and of an `x-roman` span the romanization, and neither names
+     * the language the song is sung in. Reading them is what made an English
+     * song whose only Han sits in its Chinese translation declare `zh` — the
+     * same primary language as its own `zh-Hans` translation lane, which the app
+     * then declines to offer, because a Chinese song needs no Chinese
+     * translation. Disregarding the auxiliary lanes keeps the root on the
+     * language of the lyrics (here `und`, a Latin body), so the translation lane
+     * is never named by the song's own language. A body with no decisive script
+     * is `und`.
      */
     private fun inferredLyricsLanguage(ttml: String): String {
         val body = nextElement(ttml, "body", 0) ?: return "und"
+        val lyrics = StringBuilder()
+        appendLyricText(ttml, body.contentStart, body.contentEnd, lyrics)
         var hasHan = false
-        var index = body.contentStart
-        while (index < body.contentEnd) {
-            val codePoint = ttml.codePointAt(index)
+        var index = 0
+        while (index < lyrics.length) {
+            val codePoint = lyrics.codePointAt(index)
             when (Character.UnicodeScript.of(codePoint)) {
                 Character.UnicodeScript.HIRAGANA,
                 Character.UnicodeScript.KATAKANA,
@@ -379,6 +396,47 @@ object AmllTtmlFormatConverter {
             index += Character.charCount(codePoint)
         }
         return if (hasHan) "zh" else "und"
+    }
+
+    /**
+     * Appends the lyric text of `[from, to)` to [out], leaving out the content of
+     * every translation and romanization span and every tag, comment and
+     * attribute value. A background vocal (`x-bg`) is a lyric and is read; an
+     * auxiliary span nested inside it is still skipped.
+     */
+    private fun appendLyricText(ttml: String, from: Int, to: Int, out: StringBuilder) {
+        var index = from
+        while (index < to) {
+            val open = ttml.indexOf('<', index)
+            if (open < 0 || open >= to) {
+                out.append(ttml, index, to)
+                return
+            }
+            out.append(ttml, index, open)
+            val literal = literalEnd(ttml, open)
+            if (literal > 0) {
+                if (ttml.startsWith(CDATA_OPEN, open) &&
+                    literal >= open + CDATA_OPEN.length + CDATA_CLOSE.length
+                ) {
+                    out.append(ttml, open + CDATA_OPEN.length, literal - CDATA_CLOSE.length)
+                }
+                index = literal
+                continue
+            }
+            val end = tagEnd(ttml, open)
+            if (end < 0) return
+            val name = elementName(ttml, open, end)
+            val child = name?.let { parseElement(ttml, it, open, end) }
+            if (child == null) {
+                index = end + 1
+                continue
+            }
+            val role = attribute(child.attributes, ROLE_ATTRIBUTE)
+            if (role != ROLE_TRANSLATION && role != ROLE_ROMAN) {
+                appendLyricText(ttml, child.contentStart, child.contentEnd, out)
+            }
+            index = child.end
+        }
     }
 
     private fun declaredTracks(ttml: String) = DeclaredTracks(

@@ -1157,6 +1157,52 @@ class AmllTtmlFormatConverterTest {
     }
 
     @Test
+    fun `an inline Chinese translation never names a Latin body's language`() {
+        // Apple reads the root `xml:lang` as the song's language and withholds a
+        // translation that matches it, so an English song whose only Han sits in
+        // its own inline Chinese translation must not declare `zh`: that named
+        // the song Chinese and suppressed the `zh-Hans` lane it had just built.
+        val translatedEnglish = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">It feels like a perfect night</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">这夜晚完美得刚好</span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(translatedEnglish)
+        val root = result.ttml.substringBefore('>')
+
+        assertFalse(root.contains("xml:lang=\"zh\""))
+        assertTrue(root.contains("xml:lang=\"und\""))
+        // The translation lane itself is still migrated and kept.
+        assertTrue(result.ttml.contains("<text for=\"L1\">这夜晚完美得刚好</text>"))
+    }
+
+    @Test
+    fun `an inline Chinese translation does not stop kana naming Japanese`() {
+        // The same exclusion must not break the real inference: kana in the
+        // lyrics still decides, beside both a Chinese translation and a
+        // romanization that also carry text.
+        val translatedJapanese = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="0.5">何</span><span begin="0.5" end="1.0">し</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">什么</span>
+            <span ttm:role="x-roman">nani shi</span>
+            </p></div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(translatedJapanese)
+        val root = result.ttml.substringBefore('>')
+
+        assertTrue(root.contains("xml:lang=\"ja\""))
+        assertTrue(result.ttml.contains("<transliteration xml:lang=\"ja-Latn\">"))
+    }
+
+    @Test
     fun `a named head transliteration survives a migration beside it untouched`() {
         val named = """
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">

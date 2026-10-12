@@ -537,14 +537,25 @@ def lyrics_language(ttml: str, declared: str | None = None) -> str:
 
 
 def inferred_lyrics_language(ttml: str) -> str:
-    """The language the body's own lyric text is written in; ``und`` when unclear."""
+    """The language the body's own **lyric text** is written in; ``und`` when unclear.
+
+    Only the lyrics are read. An ``x-translation`` span holds the translation and
+    an ``x-roman`` span the romanization, and neither names the language the song
+    is sung in. Reading them is what made an English song whose only Han sits in
+    its Chinese translation declare ``zh`` — the same primary language as its own
+    ``zh-Hans`` translation lane, which the app then declines to offer, because a
+    Chinese song needs no Chinese translation. A body with no decisive script is
+    ``und``.
+    """
     import unicodedata
 
     body = next_element(ttml, "body", 0)
     if body is None:
         return "und"
+    parts: list[str] = []
+    append_lyric_text(ttml, body.content_start, body.content_end, parts)
     has_han = False
-    for character in ttml[body.content_start : body.content_end]:
+    for character in "".join(parts):
         name = unicodedata.name(character, "")
         if name.startswith("HIRAGANA") or name.startswith("KATAKANA"):
             return "ja"
@@ -553,6 +564,40 @@ def inferred_lyrics_language(ttml: str) -> str:
         if name.startswith("CJK UNIFIED IDEOGRAPH") or name.startswith("CJK COMPATIBILITY IDEOGRAPH"):
             has_han = True
     return "zh" if has_han else "und"
+
+
+def append_lyric_text(ttml: str, from_: int, to: int, out: list[str]) -> None:
+    """Append the lyric text of ``[from_, to)`` to ``out``.
+
+    The content of every translation and romanization span is left out, as is
+    every tag, comment and attribute value. A background vocal (``x-bg``) is a
+    lyric and is read; an auxiliary span nested inside it is still skipped.
+    """
+    index = from_
+    while index < to:
+        open_ = ttml.find("<", index)
+        if open_ < 0 or open_ >= to:
+            out.append(ttml[index:to])
+            return
+        out.append(ttml[index:open_])
+        literal = literal_end(ttml, open_)
+        if literal > 0:
+            if ttml.startswith("<![CDATA[", open_) and literal >= open_ + len("<![CDATA[") + len("]]>"):
+                out.append(ttml[open_ + len("<![CDATA[") : literal - len("]]>")])
+            index = literal
+            continue
+        end = tag_end(ttml, open_)
+        if end < 0:
+            return
+        name = element_name(ttml, open_, end)
+        child = parse_element(ttml, name, open_, end) if name else None
+        if child is None:
+            index = end + 1
+            continue
+        role = attribute(child.attributes, ROLE_ATTRIBUTE)
+        if role not in (ROLE_TRANSLATION, ROLE_ROMAN):
+            append_lyric_text(ttml, child.content_start, child.content_end, out)
+        index = child.end
 
 
 def has_undeclared_inline_track(ttml: str, declared: DeclaredTracks) -> bool:
@@ -1162,6 +1207,47 @@ def _selftest() -> int:
         return True
 
     checks.append(("a timed head track does not time the body", check_head_track_does_not_time_body))
+
+    def check_translation_never_names_lyrics() -> bool:
+        # Apple reads the root xml:lang as the song's language and withholds a
+        # translation that matches it, so an English song whose only Han sits in
+        # its own inline Chinese translation must not declare zh.
+        translated_english = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="1.0">It feels like a perfect night</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">这夜晚完美得刚好</span>
+            </p></div></body></tt>
+            """
+        )
+        result = to_apple_format(translated_english)
+        root = result.ttml.split(">", 1)[0]
+        assert 'xml:lang="zh"' not in root
+        assert 'xml:lang="und"' in root
+        assert '<text for="L1">这夜晚完美得刚好</text>' in result.ttml
+
+        # The exclusion must not break the real inference: kana still decides.
+        translated_japanese = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata xmlns=""/></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1">
+            <span begin="0.0" end="0.5">何</span><span begin="0.5" end="1.0">し</span>
+            <span ttm:role="x-translation" xml:lang="zh-CN">什么</span>
+            <span ttm:role="x-roman">nani shi</span>
+            </p></div></body></tt>
+            """
+        )
+        japanese = to_apple_format(translated_japanese).ttml
+        assert 'xml:lang="ja"' in japanese.split(">", 1)[0]
+        assert '<transliteration xml:lang="ja-Latn">' in japanese
+        return True
+
+    checks.append(
+        ("a translation never names the lyrics language", check_translation_never_names_lyrics)
+    )
 
     def check_declared_replaced_not_duplicated() -> bool:
         declared = textwrap.dedent(

@@ -50,7 +50,7 @@ class AppleLyricTtmlReaderTest {
     }
 
     @Test
-    fun `flattens a background vocal group to its syllables`() {
+    fun `keeps a background vocal group as its own lane`() {
         val ttml =
             """<tt xmlns="http://www.w3.org/ns/ttml" itunes:timing="Word" xml:lang="ja">""" +
                 """<body><div><p begin="1.000" end="3.000" itunes:key="L1">""" +
@@ -61,8 +61,48 @@ class AppleLyricTtmlReaderTest {
 
         val line = AppleLyricTtmlReader.read(ttml).single()
 
-        assertEquals(listOf("Main", "back", "ing"), line.words.map { it.text })
-        assertEquals("Main backing", line.text)
+        // The background is the small row under the lyric: its own words, its own
+        // extent and its own text. It is never folded into the main lane.
+        assertEquals(listOf("Main"), line.words.map { it.text })
+        assertEquals("Main", line.text)
+        assertEquals(listOf("back", "ing"), line.backgroundWords.map { it.text })
+        assertEquals(2_000L, line.backgroundWords.first().begin)
+        assertEquals(3_000L, line.backgroundWords.last().end)
+        assertEquals("backing", line.backgroundText)
+        // A line-level (untimed) background keeps no word slices.
+        assertTrue(line.backgroundRomanizationSpans.isEmpty())
+    }
+
+    @Test
+    fun `splits a head transliteration entry into main and background slices`() {
+        // The exact shape of the custom document's L19: the lyric's own spans and
+        // the `x-bg` group's spans are two independent sets in both the body and
+        // the transliteration track. Folding the background's `(boon)` into the
+        // main lane is what rendered `boon(boon)` on the last main word.
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">""" +
+                """<head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">""" +
+                """<transliterations><transliteration xml:lang="ja-Latn">""" +
+                """<text for="L1"><span begin="1.000" end="1.500">ri</span>""" +
+                """<span begin="1.500" end="2.000">boon</span>""" +
+                """<span ttm:role="x-bg"><span begin="2.100" end="2.500">(boon)</span></span>""" +
+                """</text></transliteration></transliterations>""" +
+                """</iTunesMetadata></metadata></head>""" +
+                """<body><div><p begin="1.000" end="2.000" itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">リ</span>""" +
+                """<span begin="1.500" end="2.000">ボーン</span>""" +
+                """<span ttm:role="x-bg"><span begin="2.100" end="2.500">(ボーン！)</span></span>""" +
+                """</p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals("riboon", line.romanization)
+        assertEquals(listOf("ri", "boon"), line.romanizationSpans.map { it.text })
+        assertEquals("(boon)", line.backgroundRomanization)
+        assertEquals(listOf(2_100L to "(boon)"), line.backgroundRomanizationSpans.map { it.begin to it.text })
+        assertEquals(listOf(2_500L), line.backgroundRomanizationSpans.map { it.end })
+        assertEquals(listOf("(ボーン！)"), line.backgroundWords.map { it.text })
     }
 
     @Test
@@ -194,8 +234,10 @@ class AppleLyricTtmlReaderTest {
 
         assertEquals(1_000L, line.begin)
         assertEquals(3_000L, line.end)
-        // The background syllable is still flattened into the word list.
-        assertEquals(listOf(1_000L, 3_100L), line.words.map { it.begin })
+        // The background syllable is its own lane, not a main word, even when it
+        // starts after the `<p>` ends.
+        assertEquals(listOf(1_000L), line.words.map { it.begin })
+        assertEquals(listOf(3_100L), line.backgroundWords.map { it.begin })
     }
 
     @Test

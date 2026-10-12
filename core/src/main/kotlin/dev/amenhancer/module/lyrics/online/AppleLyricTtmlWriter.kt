@@ -23,6 +23,17 @@ data class AppleTtmlLine(
      * the line-lane fallback only.
      */
     val romanizationSpans: List<AppleTtmlWord> = emptyList(),
+    /**
+     * The line's own `ttm:role="x-bg"` background vocal, kept as a **separate**
+     * lane because the app's native line exposes it through its own getters
+     * (`getBackgroundWords` / `getPronunciationBackgroundWords`) and renders it as
+     * the small row under the lyric. It is never part of [text], [words] or
+     * [romanizationSpans].
+     */
+    val backgroundText: String? = null,
+    val backgroundWords: List<AppleTtmlWord> = emptyList(),
+    val backgroundRomanization: String? = null,
+    val backgroundRomanizationSpans: List<AppleTtmlWord> = emptyList(),
 )
 
 /**

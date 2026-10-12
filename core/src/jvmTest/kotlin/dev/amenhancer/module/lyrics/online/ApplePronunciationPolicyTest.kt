@@ -207,6 +207,49 @@ class ApplePronunciationPolicyTest {
     }
 
     @Test
+    fun `a background vocal's own slice is matched against its own words`() {
+        // The L19 shape: the lyric's words/spans and the `x-bg` group's
+        // words/spans are two independent lists. Matching the main list must give
+        // the last main word its own `boon` and nothing else — the old flattened
+        // lane put the background's `(boon)` on that word, rendering
+        // `boon(boon)`. The background's word gets `(boon)` from its own list.
+        val mainWords = listOf(
+            PronunciationWordTiming(1_000L, 1_500L),
+            PronunciationWordTiming(1_500L, 2_000L),
+        )
+        val mainSpans = listOf(
+            NativePronunciationSpan(1_000L, 1_500L, "ri"),
+            NativePronunciationSpan(1_500L, 2_000L, "boon"),
+        )
+        val backgroundWords = listOf(PronunciationWordTiming(2_100L, 2_500L))
+        val backgroundSpans = listOf(NativePronunciationSpan(2_100L, 2_500L, "(boon)"))
+
+        assertEquals(
+            listOf(
+                PronunciationWordMatch(wordIndex = 0, text = "ri"),
+                PronunciationWordMatch(wordIndex = 1, text = "boon"),
+            ),
+            ApplePronunciationPolicy.matchPronunciationSpans(mainWords, mainSpans),
+        )
+        assertEquals(
+            listOf(PronunciationWordMatch(wordIndex = 0, text = "(boon)")),
+            ApplePronunciationPolicy.matchPronunciationSpans(backgroundWords, backgroundSpans),
+        )
+        // Even if a background slice is handed to the main list by mistake and
+        // overlaps the last word, the policy never duplicates it across words.
+        assertEquals(
+            listOf(
+                PronunciationWordMatch(wordIndex = 0, text = "ri"),
+                PronunciationWordMatch(wordIndex = 1, text = "boon(boon)"),
+            ),
+            ApplePronunciationPolicy.matchPronunciationSpans(
+                mainWords,
+                mainSpans + NativePronunciationSpan(1_900L, 2_100L, "(boon)"),
+            ),
+        )
+    }
+
+    @Test
     fun `a span that crosses a word boundary is never duplicated`() {
         // A line- or group-level span belongs to no single word: it is dropped,
         // so a whole-line string can neither pile onto one word nor repeat on all.

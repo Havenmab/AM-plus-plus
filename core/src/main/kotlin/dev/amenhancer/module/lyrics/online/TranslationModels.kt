@@ -70,6 +70,18 @@ data class NativeLyricLine(
      * fallback; this is the per-word lane the word getter matches against.
      */
     val romaSpans: List<NativePronunciationSpan> = emptyList(),
+    /**
+     * The line's `ttm:role="x-bg"` background vocal. The native line carries it
+     * as its own word vector (`getBackgroundWords` /
+     * `getPronunciationBackgroundWords`), so its text, timing and romanization
+     * slices live here rather than in [text]/[romaSpans]; the background is never
+     * folded into the main lane.
+     */
+    val backgroundText: String? = null,
+    val backgroundRoma: String? = null,
+    val backgroundRomaSpans: List<NativePronunciationSpan> = emptyList(),
+    val backgroundBegin: Long = 0L,
+    val backgroundEnd: Long = 0L,
     val isAlignedRight: Boolean = false,
     val metadata: LyricMetadata? = null,
 )

@@ -31,6 +31,22 @@ class NativeLyricOverlayStore {
 
     private data class LineKey(val timing: TimingKey, val text: String)
 
+    /**
+     * The line's `ttm:role="x-bg"` background lane, kept apart from the main
+     * lane. The app's native line exposes it through its own getters
+     * (`getBackgroundWords` / `getPronunciationBackgroundWords`) and renders it
+     * as the small row under the lyric, so the background's own word slices are
+     * what that row must be served from — never a slice of the main line.
+     */
+    data class BackgroundContent(
+        val text: String? = null,
+        val pronunciation: String? = null,
+        val pronunciationSpans: List<NativePronunciationSpan> = emptyList(),
+        /** The background group's own extent, its second lookup key. */
+        val begin: Long = 0L,
+        val end: Long = 0L,
+    )
+
     /** The lanes stored for one line. */
     data class Content(
         val translation: String?,
@@ -41,6 +57,7 @@ class NativeLyricOverlayStore {
          * only their concatenation for the line-lane fallback.
          */
         val pronunciationSpans: List<NativePronunciationSpan> = emptyList(),
+        val background: BackgroundContent? = null,
     )
 
     private data class Entry(val text: String, val content: Content)
@@ -52,12 +69,16 @@ class NativeLyricOverlayStore {
      */
     data class OverlayRow(val content: Content?, val match: OverlayMatch)
 
+    /** The background lane lookup: the lane itself plus which key answered it. */
+    data class BackgroundRow(val background: BackgroundContent?, val match: OverlayMatch)
+
     private data class Overlay(
         val songId: String,
         val exactContent: Map<LineKey, Content>,
         val contentByTiming: Map<TimingKey, List<Entry>>,
         val contentByBegin: Map<Long, List<Entry>>,
         val contentByText: Map<String, List<Entry>>,
+        val backgroundByTiming: Map<TimingKey, List<Entry>>,
         val hasTranslation: Boolean,
         val translationSource: String?,
         val hasPronunciation: Boolean,
@@ -88,15 +109,30 @@ class NativeLyricOverlayStore {
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
         val entries = lines.mapNotNull { line ->
+            val backgroundSpans = line.backgroundRomaSpans.filter { it.text.isNotBlank() }
+            val backgroundText = line.backgroundText?.takeIf(String::isNotBlank)
+            val background = if (backgroundText != null || backgroundSpans.isNotEmpty()) {
+                BackgroundContent(
+                    text = backgroundText,
+                    pronunciation = RomanizationPolicy.sanitize(backgroundText, line.backgroundRoma),
+                    pronunciationSpans = backgroundSpans,
+                    begin = line.backgroundBegin,
+                    end = line.backgroundEnd,
+                )
+            } else {
+                null
+            }
             val content = Content(
                 translation = OnlineTranslationContentPolicy.sanitize(line.translation),
                 pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
                 pronunciationSpans = line.romaSpans.filter { it.text.isNotBlank() },
+                background = background,
             )
             if (
                 content.translation == null &&
                 content.pronunciation == null &&
-                content.pronunciationSpans.isEmpty()
+                content.pronunciationSpans.isEmpty() &&
+                content.background == null
             ) {
                 return@mapNotNull null
             }
@@ -120,10 +156,24 @@ class NativeLyricOverlayStore {
                     keySelector = { it.first.text },
                     valueTransform = { Entry(it.first.text, it.second) },
                 ),
+            // The background's own extent is the second key the app's background
+            // getter can be matched by, independent of the line's own timing.
+            backgroundByTiming = entries
+                .mapNotNull { (key, content) ->
+                    val background = content.background ?: return@mapNotNull null
+                    if (background.end <= background.begin) return@mapNotNull null
+                    TimingKey(background.begin, background.end) to Entry(key.text, content)
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
             hasPronunciation = entries.any {
-                it.second.pronunciation != null || it.second.pronunciationSpans.isNotEmpty()
+                it.second.pronunciation != null ||
+                    it.second.pronunciationSpans.isNotEmpty() ||
+                    it.second.background != null
             },
             pronunciationSource = pronunciationSource,
         )
@@ -210,6 +260,41 @@ class NativeLyricOverlayStore {
      */
     fun lookup(songId: String?, begin: Long, end: Long, text: String?): OverlayRow =
         row(songId, begin, end, text)
+
+    /**
+     * The **background** lane of the native line at [lineBegin]/[lineEnd]. The
+     * app's `getPronunciationBackgroundWords(boolean)` is answered by the same
+     * line object as the main getter, so the line is resolved exactly as the main
+     * lane is and its background is taken from the same row; when that row cannot
+     * be found, the background group's own extent ([backgroundBegin]/
+     * [backgroundEnd], the `x-bg` span's own `begin`/`end`) is the bounded second
+     * key. Never falls back to the main lane: a background row with no own lane
+     * stays empty rather than showing the lyric as romanization.
+     */
+    fun lookupBackground(
+        songId: String?,
+        lineBegin: Long,
+        lineEnd: Long,
+        lineText: String?,
+        backgroundBegin: Long? = null,
+        backgroundEnd: Long? = null,
+    ): BackgroundRow {
+        val current = overlay ?: return BackgroundRow(null, OverlayMatch.MISSING)
+        if (songId.isNullOrBlank() || current.songId != songId) {
+            return BackgroundRow(null, OverlayMatch.MISSING)
+        }
+        row(songId, lineBegin, lineEnd, lineText).let { lineRow ->
+            lineRow.content?.background?.let { return BackgroundRow(it, lineRow.match) }
+        }
+        if (backgroundBegin != null && backgroundEnd != null && backgroundEnd > backgroundBegin) {
+            current.backgroundByTiming[TimingKey(backgroundBegin, backgroundEnd)]
+                ?.singleOrNull()
+                ?.content
+                ?.background
+                ?.let { return BackgroundRow(it, OverlayMatch.TIMING) }
+        }
+        return BackgroundRow(null, OverlayMatch.MISSING)
+    }
 
     private fun content(songId: String?, begin: Long, end: Long, text: String?): Content? =
         row(songId, begin, end, text).content
@@ -313,6 +398,21 @@ object DisplayedLyricPublication {
                         text = span.text,
                     )
                 },
+                backgroundText = line.backgroundText,
+                backgroundRoma = line.backgroundRomanization,
+                backgroundRomaSpans = line.backgroundRomanizationSpans.map { span ->
+                    NativePronunciationSpan(
+                        begin = span.begin,
+                        end = span.end,
+                        text = span.text,
+                    )
+                },
+                backgroundBegin = line.backgroundWords.firstOrNull()?.begin
+                    ?: line.backgroundRomanizationSpans.firstOrNull()?.begin
+                    ?: 0L,
+                backgroundEnd = line.backgroundWords.lastOrNull()?.end
+                    ?: line.backgroundRomanizationSpans.lastOrNull()?.end
+                    ?: 0L,
             )
         }
 }

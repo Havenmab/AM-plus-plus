@@ -218,6 +218,17 @@ object OnlineTranslationEnrichment {
         romaSpans = line.romanizationSpans.map { span ->
             NativePronunciationSpan(begin = span.begin, end = span.end, text = span.text)
         },
+        backgroundText = line.backgroundText,
+        backgroundRoma = line.backgroundRomanization,
+        backgroundRomaSpans = line.backgroundRomanizationSpans.map { span ->
+            NativePronunciationSpan(begin = span.begin, end = span.end, text = span.text)
+        },
+        backgroundBegin = line.backgroundWords.firstOrNull()?.begin
+            ?: line.backgroundRomanizationSpans.firstOrNull()?.begin
+            ?: 0L,
+        backgroundEnd = line.backgroundWords.lastOrNull()?.end
+            ?: line.backgroundRomanizationSpans.lastOrNull()?.end
+            ?: 0L,
     )
 
     /** Turns one candidate into a selector entry, or null when it adds no translation. */

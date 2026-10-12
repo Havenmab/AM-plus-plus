@@ -127,6 +127,61 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `a published background vocal keeps its own lane and its own key`() {
+        val store = NativeLyricOverlayStore()
+        // The custom document's L19: the main lyric's four words and the `x-bg`
+        // group's own word are two independent span sets in the transliteration
+        // track. The background must not be folded into the main lane, and the
+        // main text must be the lyric only so the native line still matches.
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="1.0" end="1.4">ri</span><span begin="1.4" end="1.8">ri</span><span begin="1.8" end="2.0">boon</span><span ttm:role="x-bg"><span begin="2.1" end="2.5">(boon)</span></span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="1.0" end="2.0" itunes:key="L1"><span begin="1.0" end="1.4">リ</span><span begin="1.4" end="1.8">リ</span><span begin="1.8" end="2.0">ボーン</span><span ttm:role="x-bg"><span begin="2.1" end="2.5">(ボーン！)</span></span></p></div></body></tt>
+        """.trimIndent()
+
+        assertTrue(store.publishDisplayed(songId = 77L, ttml = ttml))
+        // The line lane is the lyric's own slices; the background's `(boon)` is not
+        // among them, so the render plan can never put it on the last main word.
+        assertEquals(
+            listOf(
+                NativePronunciationSpan(1_000L, 1_400L, "ri"),
+                NativePronunciationSpan(1_400L, 1_800L, "ri"),
+                NativePronunciationSpan(1_800L, 2_000L, "boon"),
+            ),
+            store.pronunciationSpans("77", 1_000L, 2_000L, "リリボーン"),
+        )
+        // The line's own text is the lyric only, so the native line matches exactly.
+        assertEquals(
+            OverlayMatch.EXACT_TIMING,
+            store.lookup("77", 1_000L, 2_000L, "リリボーン").match,
+        )
+        // The background lane is reachable through the line row...
+        val byLine = store.lookupBackground(77L.toString(), 1_000L, 2_000L, "リリボーン")
+        assertEquals(OverlayMatch.EXACT_TIMING, byLine.match)
+        assertEquals(
+            listOf(NativePronunciationSpan(2_100L, 2_500L, "(boon)")),
+            byLine.background?.pronunciationSpans,
+        )
+        assertEquals(2_100L, byLine.background?.begin)
+        assertEquals(2_500L, byLine.background?.end)
+        // ...and, as a bounded fallback, by the `x-bg` span's own extent.
+        val byBackground = store.lookupBackground(
+            songId = "77",
+            lineBegin = 9_999L,
+            lineEnd = 9_999L,
+            lineText = "unknown",
+            backgroundBegin = 2_100L,
+            backgroundEnd = 2_500L,
+        )
+        assertEquals(OverlayMatch.TIMING, byBackground.match)
+        assertEquals("(boon)", byBackground.background?.pronunciationSpans?.single()?.text)
+        // A line with no background never gets the main lane handed back.
+        assertNull(store.lookupBackground("77", 5_000L, 6_000L, "nope").background)
+    }
+
+    @Test
     fun `a timing with a single entry still answers when Apple re-normalizes the text`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

@@ -400,6 +400,51 @@ class AppleMusic700NativeLyricsProfileTest {
     }
 
     @Test
+    fun `every background hook is probed and the app's gate is mirrored`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The small row is answered by four native methods, and the app only calls
+        // the word-level one after its line-level background gate passes
+        // (`player.A.k`). Every one of them must be hooked and named in the log, or
+        // a still-silent background row cannot be attributed.
+        listOf(
+            "getHtmlBackgroundVocalsLineText",
+            "getHtmlPronunciationBackgroundVocalsLineText",
+            "getBackgroundWords",
+            "getPronunciationBackgroundWords",
+        ).forEach { hook -> assertTrue("missing hook $hook", hooks.contains("\"$hook\"")) }
+        // Apple's own members behind those hooks come from the profile, never a
+        // guessed name.
+        assertTrue(hooks.contains("LYRICS_NATIVE_BACKGROUND_TEXT_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_BACKGROUND_WORDS_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
+        // The gate mirror: the background line text is only substituted when the
+        // app would accept it (non-empty and different from the background lyric),
+        // and Apple's own value is preferred and otherwise left untouched.
+        assertTrue(hooks.contains("private fun isUsableBackgroundPronunciation("))
+        assertTrue(hooks.contains("private fun backgroundSupplementGateText("))
+        assertTrue(hooks.contains("private fun backgroundLane("))
+        assertTrue(hooks.contains("AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD"))
+        // The bounded per-hook diagnostic.
+        assertTrue(
+            hooks.contains(
+                "online-translation background-hook id=\$songId hook=\$hook row=\$begin",
+            ),
+        )
+        assertTrue(hooks.contains("empty=\$empty supplied=\$supplied apple=\$apple"))
+        assertTrue(hooks.contains("private fun reportBackgroundHook("))
+        assertTrue(hooks.contains("MAX_BACKGROUND_HOOK_ROWS"))
+        assertTrue(
+            hooks.contains("backgroundHookKeys.add(\"\$songId:\$hook:\$begin\")"),
+        )
+        // The background row must still be served word-by-word from the overlay.
+        assertTrue(hooks.contains("lookupBackground("))
+        assertTrue(hooks.contains("background = true"))
+    }
+
+    @Test
     fun `the displayed document's own p timing is the overlay's line key`() {
         val reader = projectFile(
             "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/AppleLyricTtmlReader.kt",

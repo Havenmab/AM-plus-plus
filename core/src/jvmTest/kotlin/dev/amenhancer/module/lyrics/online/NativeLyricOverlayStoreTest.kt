@@ -177,8 +177,38 @@ class NativeLyricOverlayStoreTest {
         )
         assertEquals(OverlayMatch.TIMING, byBackground.match)
         assertEquals("(boon)", byBackground.background?.pronunciationSpans?.single()?.text)
+        // The document's own background romanization is kept raw beside the
+        // sanitized pronunciation: the app gates its background word getter on the
+        // line-level background pronunciation being non-empty and different from
+        // the background lyric, so the host needs the lane's own text even when it
+        // is only partially Latin.
+        assertEquals("(boon)", byLine.background?.romanization)
         // A line with no background never gets the main lane handed back.
         assertNull(store.lookupBackground("77", 5_000L, 6_000L, "nope").background)
+    }
+
+    @Test
+    fun `a partially romanized background keeps its raw line text for the gate`() {
+        val store = NativeLyricOverlayStore()
+        // The ラブレター L24 shape: only the background's first slice is Latin; the
+        // later slices still carry the lyric. `sanitize` rejects the mixed
+        // concatenation, but the raw document text must survive so the host can
+        // offer it for the app's background gate (the per-word plan overrides only
+        // the words it matches).
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="1.0" end="1.4">sukuwaretan</span><span ttm:role="x-bg"><span begin="1.9" end="2.1">(kokoro ga</span><span begin="2.1" end="2.3">動かされるんです</span></span></text></transliteration></transliterations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="1.0" end="2.4" itunes:key="L1"><span begin="1.0" end="1.4">救われたん</span><span ttm:role="x-bg"><span begin="1.9" end="2.1">(心が</span><span begin="2.1" end="2.3">動かされるんです</span></span></p></div></body></tt>
+        """.trimIndent()
+
+        assertTrue(store.publishDisplayed(songId = 77L, ttml = ttml))
+        val background = store.lookupBackground("77", 1_000L, 2_400L, "救われたん").background
+        assertEquals(listOf("(kokoro ga", "動かされるんです"), background?.pronunciationSpans?.map { it.text })
+        // The fully-Latin sanitized form is refused, but the raw lane text remains.
+        assertNull(background?.pronunciation)
+        assertEquals("(kokoro ga動かされるんです", background?.romanization)
     }
 
     @Test

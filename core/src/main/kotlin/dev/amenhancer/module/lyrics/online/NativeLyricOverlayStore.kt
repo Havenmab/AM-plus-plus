@@ -42,6 +42,16 @@ class NativeLyricOverlayStore {
         val text: String? = null,
         val pronunciation: String? = null,
         val pronunciationSpans: List<NativePronunciationSpan> = emptyList(),
+        /**
+         * The background entry's own romanization as the document wrote it
+         * (concatenated in document order, un-sanitized). The app gates its
+         * background word getter on `getHtmlPronunciationBackgroundVocalsLineText`
+         * being non-empty and different from `getHtmlBackgroundVocalsLineText`, so
+         * a partially romanized background (a Word-timed track whose later slices
+         * still carry the lyric) must still be offered here — otherwise the gate
+         * can never pass and the per-word lane is never asked for.
+         */
+        val romanization: String? = null,
         /** The background group's own extent, its second lookup key. */
         val begin: Long = 0L,
         val end: Long = 0L,
@@ -116,6 +126,7 @@ class NativeLyricOverlayStore {
                     text = backgroundText,
                     pronunciation = RomanizationPolicy.sanitize(backgroundText, line.backgroundRoma),
                     pronunciationSpans = backgroundSpans,
+                    romanization = line.backgroundRoma?.takeIf(String::isNotBlank),
                     begin = line.backgroundBegin,
                     end = line.backgroundEnd,
                 )

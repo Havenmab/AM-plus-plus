@@ -278,6 +278,26 @@ internal class AppleNativeLyricModelHooks(
     @Volatile
     private var wordLaneRowsEmitted: Int = 0
 
+    /**
+     * De-duplicates the `background-hook` diagnostic: one short line per
+     * background getter (`getHtmlBackgroundVocalsLineText`,
+     * `getHtmlPronunciationBackgroundVocalsLineText`, `getBackgroundWords`,
+     * `getPronunciationBackgroundWords`) per lyric line per model generation.
+     *
+     * The app gates its background word getter on the background's own
+     * **line-level** pronunciation text being non-empty and different from the
+     * background lyric (`A.k` reads `getHtmlPronunciationBackgroundVocalsLineText`
+     * and `getHtmlBackgroundVocalsLineText`, then only calls
+     * `getPronunciationBackgroundWords(false)` when both conditions hold), so a
+     * silent background row must be attributable to the exact hook that answered
+     * — the previous log could not say which one the small row used.
+     */
+    private val backgroundHookKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Background-hook rows emitted per model generation before the cap. */
+    @Volatile
+    private var backgroundHookRowsEmitted: Int = 0
+
     /** True once at least one `LyricsWordVector -> ArrayMap` adapter method is hooked. */
     @Volatile
     private var wordRenderAdapterAvailable: Boolean = false
@@ -2627,9 +2647,19 @@ internal class AppleNativeLyricModelHooks(
      *    `x-bg` lane through the same overlay ([supplementPronunciationRow] with
      *    `background = true`), so the background row gets its own per-word
      *    romanization; the main lane's slices are never spread over it and its
-     *    slices are never folded into the main lane. Only the no-argument
-     *    line-level background text stays Apple's own, sanitized — exactly HLE's
-     *    `LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD` branch.
+     *    slices are never folded into the main lane.
+     *
+     *    The app does **not** call the background word getter unconditionally:
+     *    `player.A.k` first reads
+     *    `getHtmlPronunciationBackgroundVocalsLineText()` and only asks for
+     *    `getPronunciationBackgroundWords(false)` when that line-level background
+     *    pronunciation is non-empty and differs from
+     *    `getHtmlBackgroundVocalsLineText()`. Apple's own value is preferred and
+     *    left untouched; when Apple has nothing usable the module stands in with
+     *    the document's own `x-bg` lane (sanitized, else the track's own
+     *    concatenation) so the gate can pass while the row still renders
+     *    word-by-word. That substitution is the background row's own semantics,
+     *    never a line-level lane for the main line.
      *
      * No native `LyricsWord` is ever synthesized: the adapter dereferences
      * `word.getLyricsLine().get().getLineId()` (verified against the 6.5.3 dex),
@@ -2657,25 +2687,58 @@ internal class AppleNativeLyricModelHooks(
         pronunciationWordSpanDetailKeys.clear()
         wordLaneRowKeys.clear()
         wordLaneRowsEmitted = 0
+        backgroundHookKeys.clear()
+        backgroundHookRowsEmitted = 0
         lines.map { it.javaClass }.distinct().forEach { clazz ->
+            // The background lyric text itself: a transparent pass-through, hooked
+            // only so the log can name it when the small row is bound.
+            installLineGetter(
+                clazz = clazz,
+                member = AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD,
+            ) { line, original ->
+                reportBackgroundHook(
+                    hook = "getHtmlBackgroundVocalsLineText",
+                    line = line,
+                    empty = original.isNullOrEmpty(),
+                    supplied = false,
+                    apple = !original.isNullOrBlank(),
+                )
+                null
+            }
+            // The app's background gate reads this method (`player.A.k`: only when
+            // it is non-empty and different from the background lyric does the app
+            // call `getPronunciationBackgroundWords`), so it must be answerable for
+            // a document lane Apple itself did not turn into a background
+            // pronunciation. Apple's own value is preferred and otherwise left
+            // untouched; the module only stands in when Apple has nothing usable.
             installLineGetter(
                 clazz = clazz,
                 member = AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD,
             ) { line, original ->
                 if (mandarinHidden) {
+                    reportBackgroundHook(
+                        hook = "getHtmlPronunciationBackgroundVocalsLineText",
+                        line = line,
+                        empty = true,
+                        supplied = false,
+                        apple = !original.isNullOrBlank(),
+                        detail = "hidden",
+                    )
                     ""
                 } else {
-                    ApplePronunciationPolicy.nonNullDisplayText(
-                        RomanizationPolicy.sanitize(
-                            originalText = rawText(
-                                line,
-                                AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD,
-                            ),
-                            pronunciation = original,
-                        ),
+                    val appleUsable = isUsableBackgroundPronunciation(original, backgroundText(line))
+                    val resolved = if (appleUsable) original else backgroundSupplementGateText(line)
+                    reportBackgroundHook(
+                        hook = "getHtmlPronunciationBackgroundVocalsLineText",
+                        line = line,
+                        empty = resolved.isNullOrEmpty(),
+                        supplied = !appleUsable && !resolved.isNullOrEmpty(),
+                        apple = !original.isNullOrBlank(),
                     )
+                    resolved
                 }
             }
+            installBackgroundWordsProbe(clazz)
             installPronunciationWordsGetter(
                 clazz = clazz,
                 member = AppleMusicRuntimeMember.LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD,
@@ -2927,6 +2990,16 @@ internal class AppleNativeLyricModelHooks(
             parameterCount = parameterCount,
             background = background,
         )
+        if (background) {
+            reportBackgroundHook(
+                hook = "getPronunciationBackgroundWords",
+                line = line,
+                empty = vectorSize(resolved) <= 0,
+                supplied = canRegisterRenderPlan,
+                apple = vectorSize(original) > 0,
+                detail = "match=${supplementRow?.match?.token ?: OverlayMatch.MISSING.token}",
+            )
+        }
         // Only the main getter participates in the late-word-vector re-presentation
         // edge: the background row has no separate presentation gate.
         announceWordReadyIfAppleWordsArrived(track, plan.source, onlineFallback && !background)
@@ -3247,6 +3320,39 @@ internal class AppleNativeLyricModelHooks(
         )
     }
 
+    /**
+     * The bounded per-hook proof of the background path:
+     *
+     * `online-translation background-hook id=… hook=<method> row=<begin>
+     * empty=<true|false> supplied=<true|false> apple=<true|false> [detail=…]`
+     *
+     * The small row under the lyric is answered by four different native methods
+     * and the app only reaches the word-level one after its **line-level**
+     * background pronunciation gate passes (`player.A.k`), so a device log must
+     * name which hook ran, whether its answer was empty, whether this module
+     * supplied the value, and whether Apple itself had one. Emitted once per
+     * (song, hook, line), capped like the other diagnostics.
+     */
+    private fun reportBackgroundHook(
+        hook: String,
+        line: Any,
+        empty: Boolean,
+        supplied: Boolean,
+        apple: Boolean,
+        detail: String? = null,
+    ) {
+        if (backgroundHookRowsEmitted >= MAX_BACKGROUND_HOOK_ROWS) return
+        val songId = modelSongId
+        val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD)) ?: -1L
+        if (!backgroundHookKeys.add("$songId:$hook:$begin")) return
+        backgroundHookRowsEmitted += 1
+        log(
+            "online-translation background-hook id=$songId hook=$hook row=$begin " +
+                "empty=$empty supplied=$supplied apple=$apple" +
+                (detail?.let { " detail=$it" } ?: ""),
+        )
+    }
+
     /** HLE's `ApplePronunciationWordRenderContext.displayText`, keyed by identity. */
     private fun pronunciationWordRenderText(word: Any?): String? {
         val context = currentPronunciationWordRenderContext() ?: return null
@@ -3524,6 +3630,89 @@ internal class AppleNativeLyricModelHooks(
      */
     private fun supplementPronunciation(line: Any, text: String?): String? =
         supplementPronunciationRow(line, text, background = false, backgroundExtent = null).lineText
+
+    /** The line's own background (small row) text, read raw. */
+    private fun backgroundText(line: Any): String? =
+        rawText(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD)
+
+    /**
+     * The app's own background gate (`player.A.k`): it asks for the background's
+     * word-level pronunciation only when the background pronunciation line text is
+     * non-empty and differs from the background lyric (both compared
+     * case-insensitively). Exactly that condition is mirrored here, so the module
+     * only ever substitutes a value the app itself would accept.
+     */
+    private fun isUsableBackgroundPronunciation(pronunciation: String?, backgroundText: String?): Boolean {
+        val candidate = pronunciation?.trim()?.takeIf(String::isNotEmpty) ?: return false
+        val original = backgroundText?.trim().orEmpty()
+        if (original.isEmpty()) return true
+        return !candidate.equals(original, ignoreCase = true)
+    }
+
+    /**
+     * The background pronunciation line text the module supplies when Apple has
+     * nothing usable: the document's own `x-bg` lane. The sanitized concatenation
+     * (fully Latin) is preferred, and the document's un-sanitized concatenation
+     * stands in otherwise — a Word-timed track whose later background slices still
+     * carry the lyric is still the row's own lane, and the per-word render plan
+     * overrides only the words it actually matches. Null when there is no lane, so
+     * Apple's own value is left exactly as it was.
+     */
+    private fun backgroundSupplementGateText(line: Any): String? {
+        val lane = backgroundLane(line) ?: return null
+        val original = backgroundText(line)
+        RomanizationPolicy.sanitize(original, lane.pronunciation)
+            ?.takeIf { isUsableBackgroundPronunciation(it, original) }
+            ?.let { return it }
+        return lane.romanization?.takeIf { isUsableBackgroundPronunciation(it, original) }
+    }
+
+    /** The document's own background lane for one native line, or null. */
+    private fun backgroundLane(line: Any): NativeLyricOverlayStore.BackgroundContent? {
+        val songId = lineSongId(line) ?: return null
+        if (!supplementLaneAvailable(songId)) return null
+        val begin = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_BEGIN_METHOD)) ?: return null
+        val end = number(call(line, AppleMusicRuntimeMember.LYRICS_NATIVE_END_METHOD)) ?: return null
+        val lineText = rawText(line, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD)
+        return overlay.lookupBackground(
+            songId = songId,
+            lineBegin = begin,
+            lineEnd = end,
+            lineText = lineText,
+        ).background
+    }
+
+    /**
+     * A transparent probe on `getBackgroundWords(boolean)`: the app calls it for
+     * the small row whenever its pronunciation toggle is off, and the background
+     * pronunciation word getter is only reached after the app's line-level gate
+     * passes. Logging it proves which of the two word-level paths the small row
+     * actually used.
+     */
+    private fun installBackgroundWordsProbe(clazz: Class<*>) {
+        val name = nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_WORDS_METHOD]
+            ?: return
+        val method = AppleReflection.findMethodOrNull(clazz, name, parameterCount = 1) ?: return
+        if (!installed.add("${method.declaringClass.name}#${method.name}/${method.parameterCount}")) {
+            return
+        }
+        ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                if (rawRead.get() == true) return
+                val line = param.thisObject ?: return
+                runCatching {
+                    val count = vectorSize(param.result)
+                    reportBackgroundHook(
+                        hook = "getBackgroundWords",
+                        line = line,
+                        empty = count <= 0,
+                        supplied = false,
+                        apple = count > 0,
+                    )
+                }
+            }
+        }, scope)
+    }
 
     private fun currentPronunciationWordRenderContext(): PronunciationWordRenderContext? =
         pronunciationWordRenderContexts.get()?.peekLast()
@@ -3949,6 +4138,13 @@ internal class AppleNativeLyricModelHooks(
          * cannot flood the log the way an unbounded per-bind emission would.
          */
         const val MAX_WORD_LANE_ROWS = 128
+
+        /**
+         * The bound on the per-hook `background-hook` diagnostic: one short line
+         * per background getter per lyric line per model generation, capped like
+         * `word-lane` so the four background hooks cannot flood the log.
+         */
+        const val MAX_BACKGROUND_HOOK_ROWS = 128
 
         /**
          * The fork's verified lyrics-RecyclerView accessor, used when the

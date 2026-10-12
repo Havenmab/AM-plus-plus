@@ -165,10 +165,11 @@ object AmllTtmlFormatConverter {
         val rootLanguage = lyricsLanguage(normalized, lyricLanguage)
         val migrated = migrateAuxiliaryTracks(normalized, declared, writtenLanguage, unnamed)
         // Migrating a line's only auxiliary span away can leave its lyric bare
-        // where the source hid it beside that span, so the shapes are normalized
-        // once more. The pass is idempotent, and this is what keeps the first
-        // run already canonical instead of leaving the wrap to a second run.
-        val canonical = normalizeLegacyShapes(migrated)
+        // where the source hid it beside that span, so the body's lines are
+        // wrapped once more. This pass is deliberately body-only: a head lane is
+        // a `<text for=…>` entry, not a body `<p>`, and must never be given a
+        // span — the app reads its translation text verbatim.
+        val canonical = wrapExposedBareLines(migrated)
         val body = nextElement(canonical, "body", 0)
         val result = normalizeTags(
             canonical,
@@ -207,11 +208,10 @@ object AmllTtmlFormatConverter {
      * pass finds nothing to do and returns the document byte-for-byte. A
      * background group with neither an inner element to lean on nor text and
      * timing to move (blank text) is left as it is, so the wrapper's timing is
-     * never dropped on its own. The pass covers the whole document, so a legacy
-     * `x-bg` inside a declared translation or transliteration lane in the head
-     * is normalized by the same rule. A bare `<text>` entry in a head lane is
-     * canonical — Apple's line-by-line tracks are plain text — and is never
-     * wrapped.
+     * never dropped on its own. The `x-bg` rule covers the whole document, so a
+     * legacy `x-bg` inside a declared translation or transliteration lane in the
+     * head is normalized by it; the line rule is confined to the body, and a
+     * `<text for=…>` head entry is never wrapped.
      */
     private fun normalizeLegacyShapes(ttml: String): String {
         val edits = mutableListOf<Edit>()
@@ -220,11 +220,32 @@ object AmllTtmlFormatConverter {
         return applyEdits(ttml, edits)
     }
 
-    /** Gives a bare-text `<p>` the timed inner span it is missing. */
+    /**
+     * Wraps the bare-text **body** lines migration exposed, and nothing else.
+     *
+     * Only the body is scanned: the head lanes this runs after are already
+     * canonical, and a `<translations>` / `<transliterations>` entry is a
+     * `<text for=…>`, not a body `<p>`. Wrapping one would hand the app a span
+     * where it expects the translation text itself, which is precisely the
+     * failure mode this pass must not have.
+     */
+    private fun wrapExposedBareLines(ttml: String): String {
+        val edits = mutableListOf<Edit>()
+        wrapBareLines(ttml, edits)
+        return applyEdits(ttml, edits)
+    }
+
+    /**
+     * Gives a bare-text `<p>` in the **body** the timed inner span it is missing.
+     * The head is out of scope: no head lane holds a `<p>`, and none may be
+     * wrapped even if a document carried one there.
+     */
     private fun wrapBareLines(ttml: String, edits: MutableList<Edit>) {
-        var cursor = 0
+        val body = nextElement(ttml, "body", 0) ?: return
+        var cursor = body.contentStart
         while (true) {
             val line = nextElement(ttml, "p", cursor) ?: break
+            if (line.end > body.contentEnd) break
             cursor = line.end
             if (line.selfClosing) continue
             if (childElements(ttml, line).isNotEmpty()) continue

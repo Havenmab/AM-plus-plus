@@ -318,10 +318,11 @@ def to_apple_format(ttml: str, lyric_language: str | None = None) -> TtmlFormatC
     root_language = lyrics_language(normalized, lyric_language)
     migrated = migrate_auxiliary_tracks(normalized, declared, written_language, unnamed)
     # Migrating a line's only auxiliary span away can leave its lyric bare where
-    # the source hid it beside that span, so the shapes are normalized once more.
-    # The pass is idempotent, and this is what keeps the first run already
-    # canonical instead of leaving the wrap to a second run.
-    canonical = normalize_legacy_shapes(migrated)
+    # the source hid it beside that span, so the body's lines are wrapped once
+    # more. This pass is deliberately body-only: a head lane is a
+    # ``<text for=…>`` entry, not a body ``<p>``, and must never be given a span
+    # — the app reads its translation text verbatim.
+    canonical = wrap_exposed_bare_lines(migrated)
     body = next_element(canonical, "body", 0)
     result = normalize_tags(
         canonical,
@@ -348,8 +349,9 @@ def normalize_legacy_shapes(ttml: str) -> str:
     span keeps its timing. Every rule fires only on a shape that is not yet
     canonical, so a second pass is a no-op. A background group with neither an
     inner element to lean on nor text and timing to move is left as it is. The
-    whole document is covered, so a legacy ``x-bg`` inside a declared head lane
-    is normalized too; a bare ``<text>`` entry is canonical and never wrapped.
+    ``x-bg`` rule covers the whole document, so a legacy ``x-bg`` inside a
+    declared head lane is normalized too; the line rule is confined to the body,
+    and a ``<text for=…>`` head entry is never wrapped.
     """
     edits: list[Edit] = []
     wrap_bare_lines(ttml, edits)
@@ -357,12 +359,33 @@ def normalize_legacy_shapes(ttml: str) -> str:
     return apply_edits(ttml, edits)
 
 
+def wrap_exposed_bare_lines(ttml: str) -> str:
+    """Wrap the bare-text **body** lines migration exposed, and nothing else.
+
+    Only the body is scanned: the head lanes this runs after are already
+    canonical, and a ``<translations>`` / ``<transliterations>`` entry is a
+    ``<text for=…>``, not a body ``<p>``. Wrapping one would hand the app a span
+    where it expects the translation text itself, which is precisely the failure
+    mode this pass must not have.
+    """
+    edits: list[Edit] = []
+    wrap_bare_lines(ttml, edits)
+    return apply_edits(ttml, edits)
+
+
 def wrap_bare_lines(ttml: str, edits: list[Edit]) -> None:
-    """Give a bare-text ``<p>`` the timed inner span it is missing."""
-    cursor = 0
+    """Give a bare-text ``<p>`` in the **body** the timed span it is missing.
+
+    The head is out of scope: no head lane holds a ``<p>``, and none may be
+    wrapped even if a document carried one there.
+    """
+    body = next_element(ttml, "body", 0)
+    if body is None:
+        return
+    cursor = body.content_start
     while True:
         line = next_element(ttml, "p", cursor)
-        if line is None:
+        if line is None or line.end > body.content_end:
             break
         cursor = line.end
         if line.self_closing or child_elements(ttml, line):
@@ -1546,6 +1569,54 @@ def _selftest() -> int:
         return True
 
     checks.append(("a head lane background is normalized too", check_head_lane_background))
+
+    def check_declared_translation_lane_untouched() -> bool:
+        # The injection-path shape: a translations lane already in the head while
+        # the body still has an undeclared romanization, so migration and the
+        # post-migration pass both run beside that lane. Its `<text for=…>`
+        # bodies are read verbatim by the app and must never be given a span.
+        declared_lane = textwrap.dedent(
+            """\
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">译文一</text><text for="L2"><span ttm:role="x-bg">(合)</span></text><text for="L3">译文三</text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-roman">R1</span></p>
+            <p begin="1.0" end="2.0" itunes:key="L2"><span ttm:role="x-roman">R2</span>hidden</p>
+            <p begin="2.0" end="3.0" itunes:key="L3">bare</p>
+            </div></body></tt>
+            """
+        )
+        result = to_apple_format(declared_lane)
+        head = result.ttml.split("<body", 1)[0]
+        assert (
+            "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">"
+            "<text for=\"L1\">译文一</text>"
+            "<text for=\"L2\"><span ttm:role=\"x-bg\">(合)</span></text>"
+            "<text for=\"L3\">译文三</text>"
+            "</translation></translations>" in head
+        )
+        assert '<text for="L1"><span' not in head
+        assert '<text for="L3"><span' not in head
+        # The undeclared romanization still migrates, and the body lines
+        # migration exposed are wrapped as the body rule says.
+        assert "<transliterations><transliteration" in head
+        assert (
+            '<p begin="1.0" end="2.0" itunes:key="L2">'
+            '<span begin="1.0" end="2.0">hidden</span></p>' in result.ttml
+        )
+        assert (
+            '<p begin="2.0" end="3.0" itunes:key="L3">'
+            '<span begin="2.0" end="3.0">bare</span></p>' in result.ttml
+        )
+        twice = to_apple_format(result.ttml)
+        assert not twice.converted and twice.ttml == result.ttml
+        return True
+
+    checks.append(
+        ("a declared translation lane keeps its text", check_declared_translation_lane_untouched)
+    )
 
     def check_declared_and_inline() -> bool:
         declared_and_inline = textwrap.dedent(

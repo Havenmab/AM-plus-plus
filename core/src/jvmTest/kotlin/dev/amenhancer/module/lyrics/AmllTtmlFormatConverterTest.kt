@@ -676,6 +676,65 @@ class AmllTtmlFormatConverterTest {
     }
 
     @Test
+    fun `a declared translation lane keeps its text through both passes`() {
+        // The injection-path shape: a document already carries a translations
+        // lane in the head while the body still has an undeclared romanization,
+        // so migration runs and the post-migration pass runs beside that lane.
+        // The lane's `<text for=…>` bodies are read verbatim by the app and must
+        // never be given a span.
+        val declaredLane = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+            <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+            <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">译文一</text><text for="L2"><span ttm:role="x-bg">(合)</span></text><text for="L3">译文三</text></translation></translations>
+            </iTunesMetadata></metadata></head>
+            <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">aa</span>
+            <span ttm:role="x-roman">R1</span></p>
+            <p begin="1.0" end="2.0" itunes:key="L2"><span ttm:role="x-roman">R2</span>hidden</p>
+            <p begin="2.0" end="3.0" itunes:key="L3">bare</p>
+            </div></body></tt>
+        """.trimIndent()
+
+        val result = AmllTtmlFormatConverter.toAppleFormat(declaredLane)
+        val head = result.ttml.substringBefore("<body")
+
+        // The whole declared translations block is byte-for-byte what went in.
+        assertTrue(
+            head.contains(
+                "<translations><translation type=\"subtitle\" xml:lang=\"zh-Hans\">" +
+                    "<text for=\"L1\">译文一</text>" +
+                    "<text for=\"L2\"><span ttm:role=\"x-bg\">(合)</span></text>" +
+                    "<text for=\"L3\">译文三</text>" +
+                    "</translation></translations>",
+            ),
+        )
+        // No `<text>` body was wrapped, not even the bare ones.
+        assertFalse(head.contains("<text for=\"L1\"><span"))
+        assertFalse(head.contains("<text for=\"L3\"><span"))
+        assertTrue(head.contains("<text for=\"L1\">译文一</text>"))
+        assertTrue(head.contains("<text for=\"L3\">译文三</text>"))
+        // The undeclared romanization still migrates into its own lane, and the
+        // body lines the migration exposed are wrapped as body `<p>` rules say.
+        assertTrue(head.contains("<transliterations><transliteration xml:lang=\"und-Latn\">"))
+        assertTrue(
+            result.ttml.contains(
+                "<p begin=\"1.0\" end=\"2.0\" itunes:key=\"L2\">" +
+                    "<span begin=\"1.0\" end=\"2.0\">hidden</span></p>",
+            ),
+        )
+        assertTrue(
+            result.ttml.contains(
+                "<p begin=\"2.0\" end=\"3.0\" itunes:key=\"L3\">" +
+                    "<span begin=\"2.0\" end=\"3.0\">bare</span></p>",
+            ),
+        )
+
+        // Both passes are idempotent beside the declared lane.
+        val twice = AmllTtmlFormatConverter.toAppleFormat(result.ttml)
+        assertFalse(twice.converted)
+        assertEquals(result.ttml, twice.ttml)
+    }
+
+    @Test
     fun `empty default namespace overrides are dropped`() {
         val result = AmllTtmlFormatConverter.toAppleFormat(amllFormat)
 

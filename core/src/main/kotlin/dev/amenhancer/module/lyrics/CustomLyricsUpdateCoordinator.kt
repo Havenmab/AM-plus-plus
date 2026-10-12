@@ -101,7 +101,12 @@ class CustomLyricsUpdateCoordinator(
 
         selected.entries.forEach { entry ->
             if (cancelled()) return CustomLyricsUpdateResult.Cancelled
-            if (requireWordTiming && !entry.enabled || entry.source == CustomLyricsSources.MANUAL ||
+            // A document the user wrote or edited is never re-converted over: the
+            // source revision is irrelevant once the document is theirs, because
+            // the automatic conversion would replace their corrected language or
+            // fixed line. An entry they left alone keeps updating below.
+            if (requireWordTiming && !entry.enabled || entry.userEdited ||
+                entry.source == CustomLyricsSources.MANUAL ||
                 entry.source == CustomLyricsSources.AUTO_CACHE && sources.fetchAutoCache == null
             ) {
                 record(

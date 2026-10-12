@@ -13,6 +13,8 @@ data class CustomLyricsDraft(
     val ttml: String,
     val source: String = CustomLyricsSources.MANUAL,
     val enabled: Boolean = true,
+    /** True when the user wrote or edited this TTML; see [CustomLyricsEntry.userEdited]. */
+    val userEdited: Boolean = false,
 )
 
 data class CustomLyricsMultiIdDraft(
@@ -21,6 +23,8 @@ data class CustomLyricsMultiIdDraft(
     val ttml: String,
     val source: String = CustomLyricsSources.MANUAL,
     val enabled: Boolean = true,
+    /** True when the user wrote or edited this TTML; see [CustomLyricsEntry.userEdited]. */
+    val userEdited: Boolean = false,
 )
 
 sealed interface CustomLyricsSaveResult {
@@ -61,6 +65,7 @@ class CustomLyricsImportTransaction(
                 ttml = draft.ttml,
                 source = draft.source,
                 enabled = draft.enabled,
+                userEdited = draft.userEdited,
             ),
             replacingAppleMusicIds = replacingAppleMusicId?.let(::listOf).orEmpty(),
         )
@@ -132,6 +137,7 @@ class CustomLyricsImportTransaction(
                 sha256 = accepted.sha256,
                 source = draft.source,
                 enabled = draft.enabled,
+                userEdited = draft.userEdited,
             )
         }
 

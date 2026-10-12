@@ -233,6 +233,54 @@ class CustomLyricsUpdateCoordinatorTest {
         assertTrue(result.issues.any { it.appleMusicId == 3L })
     }
 
+    @Test
+    fun `an entry the user edited is never re converted over`() {
+        // The user corrected the root language of an AMLL document. The source
+        // would now convert to different bytes, but the automatic path must
+        // leave the user's document exactly as they saved it.
+        val owned = entry(1L, CustomLyricsSources.AMLL, wordTtml("user edit"), "lyrics_user")
+            .copy(enabled = true, userEdited = true)
+        var fetches = 0
+        val result = coordinator(fetchAmll = { fetches += 1; wordTtml("source revision") }).update(
+            oldManifest = CustomLyricsManifest(listOf(owned)),
+            fileIdFactory = { error("must not write") },
+            writeRemoteFile = { _, _ -> error("must not write") },
+            publishManifest = { error("must not publish") },
+            deleteRemoteFile = {},
+            targetIds = setOf(1L),
+            requireWordTiming = true,
+        ) as CustomLyricsUpdateResult.Updated
+
+        assertEquals(0, fetches)
+        assertEquals(owned, result.manifest.entries.single())
+        assertEquals(1, result.skipped)
+    }
+
+    @Test
+    fun `only an untouched entry follows its source revision`() {
+        val untouched = entry(1L, CustomLyricsSources.AMLL, wordTtml("old"), "lyrics_auto")
+            .copy(enabled = true)
+        val owned = entry(2L, CustomLyricsSources.AMLL, wordTtml("user edit"), "lyrics_user")
+            .copy(enabled = true, userEdited = true)
+        val requested = mutableListOf<Long>()
+        val result = coordinator(fetchAmll = { requested += it; wordTtml("new") }).update(
+            oldManifest = CustomLyricsManifest(listOf(untouched, owned)),
+            fileIdFactory = { "lyrics_new" },
+            writeRemoteFile = { _, _ -> true },
+            publishManifest = { true },
+            deleteRemoteFile = {},
+            requireWordTiming = true,
+        ) as CustomLyricsUpdateResult.Updated
+
+        // The untouched entry is converted from the new source revision; the
+        // user-edited one is never even fetched.
+        assertEquals(listOf(1L), requested)
+        assertEquals(1, result.updated)
+        assertEquals(1, result.skipped)
+        assertTrue(result.manifest.entries.any { it.appleMusicId == 1L && !it.userEdited })
+        assertTrue(result.manifest.entries.any { it.appleMusicId == 2L && it.userEdited })
+    }
+
     private fun coordinator(
         fetchAmll: (Long) -> String? = { null },
         loadAmLyricsIndex: () -> AmLyricsIndex? = { null },

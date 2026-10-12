@@ -366,7 +366,16 @@ class AppleMusic700NativeLyricsProfileTest {
         // once the app has actually rendered a registered plan), this is emitted on
         // the word getter for every row, including the ones that resolve to
         // nothing, so a line that never reaches the word lane is never silent.
-        assertTrue(hooks.contains("online-translation word-lane id=\$songId row=\$begin"))
+        //
+        // The row names which of the native line's two lanes it is (`getter` plus
+        // `bg`): the lyric getter and the `x-bg` background getter share the line's
+        // begin, so without them the background row would be dropped from the log.
+        assertTrue(
+            hooks.contains(
+                "online-translation word-lane id=\$songId getter=\$getterName/\$parameterCount",
+            ),
+        )
+        assertTrue(hooks.contains("bg=\$background row=\$begin"))
         assertTrue(hooks.contains("words=\$wordCount spans=\$spanCount"))
         assertTrue(hooks.contains("match=\${supplementRow?.match?.token"))
         assertTrue(hooks.contains("reason=\$reason"))
@@ -376,14 +385,18 @@ class AppleMusic700NativeLyricsProfileTest {
         listOf(
             "\"lane-unavailable\"",
             "\"no-row\"",
+            "\"no-bg-row\"",
             "\"no-timed-spans\"",
             "\"no-main-vector\"",
             "\"no-render-adapter\"",
             "\"ok\"",
         ).forEach { reason -> assertTrue("missing $reason", hooks.contains(reason)) }
-        // Bounded: one row per lyric line per model generation, capped.
+        // Bounded: one row per lyric line **per getter** per model generation,
+        // capped; the getter is part of the key so both rows are named.
         assertTrue(hooks.contains("MAX_WORD_LANE_ROWS"))
-        assertTrue(hooks.contains("wordLaneRowKeys.add("))
+        assertTrue(
+            hooks.contains("wordLaneRowKeys.add(\"\$songId:\$getterName/\$parameterCount:\$begin\")"),
+        )
     }
 
     @Test

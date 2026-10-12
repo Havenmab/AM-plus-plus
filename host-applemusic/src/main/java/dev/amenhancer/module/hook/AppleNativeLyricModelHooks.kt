@@ -6,6 +6,7 @@ import dev.amenhancer.module.lyrics.online.ApplePronunciationPolicy
 import dev.amenhancer.module.lyrics.online.ApplePronunciationTextSource
 import dev.amenhancer.module.lyrics.online.ApplePronunciationVisibilityPolicy
 import dev.amenhancer.module.lyrics.online.ApplePronunciationWordTrack
+import dev.amenhancer.module.lyrics.online.BackgroundParenthesisPolicy
 import dev.amenhancer.module.lyrics.online.LyricsRenderProbe
 import dev.amenhancer.module.lyrics.online.NativeLyricModelPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
@@ -2727,13 +2728,15 @@ internal class AppleNativeLyricModelHooks(
                     ""
                 } else {
                     val appleUsable = isUsableBackgroundPronunciation(original, backgroundText(line))
-                    val resolved = if (appleUsable) original else backgroundSupplementGateText(line)
+                    val substitution = if (appleUsable) null else backgroundSupplementGateText(line)
+                    val resolved = if (appleUsable) original else substitution?.value
                     reportBackgroundHook(
                         hook = "getHtmlPronunciationBackgroundVocalsLineText",
                         line = line,
                         empty = resolved.isNullOrEmpty(),
                         supplied = !appleUsable && !resolved.isNullOrEmpty(),
                         apple = !original.isNullOrBlank(),
+                        parens = substitution?.parensToken(at = "line"),
                     )
                     resolved
                 }
@@ -2998,6 +3001,7 @@ internal class AppleNativeLyricModelHooks(
                 supplied = canRegisterRenderPlan,
                 apple = vectorSize(original) > 0,
                 detail = "match=${supplementRow?.match?.token ?: OverlayMatch.MISSING.token}",
+                parens = supplementRow?.parens,
             )
         }
         // Only the main getter participates in the late-word-vector re-presentation
@@ -3324,14 +3328,16 @@ internal class AppleNativeLyricModelHooks(
      * The bounded per-hook proof of the background path:
      *
      * `online-translation background-hook id=… hook=<method> row=<begin>
-     * empty=<true|false> supplied=<true|false> apple=<true|false> [detail=…]`
+     * empty=<true|false> supplied=<true|false> apple=<true|false> [detail=…]
+     * [parens=stripped before=<raw> after=<normalized>]`
      *
      * The small row under the lyric is answered by four different native methods
      * and the app only reaches the word-level one after its **line-level**
      * background pronunciation gate passes (`player.A.k`), so a device log must
      * name which hook ran, whether its answer was empty, whether this module
-     * supplied the value, and whether Apple itself had one. Emitted once per
-     * (song, hook, line), capped like the other diagnostics.
+     * supplied the value, and whether Apple itself had one. `parens` appears only
+     * when the value actually had its wrapping parentheses normalized. Emitted
+     * once per (song, hook, line), capped like the other diagnostics.
      */
     private fun reportBackgroundHook(
         hook: String,
@@ -3340,6 +3346,7 @@ internal class AppleNativeLyricModelHooks(
         supplied: Boolean,
         apple: Boolean,
         detail: String? = null,
+        parens: String? = null,
     ) {
         if (backgroundHookRowsEmitted >= MAX_BACKGROUND_HOOK_ROWS) return
         val songId = modelSongId
@@ -3349,7 +3356,8 @@ internal class AppleNativeLyricModelHooks(
         log(
             "online-translation background-hook id=$songId hook=$hook row=$begin " +
                 "empty=$empty supplied=$supplied apple=$apple" +
-                (detail?.let { " detail=$it" } ?: ""),
+                (detail?.let { " detail=$it" } ?: "") +
+                (parens?.let { " parens=$it" } ?: ""),
         )
     }
 
@@ -3547,6 +3555,12 @@ internal class AppleNativeLyricModelHooks(
         val spans: List<NativePronunciationSpan>,
         val match: OverlayMatch,
         val begin: Long?,
+        /**
+         * `before->after` of the first background slice whose wrapping parentheses
+         * were stripped, for the `parens=` diagnostic. Null when nothing changed or
+         * this is the main lane (which is never normalized).
+         */
+        val parens: String? = null,
     )
 
     private fun supplementPronunciationRow(
@@ -3572,25 +3586,48 @@ internal class AppleNativeLyricModelHooks(
             // through the line's own `(begin, end, text)` row; the background
             // words' own extent is the bounded second key when that row cannot be
             // found.
-            val lineText = rawText(line, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD)
+            val mainText = rawText(line, AppleMusicRuntimeMember.LYRICS_NATIVE_LINE_TEXT_METHOD)
             val row = overlay.lookupBackground(
                 songId = songId,
                 lineBegin = begin,
                 lineEnd = end,
-                lineText = lineText,
+                lineText = mainText,
                 backgroundBegin = backgroundExtent?.first,
                 backgroundEnd = backgroundExtent?.second,
             )
             val lane = row.background
-            return SupplementPronunciationRow(
-                laneAvailable = true,
-                lineText = RomanizationPolicy.sanitize(
+            // The background row is displayed without the parentheses that wrap the
+            // document's background vocal (`(boon)` and the group-wide
+            // `(jibun … michi)`), so the group's slices are normalized together and
+            // a slice that is nothing but a wrapper is dropped rather than rendered
+            // empty. The same normalization feeds the gate's line text below.
+            val rawSpans = lane?.pronunciationSpans.orEmpty()
+            val strippedTexts = BackgroundParenthesisPolicy.stripGroup(rawSpans.map { it.text })
+            var parens: String? = null
+            val spans = rawSpans.mapIndexedNotNull { index, span ->
+                val stripped = strippedTexts[index]
+                if (stripped.isEmpty()) return@mapIndexedNotNull null
+                if (parens == null && stripped != span.text.trim()) {
+                    parens = "stripped at=${parensPosition(index, rawSpans.size)} " +
+                        "before=${span.text.trim()} after=$stripped"
+                }
+                NativePronunciationSpan(begin = span.begin, end = span.end, text = stripped)
+            }
+            val lineText = stripBackgroundParens(
+                RomanizationPolicy.sanitize(
                     originalText = text,
                     pronunciation = lane?.pronunciation,
                 ),
-                spans = lane?.pronunciationSpans.orEmpty(),
+            )?.also { stripped ->
+                if (parens == null) parens = stripped.parensToken(at = "line")
+            }?.value
+            return SupplementPronunciationRow(
+                laneAvailable = true,
+                lineText = lineText,
+                spans = spans,
                 match = row.match,
                 begin = begin,
+                parens = parens,
             )
         }
         val row = overlay.lookup(songId, begin, end, text)
@@ -3655,16 +3692,56 @@ internal class AppleNativeLyricModelHooks(
      * (fully Latin) is preferred, and the document's un-sanitized concatenation
      * stands in otherwise — a Word-timed track whose later background slices still
      * carry the lyric is still the row's own lane, and the per-word render plan
-     * overrides only the words it actually matches. Null when there is no lane, so
-     * Apple's own value is left exactly as it was.
+     * overrides only the words it actually matches. Apple wraps a background
+     * vocal's parentheses in the document but displays the small row without
+     * them, so the value is parenthesis-normalized before it is judged. Null when
+     * there is no lane, so Apple's own value is left exactly as it was.
      */
-    private fun backgroundSupplementGateText(line: Any): String? {
+    private fun backgroundSupplementGateText(line: Any): StrippedBackgroundParens? {
         val lane = backgroundLane(line) ?: return null
         val original = backgroundText(line)
-        RomanizationPolicy.sanitize(original, lane.pronunciation)
-            ?.takeIf { isUsableBackgroundPronunciation(it, original) }
+        stripBackgroundParens(RomanizationPolicy.sanitize(original, lane.pronunciation))
+            ?.takeIf { isUsableBackgroundPronunciation(it.value, original) }
             ?.let { return it }
-        return lane.romanization?.takeIf { isUsableBackgroundPronunciation(it, original) }
+        return stripBackgroundParens(lane.romanization)
+            ?.takeIf { isUsableBackgroundPronunciation(it.value, original) }
+    }
+
+    /** One background value with its wrapping parentheses normalized. */
+    private data class StrippedBackgroundParens(
+        val value: String,
+        val before: String,
+        val changed: Boolean,
+    )
+
+    /**
+     * The background-only parenthesis normalization: the wrapping `(`/`（` and
+     * `)`/`）` of a small-row value go ([BackgroundParenthesisPolicy]), and a value
+     * that is only a wrapper (or blank) yields null — the row then has no content
+     * and Apple's own value is left untouched rather than replaced by an empty
+     * string. The main lane never reaches this.
+     */
+    private fun stripBackgroundParens(text: String?): StrippedBackgroundParens? {
+        val raw = text?.takeIf(String::isNotBlank) ?: return null
+        val stripped = BackgroundParenthesisPolicy.strip(raw)
+        if (stripped.isEmpty()) return null
+        return StrippedBackgroundParens(stripped, raw, stripped != raw)
+    }
+
+    /** The `before->after` token one stripped value contributes to `parens=`. */
+    private fun StrippedBackgroundParens.parensToken(at: String): String? =
+        if (changed) "stripped at=$at before=$before after=$value" else null
+
+    /**
+     * Which slice of the background group the normalization landed on: the group
+     * spreads its wrapper across the first and last slice, so a device log needs
+     * to say which one moved.
+     */
+    private fun parensPosition(index: Int, count: Int): String = when {
+        count <= 1 -> "both"
+        index == 0 -> "first"
+        index == count - 1 -> "last"
+        else -> "slice"
     }
 
     /** The document's own background lane for one native line, or null. */

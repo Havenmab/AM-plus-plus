@@ -439,6 +439,16 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(
             hooks.contains("backgroundHookKeys.add(\"\$songId:\$hook:\$begin\")"),
         )
+        // Apple displays a background vocal without its wrapping parentheses, so
+        // the module normalizes the background lane's line text and every word
+        // slice through the core policy, drops a value that becomes empty, and
+        // reports `parens=stripped before=… after=…` when it actually changed.
+        assertTrue(hooks.contains("BackgroundParenthesisPolicy.strip("))
+        assertTrue(hooks.contains("BackgroundParenthesisPolicy.stripGroup("))
+        assertTrue(hooks.contains("private fun stripBackgroundParens("))
+        assertTrue(hooks.contains("parensToken(at ="))
+        assertTrue(hooks.contains("parensPosition("))
+        assertTrue(hooks.contains("parens=\$it"))
         // The background row must still be served word-by-word from the overlay.
         assertTrue(hooks.contains("lookupBackground("))
         assertTrue(hooks.contains("background = true"))

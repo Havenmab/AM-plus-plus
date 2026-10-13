@@ -196,6 +196,8 @@ internal class LyricBlurViewSession(
                 documentDirty = false
                 cancelRestore()
                 val document = port.document()
+                // Retry incomplete initialization on the next host event, without polling.
+                documentDirty = document !is LyricDecodeResult.Complete
                 val values = (document as? LyricDecodeResult.Complete<Map<Int, Int>>)?.value.orEmpty()
                 state = LyricBlurReducer.reduce(state, LyricBlurEvent.Document(
                     epoch.copy(document = epoch.document + 1, playback = 0), values))

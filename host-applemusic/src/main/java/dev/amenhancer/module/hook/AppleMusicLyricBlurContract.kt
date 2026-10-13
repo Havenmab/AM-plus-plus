@@ -11,8 +11,8 @@ import java.lang.reflect.Method
 internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, loader: ClassLoader) {
     companion object {
         private val commonMethods = setOf("createView", "destroyView", "resume", "installDocument",
-            "readerCount", "readerLine", "lineGet", "lineId", "lineVectorSize", "lineVectorGet",
-            "wordVectorSize", "wordVectorGet", "wordGet", "wordLine", "wordId", "getAdapter", "getScrollState",
+            "readerCount", "readerLine", "lineGet", "nativeLineId", "lineVectorSize", "lineVectorGet",
+            "wordVectorSize", "wordVectorGet", "wordGet", "wordLine", "nativeWordId", "getAdapter", "getScrollState",
             "setScrollState", "onTouchEvent", "onInterceptTouchEvent", "rowPosition", "rowHolder",
             "registerChildListener", "childAttach", "childDetach", "vmWord", "vmLine", "seek", "seekItem")
         private val adapterRoles = listOf("Commit", "Snapshot", "Map", "Type", "Id", "Reader", "Token", "Document", "Bind", "Payload", "Recycle")
@@ -55,6 +55,15 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
         check(Iterable::class.java.isAssignableFrom(field("wordTailAnimators").type))
         check(wordMaps.all { it.second.declaringClass == wordHolder && Map::class.java.isAssignableFrom(it.second.type) })
         check(wordRoles.all { field("${it}Model").type == wordModel })
+        listOf("line", "word").forEach { prefix ->
+            val id = method("${prefix}Id")
+            check(id.declaringClass.isAssignableFrom(if (prefix == "line") lineAdapter else wordAdapter) &&
+                id.parameterTypes.contentEquals(arrayOf(Int::class.javaPrimitiveType)) &&
+                id.returnType == Long::class.javaPrimitiveType)
+            val nativeId = method(if (prefix == "line") "nativeLineId" else "nativeWordId")
+            check(nativeId.declaringClass == method("${prefix}Get").returnType &&
+                nativeId.parameterTypes.isEmpty() && nativeId.returnType == Int::class.javaPrimitiveType)
+        }
         val rowTypes = names.getJSONObject("rowTypes")
         check(rowTypes.getInt("line") == 0 && rowTypes.getInt("word") == 3 &&
             rowTypes.getInt("instrumental") == 2 && rowTypes.getInt("credits") == 1)
@@ -82,7 +91,7 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
                         val linePointer = checkNotNull(method("wordLine").invoke(value))
                         checkNotNull(method("lineGet").invoke(linePointer))
                     } else checkNotNull(method("lineGet").invoke(pointer))
-                    values += (method("lineId").invoke(line) as Number).toInt()
+                    values += (method("nativeLineId").invoke(line) as Number).toInt()
                 }.onFailure { failure = it.javaClass.simpleName }
             }
             failure?.let { LyricDecodeResult.Partial(values.toSet(), it) }

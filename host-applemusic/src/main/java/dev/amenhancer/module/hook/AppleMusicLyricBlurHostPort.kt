@@ -57,7 +57,7 @@ internal class AppleMusicLyricBlurHostPort(
                 runCatching {
                     val pointer = checkNotNull(contract.method("readerLine").invoke(reader, ordinal))
                     val line = checkNotNull(contract.method("lineGet").invoke(pointer))
-                    val id = (contract.method("lineId").invoke(line) as Number).toInt()
+                    val id = (contract.method("nativeLineId").invoke(line) as Number).toInt()
                     check(values.put(id, ordinal) == null) { "Duplicate native line ID" }
                 }.onFailure { failure = it.javaClass.simpleName }
             }

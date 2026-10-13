@@ -6,7 +6,7 @@ import android.util.Log
 internal class LyricBlurDiagnostics(private val build: String) {
     private var emitted = 0
     private var lastFrame: String? = null
-    private var lastFailure: String? = null
+    private val failures = linkedSetOf<String>()
     val enabled: Boolean get() = runCatching { Log.isLoggable(LyricHighlightProbe.TAG, Log.DEBUG) }.getOrDefault(false)
 
     fun event(source: String, detail: () -> String) {
@@ -16,8 +16,7 @@ internal class LyricBlurDiagnostics(private val build: String) {
     }
 
     fun failure(role: String) {
-        if (lastFailure == role) return
-        lastFailure = role
+        if (failures.size >= LyricHighlightProbe.MAX_EVENTS || !failures.add(role)) return
         runCatching { ModernXposedRuntime.log("Lyric blur degraded: $build $role") }
     }
 

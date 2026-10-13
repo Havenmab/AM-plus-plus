@@ -1080,10 +1080,12 @@
         "static": false
       },
       "lineId": {
-        "owner": "com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLineNative",
-        "name": "getLineId",
-        "parameters": [],
-        "returns": "int",
+        "owner": "com.apple.android.music.player.U0",
+        "name": "j",
+        "parameters": [
+          "int"
+        ],
+        "returns": "long",
         "static": false
       },
       "lineReader": {
@@ -1177,10 +1179,12 @@
         "static": false
       },
       "wordId": {
-        "owner": "com.apple.android.music.ttml.javanative.model.LyricsWord$LyricsWordNative",
-        "name": "getWordId",
-        "parameters": [],
-        "returns": "int",
+        "owner": "com.apple.android.music.player.A",
+        "name": "j",
+        "parameters": [
+          "int"
+        ],
+        "returns": "long",
         "static": false
       },
       "wordReader": {
@@ -1259,6 +1263,13 @@
         "returns": "com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLineNative",
         "static": false
       },
+      "nativeLineId": {
+        "owner": "com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLineNative",
+        "name": "getLineId",
+        "parameters": [],
+        "returns": "int",
+        "static": false
+      },
       "lineVectorSize": {
         "owner": "com.apple.android.music.ttml.javanative.model.LyricsLineVector",
         "name": "size",
@@ -1303,6 +1314,13 @@
         "name": "getLyricsLine",
         "parameters": [],
         "returns": "com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLinePtr",
+        "static": false
+      },
+      "nativeWordId": {
+        "owner": "com.apple.android.music.ttml.javanative.model.LyricsWord$LyricsWordNative",
+        "name": "getWordId",
+        "parameters": [],
+        "returns": "int",
         "static": false
       },
       "getAdapter": {

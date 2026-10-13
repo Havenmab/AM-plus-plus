@@ -2,7 +2,7 @@
 
 分析日期：2026-10-13。分支：`codex/lyrics-blur-analysis`。
 
-本文分析仓库现有实现，并对用户提供的 `com.apple.android.music_7.0.0-beta-1609.apkm` 做了定向反编译；追加对照了本地已有的 6.5.3/1599 与 7.0.0-beta/1606 安装包。功能实现尚未修改；没有运行功能测试、设备操作、构建或哈希验证。
+本文分析仓库现有实现，并对用户提供的 6.5.1/1583、6.5.2/1586、7.0.0-beta/1609 APKM，以及本地已有的 6.5.3/1599、7.0.0-beta/1606 安装包做了定向反编译。五个生产登记构建的核心歌词路径均有对应源码证据。功能实现尚未修改；没有运行功能测试、设备操作、构建或哈希验证。
 
 ## 1. 结论与证据边界
 
@@ -19,7 +19,7 @@
 
 上表的调用关系和集合计算能由源码确定；**这些路径是否对应某一次实机现象、实际持续多久，仍需使用者手动确认**。本文中的集合示例是按源码推演，没有运行测试。
 
-1609 的结论不能直接当作其他构建的运行结果。1599、1606 的独立源码证据和 1583、1586 的证据缺口见第10节。此次分析了 base APK 中 Java/DEX 层的关键路径，没有反编译原生歌词算法的 C++ 实现，也没有分析全部 ABI split。`forPosition`、`deadline` 的命名及 Java 层用途可确认，但没有据此假定原生内部全部时序规则。
+1609 的结论不能直接当作其他构建的运行结果。第10节列出五个构建各自的独立源码证据和接入差异；这些是静态路径确认，不代表已经完成新实现或实机验收。此次分析了 base APK 中 Java/DEX 层的关键路径，没有反编译原生歌词算法的 C++ 实现，也没有分析全部 ABI split。`forPosition`、`deadline` 的命名及 Java 层用途可确认，但没有据此假定原生内部全部时序规则。
 
 ## 2. 当前链路
 
@@ -299,7 +299,7 @@ View 引用和其变换矩形留在 Android session 中，core 接收不可变�
 
 来源优先处理实际显示证据：已确认的 adapter/绑定状态决定显示高亮；词流补充仍在进行的逐字视觉；raw native 提供位置/时间与过渡信息；VM fallback 按已确认语义接入。遇到读取失败时保持已知显示状态或临时清晰，不把它编码成间奏。
 
-1609 的 `R0.O/w/E/e` 与 `A.O/w/E/e` 是值得验证并纳入新 `lyricBlur` profile contract 的成员候选。复杂 binding 与动画结束证据仍需精确版本分析。复用 `fragmentLyricsRuntime` 已有 binding.recycler 和 listener 契约的定义方式，但模糊能力不应因此依赖双栏开关或双栏安装成功。
+各版已分析的提交、映射、集合与宿主字段见第10.4节，应纳入新 `lyricBlur` profile contract。复杂 binding 与动画结束角色仍需在这些已有包中继续精确解析，不能仅靠已提交集合猜全部像素状态。复用 `fragmentLyricsRuntime` 已有 binding.recycler 和 listener 契约的定义方式，但模糊能力不应因此依赖双栏开关或双栏安装成功。
 
 间奏与 credits 语义标记应在歌词行接入自己的资源路径注册。当前三点标记来自 LyricsTypefaceSession 的资源注册，虽然该注册不要求字体开启，功能归属仍不够清楚。
 
@@ -376,15 +376,15 @@ View 引用和其变换矩形留在 Android session 中，core 接收不可变�
 
 JADX 的部分复杂方法未能还原为结构化 Java；本文没有把其 `UnsupportedOperationException` 占位当作宿主会真的抛异常。关键分支使用可读源码与 fallback 指令结构分析。其余无法从本次证据确认的视觉、线程与并存场景已标为待手动确认。
 
-## 10. 其他版本的范围与追加证据
+## 10. 五个生产构建的跨版本证据
 
-### 10.1 不需要先收齐每个版本的安装包
+### 10.1 现有输入已齐，核心宿主路径已逐版分析
 
-共用状态、滚动、行复用、首帧与 renderer 可以先统一重构。此次本地已有1599、1606的原始安装包，1609由使用者提供，三个构建已经可以对照核心宿主路径。
+现有输入覆盖1583、1586、1599、1606、1609五个生产登记构建：1583/1586/1609来自使用者提供的原始APKM，1599/1606来自本地已有的原始宿主包。**针对当前支持范围，不需要继续补充安装包。** 1580的profile未生产启用，不纳入此次目标。
 
-安装包的必要性取决于是否要为某个构建新增或改变私有宿主契约。若对应源码证据已有，不必重复提供；若缺失，可以在接入该构建时补齐其原始包或可靠的既有反编译资料。**无需使用者先把所有版本上传一遍，也不能因此把缺证据构建标成已经完成精确适配。**
+每个构建分别读取了实际Fragment、逐行/逐字adapter与高亮提交helper。没有因为类名相同就沿用另一包的结论。B1行身份映射、B2逐行子集保留、B3等待动画并post提交，现在五版均有对应证据。
 
-本地1586旧分析目录只保留了目录结构，没有可读歌词目标文件；此次没有找到1583/1586原始宿主包。另找到的 `AM-plus-plus-glass-1586-release.apk` 是模块产物，不能拿它替代 Apple Music 的宿主证据。
+这些输入足以推进五版重构。后续实现仍需在已有包里解析完整binding、动画释放及安装契约，并由使用者完成手动验收；输入齐全和静态路径确认不等于新功能已适配或已通过实机测试。
 
 ### 10.2 所有生产登记构建共用这套模糊实现
 
@@ -401,50 +401,59 @@ JADX 的部分复杂方法未能还原为结构化 Java；本文没有把其 `Un
 | 精确构建 | profile生产登记 | 共用代码缺口 | B1动态三点与行位置映射 | B2逐行子集保留 | B3动画等待与post提交 |
 | --- | --- | --- | --- | --- | --- |
 | 6.5.0 / 1580 | 关闭 | 实现存在，不纳入当前生产范围 | 未追加分析 | 未追加分析 | 未追加分析 |
-| 6.5.1 / 1583 | 开启 | 已确认共用实现 | 待对应宿主证据 | 待对应宿主证据 | 待对应宿主证据 |
-| 6.5.2 / 1586 | 开启 | 已确认共用实现 | 待对应宿主证据 | 待对应宿主证据 | 待对应宿主证据 |
+| 6.5.1 / 1583 | 开启 | 已确认共用实现 | 已确认 | 已确认 | 已确认 |
+| 6.5.2 / 1586 | 开启 | 已确认共用实现 | 已确认 | 已确认 | 已确认 |
 | 6.5.3 / 1599 | 开启 | 已确认共用实现 | 已确认 | 已确认 | 已确认 |
 | 7.0.0-beta / 1606 | 开启 | 已确认共用实现 | 已确认 | 已确认 | 已确认 |
 | 7.0.0-beta / 1609 | 开启 | 已确认共用实现 | 已确认 | 已确认 | 已确认 |
 
-1583/1586的“待确认”不表示已经没有这些问题，只表示不能用其他构建的反编译结果替它们下结论。B4的三点替换规则来自共用策略，在旧版也存在；其实际触发要结合该构建的三点行与显示状态。多Fragment、原生属性冲突与平板视口等同样不能单凭页面族名称保证一致。
+五版均有这三类宿主机制，因此主要问题不是1609新界面独有。B4的三点替换规则来自共用策略，在旧版也存在；实际触发仍取决于当前三点行与显示状态。多Fragment并存、原生属性冲突、逐字视觉释放与平板视口等未做全场景动态确认，不能单凭页面族名称或这张表保证全部行为一致。
 
-### 10.4 1599、1606与1609的接入差异
+### 10.4 五版的接入差异
 
-| 宿主角色 | 1599 | 1606 | 1609 |
-| --- | --- | --- | --- |
-| 逐行adapter | `player.U0` | `player.Y0` | `player.R0` |
-| 逐字adapter | `player.A` | `player.A` | `player.A` |
-| 共用adapter基类 | `player.i1` | `player.n1` | `player.f1` |
-| 提交行集合 | `T(List,int,Pair[])` | `O(List,int,Pair[])` | `O(List,int,Pair[])` |
-| 歌词/列表位置映射 | `J(int,boolean)` | `E(int,boolean)` | `E(int,boolean)` |
-| 读取已提交集合 | `B():TreeSet` | `w():TreeSet` | `w():TreeSet` |
-| line callback后续提交helper | `fragment.K` | `fragment.J` | `fragment.L` |
-| Fragment中的Handler字段 | `Q` | `X` | `V` |
-| Fragment当前adapter字段 | `i0` | `p0` | `n0` |
+下表中类名前缀省略 `com.apple.android.music.`；T/O完整提交签名均为 `(List,int,Pair[]) -> void`，J/E映射签名为 `(int,boolean) -> int`，B/w读取返回TreeSet。
 
-1599的 `U0.J`、`A.J` 与1606的 `Y0.E`、`A.E` 都对三点插入点后的列表位置减1；逐行itemCount额外增加三点item，item ID读取先映射再取native getLineId。因此B1并非1609的新界面独有。
+| 宿主角色 | 1583 | 1586 | 1599 | 1606 | 1609 |
+| --- | --- | --- | --- | --- | --- |
+| 逐行adapter | `player.U0` | `player.U0` | `player.U0` | `player.Y0` | `player.R0` |
+| 逐字adapter | `player.A` | **`player.z`** | `player.A` | `player.A` | `player.A` |
+| 共用adapter基类 | `player.i1` | `player.i1` | `player.i1` | `player.n1` | `player.f1` |
+| 提交行集合 | `T` | `T` | `T` | `O` | `O` |
+| 歌词/列表位置映射 | `J` | `J` | `J` | `E` | `E` |
+| 读取已提交集合 | `B` | `B` | `B` | `w` | `w` |
+| line callback后续提交helper | `player.fragment.I` | `player.fragment.L` | `player.fragment.K` | `player.fragment.J` | `player.fragment.L` |
+| Fragment中的Handler字段 | `S` | `S` | `Q` | `X` | `V` |
+| Fragment当前adapter字段 | `k0` | `k0` | `i0` | `p0` | `n0` |
 
-1599的 `U0.T` 在非空输入为旧集合子集时跳过更新，其判定 `i1.I` 是包含关系；1606的 `Y0.O` 和 `n1.D` 也是这一行为。因此 `{5,6}->{5}` 的宿主/模块集合不一致在这两个构建也有源码依据。
+1583/1586的逐行 `U0.J`、逐字 `A.J/z.J` 与1599的 `U0.J/A.J`、1606的 `Y0.E/A.E` 都对三点插入点后的列表位置减1；逐行itemCount额外增加三点item，item ID读取先映射再取native getLineId。因此B1并非1609的新界面独有。
 
-1599与1606的 `PlayerLyricsViewFragment.f` 同样先调用 ItemAnimator 的 `h`，再经各自helper向Handler post提交。直接读对应 `RecyclerView$k.h` 的smali确认：动画进行时入队监听器，否则立即调用；helper仍额外post。所以B3的显示时序差异也不是从1609推测出来的。
+1583、1586、1599的 `U0.T` 在非空输入为旧集合子集时跳过更新，其判定 `i1.I` 是包含关系；1606的 `Y0.O/n1.D` 与1609的 `R0.O/f1.D` 也有同一行为。因此 `{5,6}->{5}` 的宿主/模块集合不一致在五版都具有源码依据。这里确认的是逐行规则，不能把它强加给逐字adapter的全部输入过滤与动画生命周期。
 
-这一表展示了重构边界：**核心状态和渲染共享，宿主私有成员通过精确构建契约分别接入。**不能按“6.5.x/7.0”猜名字，也不能因两个构建都有 `player.A` 就把它们视为相同类结构。
+五版的 `PlayerLyricsViewFragment.f` 都先调用ItemAnimator的 `h(listener)`，再经各自helper向Handler post提交。动画进行时监听器入队，否则立即调用，但helper仍有post边界；B3不是从1609推测出来的旧版行为。
+
+这一表展示了重构边界：**核心状态和渲染共享，宿主私有成员通过精确构建契约分别接入。** 1586的逐字类名是z，不能在所有6.5.x包中硬找A；1586与1609的helper都叫L，却指向不同字段/基类/方法，不能只认类名就合并契约。可以共享接入结构与已确认语义，不能共享未经逐版确认的私有成员。
 
 ### 10.5 对重构范围的影响
 
 1. 先修共用状态、交互模式、首帧与绑定生命周期，已有设置键和Android门禁继续保留。
-2. 用1599、1606、1609的独立证据建立显示高亮和行身份接口；它们可以共享实现结构，但方法/字段描述符分别登记。
-3. 1583/1586在新的宿主接口证据补齐前保留已登记接入；可以覆盖共用修复，但不能宣称它们新增显示读取与全部错位问题已解决。
-4. 若最终要求所有当前生产版本都完成新宿主接入，则补齐1583/1586的证据，并由使用者完成各自手动验收；无需重复提供已经可用的三个包。
+2. 用五版各自的证据建立显示高亮和行身份接口；共享实现结构，方法/字段描述符按精确构建分别登记。无需让旧版继续依赖有已知错位的原始集合猜测。
+3. 对每版继续解析已有包中的binding和宿主动画释放角色；通过同一显示快照协议进入core，将“高亮保护”与“距离焦点”分开。
+4. 新适配通过各自完整preflight后才启用；所需角色缺失时明确降级或保持原接入，不能把某一版成功当作五版已完成。功能验收由使用者手动进行。
 
-### 10.6 追加本地证据
+### 10.6 各版原始输入与本地证据
 
+- 1583/1586原始APKM：工作区用户提供的 `com.apple.android.music_6.5.1-1583_...apkmirror.com.apkm` 与 `com.apple.android.music_6.5.2-1586_...apkmirror.com.apkm`。包内info.json分别记录6.5.1/1583、6.5.2/1586以及com.apple.android.music；原始文件保持未跟踪。
 - 1599原始包：`.scratch/decompile-1599/com.apple.android.music.apk`；既有解包 `apktool.yml` 记录 `6.5.3 / 1599`。
 - 1606原始包：`.scratch/applemusic-700-beta-analysis/base.apk`；既有解包 `apktool.yml` 记录 `7.0.0-beta / 1606`。
-- 新定向反编译输出：`.scratch/lyrics-blur-analysis-1609/cross-version/{1599,1606}/selected-java/`，复用上轮JADX并关闭DEX checksum计算。
+- 1609原始输入与证据见第9节。
+- 旧四版的定向反编译输出：`.scratch/lyrics-blur-analysis-1609/cross-version/{1583,1586,1599,1606}/selected-java/`，复用JADX并关闭DEX checksum计算。1583/1586解出的base与fallback输出也保存在各自目录。
+- 1583：`PlayerLyricsViewFragment.java:392/429/1829`，`U0.java:281/306/485/892/901`，`A.java:1089/1116`，`i1.java:84`，`fragment.I.java:23/41`，`androidx.recyclerview.widget.RecyclerView$k.java:5436`。
+- 1586：`PlayerLyricsViewFragment.java:392/429/1829`，`U0.java:281/306/485/892/901`，`z.java:1088/1115`，`i1.java:84`，`fragment.L.java:23/41`，`androidx.recyclerview.widget.RecyclerView$k.java:5436`。
 - 1599：`PlayerLyricsViewFragment.java:387/429/1829`，`U0.java:281/306/485/892/901`，`A.java:1088/1115`，`fragment.K.java:23/41`。
 - 1606：`PlayerLyricsViewFragment.java:387/429/1682`，`Y0.java:281/460/869/878/1067`，`A.java:1088/2644`，`fragment.J.java:23/41`。
-- 两个构建的 `method-evidence.txt` 保存基类包含关系与 `RecyclerView$k.h` 的行号、原始smali，作为上述关键分支的补充证据；没有执行这些方法。
+- 1583/1586的 `fallback-java/...player.U0.java:827` 对应T方法，明确展示非空子集跳转返回。1583的 `fallback-java/androidx.recyclerview.widget.RecyclerView$k.java:1622` 对应h(listener)，用于补足结构化输出的一处重建失败。
+- 1599/1606的 `method-evidence.txt` 保存基类包含关系与 `RecyclerView$k.h` 的行号、原始smali，作为关键分支的补充证据；没有执行这些方法。
+
+JADX针对inner RecyclerView$k会保存整个outer RecyclerView源码，索引仍使用实际输出文件名；需要按带listener参数的h签名读取，不能混同ViewHolder的无参数h。结构化输出有错误的非目标方法不作为运行时故障证据。
 
 本轮只扩展分析文档，未修改profile或功能实现，未运行构建、设备或功能测试。

@@ -84,7 +84,7 @@ internal class LyricBlurViewSession(
                 }
                 val changed = next != geometry
                 geometry = next
-                if (dirty || changed) { cancelFrame(); renderFrame() }
+                if (dirty || changed || renderer.clippingChanged()) { cancelFrame(); renderFrame() }
             } else if (dirty) { cancelFrame(); renderFrame() }
         }
         true

@@ -13,14 +13,18 @@ internal class LyricBlurViewRenderer(private val effects: LyricBlurEffectOwner) 
     private data class Bound(val key: Key, val generation: Long, val lease: Any = Any(), var acquired: Boolean = false)
     private val logical = LinkedHashMap<Key, Logical>()
     private val bound = IdentityHashMap<View, Bound>()
+    private var clipping: LyricBlurClippingLease? = null
     private val rect = RectF()
     var unavailableBaselines: Int = 0
         private set
 
     fun owns(view: View): Boolean = bound.containsKey(view)
 
+    fun clippingChanged(): Boolean = clipping?.needsUpdate() == true
+
     fun detach(view: View) {
         bound.remove(view)?.let { effects.release(view, it.lease) }
+        if (bound.isEmpty()) releaseClipping()
     }
 
     fun documentChanged() {
@@ -65,6 +69,7 @@ internal class LyricBlurViewRenderer(private val effects: LyricBlurEffectOwner) 
     fun render(recycler: ViewGroup, tabletEdges: Boolean, nowMs: Long): Boolean {
         unavailableBaselines = 0
         var running = false
+        var blurred = false
         bound.forEach { (view, binding) ->
             val row = logical[binding.key] ?: return@forEach
             if (!binding.acquired) binding.acquired = effects.acquire(view, binding.lease)
@@ -72,10 +77,29 @@ internal class LyricBlurViewRenderer(private val effects: LyricBlurEffectOwner) 
             val edge = if (tabletEdges) edgeRadius(view, recycler) else 0f
             val animation = row.animation
             val radius = max(animation.focus.value(nowMs), edge * animation.edgeWeight.value(nowMs))
-            effects.apply(view, binding.lease, BidirectionalBlurPolicy.quantize(radius))
+            val quantized = BidirectionalBlurPolicy.quantize(radius)
+            if (quantized > 0 && !blurred) {
+                allowRowOverflow(recycler)
+                blurred = true
+            }
+            effects.apply(view, binding.lease, quantized)
             running = running || animation.running(nowMs)
         }
+        if (!blurred) releaseClipping()
         return running
+    }
+
+    private fun allowRowOverflow(recycler: ViewGroup) {
+        if (clipping?.recycler !== recycler) {
+            releaseClipping()
+            clipping = LyricBlurClippingLease(recycler)
+        }
+        clipping?.update()
+    }
+
+    private fun releaseClipping() {
+        clipping?.close()
+        clipping = null
     }
 
     fun observations(nowMs: Long): List<String> = bound.entries.take(LyricHighlightProbe.MAX_IDS).mapNotNull { (view, binding) ->

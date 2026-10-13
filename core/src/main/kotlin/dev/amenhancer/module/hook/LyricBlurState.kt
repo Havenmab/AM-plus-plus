@@ -16,6 +16,7 @@ data class LyricRowSnapshot(
 )
 
 sealed interface LyricDecodeResult<out T> {
+    data class Pending(val role: String) : LyricDecodeResult<Nothing>
     data class Complete<T>(val value: T) : LyricDecodeResult<T>
     data class Partial<T>(val value: T, val reason: String) : LyricDecodeResult<T>
     data class Failed(val reason: String) : LyricDecodeResult<Nothing>
@@ -51,10 +52,10 @@ data class LyricBlurState(
             val current = display ?: return LyricFocusAnchor.None
             val displayed = current.displayedLineIds.mapNotNull(ordinals::get).toSet()
             if (displayed.isNotEmpty()) return LyricFocusAnchor.Lines(displayed)
+            current.instrumentalBeforeOrdinal?.let { return LyricFocusAnchor.Instrumental(it) }
             val words = current.words.values.flatten().mapNotNull(ordinals::get).toSet()
             if (words.isNotEmpty()) return LyricFocusAnchor.Lines(words)
-            return current.instrumentalBeforeOrdinal?.let(LyricFocusAnchor::Instrumental)
-                ?: LyricFocusAnchor.None
+            return LyricFocusAnchor.None
         }
 }
 
@@ -72,7 +73,8 @@ object LyricBlurReducer {
     fun reduce(state: LyricBlurState, event: LyricBlurEvent): LyricBlurState {
         if (event is LyricBlurEvent.Document) {
             if (event.epoch.view != state.epoch.view || event.epoch.document <= state.epoch.document) return state
-            return LyricBlurState(event.epoch, event.ordinals.toMap(),
+            return LyricBlurState(event.epoch, event.ordinals.toMap(), interaction = state.interaction,
+                touchActive = state.touchActive, scrollState = state.scrollState,
                 interactionGeneration = state.interactionGeneration + 1)
         }
         if (event is LyricBlurEvent.Seek) {
@@ -86,13 +88,15 @@ object LyricBlurReducer {
             is LyricBlurEvent.Display -> state.copy(display =
                 (event.result as? LyricDecodeResult.Complete<LyricDisplaySnapshot>)?.value)
             is LyricBlurEvent.Touch -> if (state.touchActive == event.active) state else state.copy(
-                touchActive = event.active, interactionGeneration = state.interactionGeneration + 1)
+                touchActive = event.active,
+                interaction = if (event.active) LyricBlurInteraction.BROWSING else state.interaction,
+                interactionGeneration = state.interactionGeneration + 1)
             is LyricBlurEvent.Scroll -> state.copy(scrollState = event.state,
                 interaction = if (event.state == 1) LyricBlurInteraction.BROWSING else state.interaction,
                 interactionGeneration = state.interactionGeneration + 1)
             is LyricBlurEvent.Restore -> if (event.interactionGeneration == state.interactionGeneration &&
                 !state.touchActive && state.scrollState == 0) state.copy(interaction = LyricBlurInteraction.FOLLOW) else state
-            else -> state
+            is LyricBlurEvent.Document, is LyricBlurEvent.Seek -> state
         }
     }
 }

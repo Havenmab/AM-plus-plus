@@ -15,10 +15,10 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
             "wordVectorSize", "wordVectorGet", "wordGet", "wordLine", "wordId", "getAdapter", "getScrollState",
             "setScrollState", "onTouchEvent", "onInterceptTouchEvent", "rowPosition", "rowHolder",
             "registerChildListener", "childAttach", "childDetach", "vmWord", "vmLine", "seek", "seekItem")
-        private val adapterRoles = listOf("Commit", "Snapshot", "Map", "Type", "Id", "Reader", "Document", "Bind", "Payload", "Recycle")
+        private val adapterRoles = listOf("Commit", "Snapshot", "Map", "Type", "Id", "Reader", "Token", "Document", "Bind", "Payload", "Recycle")
         val nativeRoles = listOf("nativeLine", "nativeWord", "nativeBackground", "nativePronunciation", "nativePronunciationBackground")
         val wordRoles = listOf("wordProgress", "wordTail", "wordLift", "wordReturn")
-        private val commonFields = setOf("binding", "recycler", "activeAdapter", "viewModel", "holderView",
+        private val commonFields = setOf("binding", "recycler", "activeAdapter", "viewModel", "holderView", "holderId", "holderType",
             "wordLineId", "wordAnimator", "wordTailAnimators", "childListeners", "words", "backgroundWords",
             "pronunciationWords", "pronunciationBackgroundWords", "instrumentalPosition", "wordInstrumentalPosition")
         private val inventory = FragmentMemberRequirements(

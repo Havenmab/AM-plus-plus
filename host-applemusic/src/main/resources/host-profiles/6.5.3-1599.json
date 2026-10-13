@@ -1093,6 +1093,13 @@
         "returns": "com.apple.android.music.ttml.j",
         "static": false
       },
+      "lineToken": {
+        "owner": "com.apple.android.music.player.U0",
+        "name": "D",
+        "parameters": [],
+        "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
+        "static": false
+      },
       "lineDocument": {
         "owner": "com.apple.android.music.player.U0",
         "name": "W",
@@ -1181,6 +1188,13 @@
         "name": "C",
         "parameters": [],
         "returns": "com.apple.android.music.ttml.j",
+        "static": false
+      },
+      "wordToken": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "D",
+        "parameters": [],
+        "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
         "static": false
       },
       "wordDocument": {
@@ -1572,6 +1586,16 @@
         "owner": "androidx.recyclerview.widget.RecyclerView$D",
         "name": "a",
         "type": "android.view.View"
+      },
+      "holderId": {
+        "owner": "androidx.recyclerview.widget.RecyclerView$D",
+        "name": "e",
+        "type": "long"
+      },
+      "holderType": {
+        "owner": "androidx.recyclerview.widget.RecyclerView$D",
+        "name": "f",
+        "type": "int"
       },
       "wordLineId": {
         "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",

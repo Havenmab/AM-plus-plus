@@ -6,20 +6,11 @@
 
 ## 1. 适用范围与版本登记
 
-版本资料位于 `host-applemusic/src/main/resources/host-profiles/`。支持范围由 `index.json`、精确 profile 的 `productionEnabled` 和能力标志共同确定。
+版本资料位于 [host-profiles](../host-applemusic/src/main/resources/host-profiles/)。支持范围由 `index.json`、精确 profile 的 `productionEnabled` 和能力标志共同确定。版本表、成员映射、已知降级与该构建的证据在档案中维护，本手册不重复登记。
 
-| Apple Music 版本 | versionCode | 页面族 | 生产入口 | 玻璃 / 蜂窝入口 | 独立 Fragment 恢复 |
-|---|---:|---|---|---|---|
-| 6.5.0 | 1580 | `legacy-activity` | 未启用，仅作参考 | 均未启用 | 不适用 |
-| 6.5.1 | 1583 | `legacy-activity` | 已启用 | 均未启用 | 不适用 |
-| 6.5.2 | 1586 | `legacy-activity` | 已启用 | 均已登记 | 不适用 |
-| 6.5.3 | 1599 | `legacy-activity` | 已启用 | 均已登记 | 不适用 |
-| 7.0.0-beta | 1606 | `fragment-content` | 已启用 | 均已登记 | 已登记 |
-| 7.0.0-beta | 1609 | `fragment-content` | 已启用 | 均已登记 | 已登记 |
+“已启用”表示允许模块接入该构建，不表示全部功能已经通过当前代码的真机验收。功能还受设置、Android API 和设备形态限制；人工验收模板见 [功能矩阵](feature-preservation.md)，实际结果在对应任务中记录。
 
-所有组合的包名均为 `com.apple.android.music`。“已启用”表示允许模块接入该构建，不表示全部功能已经通过当前代码的真机验收。功能还受设置、Android API 和设备形态限制；实际验收状态见功能矩阵。
-
-当前的 6.x 路径指已登记的 6.5.x 构建，7.x 路径指已登记的 7.0 beta 构建。其他 6.x、7.x、正式版或相邻 beta 均需独立分析。版本号大小和主版本号不能代替页面族识别。
+页面族按实际入口、生命周期和布局识别：`legacy-activity` 与 `fragment-content` 分别使用自己的接入。正式版、beta、相邻构建和新页面族均需独立分析，版本号大小和主版本号不能代替页面族识别。
 
 `AppleMusicHostProfiles.find` 按版本名、版本号定位文件，并校验包名；生产资格另检查 `productionEnabled`。资料文件名使用 `<versionName>-<versionCode>.json`。同一组合只能登记一次。索引顺序还影响旧 HLE 引擎的已审核候选，适配时应保留现有条目的相对顺序。
 
@@ -57,6 +48,7 @@
 | `hookTargets` | HLE Hook 入口、签名约束、调用方约束及 `runtimeMemberNames` |
 | `settings` / `chrome` | 设置入口、原生设置模型、导航和播放器资源或旧宿主契约 |
 | `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
+| `lyricBlur` | 两类页面族独立使用的完整歌词模糊契约：显示提交、文档/行身份、绑定、词动画、视图、触摸/滚动与 Seek |
 | `catalogQueryRenames` | 实际目录查询 owner 与方法映射，配合完整签名和调用路径核对 |
 | Fragment 专用区域 | 双栏、歌词运行时、逐字宽度、视频接力、chrome 和恢复所需契约 |
 | `verification` | 离线检查需要的 DEX 描述符、字段类型、资源名和辅助接口证据 |
@@ -123,9 +115,9 @@ Java 反编译用于理解调用链，成员声明与完整签名以 DEX/smali �
 
 交付至少包括精确 profile、必要宿主接入、当前通用文档、可安装 APK、能力缺口和按版本填写的验收结果。发布、推送和 PR 依任务授权单独处理。
 
-## 5. 6.x Activity 页面族
+## 5. Activity 页面族
 
-当前 6.5.x 使用 `legacy-activity`。主要入口为 `AppleMusicDualPaneTarget`、`DualPaneShell` / `ConstraintLayoutPane`、`LegacyChromeHostBinding` 和旧设置桥。
+`legacy-activity` 的主要入口为 `AppleMusicDualPaneTarget`、`DualPaneShell` / `ConstraintLayoutPane`、`LegacyChromeHostBinding` 和旧设置桥。
 
 | 接入域 | 每个构建应核对 |
 |---|---|
@@ -139,13 +131,13 @@ Java 反编译用于理解调用链，成员声明与完整签名以 DEX/smali �
 
 旧宿主的 AndroidX 参数类可能经过重新打包和字段混淆。应依据实际字段类型和原生使用位置确认映射，不能直接采用另一构建的字段名，也不能用模块自带 AndroidX 对象替换宿主对象。
 
-旧路径的布局安装、原生状态选择及已审核候选回退属于兼容语义。调整通用接入时，需对 1583、1586、1599 分别列出回归项。已有冻结夹具位于 `host-applemusic/src/test/resources/baseline/`；普通适配不能以更新夹具消除行为差异。
+旧路径的布局安装、原生状态选择及已审核候选回退属于兼容语义。调整通用接入时，需对已登记构建分别列出回归项。已有冻结夹具位于 `host-applemusic/src/test/resources/baseline/`；普通适配不能以更新夹具消除行为差异。
 
-1583 的玻璃和蜂窝资格保持关闭。1586、1599 的 `staticCollapsedIntercept` 是独立资格，不能扩展到其他构建。1599 已登记的操作表元数据和主页封面连续性降级应单独列出。
+玻璃、蜂窝和 `staticCollapsedIntercept` 是独立资格，按当前 profile 判断，不能扩展到其他构建。操作表、主页封面等子面的已知降级单独记录，不能因其他表面成功而省略。
 
-## 6. 7.x Fragment 页面族
+## 6. Fragment 页面族
 
-当前 7.0 beta 使用 `fragment-content`。播放器、页面导航与 mini 的生命周期由 Fragment 接入；不能套用旧 Activity 的 holder、设置或事务模型。
+`fragment-content` 的播放器、页面导航与 mini 生命周期由 Fragment 接入；不能套用旧 Activity 的 holder、设置或事务模型。
 
 ### 6.1 必需契约
 
@@ -184,12 +176,23 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ## 7. 各功能的适配要点
 
+### 7.1 歌词模糊的独立契约
+
+`AppleMusicLyricBlurContract` 对两类页面族都解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。代码维护的必需角色、当前 profile 与 `scripts/verify-host-profile.py` 清单同步维护，JSON 漏写角色不能绕过预检。
+
+适配时独立核对实际显示提交、文档/行身份、四路词动画、首句时间与播放位置、绑定/回收、触摸/滚动和 Seek。混淆名、声明 owner 和类型关系以当前安装包为准；Native 事件不替代宿主已应用的显示集合。
+
+显示规则、前奏/延迟三点处理、状态分层、效果所有权和人工场景统一维护在 [歌词模糊维护指南](lyrics-blur-guide.md)。
+
+### 7.2 其他功能与共同规则
+
 | 功能 | 必须保持的业务与接入规则 |
 |---|---|
 | 当前歌曲身份 | 元数据转换器、当前 item 和歌曲 ID 对应实际播放对象；异步结果再次核对当前歌曲 |
 | 自定义歌词 | 原生 TTML 解析、有效指针检查、普通/无官方歌词歌曲、多 ID、禁用优先级、异步重应用和重复注入抑制 |
 | 自动补全 | 既有触发条件、来源顺序、手动/禁用优先级、代次控制、重试和缓存策略；切歌后旧结果不能注入 |
-| 模糊与 CJK | 原生行词事件、焦点/滚动暂停恢复、前景文本、合并高亮及动画结束清理；保留宿主位移 |
+| 模糊 | 已提交显示快照、ID/序号/位置分离、双向300ms原曲线、用户浏览和空闲1秒恢复；每视图会话、效果所有权独立于双栏 |
+| CJK | 单词作用域、前景文本、合并高亮及动画结束清理；保留宿主位移 |
 | 字体 | TTF/OTF、后台加载、重试、行词一致、视图重建和原字体恢复；区分 Hook 安装与字体就绪 |
 | 名称修正 | 原地区/cn/jp 模式、原名与标识证据、目录查询、离线及持久缓存、显示优先级；各表面单独安装与报告 |
 | 玻璃 | Android API、精确资格、导航/mini 区域、采样、触摸、展开过渡和属性恢复；材质准备完成后接管原生呈现 |
@@ -231,7 +234,7 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 新宿主需重新核对这些内部尺寸及资源限定符，再由共享布局策略计算容器。普通/逐字、静态、翻译、背景、间奏和 credits 行应分别检查；字体、高亮比例和字形边界会影响可见像素。
 
-7.x 媒体组件位于 `hook/tabletmedia/`。旧 Activity 路径共用列宽和封面策略，并保留自己的原生控制组件；不能把 Fragment 的附加音量、代理按钮或动画接入直接视为 6.x 功能。
+Fragment 媒体组件位于 `hook/tabletmedia/`。旧 Activity 路径共用列宽和封面策略，并保留自己的原生控制组件；不能把 Fragment 的附加音量、代理按钮或动画接入直接视为 Activity 页面族功能。
 
 Fragment 音量行中心比原生 footer 中心高6dp，与播放/进度区域保留4dp净间距；短窗口优先调整行位置或压缩触摸空白，24dp图标保持。原生被替代动作使用 INVISIBLE 保留约束，并关闭点击、取消待处理输入及按压反馈；原本 GONE 的装饰保持 GONE。关闭会话恢复仍由模块拥有的属性。歌词渐变视口不额外预留底部代理高度。
 

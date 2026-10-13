@@ -34,7 +34,7 @@ def _uleb(data, offset):
 
 
 def dex_classes(data):
-    """Return {class descriptor: {"super": ..., "methods": set, "fields": dict}}."""
+    """Return class descriptors, inherited interfaces, methods and fields."""
     if not data.startswith(b"dex\n"):
         raise ValueError("Not a DEX file")
 
@@ -70,6 +70,10 @@ def dex_classes(data):
         base = u32(100) + i * 32
         class_name = types[u32(base)]
         superclass = u32(base + 8)
+        interfaces_offset = u32(base + 12)
+        interfaces = [] if not interfaces_offset else [
+            types[u16(interfaces_offset + 4 + 2 * j)] for j in range(u32(interfaces_offset))
+        ]
         offset = u32(base + 24)
         methods = set()
         fields = {}
@@ -99,6 +103,7 @@ def dex_classes(data):
                     method_access[method_defs[index]] = flags
         classes[class_name] = {
             "super": types[superclass] if superclass != 0xFFFFFFFF else None,
+            "interfaces": interfaces,
             "methods": methods,
             "fields": fields,
             "method_access": method_access,
@@ -188,6 +193,57 @@ def verify_fragment_contracts(document, classes, failures):
     return checks
 
 
+def verify_lyric_blur_contract(document, classes, failures):
+    """Independent blur inventory for both host families; run only when the verifier is requested."""
+    data = document.get('lyricBlur')
+    if data is None and not document.get('productionEnabled'):
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricBlur: missing versioned production contract')
+        return 0
+    adapter_roles = ('Commit', 'Snapshot', 'Map', 'Type', 'Id', 'Reader', 'Token', 'Document', 'Bind', 'Payload', 'Recycle')
+    native_roles = ('nativeLine', 'nativeWord', 'nativeBackground', 'nativePronunciation', 'nativePronunciationBackground')
+    word_roles = ('wordProgress',)
+    required_methods = {
+        'createView', 'destroyView', 'resume', 'installDocument', 'readerCount', 'readerLine', 'lineGet', 'nativeLineId',
+        'lineVectorSize', 'lineVectorGet', 'wordVectorSize', 'wordVectorGet', 'wordGet', 'wordLine', 'nativeWordId',
+        'getAdapter', 'getScrollState', 'setScrollState', 'onTouchEvent', 'onInterceptTouchEvent', 'rowPosition',
+        'rowHolder', 'registerChildListener', 'childAttach', 'childDetach', 'vmWord', 'vmLine', 'seek', 'seekItem',
+        'nativeLineBegin', 'nativeLineEnd', 'mediaBrowser', 'mediaPosition', 'wordAnimationTag',
+    } | {prefix + role for prefix in ('line', 'word') for role in adapter_roles} | set(native_roles) | {
+        role + phase for role in word_roles for phase in ('Start', 'End')}
+    required_fields = {
+        'binding', 'recycler', 'activeAdapter', 'viewModel', 'holderView', 'holderId', 'holderType', 'wordLineId',
+        'wordAnimator', 'childListeners', 'words', 'backgroundWords', 'pronunciationWords',
+        'pronunciationBackgroundWords', 'instrumentalPosition', 'wordInstrumentalPosition',
+    } | set(native_roles) | {role + 'Model' for role in word_roles}
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[') else 'L' + name.replace('.', '/') + ';')
+    checks = 0
+    for group, required in (('methods', required_methods), ('fields', required_fields)):
+        declared = data.get(group, {})
+        for role in sorted(required - declared.keys()):
+            failures.append(f'lyricBlur.{group}.{role}: missing required role')
+        for role, contract in declared.items():
+            checks += 1
+            try:
+                native = classes.get(descriptor(contract['owner']), {})
+                if group == 'fields':
+                    valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                             and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+                else:
+                    signature = contract['name'] + '(' + ''.join(map(descriptor, contract['parameters'])) + ')' + descriptor(contract['returns'])
+                    flags = native.get('method_access', {}).get(signature)
+                    forbidden = 0x40 | 0x1000 | (0 if contract.get('invocationOnly') else 0x400)
+                    valid = flags is not None and not flags & forbidden and bool(flags & 8) == contract['static']
+                if not valid:
+                    failures.append(f'lyricBlur.{group}.{role}: invalid exact descriptor')
+            except (KeyError, TypeError, AttributeError) as error:
+                failures.append(f'lyricBlur.{group}.{role}: incomplete descriptor ({error})')
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path, help="APK, XAPK or APKS (all DEX splits are checked)")
@@ -267,6 +323,7 @@ def main():
                 document = json.loads(candidate.read_text(encoding="utf-8"))
         if document:
             checks += verify_fragment_contracts(document, classes, failures)
+            checks += verify_lyric_blur_contract(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',
                              'double':'D','byte':'B','short':'S','char':'C'}

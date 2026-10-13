@@ -1741,7 +1741,7 @@
     },
     "evidence": {
       "sourceBuild": "6.5.3/1599",
-      "analysis": "docs/lyrics-blur-refactor-analysis.md",
+      "analysis": "docs/lyrics-blur-guide.md",
       "runtimeVerified": false,
       "memberSource": "Exact DEX member descriptors plus local Fragment/adapter/word-model/binding/RecyclerView source",
       "wordProtection": "holder G/H/I/J models: o progress, p tails; listener start/end and a line ID",

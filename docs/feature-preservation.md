@@ -43,7 +43,7 @@
 | 当前歌曲身份 | 当前播放对象、元数据转换与歌曲 ID 一致，旧异步结果不应用到新歌曲 | 多 ID、快速切歌、切换队列、异步完成 | 当前歌曲身份及歌词注入接入 |
 | 自定义歌词 | 获取 ID、增删改查/禁用、TTML 与原生指针有效性、普通及无官方歌词、重复注入抑制 | 启用/禁用、多 ID、异步重应用、连续切歌 | AppleMusicCustomLyricsTarget、TTML 契约 |
 | 在线查找与自动补全 | 手动来源保留；自动来源 AMLL→Lunabeat→AM-Lyrics；既有触发条件、manual/disabled 优先、代次与退避、缓存/ETag | 缺词/非逐字/缺翻译、网络失败、离线、手动与自动切换 | 在线/自动歌词业务和原生接入 |
-| 模糊 | 原生行词高亮、前后方向、焦点和滚动暂停恢复、换歌；Android API 和配置范围保持 | 不同方向/强度、滚动、暂停/恢复、切歌 | Blur / Highlight 接入与策略 |
+| 模糊 | 已提交行/实际词动画保护，原前后曲线、双向300ms、用户浏览及空闲1秒恢复；独立会话与效果所有权，保留Android门禁/配置范围/宿主透明度 | 首句/三点、重叠/子集、延迟提交、Seek、复用、暂停重建、拖动惯性、双栏边缘与释放 | lyricBlur契约、LyricBlurState、LyricBlurViewSession / Renderer |
 | CJK 动画 | 单词作用域、汉字/日文/韩文、前景文本、合并高亮和结束清理，保留原生位移 | 重叠高亮、快速切歌、动画取消、正常词/背景词 | AppleMusicCjkKaraokeAnimationTarget |
 | 字体 | TTF/OTF、后台加载与重试、普通行/逐字一致、旋转/重建和原字体恢复 | 导入、加载失败、切换/禁用、后台和恢复 | LyricsTypefaceSession、字体业务 |
 | 歌词面板 | binding、附属容器、RecyclerView、同步度量、渐变与监听生命周期一致 | 普通/逐字/翻译/背景/静态/间奏/credits、滚动和高亮锚点 | 歌词 runtime、layoutVariants |
@@ -128,6 +128,8 @@ Epoxy、DataBinding、Compose/LiveData、辅助 getter 和目录接口均属于�
 缺口未解决时保留其状态。以扩大候选、首个匹配或修改冻结夹具替代证据，不构成修复。
 
 ## 7. 当前验收状态
+
+2026-10-13 的歌词模糊重构已完成五版独立静态接入，debug 与签名 release 构建成功；**1583、1586、1599、1606、1609 的新模糊实现均未完成运行时手测**，其 `lyricBlur.runtimeVerified` 保持 false。详细[实现记录与手测清单](lyrics-blur-refactor-implementation.md)独立于下列双栏/封面的既有人工反馈。
 
 | 构建 | 资料依据 | 当前人工验收范围 |
 |---|---|---|

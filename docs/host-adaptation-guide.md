@@ -57,6 +57,7 @@
 | `hookTargets` | HLE Hook 入口、签名约束、调用方约束及 `runtimeMemberNames` |
 | `settings` / `chrome` | 设置入口、原生设置模型、导航和播放器资源或旧宿主契约 |
 | `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
+| `lyricBlur` | 两类页面族独立使用的完整歌词模糊契约：显示提交、文档/行身份、绑定、词动画、视图、触摸/滚动与 Seek |
 | `catalogQueryRenames` | 实际目录查询 owner 与方法映射，配合完整签名和调用路径核对 |
 | Fragment 专用区域 | 双栏、歌词运行时、逐字宽度、视频接力、chrome 和恢复所需契约 |
 | `verification` | 离线检查需要的 DEX 描述符、字段类型、资源名和辅助接口证据 |
@@ -184,12 +185,27 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ## 7. 各功能的适配要点
 
+### 7.1 歌词模糊的独立契约
+
+`AppleMusicLyricBlurContract` 对 `legacy-activity` 和 `fragment-content` 都解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。当前五个生产构建各有 64 个方法角色、26 个字段角色；代码维护的必需角色清单、当前 profile 与 `scripts/verify-host-profile.py` 清单必须同步维护，JSON 漏写角色不能绕过预检。
+
+逐版核对完整 owner、参数、返回类型、字段类型及实际使用语义，包括 adapter 提交/快照/映射、document token/reader、holder 的稳定 ID/类型、四路词模型和尾部动画、RecyclerView 监听及两个 Seek 入口。1586 的逐字类为 `z`，1599 的 Fragment binding 为 `g0`，不能复制其他构建的混淆名。native callback 的 Hook 契约用实际擦除签名 `(Object,Object,Object) -> Object`，泛型反编译展示仅用于解释参数意义。
+
+模糊依据已应用的显示快照，原始事件只触发刷新或提供位置/诊断；`nativeLineId`、歌词序号和列表位置不可互换。后续适配须继续核对宿主的子集保留、ItemAnimator 等待与 Handler 提交边界、词动画结束/取消、同指针文档重装和 View 复用。未知身份及失败显示读取保持可读，不回退到旧 raw 集合猜测。
+
+原生 ID getter 的角色为 `nativeLineId/nativeWordId`，adapter 稳定 ID getter 为 `lineId/wordId`，不能共用角色名。前者无参数并返回 int，后者接收 int 列表位置并返回 long；Contract 同时校验 owner/返回对象关系。反射方法存在并不等于其接收对象、参数域与值域正确。
+
+安装先解析全部必需契约，再在 PREPARING scope 注册所有 Hook 与清理，全部成功才 activate；失败关闭整组并报告降级。效果写入观察先于歌词 View 创建，模块释放只恢复仍拥有的效果，不操作宿主 alpha。状态、会话、渲染和本次五版手测状态见[重构实现记录](lyrics-blur-refactor-implementation.md)。
+
+### 7.2 其他功能与共同规则
+
 | 功能 | 必须保持的业务与接入规则 |
 |---|---|
 | 当前歌曲身份 | 元数据转换器、当前 item 和歌曲 ID 对应实际播放对象；异步结果再次核对当前歌曲 |
 | 自定义歌词 | 原生 TTML 解析、有效指针检查、普通/无官方歌词歌曲、多 ID、禁用优先级、异步重应用和重复注入抑制 |
 | 自动补全 | 既有触发条件、来源顺序、手动/禁用优先级、代次控制、重试和缓存策略；切歌后旧结果不能注入 |
-| 模糊与 CJK | 原生行词事件、焦点/滚动暂停恢复、前景文本、合并高亮及动画结束清理；保留宿主位移 |
+| 模糊 | 已提交显示快照、ID/序号/位置分离、双向300ms原曲线、用户浏览和空闲1秒恢复；每视图会话、效果所有权独立于双栏 |
+| CJK | 单词作用域、前景文本、合并高亮及动画结束清理；保留宿主位移 |
 | 字体 | TTF/OTF、后台加载、重试、行词一致、视图重建和原字体恢复；区分 Hook 安装与字体就绪 |
 | 名称修正 | 原地区/cn/jp 模式、原名与标识证据、目录查询、离线及持久缓存、显示优先级；各表面单独安装与报告 |
 | 玻璃 | Android API、精确资格、导航/mini 区域、采样、触摸、展开过渡和属性恢复；材质准备完成后接管原生呈现 |

@@ -2,7 +2,9 @@
 
 分析日期：2026-10-13。分支：`codex/lyrics-blur-analysis`。
 
-本文分析仓库现有实现，并对用户提供的 6.5.1/1583、6.5.2/1586、7.0.0-beta/1609 APKM，以及本地已有的 6.5.3/1599、7.0.0-beta/1606 安装包做了定向反编译。五个生产登记构建的核心歌词路径均有对应源码证据。功能实现尚未修改；没有运行功能测试、设备操作、构建或哈希验证。
+本文保留重构前的分析快照（截至 `49dd9d9`），并对用户提供的 6.5.1/1583、6.5.2/1586、7.0.0-beta/1609 APKM，以及本地已有的 6.5.3/1599、7.0.0-beta/1606 安装包做了定向反编译。五个生产登记构建的核心歌词路径均有对应源码证据。分析阶段没有修改功能或运行构建、设备操作、功能测试、哈希验证。
+
+后续已按批准方案重构五版接入，并成功生成 debug 和签名 release APK。当前实现、维护入口、证据范围与手测清单见[重构实现记录](lyrics-blur-refactor-implementation.md)。下文旧类名、源码行号和缺口指分析时的快照，不表示新实现仍保留这些路径；运行时仍待手动验收。
 
 视觉要求：**平滑清晰、平滑模糊，两方向都保留动画，首轮沿用现有300ms。** 本文所说的高亮保护约束目标半径为0；正常过渡中的非零实际半径属于预期效果。
 
@@ -23,7 +25,7 @@
 
 1609 的结论不能直接当作其他构建的运行结果。第10节列出五个构建各自的独立源码证据和接入差异；这些是静态路径确认，不代表已经完成新实现或实机验收。此次分析了 base APK 中 Java/DEX 层的关键路径，没有反编译原生歌词算法的 C++ 实现，也没有分析全部 ABI split。`forPosition`、`deadline` 的命名及 Java 层用途可确认，但没有据此假定原生内部全部时序规则。
 
-## 2. 当前链路
+## 2. 分析时的链路
 
 | 层 | 主要实现 | 当前职责 |
 | --- | --- | --- |
@@ -353,13 +355,13 @@ View 引用和其变换矩形留在 Android session 中，core 接收不可变�
 
 ## 9. 证据索引
 
-仓库源码入口：
+重构后的仓库源码入口（旧类的行号证据请查 `49dd9d9` 快照）：
 
-- [运行时与视图生命周期](../host-applemusic/src/main/java/dev/amenhancer/module/hook/OpenSourceLyricBlurPort.kt)
-- [宿主hook、解码与Router](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicBidirectionalLyricBlurTarget.kt)
-- [行Session](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricHighlightSession.kt)、[词状态](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWordHighlightState.kt)
+- [宿主运行时](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurRuntime.kt)、[视图会话](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurViewSession.kt)
+- [原子安装目标](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicBidirectionalLyricBlurTarget.kt)、[精确契约与同步解码](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurContract.kt)
+- [纯状态与动画](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricBlurState.kt)、[宿主已提交显示读取](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurHostPort.kt)
 - [模糊策略](../core/src/main/kotlin/dev/amenhancer/module/hook/BidirectionalBlurPolicy.kt)、[平板边缘策略](../core/src/main/kotlin/dev/amenhancer/module/hook/TabletLyricVisualPolicy.kt)
-- [Android渲染器](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurRenderer.kt)
+- [Android渲染器](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurViewRenderer.kt)、[效果所有权](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurEffectOwner.kt)
 - [现有宿主适配约束](host-adaptation-guide.md)、[功能保全矩阵](feature-preservation.md)
 
 本次从原始 APKM 生成的本地证据位于 `.scratch/lyrics-blur-analysis-1609/`，不提交安装包、工具或宿主反编译源码。`selected-java` 是可读还原；`fallback-java` 用于检查复杂 adapter 的原始指令结构。工具来自 [JADX 官方发布](https://github.com/skylot/jadx/releases/tag/v1.5.5)。
@@ -440,7 +442,7 @@ JADX 的部分复杂方法未能还原为结构化 Java；本文没有把其 `Un
 1. 先修共用状态、交互模式、首帧与绑定生命周期，已有设置键和Android门禁继续保留。
 2. 用五版各自的证据建立显示高亮和行身份接口；共享实现结构，方法/字段描述符按精确构建分别登记。无需让旧版继续依赖有已知错位的原始集合猜测。
 3. 对每版继续解析已有包中的binding和宿主动画释放角色；通过同一显示快照协议进入core，将“高亮保护”与“距离焦点”分开。
-4. 新适配通过各自完整preflight后才启用；所需角色缺失时明确降级或保持原接入，不能把某一版成功当作五版已完成。功能验收由使用者手动进行。
+4. 新适配通过各自完整preflight后才启用；按后续批准方案，所需角色或必需 Hook 缺失时关闭整组并明确降级，保持宿主原生行为，不能把某一版成功当作五版已完成。功能验收由使用者手动进行。
 
 ### 10.6 各版原始输入与本地证据
 
@@ -458,4 +460,4 @@ JADX 的部分复杂方法未能还原为结构化 Java；本文没有把其 `Un
 
 JADX针对inner RecyclerView$k会保存整个outer RecyclerView源码，索引仍使用实际输出文件名；需要按带listener参数的h签名读取，不能混同ViewHolder的无参数h。结构化输出有错误的非目标方法不作为运行时故障证据。
 
-本轮只扩展分析文档，未修改profile或功能实现，未运行构建、设备或功能测试。
+上述跨版本分析阶段只扩展分析文档，未修改profile或功能实现，未运行构建、设备或功能测试。后续实施与APK交付分别记录在[重构实现记录](lyrics-blur-refactor-implementation.md)。

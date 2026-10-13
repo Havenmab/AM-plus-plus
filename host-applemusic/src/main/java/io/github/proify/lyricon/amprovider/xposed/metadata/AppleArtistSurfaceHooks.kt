@@ -136,6 +136,7 @@ internal class AppleArtistSurfaceHooks(
         kind: AppleMetadataRefreshKind,
         mediaId: String? = null,
         target: Any? = null,
+        slot: Int = -1,
         priority: AppleInternalCatalogResolver.RequestPriority =
             AppleInternalCatalogResolver.RequestPriority.BACKGROUND,
         originalResolutionMode: InAppOriginalResolutionMode =
@@ -152,6 +153,7 @@ internal class AppleArtistSurfaceHooks(
                 priority = priority,
                 originalResolutionMode = originalResolutionMode,
                 target = target,
+                slot = slot,
                 action = work,
             )
         }
@@ -427,6 +429,8 @@ internal class AppleArtistSurfaceHooks(
                 val owner = chain.thisObject ?: return@installArgumentRewriteHook null
                 val state = chain.args.firstOrNull() ?: return@installArgumentRewriteHook null
                 if (!members.successState.clazz.isInstance(state)) {
+                    // Clear saved Success so an in-flight alias refresh cannot republish stale page content.
+                    clearComposeProfileOwner(owner)
                     return@installArgumentRewriteHook null
                 }
                 if (composeProfileRepublishing.get() == true) {
@@ -460,21 +464,27 @@ internal class AppleArtistSurfaceHooks(
             }
             if (!composeProfileRefreshPending.add(owner)) return@forEach
             scheduled += 1
+            // Distinct slot from page-state ARTIST_BINDING work so mergeIntents cannot drop
+            // this action (and its pending cleanup) when another Success arrives mid-frame.
             dispatchSurfaceWork(
                 kind = AppleMetadataRefreshKind.ARTIST_BINDING,
                 mediaId = mediaId,
                 target = owner,
+                slot = COMPOSE_PROFILE_REFRESH_SLOT,
                 priority = AppleInternalCatalogResolver.RequestPriority.VISIBLE,
                 originalResolutionMode = InAppOriginalResolutionMode.ORIGINAL_FIRST,
             ) {
-                composeProfileRefreshPending.remove(owner)
-                runCatching { republishComposeProfile(owner, members) }
-                    .onFailure {
-                        ProviderLogger.error(
-                            "Apple Music Compose 歌手页标题刷新失败: id=$mediaId",
-                            it,
-                        )
-                    }
+                try {
+                    runCatching { republishComposeProfile(owner, members) }
+                        .onFailure {
+                            ProviderLogger.error(
+                                "Apple Music Compose 歌手页标题刷新失败: id=$mediaId",
+                                it,
+                            )
+                        }
+                } finally {
+                    composeProfileRefreshPending.remove(owner)
+                }
             }
         }
         return scheduled
@@ -492,6 +502,8 @@ internal class AppleArtistSurfaceHooks(
         if (!isArtistEntity(entity)) return null
         val attributes = host.mediaApiEntityAttributes(entity) ?: return null
         val mediaId = host.mediaApiEntityCatalogId(entity, attributes) ?: return null
+        // A fresh Success supersedes any coalesced refresh; do not leave pending stranded.
+        composeProfileRefreshPending.remove(owner)
         composeProfileStates[owner] = state
         profileMediaIds[owner] = mediaId
         latestProfileMediaId = mediaId
@@ -591,6 +603,8 @@ internal class AppleArtistSurfaceHooks(
                 kind = InAppLibraryEntityKind.SONG,
                 knownAttributes = attributes,
             )
+            // Associate before enrich so a missing song artist still gets the profile candidate.
+            associateTopSongWithProfileArtist(owner, mediaId)
             host.enrichLibraryEntity(
                 mediaId = mediaId,
                 entity = songEntity,
@@ -599,7 +613,6 @@ internal class AppleArtistSurfaceHooks(
             )
             // Song aliases rewrite artistName on the shared entity; republish the shelves.
             registerComposeProfile(mediaId, owner)
-            associateTopSongWithProfileArtist(owner, mediaId)
             mediaId
         }.distinct()
         if (songIds.isNotEmpty()) {
@@ -636,6 +649,31 @@ internal class AppleArtistSurfaceHooks(
             if (target == null) refs.remove(ref) else if (target === owner) registered = true
         }
         if (!registered) refs.add(WeakReference(owner))
+    }
+
+    /**
+     * Clears the owner's saved Success and media refs whenever the view model leaves Success.
+     * Without this, [refreshComposeProfiles] can republish the old Success over loading/error.
+     */
+    private fun clearComposeProfileOwner(owner: Any) {
+        composeProfileStates.remove(owner)
+        composeProfileRefreshPending.remove(owner)
+        val detachedMediaId = profileMediaIds[owner]
+        profileMediaIds.remove(owner)
+        if (latestProfileMediaId == detachedMediaId) latestProfileMediaId = null
+        unregisterComposeProfileOwner(owner)
+    }
+
+    private fun unregisterComposeProfileOwner(owner: Any) {
+        val emptyKeys = ArrayList<String>()
+        composeProfileRefs.forEach { (mediaId, refs) ->
+            refs.removeIf { ref ->
+                val target = ref.get()
+                target == null || target === owner
+            }
+            if (refs.isEmpty()) emptyKeys += mediaId
+        }
+        emptyKeys.forEach { composeProfileRefs.remove(it) }
     }
 
     fun handleFinalBinding(model: Any, finalHolder: Any?, position: Int?) {
@@ -1289,6 +1327,8 @@ internal fun artistProfileSubtitleWithArtist(
 
 private const val TOP_SONGS_KEY = "top-songs"
 private const val ARTIST_ENTITY_TYPE = "artists"
+/** Alias republish identity; must differ from page-state work (default slot -1). */
+private const val COMPOSE_PROFILE_REFRESH_SLOT = 1
 
 /** Members resolved once at install time; the setUiState hook never scans for them. */
 internal class ArtistComposeProfileMembers(

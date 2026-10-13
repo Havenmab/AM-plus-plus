@@ -31,6 +31,23 @@ class HleArtistComposeProfileStructuralTest {
         assertTrue(body.contains("host.scheduleMetadataResolution("))
         assertTrue(body.contains("associateTopSongWithProfileArtist(owner, mediaId)"))
         assertTrue(body.contains("requestPageOriginalMetadata(songIds)"))
+        // P1: associate before enrich so missing song artists still get the profile candidate.
+        val associateAt = body.indexOf("associateTopSongWithProfileArtist(owner, mediaId)")
+        val enrichAt = body.indexOf("host.enrichLibraryEntity(", associateAt)
+        assertTrue("associateTopSong must precede enrichLibraryEntity", associateAt >= 0 && enrichAt > associateAt)
+    }
+
+    @Test
+    fun composeProfileClearsSavedSuccessWhenLeavingSuccessAndIsolatesRefreshQueueIdentity() {
+        val body = composeBody()
+        assertTrue(body.contains("clearComposeProfileOwner(owner)"))
+        assertTrue(body.contains("slot = COMPOSE_PROFILE_REFRESH_SLOT"))
+        assertTrue(body.contains("composeProfileRefreshPending.remove(owner)"))
+        assertTrue(
+            source(
+                "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/AppleArtistSurfaceHooks.kt",
+            ).contains("private const val COMPOSE_PROFILE_REFRESH_SLOT = 1"),
+        )
     }
 
     @Test

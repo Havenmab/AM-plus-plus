@@ -187,13 +187,15 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ### 7.1 歌词模糊的独立契约
 
-`AppleMusicLyricBlurContract` 对 `legacy-activity` 和 `fragment-content` 都解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。当前五个生产构建各有 64 个方法角色、26 个字段角色；代码维护的必需角色清单、当前 profile 与 `scripts/verify-host-profile.py` 清单必须同步维护，JSON 漏写角色不能绕过预检。
+`AppleMusicLyricBlurContract` 对 `legacy-activity` 和 `fragment-content` 都解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。当前五个生产构建各有 67 个方法角色、26 个字段角色；代码维护的必需角色清单、当前 profile 与 `scripts/verify-host-profile.py` 清单必须同步维护，JSON 漏写角色不能绕过预检。
 
 逐版核对完整 owner、参数、返回类型、字段类型及实际使用语义，包括 adapter 提交/快照/映射、document token/reader、holder 的稳定 ID/类型、四路词模型和尾部动画、RecyclerView 监听及两个 Seek 入口。1586 的逐字类为 `z`，1599 的 Fragment binding 为 `g0`，不能复制其他构建的混淆名。native callback 的 Hook 契约用实际擦除签名 `(Object,Object,Object) -> Object`，泛型反编译展示仅用于解释参数意义。
 
 模糊依据已应用的显示快照，原始事件只触发刷新或提供位置/诊断；`nativeLineId`、歌词序号和列表位置不可互换。后续适配须继续核对宿主的子集保留、ItemAnimator 等待与 Handler 提交边界、词动画结束/取消、同指针文档重装和 View 复用。未知身份及失败显示读取保持可读，不回退到旧 raw 集合猜测。
 
 原生 ID getter 的角色为 `nativeLineId/nativeWordId`，adapter 稳定 ID getter 为 `lineId/wordId`，不能共用角色名。前者无参数并返回 int，后者接收 int 列表位置并返回 long；Contract 同时校验 owner/返回对象关系。反射方法存在并不等于其接收对象、参数域与值域正确。
+
+无三点前奏另登记 `nativeLineBegin`、`mediaBrowser`、`mediaPosition`。`getBegin` 声明在 `LyricsTiming`，`getMediaBrowser` 声明在当前构建的接口；应沿实际 extends/implements 关系找到 owner，不能只搜类的 super 链或依赖 JADX 展示的调用位置。完整文档首句与宿主播放位置确认前奏，三点的实际绑定/布局/显示状态决定何时切到三点距离；实际高亮始终优先，文档和 Seek 清除旧确认。
 
 安装先解析全部必需契约，再在 PREPARING scope 注册所有 Hook 与清理，全部成功才 activate；失败关闭整组并报告降级。效果写入观察先于歌词 View 创建，模块释放只恢复仍拥有的效果，不操作宿主 alpha。状态、会话、渲染和本次五版手测状态见[重构实现记录](lyrics-blur-refactor-implementation.md)。
 

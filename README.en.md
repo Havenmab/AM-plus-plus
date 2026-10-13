@@ -124,6 +124,8 @@ See the [feature table](#features) above for individual switches. The following 
 
 Custom lyrics can be edited, deleted, and searched by name or Apple Music ID. ZIP backup and restore are also supported; when restoring, you can overwrite conflicting entries or keep the current versions. Invalid TTML is rejected, leaving Apple Music's original lyrics in use. TTML retrieved from AMLL is converted to Apple Music's format before being placed in the editor.
 
+AMLL conversion orders lyric lines, translations, and romanization by each line's start time. Translations with matching starts are deduplicated in their original order and joined with newlines, even when their end times differ. Lyric voices and romanization remain separate; the combined translation belongs to the first line in the group, with space placeholders for the others to preserve alignment. Online updates and automatic live completion use the same conversion rules.
+
 For manually authored TTML, see the [Apple Music TTML format guide](docs/apple-music-ttml-format.md).
 
 With automatic live completion enabled, candidate lyrics are requested during playback only when the native lyrics are missing, lack word timing, or have word timing in a foreign language without a translation, and no usable manual lyrics are available. Disabling it stops these requests during playback. Manual imports are always initiated by the user.

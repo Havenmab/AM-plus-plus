@@ -176,6 +176,62 @@ class AmllTtmlTimelineFormattingTest {
         }
     }
 
+    @Test
+    fun synthesizedTrackEntriesPreserveQuotedAndEntityEncodedKeyValues() {
+        val tracks = "<translations><translation><text for=\"known\">T</text></translation></translations>" +
+            "<transliterations><transliteration><text for=\"known\">R</text></transliteration></transliterations>"
+        quotedKeys.forEach { quotedKey ->
+            val raw = document("<div>" + lineWithQuotedKey(quotedKey, null, null) +
+                line("known", "2s", "3s", null) + "</div>", tracks)
+            val expectedKeys = keys(raw) // Parsing the input also proves it is valid XML.
+            val result = AmllTtmlFormatConverter.toAppleFormat(raw).ttml
+
+            assertEquals(expectedKeys, keys(result))
+            assertTrackKeys(result, "translations", expectedKeys)
+            assertTrackKeys(result, "transliterations", expectedKeys)
+            assertEquals(listOf(" ", "T"), trackTexts(result, "translations"))
+            assertEquals(listOf(" ", "R"), trackTexts(result, "transliterations"))
+            assertIdempotent(result)
+        }
+    }
+
+    @Test
+    fun migratedTracksPreserveQuotedAndEntityEncodedKeyValues() {
+        quotedKeys.forEach { quotedKey ->
+            val raw = document("<div>" + lineWithQuotedKey(quotedKey, "T", "R") +
+                line("known", "2s", "3s", "T2", "R2") + "</div>")
+            val expectedKeys = keys(raw)
+            val result = AmllTtmlFormatConverter.toAppleFormat(raw).ttml
+
+            assertEquals(expectedKeys, keys(result))
+            assertTrackKeys(result, "translations", expectedKeys)
+            assertTrackKeys(result, "transliterations", expectedKeys)
+            assertEquals(listOf("T", "T2"), trackTexts(result, "translations"))
+            assertEquals(listOf("R", "R2"), trackTexts(result, "transliterations"))
+            assertIdempotent(result)
+        }
+    }
+
+    private val quotedKeys = listOf(
+        "'a\"b'",
+        "\"a'b\"",
+        "'a\"&amp;b'",
+        "\"a&amp;b\"",
+        "\"a&quot;&apos;&lt;&gt;&amp;b\"",
+        "\"a&#34;&#39;&#38;b\"",
+        "\"a&#x22;&#x27;&#x26;b\"",
+        "'a\"&amp;quot;b'",
+    )
+
+    private fun lineWithQuotedKey(quotedKey: String, translation: String?, roman: String?) =
+        line("placeholder", "1s", "2s", translation, roman)
+            .replace("itunes:key=\"placeholder\"", "itunes:key=$quotedKey")
+
+    private fun assertTrackKeys(ttml: String, kind: String, expected: List<String>) {
+        val nodes = elements(ttml, kind).single().getElementsByTagName("text")
+        assertEquals(expected, (0 until nodes.length).map { (nodes.item(it) as Element).getAttribute("for") })
+    }
+
     private fun document(body: String, tracks: String = "") =
         "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" " +
             "xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xml:lang=\"ja\" itunes:timing=\"Word\">" +

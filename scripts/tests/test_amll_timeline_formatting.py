@@ -13,6 +13,16 @@ SPEC.loader.exec_module(CONVERTER)
 TTML = "http://www.w3.org/ns/ttml"
 ITUNES = "http://music.apple.com/lyric-ttml-internal"
 TTM = "http://www.w3.org/ns/ttml#metadata"
+QUOTED_KEYS = (
+    "'a\"b'",
+    "\"a'b\"",
+    "'a\"&amp;b'",
+    "\"a&amp;b\"",
+    "\"a&quot;&apos;&lt;&gt;&amp;b\"",
+    "\"a&#34;&#39;&#38;b\"",
+    "\"a&#x22;&#x27;&#x26;b\"",
+    "'a\"&amp;quot;b'",
+)
 
 
 def document(body, tracks=""):
@@ -143,6 +153,39 @@ class AmllTimelineFormattingTest(unittest.TestCase):
         self.assertIn("<div/>", result)
         self.assertEqual(["early", "late"], keys(result))
         self.assertEqual([" ", "Late"], texts(result))
+
+
+    def test_synthesized_entries_preserve_quoted_and_entity_encoded_keys(self):
+        tracks = ('<translations><translation><text for="known">T</text></translation></translations>'
+                  '<transliterations><transliteration><text for="known">R</text></transliteration></transliterations>')
+        for quoted_key in QUOTED_KEYS:
+            with self.subTest(key=quoted_key):
+                first = line("placeholder", "1s", "2s").replace('itunes:key="placeholder"', f"itunes:key={quoted_key}")
+                raw = document("<div>" + first + line("known", "2s", "3s") + "</div>", tracks)
+                expected = keys(raw)  # Parse the input before conversion.
+                result = self.convert(raw)
+                self.assertEqual(expected, keys(result))
+                self.assert_track_keys(result, expected)
+                self.assertEqual([" ", "T"], texts(result))
+                self.assertEqual([" ", "R"], texts(result, "transliterations"))
+
+    def test_migrated_tracks_preserve_quoted_and_entity_encoded_keys(self):
+        for quoted_key in QUOTED_KEYS:
+            with self.subTest(key=quoted_key):
+                first = line("placeholder", "1s", "2s", "T", "R").replace('itunes:key="placeholder"', f"itunes:key={quoted_key}")
+                raw = document("<div>" + first + line("known", "2s", "3s", "T2", "R2") + "</div>")
+                expected = keys(raw)
+                result = self.convert(raw)
+                self.assertEqual(expected, keys(result))
+                self.assert_track_keys(result, expected)
+                self.assertEqual(["T", "T2"], texts(result))
+                self.assertEqual(["R", "R2"], texts(result, "transliterations"))
+
+    def assert_track_keys(self, ttml, expected):
+        root = ET.fromstring(ttml)
+        for kind in ("translations", "transliterations"):
+            track = next(node for node in root.iter() if node.tag == f"{{{ITUNES}}}{kind}")
+            self.assertEqual(expected, [node.get("for") for node in track.iter(f"{{{ITUNES}}}text")])
 
 
 if __name__ == "__main__":

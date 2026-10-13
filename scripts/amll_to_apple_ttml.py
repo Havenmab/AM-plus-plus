@@ -315,6 +315,12 @@ def clock_seconds(value: str | None) -> float | None:
 # --- Track migration --------------------------------------------------
 
 
+def quote_raw_attribute_value(value: str) -> str:
+    """Source attribute content already carries entities; choose a safe delimiter."""
+    delimiter = "'" if '"' in value else '"'
+    return delimiter + value + delimiter
+
+
 def to_apple_format(ttml: str) -> TtmlFormatConversion:
     if not ttml:
         return TtmlFormatConversion(ttml, False)
@@ -478,7 +484,7 @@ def format_track(ttml: str, track: Element, lines: list[TimelineLine], merge: bo
     for index, key in enumerate(keys):
         entry = by_key.get(key)
         if entry is None:
-            result.append(f'<text for="{key}">{texts[index]}</text>')
+            result.append(f"<text for={quote_raw_attribute_value(key)}>{texts[index]}</text>")
         else:
             result.append(prefixes[entry.start])
             if entry.self_closing:
@@ -759,7 +765,7 @@ def append_track(
     head += f' xml:lang="{language}">'
     parts.append(head)
     for entry in entries:
-        parts.append(f'<text for="{entry.key}">')
+        parts.append(f"<text for={quote_raw_attribute_value(entry.key)}>")
         parts.append(append_entry_text(entry))
         parts.append("</text>")
     parts.append(f"</{item}>")

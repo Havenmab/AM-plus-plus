@@ -105,6 +105,10 @@ object AmllTtmlFormatConverter {
     private fun attributePattern(name: String) =
         Regex("""\s${Regex.escape(name)}\s*=\s*"([^"]*)"|\s${Regex.escape(name)}\s*=\s*'([^']*)'""")
 
+    /** Source attribute content already carries entities; choose a safe delimiter. */
+    private fun quoteRawAttributeValue(value: String): String =
+        if ('"' in value) "'$value'" else "\"$value\""
+
     fun toAppleFormat(ttml: String): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
         // Judged per kind, so a head that already declares one track does not
@@ -271,7 +275,8 @@ object AmllTtmlFormatConverter {
             keys.forEachIndexed { index, key ->
                 val entry = byKey[key]
                 if (entry == null) {
-                    append("<text for=\"").append(key).append("\">").append(texts[index]).append("</text>")
+                    append("<text for=").append(quoteRawAttributeValue(key)).append('>')
+                    append(texts[index]).append("</text>")
                 } else {
                     append(prefixes.getValue(entry))
                     if (entry.selfClosing) {
@@ -575,7 +580,7 @@ object AmllTtmlFormatConverter {
         if (type != null) append(" type=\"").append(type).append('"')
         append(" xml:lang=\"").append(language).append("\">")
         entries.forEach { entry ->
-            append("<text for=\"").append(entry.key).append("\">")
+            append("<text for=").append(quoteRawAttributeValue(entry.key)).append('>')
             appendEntryText(entry)
             append("</text>")
         }

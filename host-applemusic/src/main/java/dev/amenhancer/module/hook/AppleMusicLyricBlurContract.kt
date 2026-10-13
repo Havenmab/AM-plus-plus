@@ -14,7 +14,8 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
             "readerCount", "readerLine", "lineGet", "nativeLineId", "lineVectorSize", "lineVectorGet",
             "wordVectorSize", "wordVectorGet", "wordGet", "wordLine", "nativeWordId", "getAdapter", "getScrollState",
             "setScrollState", "onTouchEvent", "onInterceptTouchEvent", "rowPosition", "rowHolder",
-            "registerChildListener", "childAttach", "childDetach", "vmWord", "vmLine", "seek", "seekItem")
+            "registerChildListener", "childAttach", "childDetach", "vmWord", "vmLine", "seek", "seekItem",
+            "nativeLineBegin", "mediaBrowser", "mediaPosition")
         private val adapterRoles = listOf("Commit", "Snapshot", "Map", "Type", "Id", "Reader", "Token", "Document", "Bind", "Payload", "Recycle")
         val nativeRoles = listOf("nativeLine", "nativeWord", "nativeBackground", "nativePronunciation", "nativePronunciationBackground")
         val wordRoles = listOf("wordProgress", "wordTail", "wordLift", "wordReturn")
@@ -64,6 +65,15 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
             check(nativeId.declaringClass == method("${prefix}Get").returnType &&
                 nativeId.parameterTypes.isEmpty() && nativeId.returnType == Int::class.javaPrimitiveType)
         }
+        val begin = method("nativeLineBegin")
+        check(begin.declaringClass.isAssignableFrom(method("lineGet").returnType) &&
+            begin.parameterTypes.isEmpty() && begin.returnType == Int::class.javaPrimitiveType)
+        val browserClass = type("mediaBrowser")
+        val browser = method("mediaBrowser")
+        val position = method("mediaPosition")
+        check(browser.declaringClass.isAssignableFrom(fragment) && browser.parameterTypes.isEmpty() &&
+            browser.returnType.isAssignableFrom(browserClass) && position.declaringClass.isAssignableFrom(browserClass) &&
+            position.parameterTypes.isEmpty() && position.returnType == Long::class.javaPrimitiveType)
         val rowTypes = names.getJSONObject("rowTypes")
         check(rowTypes.getInt("line") == 0 && rowTypes.getInt("word") == 3 &&
             rowTypes.getInt("instrumental") == 2 && rowTypes.getInt("credits") == 1)

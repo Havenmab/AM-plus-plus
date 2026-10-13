@@ -3984,7 +3984,8 @@
       "adapterBase": "com.apple.android.music.player.f1",
       "wordHolder": "com.apple.android.music.player.A$a",
       "wordModel": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
-      "recycler": "androidx.recyclerview.widget.RecyclerView"
+      "recycler": "androidx.recyclerview.widget.RecyclerView",
+      "mediaBrowser": "J4.w"
     },
     "methods": {
       "createView": {
@@ -4247,6 +4248,27 @@
         "name": "getLineId",
         "parameters": [],
         "returns": "int",
+        "static": false
+      },
+      "nativeLineBegin": {
+        "owner": "com.apple.android.music.ttml.javanative.model.LyricsTiming",
+        "name": "getBegin",
+        "parameters": [],
+        "returns": "int",
+        "static": false
+      },
+      "mediaBrowser": {
+        "owner": "ia.a$c",
+        "name": "getMediaBrowser",
+        "parameters": [],
+        "returns": "J4.w",
+        "static": false
+      },
+      "mediaPosition": {
+        "owner": "J4.B",
+        "name": "getCurrentPosition",
+        "parameters": [],
+        "returns": "long",
         "static": false
       },
       "lineVectorSize": {
@@ -4702,6 +4724,7 @@
       "runtimeVerified": false,
       "memberSource": "Exact DEX member descriptors plus local Fragment/adapter/word-model/binding/RecyclerView source",
       "wordProtection": "holder G/H/I/J models: o progress, p tails; listener start/end and a line ID",
+      "prelude": "First lyric getBegin and the current Fragment media browser getCurrentPosition; independent of the 7000ms dots gate",
       "scroll": "setScrollState/getScrollState and observed native touch methods; child h(p), p.d/p.b"
     }
   }

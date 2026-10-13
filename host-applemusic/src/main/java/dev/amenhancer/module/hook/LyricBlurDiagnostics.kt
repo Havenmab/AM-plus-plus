@@ -29,6 +29,7 @@ internal class LyricBlurDiagnostics(private val build: String) {
             is LyricFocusAnchor.Lines -> "lines:${focus.ordinals.take(LyricHighlightProbe.MAX_IDS)} count=${focus.ordinals.size}"
             is LyricFocusAnchor.Instrumental -> "instrumental:${focus.beforeOrdinal}"
             LyricFocusAnchor.None -> "none"
+            LyricFocusAnchor.Prelude -> "prelude:0"
         }
         event("display") { "epoch=${state.epoch} interaction=${state.interaction}/${state.interactionGeneration}" +
             " protected=${state.protectedLineIds.take(LyricHighlightProbe.MAX_IDS)} anchor=$anchor" +

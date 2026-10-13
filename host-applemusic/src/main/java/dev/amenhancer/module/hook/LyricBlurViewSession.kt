@@ -46,6 +46,7 @@ internal class LyricBlurViewSession(
     private val observedRows = WeakHashMap<View, Boolean>()
     private var rows: List<LyricBlurBoundRow> = emptyList()
     private var geometry: List<Float> = emptyList()
+    private var instrumentalVisible = false
     private var lastNativePosition: Long? = null
     private val layout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> requestData() }
     private val attach = object : View.OnAttachStateChangeListener {
@@ -67,6 +68,11 @@ internal class LyricBlurViewSession(
             val rv = recycler
             if (rv != null) {
                 if (rv.childCount != rows.size) dirty = true
+                val markerVisible = rows.any { it.isVisibleInstrumental() }
+                if (markerVisible != instrumentalVisible) {
+                    instrumentalVisible = markerVisible
+                    dirty = true
+                }
                 val next = buildList {
                     add(rv.height.toFloat()); add(rv.paddingTop.toFloat()); add(rv.paddingBottom.toFloat())
                     rows.forEach { add(renderer.geometry(it.view, rv)); add(it.view.width.toFloat()); add(it.view.height.toFloat()) }
@@ -308,6 +314,7 @@ internal class LyricBlurViewSession(
         recycler = null
         rows = emptyList()
         geometry = emptyList()
+        instrumentalVisible = false
         targetsDirty = true
     }
 

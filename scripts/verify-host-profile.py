@@ -34,7 +34,7 @@ def _uleb(data, offset):
 
 
 def dex_classes(data):
-    """Return {class descriptor: {"super": ..., "methods": set, "fields": dict}}."""
+    """Return class descriptors, inherited interfaces, methods and fields."""
     if not data.startswith(b"dex\n"):
         raise ValueError("Not a DEX file")
 
@@ -70,6 +70,10 @@ def dex_classes(data):
         base = u32(100) + i * 32
         class_name = types[u32(base)]
         superclass = u32(base + 8)
+        interfaces_offset = u32(base + 12)
+        interfaces = [] if not interfaces_offset else [
+            types[u16(interfaces_offset + 4 + 2 * j)] for j in range(u32(interfaces_offset))
+        ]
         offset = u32(base + 24)
         methods = set()
         fields = {}
@@ -99,6 +103,7 @@ def dex_classes(data):
                     method_access[method_defs[index]] = flags
         classes[class_name] = {
             "super": types[superclass] if superclass != 0xFFFFFFFF else None,
+            "interfaces": interfaces,
             "methods": methods,
             "fields": fields,
             "method_access": method_access,
@@ -204,6 +209,7 @@ def verify_lyric_blur_contract(document, classes, failures):
         'lineVectorSize', 'lineVectorGet', 'wordVectorSize', 'wordVectorGet', 'wordGet', 'wordLine', 'nativeWordId',
         'getAdapter', 'getScrollState', 'setScrollState', 'onTouchEvent', 'onInterceptTouchEvent', 'rowPosition',
         'rowHolder', 'registerChildListener', 'childAttach', 'childDetach', 'vmWord', 'vmLine', 'seek', 'seekItem',
+        'nativeLineBegin', 'mediaBrowser', 'mediaPosition',
     } | {prefix + role for prefix in ('line', 'word') for role in adapter_roles} | set(native_roles) | {
         role + phase for role in word_roles for phase in ('Start', 'End')}
     required_fields = {

@@ -15,6 +15,7 @@ internal class AppleMusicLyricBlurHostPort(
 ) : LyricBlurHostPort {
     private val ownerRef = WeakReference(owner)
     private var ordinals: Map<Int, Int> = emptyMap()
+    private var firstLineBeginMs: Long? = null
     private var frameAdapter: Any? = null
     private val models = Collections.newSetFromMap(WeakHashMap<Any, Boolean>())
     private val ignoredAnimations = Collections.newSetFromMap(WeakHashMap<Animator, Boolean>())
@@ -44,7 +45,9 @@ internal class AppleMusicLyricBlurHostPort(
         models.clear()
         ignoredAnimations.clear()
         ordinals = emptyMap()
+        firstLineBeginMs = null
         val values = linkedMapOf<Int, Int>()
+        var firstBegin: Long? = null
         var failure: String? = null
         return try {
             val adapter = adapter() ?: return LyricDecodeResult.Pending("document:awaiting-adapter")
@@ -59,9 +62,12 @@ internal class AppleMusicLyricBlurHostPort(
                     val line = checkNotNull(contract.method("lineGet").invoke(pointer))
                     val id = (contract.method("nativeLineId").invoke(line) as Number).toInt()
                     check(values.put(id, ordinal) == null) { "Duplicate native line ID" }
+                    if (ordinal == 0) firstBegin = (contract.method("nativeLineBegin").invoke(line) as Number)
+                        .toLong().takeIf { it >= 0 }
                 }.onFailure { failure = it.javaClass.simpleName }
             }
             ordinals = values.toMap()
+            if (failure == null) firstLineBeginMs = firstBegin
             failure?.let { LyricDecodeResult.Partial(ordinals, "document:$it") }
                 ?: LyricDecodeResult.Complete(ordinals)
         } catch (error: Exception) {
@@ -124,7 +130,15 @@ internal class AppleMusicLyricBlurHostPort(
         }
         val gap = (contract.field(if (contract.wordAdapter.isInstance(adapter)) "wordInstrumentalPosition"
             else "instrumentalPosition").get(adapter) as Number).toInt().takeIf { it in 0..ordinals.size }
-        LyricDecodeResult.Complete(LyricDisplaySnapshot(displayed, words.mapValues { it.value.toSet() }, gap))
+        val position = if (displayed.isEmpty() && words.values.all { it.isEmpty() } && gap == null &&
+            firstLineBeginMs?.let { it > 0 } == true) runCatching {
+            val owner = ownerRef.get() ?: return@runCatching null
+            val browser = contract.method("mediaBrowser").invoke(owner) ?: return@runCatching null
+            (contract.method("mediaPosition").invoke(browser) as Number).toLong().takeIf { it >= 0 }
+        }.getOrNull() else null
+        LyricDecodeResult.Complete(LyricDisplaySnapshot(displayed, words.mapValues { it.value.toSet() },
+            gap, firstLineBeginMs, position,
+            rows.any { it.isVisibleInstrumental() && it.identity.adapterPosition == gap }))
     } catch (error: Exception) { LyricDecodeResult.Failed("display:${error.javaClass.simpleName}") }
     }
 
@@ -151,3 +165,6 @@ internal class AppleMusicLyricBlurHostPort(
         if (model in models) ignoredAnimations.remove(animation)
     }
 }
+
+internal fun LyricBlurBoundRow.isVisibleInstrumental(): Boolean =
+    identity.kind == LyricRowKind.INSTRUMENTAL && view.isShown && view.width > 0 && view.height > 0

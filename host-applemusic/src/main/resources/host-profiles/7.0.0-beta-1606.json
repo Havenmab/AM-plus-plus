@@ -3842,7 +3842,8 @@
       "wordHolder": "com.apple.android.music.player.A$a",
       "wordModel": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
       "recycler": "androidx.recyclerview.widget.RecyclerView",
-      "mediaBrowser": "J4.w"
+      "mediaBrowser": "J4.w",
+      "taggedAnimator": "N7.c"
     },
     "methods": {
       "createView": {
@@ -4114,6 +4115,21 @@
         "returns": "int",
         "static": false
       },
+      "nativeLineEnd": {
+        "owner": "com.apple.android.music.ttml.javanative.model.LyricsTiming",
+        "name": "getEnd",
+        "parameters": [],
+        "returns": "int",
+        "static": false
+      },
+      "wordAnimationTag": {
+        "owner": "N7.c",
+        "name": "getTag",
+        "parameters": [],
+        "returns": "java.lang.Object",
+        "static": false,
+        "invocationOnly": true
+      },
       "mediaBrowser": {
         "owner": "ia.a$c",
         "name": "getMediaBrowser",
@@ -4308,60 +4324,6 @@
         "returns": "void",
         "static": false
       },
-      "wordTailStart": {
-        "owner": "com.apple.android.music.player.A$c",
-        "name": "onAnimationStart",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
-      "wordTailEnd": {
-        "owner": "com.apple.android.music.player.A$c",
-        "name": "onAnimationEnd",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
-      "wordLiftStart": {
-        "owner": "com.apple.android.music.player.A$h$a",
-        "name": "onAnimationStart",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
-      "wordLiftEnd": {
-        "owner": "com.apple.android.music.player.A$h$a",
-        "name": "onAnimationEnd",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
-      "wordReturnStart": {
-        "owner": "com.apple.android.music.player.A$d$a",
-        "name": "onAnimationStart",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
-      "wordReturnEnd": {
-        "owner": "com.apple.android.music.player.A$d$a",
-        "name": "onAnimationEnd",
-        "parameters": [
-          "android.animation.Animator"
-        ],
-        "returns": "void",
-        "static": false
-      },
       "nativeLine": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f",
         "name": "invoke",
@@ -4483,11 +4445,6 @@
         "name": "o",
         "type": "android.animation.Animator"
       },
-      "wordTailAnimators": {
-        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
-        "name": "p",
-        "type": "F.b"
-      },
       "childListeners": {
         "owner": "androidx.recyclerview.widget.RecyclerView",
         "name": "k0",
@@ -4515,21 +4472,6 @@
       },
       "wordProgressModel": {
         "owner": "com.apple.android.music.player.A$e",
-        "name": "a",
-        "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e"
-      },
-      "wordTailModel": {
-        "owner": "com.apple.android.music.player.A$c",
-        "name": "a",
-        "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e"
-      },
-      "wordLiftModel": {
-        "owner": "com.apple.android.music.player.A$h$a",
-        "name": "a",
-        "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e"
-      },
-      "wordReturnModel": {
-        "owner": "com.apple.android.music.player.A$d$a",
         "name": "a",
         "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e"
       },
@@ -4580,7 +4522,8 @@
       "analysis": "docs/lyrics-blur-guide.md",
       "runtimeVerified": false,
       "memberSource": "Exact DEX member descriptors plus local Fragment/adapter/word-model/binding/RecyclerView source",
-      "wordProtection": "holder G/H/I/J models: o progress, p tails; listener start/end and a line ID",
+      "wordProtection": "holder G/H/I/J models: o text progress children; exclude p glow/tails and KARAOKE_WORD_LIFT_TAG; scoped child end/cancel observations and identity-owned model callbacks",
+      "ending": "Maximum LyricsTiming.getEnd and current media browser position; retain the final applied focus after lyric display becomes empty",
       "prelude": "First lyric getBegin and the current Fragment media browser getCurrentPosition; independent of the 7000ms dots gate",
       "scroll": "setScrollState/getScrollState and observed native touch methods; child h(p), p.d/p.b"
     }

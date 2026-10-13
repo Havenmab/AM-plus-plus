@@ -28,6 +28,7 @@ internal class LyricBlurDiagnostics(private val build: String) {
         val anchor = when (val focus = state.focusAnchor) {
             is LyricFocusAnchor.Lines -> "lines:${focus.ordinals.take(LyricHighlightProbe.MAX_IDS)} count=${focus.ordinals.size}"
             is LyricFocusAnchor.Instrumental -> "instrumental:${focus.beforeOrdinal}"
+            is LyricFocusAnchor.Ending -> "ending:${focus.ordinals.take(LyricHighlightProbe.MAX_IDS)} count=${focus.ordinals.size}"
             LyricFocusAnchor.None -> "none"
             LyricFocusAnchor.Prelude -> "prelude:0"
         }

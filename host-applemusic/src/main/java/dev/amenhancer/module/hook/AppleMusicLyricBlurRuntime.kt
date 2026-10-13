@@ -10,6 +10,7 @@ import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.WeakHashMap
+import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
 
 /** Routes managed owners to independent view sessions; native vectors never enter the queue. */
 internal class AppleMusicLyricBlurRuntime(
@@ -23,7 +24,7 @@ internal class AppleMusicLyricBlurRuntime(
     private val controllers = IdentityHashMap<Any, HostViewSessionController<View, LyricBlurViewSession>>()
     private val sessions = IdentityHashMap<Any, LyricBlurViewSession>()
     private val callbacks = Collections.synchronizedMap(WeakHashMap<Any, WeakReference<LyricBlurViewSession>>())
-    private val words = Collections.synchronizedMap(WeakHashMap<Any, MutableList<WordOwner>>())
+    private val words = WeakIdentityMap<Any, MutableList<WordOwner>>()
     private val seekDepth = ThreadLocal.withInitial { 0 }
     private var viewSequence = 0L
     private var lastFailure: String? = null
@@ -157,7 +158,7 @@ internal class AppleMusicLyricBlurRuntime(
     private fun observeWord(session: LyricBlurViewSession, model: Any) {
         val epoch = session.epoch
         synchronized(words) {
-            val owners = words.getOrPut(model) { mutableListOf() }
+            val owners = words[model] ?: mutableListOf<WordOwner>().also { words[model] = it }
             owners.removeAll { it.session.get() == null || it.view == epoch.view }
             owners += WordOwner(WeakReference(session), epoch.view, epoch.document)
         }

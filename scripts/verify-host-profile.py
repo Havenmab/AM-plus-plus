@@ -203,18 +203,18 @@ def verify_lyric_blur_contract(document, classes, failures):
         return 0
     adapter_roles = ('Commit', 'Snapshot', 'Map', 'Type', 'Id', 'Reader', 'Token', 'Document', 'Bind', 'Payload', 'Recycle')
     native_roles = ('nativeLine', 'nativeWord', 'nativeBackground', 'nativePronunciation', 'nativePronunciationBackground')
-    word_roles = ('wordProgress', 'wordTail', 'wordLift', 'wordReturn')
+    word_roles = ('wordProgress',)
     required_methods = {
         'createView', 'destroyView', 'resume', 'installDocument', 'readerCount', 'readerLine', 'lineGet', 'nativeLineId',
         'lineVectorSize', 'lineVectorGet', 'wordVectorSize', 'wordVectorGet', 'wordGet', 'wordLine', 'nativeWordId',
         'getAdapter', 'getScrollState', 'setScrollState', 'onTouchEvent', 'onInterceptTouchEvent', 'rowPosition',
         'rowHolder', 'registerChildListener', 'childAttach', 'childDetach', 'vmWord', 'vmLine', 'seek', 'seekItem',
-        'nativeLineBegin', 'mediaBrowser', 'mediaPosition',
+        'nativeLineBegin', 'nativeLineEnd', 'mediaBrowser', 'mediaPosition', 'wordAnimationTag',
     } | {prefix + role for prefix in ('line', 'word') for role in adapter_roles} | set(native_roles) | {
         role + phase for role in word_roles for phase in ('Start', 'End')}
     required_fields = {
         'binding', 'recycler', 'activeAdapter', 'viewModel', 'holderView', 'holderId', 'holderType', 'wordLineId',
-        'wordAnimator', 'wordTailAnimators', 'childListeners', 'words', 'backgroundWords', 'pronunciationWords',
+        'wordAnimator', 'childListeners', 'words', 'backgroundWords', 'pronunciationWords',
         'pronunciationBackgroundWords', 'instrumentalPosition', 'wordInstrumentalPosition',
     } | set(native_roles) | {role + 'Model' for role in word_roles}
     primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}

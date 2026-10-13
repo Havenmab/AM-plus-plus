@@ -22,7 +22,11 @@ internal class LyricBlurViewSession(
     private val offsetPx: Int,
     observeModel: (LyricBlurViewSession, Any) -> Unit,
 ) : AutoCloseable {
-    val port = AppleMusicLyricBlurHostPort(owner, contract) { observeModel(this, it) }
+    val port = AppleMusicLyricBlurHostPort(owner, contract,
+        observeModel = { observeModel(this, it) },
+        highlightAnimationChanged = {
+            if (Looper.myLooper() == Looper.getMainLooper()) requestData() else handler.post { requestData() }
+        })
     private val rootRef = WeakReference(root)
     private val handler = Handler(Looper.getMainLooper())
     private val choreographer = Choreographer.getInstance()
@@ -53,6 +57,7 @@ internal class LyricBlurViewSession(
         override fun onViewAttachedToWindow(view: View) { installPreDraw(); requestData() }
         override fun onViewDetachedFromWindow(view: View) {
             cancelRestore(); cancelFrame(); removePreDraw()
+            port.stopObservingAnimations()
             state = LyricBlurReducer.reduce(state, LyricBlurEvent.Touch(epoch, false))
             state = LyricBlurReducer.reduce(state, LyricBlurEvent.Scroll(epoch, 0))
             rows.forEach { renderer.detach(it.view) }
@@ -169,7 +174,9 @@ internal class LyricBlurViewSession(
     }
 
     fun wordLifecycle(model: Any, animation: Animator?, started: Boolean) {
-        if (started && animation != null) port.wordStarted(model, animation)
+        if (animation != null) {
+            if (started) port.wordStarted(model, animation) else port.wordFinished(animation)
+        }
         requestData()
     }
 
@@ -303,6 +310,7 @@ internal class LyricBlurViewSession(
         preDrawObserver = null
     }
     private fun unbindRecycler() {
+        port.stopObservingAnimations()
         renderer.close()
         observedRows.keys.toList().forEach { it.removeOnLayoutChangeListener(layout) }
         observedRows.clear()
@@ -328,6 +336,7 @@ internal class LyricBlurViewSession(
         cancelRestore(); cancelFrame(); removePreDraw()
         rootRef.get()?.let { it.removeOnLayoutChangeListener(layout); it.removeOnAttachStateChangeListener(attach) }
         unbindRecycler()
+        port.close()
         bindingGenerations.clear()
     }
 }

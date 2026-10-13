@@ -1,24 +1,30 @@
 package dev.amenhancer.module.hook
 
 import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.AnimatorSet
 import android.view.View
 import android.view.ViewGroup
 import java.lang.ref.WeakReference
-import java.util.Collections
-import java.util.WeakHashMap
+import java.util.IdentityHashMap
+import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
 
 /** Private host objects stay in this binding. Only copied IDs enter the reducer. */
 internal class AppleMusicLyricBlurHostPort(
     owner: Any,
     private val contract: AppleMusicLyricBlurContract,
     private val observeModel: (Any) -> Unit,
-) : LyricBlurHostPort {
+    private val highlightAnimationChanged: () -> Unit,
+) : LyricBlurHostPort, AutoCloseable {
+    private data class TextAnimationWatch(val parent: Animator, val listener: AnimatorListenerAdapter)
     private val ownerRef = WeakReference(owner)
     private var ordinals: Map<Int, Int> = emptyMap()
     private var firstLineBeginMs: Long? = null
+    private var lastLineEndMs: Long? = null
     private var frameAdapter: Any? = null
-    private val models = Collections.newSetFromMap(WeakHashMap<Any, Boolean>())
-    private val ignoredAnimations = Collections.newSetFromMap(WeakHashMap<Animator, Boolean>())
+    private val models = WeakIdentityMap<Any, Boolean>()
+    private val ignoredAnimations = WeakIdentityMap<Animator, Boolean>()
+    private val textAnimationWatches = IdentityHashMap<Animator, TextAnimationWatch>()
 
     override fun recycler(): ViewGroup? = ownerRef.get()?.let { owner ->
         contract.field("binding").get(owner)?.let { binding ->
@@ -42,12 +48,15 @@ internal class AppleMusicLyricBlurHostPort(
     }.orEmpty()
 
     override fun document(): LyricDecodeResult<Map<Int, Int>> {
+        stopObservingAnimations()
         models.clear()
         ignoredAnimations.clear()
         ordinals = emptyMap()
         firstLineBeginMs = null
+        lastLineEndMs = null
         val values = linkedMapOf<Int, Int>()
         var firstBegin: Long? = null
+        var lastEnd: Long? = null
         var failure: String? = null
         return try {
             val adapter = adapter() ?: return LyricDecodeResult.Pending("document:awaiting-adapter")
@@ -64,10 +73,16 @@ internal class AppleMusicLyricBlurHostPort(
                     check(values.put(id, ordinal) == null) { "Duplicate native line ID" }
                     if (ordinal == 0) firstBegin = (contract.method("nativeLineBegin").invoke(line) as Number)
                         .toLong().takeIf { it >= 0 }
+                    val end = (contract.method("nativeLineEnd").invoke(line) as Number).toLong()
+                    check(end >= 0)
+                    lastEnd = maxOf(lastEnd ?: end, end)
                 }.onFailure { failure = it.javaClass.simpleName }
             }
             ordinals = values.toMap()
-            if (failure == null) firstLineBeginMs = firstBegin
+            if (failure == null) {
+                firstLineBeginMs = firstBegin
+                lastLineEndMs = lastEnd
+            }
             failure?.let { LyricDecodeResult.Partial(ordinals, "document:$it") }
                 ?: LyricDecodeResult.Complete(ordinals)
         } catch (error: Exception) {
@@ -119,9 +134,12 @@ internal class AppleMusicLyricBlurHostPort(
                     val map = field.get(holder) as? Map<*, *> ?: return@maps
                     map.values.forEach { model ->
                         check(model != null && contract.wordModel.isInstance(model))
-                        if (models.add(model)) observeModel(model)
+                        if (models[model] != true) {
+                            models[model] = true
+                            observeModel(model)
+                        }
                         val id = (contract.field("wordLineId").get(model) as Number).toInt()
-                        if (hasLiveAnimation(model)) {
+                        if (hasLiveTextAnimation(model)) {
                             words.getValue(source).add(id)
                         }
                     }
@@ -131,38 +149,89 @@ internal class AppleMusicLyricBlurHostPort(
         val gap = (contract.field(if (contract.wordAdapter.isInstance(adapter)) "wordInstrumentalPosition"
             else "instrumentalPosition").get(adapter) as Number).toInt().takeIf { it in 0..ordinals.size }
         val position = if (displayed.isEmpty() && words.values.all { it.isEmpty() } && gap == null &&
-            firstLineBeginMs?.let { it > 0 } == true) runCatching {
+            (firstLineBeginMs?.let { it > 0 } == true || lastLineEndMs?.let { it > 0 } == true)) runCatching {
             val owner = ownerRef.get() ?: return@runCatching null
             val browser = contract.method("mediaBrowser").invoke(owner) ?: return@runCatching null
             (contract.method("mediaPosition").invoke(browser) as Number).toLong().takeIf { it >= 0 }
         }.getOrNull() else null
-        LyricDecodeResult.Complete(LyricDisplaySnapshot(displayed, words.mapValues { it.value.toSet() },
-            gap, firstLineBeginMs, position,
-            rows.any { it.isVisibleInstrumental() && it.identity.adapterPosition == gap }))
+        LyricDecodeResult.Complete(LyricDisplaySnapshot(
+            displayedLineIds = displayed, words = words.mapValues { it.value.toSet() },
+            instrumentalBeforeOrdinal = gap, firstLineBeginMs = firstLineBeginMs,
+            playbackPositionMs = position, lastLineEndMs = lastLineEndMs,
+            instrumentalRowVisible = rows.any { it.isVisibleInstrumental() && it.identity.adapterPosition == gap }))
     } catch (error: Exception) { LyricDecodeResult.Failed("display:${error.javaClass.simpleName}") }
     }
 
-    private fun animators(model: Any): List<Animator> = buildList {
-        (contract.field("wordAnimator").get(model) as? Animator)?.let(::add)
-        val tails = contract.field("wordTailAnimators").get(model) as Iterable<*>
-        tails.forEach { if (it is Animator) add(it) }
+    private fun textAnimations(animation: Animator): List<Animator> {
+        if (contract.isWordMovement(animation)) return emptyList()
+        return if (animation is AnimatorSet) animation.childAnimations.flatMap(::textAnimations)
+        else listOf(animation)
     }
 
-    private fun hasLiveAnimation(model: Any): Boolean {
-        fun live(animation: Animator) = animation !in ignoredAnimations &&
-            (animation.isStarted || animation.isRunning || animation.isPaused)
-        val progress = contract.field("wordAnimator").get(model) as? Animator
-        if (progress != null && live(progress)) return true
-        val tails = contract.field("wordTailAnimators").get(model) as Iterable<*>
-        return tails.any { it is Animator && live(it) }
+    private fun hasLiveTextAnimation(model: Any): Boolean {
+        val progress = contract.field("wordAnimator").get(model) as? Animator ?: return false
+        if (ignoredAnimations[progress] == true) return false
+        val text = textAnimations(progress)
+        text.forEach { observeTextAnimation(progress, it) }
+        // p contains glow/scale and spring movement, which can outlive the text highlight.
+        return text.any { ignoredAnimations[it] != true && (it.isStarted || it.isRunning || it.isPaused) }
+    }
+
+    private fun observeTextAnimation(parent: Animator, animation: Animator) {
+        val old = textAnimationWatches[animation]
+        if (old?.parent === parent) return
+        old?.let { animation.removeListener(it.listener) }
+        val listener = object : AnimatorListenerAdapter() {
+            override fun onAnimationStart(animation: Animator) = highlightAnimationChanged()
+            override fun onAnimationEnd(animation: Animator) = finished(animation)
+            override fun onAnimationCancel(animation: Animator) = finished(animation)
+
+            private fun finished(animation: Animator) {
+                if (textAnimationWatches[animation]?.listener !== this) return
+                textAnimationWatches.remove(animation)
+                animation.removeListener(this)
+                highlightAnimationChanged()
+            }
+        }
+        textAnimationWatches[animation] = TextAnimationWatch(parent, listener)
+        animation.addListener(listener)
+    }
+
+    fun stopObservingAnimations() {
+        textAnimationWatches.entries.toList().forEach { (animation, watch) -> animation.removeListener(watch.listener) }
+        textAnimationWatches.clear()
     }
 
     fun seek() {
-        models.toList().forEach { model -> runCatching { ignoredAnimations.addAll(animators(model)) } }
+        models.keys().forEach { model -> runCatching {
+            (contract.field("wordAnimator").get(model) as? Animator)?.let { progress ->
+                ignoredAnimations[progress] = true
+                textAnimations(progress).forEach { ignoredAnimations[it] = true }
+            }
+        } }
+        stopObservingAnimations()
     }
 
     fun wordStarted(model: Any, animation: Animator) {
-        if (model in models) ignoredAnimations.remove(animation)
+        if (models[model] == true) {
+            ignoredAnimations.remove(animation)
+            textAnimations(animation).forEach { ignoredAnimations.remove(it) }
+        }
+    }
+
+    fun wordFinished(animation: Animator) {
+        textAnimationWatches.entries.filter { it.value.parent === animation }.toList().forEach { (child, watch) ->
+            child.removeListener(watch.listener)
+            textAnimationWatches.remove(child)
+        }
+    }
+
+    override fun close() {
+        stopObservingAnimations()
+        models.clear()
+        ignoredAnimations.clear()
+        frameAdapter = null
+        ownerRef.clear()
     }
 }
 

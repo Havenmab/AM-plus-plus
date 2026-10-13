@@ -15,12 +15,12 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
             "wordVectorSize", "wordVectorGet", "wordGet", "wordLine", "nativeWordId", "getAdapter", "getScrollState",
             "setScrollState", "onTouchEvent", "onInterceptTouchEvent", "rowPosition", "rowHolder",
             "registerChildListener", "childAttach", "childDetach", "vmWord", "vmLine", "seek", "seekItem",
-            "nativeLineBegin", "mediaBrowser", "mediaPosition")
+            "nativeLineBegin", "nativeLineEnd", "mediaBrowser", "mediaPosition", "wordAnimationTag")
         private val adapterRoles = listOf("Commit", "Snapshot", "Map", "Type", "Id", "Reader", "Token", "Document", "Bind", "Payload", "Recycle")
         val nativeRoles = listOf("nativeLine", "nativeWord", "nativeBackground", "nativePronunciation", "nativePronunciationBackground")
-        val wordRoles = listOf("wordProgress", "wordTail", "wordLift", "wordReturn")
+        val wordRoles = listOf("wordProgress")
         private val commonFields = setOf("binding", "recycler", "activeAdapter", "viewModel", "holderView", "holderId", "holderType",
-            "wordLineId", "wordAnimator", "wordTailAnimators", "childListeners", "words", "backgroundWords",
+            "wordLineId", "wordAnimator", "childListeners", "words", "backgroundWords",
             "pronunciationWords", "pronunciationBackgroundWords", "instrumentalPosition", "wordInstrumentalPosition")
         private val inventory = FragmentMemberRequirements(
             methods = commonMethods + adapterRoles.flatMap { listOf("line$it", "word$it") } + nativeRoles +
@@ -38,6 +38,7 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
     val wordModel: Class<*> = type("wordModel")
     val recyclerClass: Class<*> = type("recycler")
     val childListener: Class<*> = method("childAttach").declaringClass
+    private val taggedAnimator: Class<*> = type("taggedAnimator")
     val wordMaps: List<Pair<LyricWordSource, Field>> = listOf(
         LyricWordSource.WORD to field("words"), LyricWordSource.BACKGROUND to field("backgroundWords"),
         LyricWordSource.PRONUNCIATION to field("pronunciationWords"),
@@ -53,7 +54,6 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
         check(method("registerChildListener").parameterTypes.contentEquals(arrayOf(childListener)) && childListener.isInterface)
         check(field("wordLineId").type == Int::class.javaPrimitiveType)
         check(field("wordAnimator").type == Animator::class.java)
-        check(Iterable::class.java.isAssignableFrom(field("wordTailAnimators").type))
         check(wordMaps.all { it.second.declaringClass == wordHolder && Map::class.java.isAssignableFrom(it.second.type) })
         check(wordRoles.all { field("${it}Model").type == wordModel })
         listOf("line", "word").forEach { prefix ->
@@ -65,9 +65,14 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
             check(nativeId.declaringClass == method("${prefix}Get").returnType &&
                 nativeId.parameterTypes.isEmpty() && nativeId.returnType == Int::class.javaPrimitiveType)
         }
-        val begin = method("nativeLineBegin")
-        check(begin.declaringClass.isAssignableFrom(method("lineGet").returnType) &&
-            begin.parameterTypes.isEmpty() && begin.returnType == Int::class.javaPrimitiveType)
+        listOf("nativeLineBegin", "nativeLineEnd").forEach { role ->
+            val timing = method(role)
+            check(timing.declaringClass.isAssignableFrom(method("lineGet").returnType) &&
+                timing.parameterTypes.isEmpty() && timing.returnType == Int::class.javaPrimitiveType)
+        }
+        val tag = method("wordAnimationTag")
+        check(taggedAnimator.isInterface && tag.declaringClass.isAssignableFrom(taggedAnimator) &&
+            tag.parameterTypes.isEmpty() && tag.returnType == Any::class.java)
         val browserClass = type("mediaBrowser")
         val browser = method("mediaBrowser")
         val position = method("mediaPosition")
@@ -85,6 +90,9 @@ internal class AppleMusicLyricBlurContract(val profile: AppleMusicHostProfile, l
     fun adapterMethod(adapter: Any, suffix: String): Method = method(
         if (wordAdapter.isInstance(adapter)) "word$suffix" else "line$suffix")
     fun isAdapter(value: Any?): Boolean = value != null && (lineAdapter.isInstance(value) || wordAdapter.isInstance(value))
+
+    fun isWordMovement(animation: Animator): Boolean = taggedAnimator.isInstance(animation) &&
+        method("wordAnimationTag").invoke(animation) == "KARAOKE_WORD_LIFT_TAG"
 
     fun decodeVector(vector: Any, word: Boolean): LyricDecodeResult<Set<Int>> {
         val values = linkedSetOf<Int>()

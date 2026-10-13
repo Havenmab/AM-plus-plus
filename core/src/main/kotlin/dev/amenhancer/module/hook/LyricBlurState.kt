@@ -30,12 +30,14 @@ data class LyricDisplaySnapshot(
     val firstLineBeginMs: Long? = null,
     val playbackPositionMs: Long? = null,
     val instrumentalRowVisible: Boolean = false,
+    val lastLineEndMs: Long? = null,
 )
 
 sealed interface LyricFocusAnchor {
     data object None : LyricFocusAnchor
     data class Lines(val ordinals: Set<Int>) : LyricFocusAnchor
     data class Instrumental(val beforeOrdinal: Int) : LyricFocusAnchor
+    data class Ending(val ordinals: Set<Int>) : LyricFocusAnchor
     data object Prelude : LyricFocusAnchor
 }
 
@@ -48,6 +50,7 @@ data class LyricBlurState(
     val touchActive: Boolean = false,
     val scrollState: Int = 0,
     val preludeConfirmed: Boolean = false,
+    val endingFocus: Set<Int> = emptySet(),
 ) {
     val protectedLineIds: Set<Int>
         get() = display?.let { it.displayedLineIds + it.words.values.flatten() }.orEmpty()
@@ -63,6 +66,10 @@ data class LyricBlurState(
             val words = current.words.values.flatten().mapNotNull(ordinals::get).toSet()
             if (words.isNotEmpty()) return LyricFocusAnchor.Lines(words)
             if (preludeConfirmed && ordinals.isNotEmpty()) return LyricFocusAnchor.Prelude
+            if (endingFocus.isNotEmpty() && current.displayedLineIds.isEmpty() &&
+                current.words.values.all { it.isEmpty() } && current.instrumentalBeforeOrdinal == null) {
+                return LyricFocusAnchor.Ending(endingFocus)
+            }
             return LyricFocusAnchor.None
         }
 }
@@ -90,6 +97,7 @@ object LyricBlurReducer {
                 event.epoch.playback <= state.epoch.playback) return state
             return state.copy(epoch = event.epoch, display = null,
                 preludeConfirmed = false,
+                endingFocus = emptySet(),
                 interactionGeneration = state.interactionGeneration + 1)
         }
         if (event.epoch != state.epoch) return state
@@ -107,7 +115,23 @@ object LyricBlurReducer {
                     // Keep confirmed prelude until the host applies content, including delayed first-line commits.
                     else -> state.preludeConfirmed || beforeFirstLine
                 }
-                state.copy(display = display, preludeConfirmed = prelude)
+                val lineOrdinals = display.displayedLineIds.mapNotNull(state.ordinals::get).toSet()
+                val highlightOrdinals = lineOrdinals.ifEmpty {
+                    display.words.values.flatten().mapNotNull(state.ordinals::get).toSet()
+                }
+                val finalOrdinal = state.ordinals.values.maxOrNull()
+                val afterLyrics = finalOrdinal != null && display.lastLineEndMs?.let { end ->
+                    end > 0 && position != null && position >= end
+                } == true && display.displayedLineIds.isEmpty() &&
+                    display.words.values.all { it.isEmpty() } && display.instrumentalBeforeOrdinal == null
+                val ending = when {
+                    finalOrdinal == null -> emptySet()
+                    highlightOrdinals.isNotEmpty() && (finalOrdinal in highlightOrdinals || state.endingFocus.isNotEmpty()) ->
+                        highlightOrdinals.toSet()
+                    afterLyrics && finalOrdinal != null -> state.endingFocus.ifEmpty { setOf(finalOrdinal) }
+                    else -> state.endingFocus
+                }
+                state.copy(display = display, preludeConfirmed = prelude && !afterLyrics, endingFocus = ending)
             }
             is LyricBlurEvent.Touch -> if (state.touchActive == event.active) state else state.copy(
                 touchActive = event.active,
@@ -145,9 +169,13 @@ object LyricBlurPolicy {
         if (anchor == LyricFocusAnchor.Prelude && row.kind == LyricRowKind.LYRIC && ordinal == 0) {
             return LyricBlurTarget(0f, 0f)
         }
+        if (anchor is LyricFocusAnchor.Ending && row.kind == LyricRowKind.LYRIC && ordinal in anchor.ordinals) {
+            return LyricBlurTarget(0f, 0f)
+        }
         val focus = when (anchor) {
             LyricFocusAnchor.None -> return LyricBlurTarget(0f, 0f)
             is LyricFocusAnchor.Lines -> BidirectionalBlurPolicy.targetRadius(ordinal, anchor.ordinals)
+            is LyricFocusAnchor.Ending -> BidirectionalBlurPolicy.targetRadius(ordinal, anchor.ordinals)
             LyricFocusAnchor.Prelude -> BidirectionalBlurPolicy.targetRadius(ordinal, setOf(0))
             is LyricFocusAnchor.Instrumental -> {
                 // The inserted gap lies between ordinals k-1 and k. Both nearest lyrics have distance one.

@@ -298,11 +298,11 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 
 #### 7.2.1 功能范围与开关
 
-现有 `cjkKaraokeAnimationEnabled` 同时控制 CJK 辉光和末词扫光补偿，不增加配置键或独立开关。修改设置后按原安装方式重启宿主生效；关闭时不安装这两部分 hook。
+现有 `cjkKaraokeAnimationEnabled` 同时控制 CJK 辉光、末词扫光补偿和 [7.3 跨行歌词扫光](#lyric-wrap-sweep)，不增加配置键或独立开关。修改设置后按原安装方式重启宿主生效；关闭时不安装这三部分 hook。
 
 辉光沿用单个、未合并 CJK 词的原生触发门槛、前景绑定、回落和结束清理。末词补偿依据原生词序列识别尾词，不额外要求该尾词触发长尾辉光。
 
-末词补偿只调整逐字内部渐变终点及其配套的延迟补亮动画，不修改原生逐字时间、词分组、整行切换、滚动或位移。本实现不包含词动画防中断、重新绑定保护或换行遮罩修正；跨行遮罩修复是独立能力，见 [7.3 跨行歌词扫光](#lyric-wrap-sweep)，不受本开关、本契约或本注册作用域控制。
+末词补偿只调整逐字内部渐变终点及其配套的延迟补亮动画，不修改原生逐字时间、词分组、整行切换、滚动或位移。本实现不包含词动画防中断、重新绑定保护或换行遮罩修正；跨行遮罩修复见 [7.3 跨行歌词扫光](#lyric-wrap-sweep)，共用本开关，但保持独立的契约、注册作用域与安装状态。
 
 #### 7.2.2 代码与安装链
 
@@ -370,13 +370,13 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 
 <a id="lyric-wrap-sweep"></a>
 
-### 7.3 跨行歌词扫光适配（独立能力）
+### 7.3 跨行歌词扫光适配（共用 CJK 开关）
 
 宿主原生逐字高亮按 TTML 词处理；词跨多个视觉行时几何按行计算，后续行容易落后或残留暗边。本能力在保留宿主原生 `ValueAnimator`/`AnimatorSet` 与歌词身份的前提下，只修正跨行词的遮罩几何与进度。
 
-它是独立能力：使用自己的能力集合、契约区域、注册作用域与安装状态，不读取 `cjkKaraokeAnimationEnabled`，不依赖 `cjk.terminalGradient` 的安装结果。两者会接入同一个原生 `d0`，但契约和作用域独立：单行尾词保留 7.2 补偿；跨行接管成功后由本节更新各行遮罩及片段羽化，原生单行更新被抑制，避免叠加写入。能力键为 `ModuleConstants.FEATURE_LYRIC_WRAP_SWEEP`（`lyric_wrap_sweep`），由 `LyricWrapSweepFeature` 通过能力接口安装，没有独立设置项。
+它使用自己的能力集合、契约区域、注册作用域与安装状态，由 `LyricWrapSweepFeature` 读取现有 `cjkKaraokeAnimationEnabled` 决定是否安装，不依赖辉光或 `cjk.terminalGradient` 的安装结果。两者会接入同一个原生 `d0`，但契约和作用域独立：单行尾词保留 7.2 补偿；跨行接管成功后由本节更新各行遮罩及片段羽化，原生单行更新被抑制，避免叠加写入。能力键为 `ModuleConstants.FEATURE_LYRIC_WRAP_SWEEP`（`lyric_wrap_sweep`），通过能力接口安装，共用“CJK 长尾歌词动画”开关，没有独立设置项。
 
-模块启用后，仅当当前精确 profile 在顶层声明 `lyricWrapSweep` 且 `contractVersion = 1` 时默认安装，无需手动开启；未声明的已登记版本明确报告不支持并保留原生渲染。当前声明本契约的版本为 `7.0.0-beta / 1609`。
+模块启用且 CJK 开关开启时，仅当当前精确 profile 在顶层声明 `lyricWrapSweep` 且 `contractVersion = 1` 时安装。CJK 开关默认开启；关闭并重启宿主后，本能力报告已禁用，不解析契约或注册 hook。开关开启但未声明契约的已登记版本明确报告不支持并保留原生渲染。当前声明本契约的版本为 `7.0.0-beta / 1609`。
 
 #### 7.3.1 代码与安装链
 
@@ -388,7 +388,7 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 | `host-applemusic` 几何 | [LyricWrapSweepGeometry.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepGeometry.kt) | 视觉行识别、跨行判定、弱引用几何校验与多遮罩写入 |
 | `host-applemusic` 目标 | [AppleMusicLyricWrapSweepTarget.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricWrapSweepTarget.kt) | Hook 注册、接管与退役、静态帧缓存、布局失效与失败释放 |
 | `host-applemusic` 装配 | [AppleMusicHostFactory.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) | 注入当前精确 profile 与宿主 ClassLoader |
-| `app` | [LyricWrapSweepFeature.kt](../app/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepFeature.kt) | 通过能力接口安装并上报能力状态 |
+| `app` | [LyricWrapSweepFeature.kt](../app/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepFeature.kt) | 读取 CJK 开关，开启时通过能力接口安装，关闭时上报已禁用 |
 | `hook-runtime` | [HookRegistrationScope](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrationScope.kt) | PREPARING、激活与关闭 |
 
 契约在安装前由 `FragmentProfileMembers` 解析完整必需角色；全部注册成功后才 activate。必需解析或注册失败时关闭 scope、报告降级，并保持宿主原生渲染。

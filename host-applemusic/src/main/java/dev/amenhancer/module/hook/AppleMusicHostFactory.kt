@@ -80,9 +80,10 @@ object AppleMusicHostFactory {
                 build = build,
                 enabled = { config.settings().forceCellularDataEntryEnabled },
             ),
-            bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(resolver),
+            bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(profile, classLoader),
             cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(resolver,
-                profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U"),
+                profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
+                AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

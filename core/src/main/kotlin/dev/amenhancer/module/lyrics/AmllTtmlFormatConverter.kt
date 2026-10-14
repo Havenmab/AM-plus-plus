@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import java.math.BigDecimal
+
 data class TtmlFormatConversion(
     val ttml: String,
     val converted: Boolean,
@@ -55,6 +57,12 @@ data class TtmlFormatConversion(
  * `Line` otherwise. AMLL's `xmlns=""` on `<metadata>` and `<div>` goes too: it
  * drops the lyric subtree out of the TTML namespace, leaving Apple no lines.
  *
+ * Lines are then stably sorted by their numeric begin time, with head entries
+ * following their keys. Same-start translations join with newlines in the
+ * first entry; subsequent entries keep their space placeholders. Simultaneous
+ * lyric voices, romanization, word timing and section ownership are retained.
+ * Existing Apple tracks participate in this formatting as well.
+ *
  * The rewrite is textual on purpose: whitespace between `<span>` tags carries
  * word separation, and a DOM round-trip would not preserve it. Only markup is
  * examined; lyric text nodes are copied verbatim.
@@ -81,17 +89,25 @@ object AmllTtmlFormatConverter {
     private val ROLE_ATTRIBUTE = attributePattern("ttm:role")
     private val LANGUAGE_ATTRIBUTE = attributePattern("xml:lang")
     private val KEY_ATTRIBUTE = attributePattern("itunes:key")
+    private val FOR_ATTRIBUTE = attributePattern("for")
     private val BEGIN_ATTRIBUTE_VALUE = attributePattern("begin")
+    private val END_ATTRIBUTE_VALUE = attributePattern("end")
     private val TIMING_ATTRIBUTE_VALUE = attributePattern("itunes:timing")
     private val ITUNES_DECLARATION = attributePattern("xmlns:itunes")
     private val SPAN_TIMING =
         Regex("""\s(?:begin|end)\s*=\s*"[^"]*"|\s(?:begin|end)\s*=\s*'[^']*'""")
     private val PARENTHESIZED = Regex("""^\s*[(（].*[)）]\s*$""", RegexOption.DOT_MATCHES_ALL)
+    private val TIMELINE_OFFSET = Regex("([0-9]+(?:\\.[0-9]+)?)(ms|s|m|h)")
+    private val TIMELINE_NUMBER = Regex("[0-9]+(?:\\.[0-9]+)?")
 
     private val AUXILIARY_ROLES = setOf(ROLE_TRANSLATION, ROLE_ROMAN, ROLE_BACKGROUND)
 
     private fun attributePattern(name: String) =
         Regex("""\s${Regex.escape(name)}\s*=\s*"([^"]*)"|\s${Regex.escape(name)}\s*=\s*'([^']*)'""")
+
+    /** Source attribute content already carries entities; choose a safe delimiter. */
+    private fun quoteRawAttributeValue(value: String): String =
+        if ('"' in value) "'$value'" else "\"$value\""
 
     fun toAppleFormat(ttml: String): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
@@ -100,18 +116,217 @@ object AmllTtmlFormatConverter {
         // own is no such signal: AMLL writes one to carry `<songwriters>`.
         val declared = declaredTracks(ttml)
         // The head already speaks for every kind the body carries, so this is
-        // Apple's own document and nothing, the root included, is rewritten.
+        // Apple's own document; only its timeline needs formatting.
         if (declared.any && !hasUndeclaredInlineTrack(ttml, declared)) {
-            return TtmlFormatConversion(ttml, false)
+            val formatted = formatTimeline(ttml)
+            return TtmlFormatConversion(formatted, formatted != ttml)
         }
         val migrated = migrateAuxiliaryTracks(ttml, declared)
         val body = nextElement(migrated, "body", 0)
-        val result = normalizeTags(
+        val normalized = normalizeTags(
             migrated,
             wordTimed = body != null && hasTimedSpan(migrated, body),
         )
+        val result = formatTimeline(normalized)
         return TtmlFormatConversion(result, result != ttml)
     }
+
+    /** Sort lines and head entries together, retaining simultaneous voices. */
+    private fun formatTimeline(ttml: String): String {
+        val body = nextElement(ttml, "body", 0) ?: return ttml
+        val root = TimelineSection(body, "", "")
+        val lines = mutableListOf<TimelineLine>()
+        if (!collectTimeline(ttml, root, emptyList(), lines) || lines.isEmpty()) return ttml
+        val ordered = lines.sortedBy(TimelineLine::begin)
+        val edits = mutableListOf<Edit>()
+        if (ordered != lines) {
+            edits += Edit(body.contentStart, body.contentEnd, renderTimeline(ttml, root, ordered))
+        }
+
+        // Without unique keys a head entry cannot be associated unambiguously.
+        val keys = ordered.map { attribute(it.element.attributes, KEY_ATTRIBUTE)?.takeIf(String::isNotBlank) }
+        if ((keys.any { it == null } || keys.distinct().size != keys.size) && declaredTracks(ttml).any) return ttml
+        if (keys.all { it != null } && keys.distinct().size == keys.size) {
+            val metadata = nextElement(ttml, "metadata", 0)
+            if (metadata != null) {
+                listOf("translations" to "translation", "transliterations" to "transliteration")
+                    .forEach { (containerName, itemName) ->
+                        val container = nextElement(ttml, containerName, metadata.contentStart)
+                            ?.takeIf { it.end <= metadata.contentEnd } ?: return@forEach
+                        childElements(ttml, container).filter { isElement(ttml, it.start, itemName) }
+                            .forEach { track ->
+                                val formatted = formatTrack(ttml, track, ordered, containerName == "translations")
+                                    ?: return ttml
+                                formatted.edit?.let(edits::add)
+                            }
+                    }
+            }
+        }
+        return applyEdits(ttml, edits)
+    }
+
+    /** Unknown structure or timestamps are left intact instead of guessed. */
+    private fun collectTimeline(
+        ttml: String,
+        section: TimelineSection,
+        ancestors: List<TimelineSection>,
+        lines: MutableList<TimelineLine>,
+    ): Boolean {
+        val children = childElements(ttml, section.element)
+        if (children.isEmpty()) return false
+        var cursor = section.element.contentStart
+        var pending = ""
+        children.forEach { child ->
+            val prefix = pending + ttml.substring(cursor, child.start)
+            pending = ""
+            when {
+                isElement(ttml, child.start, "p") -> {
+                    val begin = timelineTime(attribute(child.attributes, BEGIN_ATTRIBUTE_VALUE)) ?: return false
+                    lines += TimelineLine(child, begin, ancestors, prefix)
+                }
+                isElement(ttml, child.start, "div") -> {
+                    if (childElements(ttml, child).isEmpty()) {
+                        pending = prefix + ttml.substring(child.start, child.end)
+                    } else {
+                        val nested = TimelineSection(child, prefix, "")
+                        if (!collectTimeline(ttml, nested, ancestors + nested, lines)) return false
+                    }
+                }
+                else -> return false
+            }
+            cursor = child.end
+        }
+        section.tail = pending + ttml.substring(cursor, section.element.contentEnd)
+        return true
+    }
+
+    /** Reopen interleaving sections so each line keeps its original section. */
+    private fun renderTimeline(ttml: String, root: TimelineSection, lines: List<TimelineLine>): String = buildString {
+        val opened = mutableListOf<TimelineSection>()
+        val seen = mutableSetOf<TimelineSection>()
+        val last = mutableMapOf<TimelineSection, Int>()
+        lines.forEachIndexed { index, line -> line.ancestors.forEach { last[it] = index } }
+        fun closeTo(depth: Int, index: Int) {
+            while (opened.size > depth) {
+                val section = opened.removeAt(opened.lastIndex)
+                if (last[section] == index) append(section.tail)
+                append(ttml, section.element.contentEnd, section.element.end)
+            }
+        }
+        lines.forEachIndexed { index, line ->
+            val common = opened.zip(line.ancestors).takeWhile { (a, b) -> a === b }.size
+            closeTo(common, index - 1)
+            line.ancestors.drop(common).forEach { section ->
+                if (seen.add(section)) append(section.prefix)
+                var tag = ttml.substring(section.element.start, section.element.contentStart)
+                val run = lines.drop(index).takeWhile { section in it.ancestors }
+                tag = replaceAttribute(tag, BEGIN_ATTRIBUTE_VALUE, attribute(line.element.attributes, BEGIN_ATTRIBUTE_VALUE))
+                val endLine = run.mapNotNull { candidate ->
+                    timelineTime(attribute(candidate.element.attributes, END_ATTRIBUTE_VALUE))?.let { it to candidate }
+                }.maxByOrNull { it.first }?.second
+                tag = replaceAttribute(tag, END_ATTRIBUTE_VALUE, endLine?.let { attribute(it.element.attributes, END_ATTRIBUTE_VALUE) })
+                append(tag)
+                opened += section
+            }
+            append(line.prefix)
+            append(ttml, line.element.start, line.element.end)
+        }
+        closeTo(0, lines.lastIndex)
+        append(root.tail)
+    }
+
+    private fun replaceAttribute(tag: String, pattern: Regex, value: String?): String {
+        if (value == null) return tag
+        val match = pattern.find(tag) ?: return tag
+        val group = match.groups[1] ?: match.groups[2] ?: return tag
+        return tag.replaceRange(group.range, value)
+    }
+
+    /** Keep an entry per line even after a group's translation is combined. */
+    private fun formatTrack(
+        ttml: String,
+        track: Element,
+        lines: List<TimelineLine>,
+        merge: Boolean,
+    ): TrackFormatting? {
+        val entries = childElements(ttml, track)
+        if (entries.isEmpty()) return TrackFormatting(null)
+        if (entries.any { !isElement(ttml, it.start, "text") }) return null
+        val keys = lines.map { requireNotNull(attribute(it.element.attributes, KEY_ATTRIBUTE)) }
+        val byKey = entries.associateBy { attribute(it.attributes, FOR_ATTRIBUTE) }
+        if (byKey.size != entries.size || byKey.keys.any { it !in keys }) return null
+        val texts = keys.map { key ->
+            byKey[key]?.let { content(ttml, it) }?.takeIf(String::isNotBlank) ?: ABSENT_TEXT
+        }.toMutableList()
+        if (merge) {
+            lines.indices.groupBy { lines[it].begin }.values.filter { it.size > 1 }.forEach { group ->
+                val combined = group.map { texts[it] }.filter(String::isNotBlank).distinct().joinToString("\n")
+                texts[group.first()] = combined.ifBlank { ABSENT_TEXT }
+                group.drop(1).forEach { texts[it] = ABSENT_TEXT }
+            }
+        }
+        val prefixes = mutableMapOf<Element, String>()
+        var cursor = track.contentStart
+        entries.forEach { entry ->
+            prefixes[entry] = ttml.substring(cursor, entry.start)
+            cursor = entry.end
+        }
+        val formatted = buildString {
+            keys.forEachIndexed { index, key ->
+                val entry = byKey[key]
+                if (entry == null) {
+                    append("<text for=").append(quoteRawAttributeValue(key)).append('>')
+                    append(texts[index]).append("</text>")
+                } else {
+                    append(prefixes.getValue(entry))
+                    if (entry.selfClosing) {
+                        append("<text${entry.attributes}>${texts[index]}</text>")
+                    } else {
+                        append(ttml, entry.start, entry.contentStart)
+                        append(texts[index])
+                        append(ttml, entry.contentEnd, entry.end)
+                    }
+                }
+            }
+            append(ttml, cursor, track.contentEnd)
+        }
+        return TrackFormatting(
+            if (formatted == content(ttml, track)) null else Edit(track.contentStart, track.contentEnd, formatted),
+        )
+    }
+
+    /** Exact decimal comparison makes 01:30.100 and 90.1s the same start. */
+    private fun timelineTime(value: String?): BigDecimal? {
+        val text = value?.trim() ?: return null
+        val offset = TIMELINE_OFFSET.matchEntire(text)
+        val time = if (offset != null) {
+            val multiplier = when (offset.groupValues[2]) {
+                "ms" -> BigDecimal("0.001")
+                "m" -> BigDecimal(60)
+                "h" -> BigDecimal(3600)
+                else -> BigDecimal.ONE
+            }
+            offset.groupValues[1].toBigDecimal().multiply(multiplier)
+        } else {
+            val parts = text.split(':').takeIf { it.size in 1..3 } ?: return null
+            var seconds = BigDecimal.ZERO
+            parts.forEach { part ->
+                if (!TIMELINE_NUMBER.matches(part)) return null
+                seconds = seconds.multiply(BigDecimal(60)).add(part.toBigDecimal())
+            }
+            seconds
+        }
+        return time.stripTrailingZeros()
+    }
+
+    private class TimelineSection(val element: Element, val prefix: String, var tail: String)
+    private data class TrackFormatting(val edit: Edit?)
+    private data class TimelineLine(
+        val element: Element,
+        val begin: BigDecimal,
+        val ancestors: List<TimelineSection>,
+        val prefix: String,
+    )
 
     private fun declaredTracks(ttml: String) = DeclaredTracks(
         translations = nextElement(ttml, "translations", 0) != null,
@@ -365,7 +580,7 @@ object AmllTtmlFormatConverter {
         if (type != null) append(" type=\"").append(type).append('"')
         append(" xml:lang=\"").append(language).append("\">")
         entries.forEach { entry ->
-            append("<text for=\"").append(entry.key).append("\">")
+            append("<text for=").append(quoteRawAttributeValue(entry.key)).append('>')
             appendEntryText(entry)
             append("</text>")
         }

@@ -283,20 +283,21 @@ internal class AppleMusicLyricWrapSweepTarget(
 
     private fun restoreStatic(contract: LyricWrapSweepContract, param: ModernMethodHook.MethodHookParam) {
         val adapter = param.thisObject ?: return
-        val word = param.args[0] ?: return
-        val bindings = param.args[1] as? List<*> ?: return
         val flex = param.args[2] as? ViewGroup ?: return
-        val colors = param.args[4] as? IntArray ?: return
-        val rtl = param.args[5] as? Boolean ?: return
         val positionName = (param.args[6] as? Enum<*>)?.name ?: return
         val bottom = when (positionName) { "TOP" -> false; "BOTTOM" -> true; else -> return }
-        if (!LyricWrapSweepGeometry.spansRows(contract, bindings, flex, bottom)) {
-            staticFrames[flex]?.remove(bottom)
-            return
-        }
+        // Every native W call supersedes the previous static frame for this mask bank.
+        staticFrames[flex]?.remove(bottom)
+        val word = param.args[0] ?: return
+        val bindings = param.args[1] as? List<*> ?: return
+        val colors = param.args[4] as? IntArray ?: return
+        val rtl = param.args[5] as? Boolean ?: return
+        if (!LyricWrapSweepGeometry.spansRows(contract, bindings, flex, bottom)) return
         val browser = contract.browser(adapter) ?: return
         val position = contract.position(browser) ?: return
-        if (lyricWrapWordProgress(contract.wordBegin.getInt(word), contract.wordDuration.getInt(word), position) == null) return
+        val begin = contract.wordBegin.getInt(word)
+        // W also initializes future rows using their last word. Zero word progress is not a sung prefix.
+        if (position < begin || lyricWrapWordProgress(begin, contract.wordDuration.getInt(word), position) == null) return
         val content = contract.wordText.get(word) as? String ?: return
         val recipe = Recipe(adapter, word, browser, flex, bindings, content, bottom, rtl)
         val frame = StaticFrame(recipe, colors.copyOf())
@@ -310,7 +311,15 @@ internal class AppleMusicLyricWrapSweepTarget(
         val word = frame.recipe.word.get() ?: return
         val browser = frame.recipe.browser.get() ?: return
         val position = contract.position(browser) ?: return
-        val progress = lyricWrapWordProgress(contract.wordBegin.getInt(word), contract.wordDuration.getInt(word), position) ?: return
+        val begin = contract.wordBegin.getInt(word)
+        if (position < begin) {
+            frame.recipe.flex.get()?.let { view ->
+                val frames = staticFrames[view]
+                if (frames != null && frames[frame.recipe.bottom] === frame) frames.remove(frame.recipe.bottom)
+            }
+            return
+        }
+        val progress = lyricWrapWordProgress(begin, contract.wordDuration.getInt(word), position) ?: return
         val active = sweeps.keys().mapNotNull { sweeps[it] }.firstOrNull {
             !it.retired && it.recipe.flex.get() === frame.recipe.flex.get() &&
                 it.recipe.bottom == frame.recipe.bottom
@@ -327,7 +336,7 @@ internal class AppleMusicLyricWrapSweepTarget(
     }
 
     private fun restoreFrames(contract: LyricWrapSweepContract, view: ViewGroup) {
-        staticFrames[view]?.values?.forEach { renderFrame(contract, it) }
+        staticFrames[view]?.values?.toList()?.forEach { renderFrame(contract, it) }
     }
 
     private fun observeLayout(contract: LyricWrapSweepContract, view: ViewGroup) {

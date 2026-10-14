@@ -9,13 +9,11 @@ package io.github.proify.lyricon.amprovider.xposed
 import androidx.recyclerview.widget.RecyclerView
 import com.juren233.hyperlyricsenhanced.BuildConfig
 import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
-import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.LinkedHashMap
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 
 internal interface AppleArtistSurfaceHost {
     fun mediaApiEntityAttributes(entity: Any): Any?
@@ -112,8 +110,7 @@ internal class AppleArtistSurfaceHooks(
     private val topSongRetryIds = ConcurrentHashMap.newKeySet<String>()
 
     private val composeProfileStates = WeakIdentityMap<Any, Any>()
-    private val composeProfileRefs =
-        ConcurrentHashMap<String, ConcurrentLinkedQueue<WeakReference<Any>>>()
+    private val composeProfileRefs = ComposeProfileRefRegistry()
     private val composeProfileRefreshPending: MutableSet<Any> =
         Collections.newSetFromMap(Collections.synchronizedMap(IdentityHashMap()))
 
@@ -454,14 +451,8 @@ internal class AppleArtistSurfaceHooks(
     /** Re-publishes the last Success state of every live Compose artist page showing [mediaId]. */
     fun refreshComposeProfiles(mediaId: String): Int {
         val members = composeProfileMembers ?: return 0
-        val refs = composeProfileRefs[mediaId] ?: return 0
         var scheduled = 0
-        refs.forEach { ref ->
-            val owner = ref.get()
-            if (owner == null) {
-                refs.remove(ref)
-                return@forEach
-            }
+        composeProfileRefs.owners(mediaId).forEach { owner ->
             if (!composeProfileRefreshPending.add(owner)) return@forEach
             scheduled += 1
             // Distinct slot from page-state ARTIST_BINDING work so mergeIntents cannot drop
@@ -491,17 +482,22 @@ internal class AppleArtistSurfaceHooks(
     }
 
     fun hasComposeProfileRefs(mediaId: String): Boolean =
-        composeProfileRefs[mediaId]?.any { it.get() != null } == true
+        composeProfileRefs.hasOwners(mediaId)
 
     private fun onComposeProfileState(
         owner: Any,
         state: Any,
         members: ArtistComposeProfileMembers,
     ): Any? {
-        val entity = members.stateEntity(state) ?: return null
-        if (!isArtistEntity(entity)) return null
-        val attributes = host.mediaApiEntityAttributes(entity) ?: return null
-        val mediaId = host.mediaApiEntityCatalogId(entity, attributes) ?: return null
+        // Any Success this hook cannot own (non-artist, missing id) also supersedes the saved one.
+        val entity = members.stateEntity(state) ?: return clearComposeProfileOwner(owner).let { null }
+        if (!isArtistEntity(entity)) return clearComposeProfileOwner(owner).let { null }
+        val attributes = host.mediaApiEntityAttributes(entity)
+            ?: return clearComposeProfileOwner(owner).let { null }
+        val mediaId = host.mediaApiEntityCatalogId(entity, attributes)
+            ?: return clearComposeProfileOwner(owner).let { null }
+        // Drop refs from the owner's previous artist/top songs before registering this page.
+        composeProfileRefs.unregister(owner)
         // A fresh Success supersedes any coalesced refresh; do not leave pending stranded.
         composeProfileRefreshPending.remove(owner)
         composeProfileStates[owner] = state
@@ -642,13 +638,7 @@ internal class AppleArtistSurfaceHooks(
     }
 
     private fun registerComposeProfile(mediaId: String, owner: Any) {
-        val refs = composeProfileRefs.computeIfAbsent(mediaId) { ConcurrentLinkedQueue() }
-        var registered = false
-        refs.forEach { ref ->
-            val target = ref.get()
-            if (target == null) refs.remove(ref) else if (target === owner) registered = true
-        }
-        if (!registered) refs.add(WeakReference(owner))
+        composeProfileRefs.register(mediaId, owner)
     }
 
     /**
@@ -665,15 +655,7 @@ internal class AppleArtistSurfaceHooks(
     }
 
     private fun unregisterComposeProfileOwner(owner: Any) {
-        val emptyKeys = ArrayList<String>()
-        composeProfileRefs.forEach { (mediaId, refs) ->
-            refs.removeIf { ref ->
-                val target = ref.get()
-                target == null || target === owner
-            }
-            if (refs.isEmpty()) emptyKeys += mediaId
-        }
-        emptyKeys.forEach { composeProfileRefs.remove(it) }
+        composeProfileRefs.unregister(owner)
     }
 
     fun handleFinalBinding(model: Any, finalHolder: Any?, position: Int?) {

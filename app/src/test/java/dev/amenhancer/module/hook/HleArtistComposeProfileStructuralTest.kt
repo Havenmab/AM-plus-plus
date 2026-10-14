@@ -88,4 +88,16 @@ class HleArtistComposeProfileStructuralTest {
                 assertEquals(name, if (name.endsWith("1609")) roles else emptyList<String>(), declared)
             }
     }
+
+    @Test
+    fun unownedSuccessAndArtistChangesDropTheOwnersPreviousRefs() {
+        val hooks = source(
+            "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/AppleArtistSurfaceHooks.kt",
+        )
+        val state = hooks.substringAfter("private fun onComposeProfileState(").substringBefore("registerComposeProfile(mediaId, owner)")
+        assertEquals(4, Regex("return clearComposeProfileOwner\\(owner\\)").findAll(state).count())
+        assertTrue(state.contains("composeProfileRefs.unregister(owner)"))
+        assertTrue(hooks.contains("private val composeProfileRefs = ComposeProfileRefRegistry()"))
+        assertFalse(hooks.contains("ConcurrentLinkedQueue<WeakReference<Any>>"))
+    }
 }

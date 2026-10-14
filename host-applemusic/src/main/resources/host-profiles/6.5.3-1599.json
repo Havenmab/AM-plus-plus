@@ -1683,7 +1683,7 @@
     },
     "evidence": {
       "sourceBuild": "6.5.3/1599",
-      "analysis": "docs/lyrics-blur-guide.md",
+      "analysis": "docs/host-adaptation-guide.md",
       "runtimeVerified": false,
       "memberSource": "Exact DEX member descriptors plus local Fragment/adapter/word-model/binding/RecyclerView source",
       "wordProtection": "holder G/H/I/J models: o text progress children; exclude p glow/tails and KARAOKE_WORD_LIFT_TAG; scoped child end/cancel observations and identity-owned model callbacks",

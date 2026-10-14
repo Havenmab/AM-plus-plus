@@ -4982,5 +4982,293 @@
       "prelude": "First lyric getBegin and the current Fragment media browser getCurrentPosition; independent of the 7000ms dots gate",
       "scroll": "setScrollState/getScrollState and observed native touch methods; child h(p), p.d/p.b"
     }
+  },
+  "lyricWrapSweep": {
+    "contractVersion": 1,
+    "methods": {
+      "build": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "d0",
+        "parameters": [
+          "java.lang.Integer",
+          "[Lcom.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a;",
+          "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+          "java.util.List",
+          "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+          "boolean",
+          "boolean",
+          "boolean",
+          "int"
+        ],
+        "returns": "java.util.ArrayList",
+        "static": false
+      },
+      "update": {
+        "owner": "com.apple.android.music.player.t",
+        "name": "onAnimationUpdate",
+        "parameters": [
+          "android.animation.ValueAnimator"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "rushUpdate": {
+        "owner": "com.apple.android.music.player.u",
+        "name": "onAnimationUpdate",
+        "parameters": [
+          "android.animation.ValueAnimator"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "staticMask": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "W",
+        "parameters": [
+          "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+          "java.util.List",
+          "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+          "[I",
+          "[I",
+          "boolean",
+          "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$b"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "rebind": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "i0",
+        "parameters": [
+          "com.apple.android.music.player.A$a",
+          "int"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "bind": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "k",
+        "parameters": [
+          "androidx.recyclerview.widget.RecyclerView$D",
+          "int"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "recycle": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "r",
+        "parameters": [
+          "androidx.recyclerview.widget.RecyclerView$D"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "document": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "R",
+        "parameters": [
+          "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "clearMasks": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+        "name": "v",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "textView": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "v0",
+        "parameters": [
+          "androidx.databinding.ViewDataBinding"
+        ],
+        "returns": "com.apple.android.music.common.views.CustomTextView",
+        "static": true
+      },
+      "maskUpdate": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a",
+        "name": "b",
+        "parameters": [
+          "[I",
+          "[F",
+          "java.lang.Float"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "animationTag": {
+        "owner": "N7.c",
+        "name": "getTag",
+        "parameters": [],
+        "returns": "java.lang.Object",
+        "static": false,
+        "invocationOnly": true
+      },
+      "pause": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "I",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "pauseRequested": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "J",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "resume": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "K",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "mediaBrowser": {
+        "owner": "ia.a$c",
+        "name": "getMediaBrowser",
+        "parameters": [],
+        "returns": "J4.w",
+        "static": false
+      },
+      "mediaPosition": {
+        "owner": "J4.B",
+        "name": "getCurrentPosition",
+        "parameters": [],
+        "returns": "long",
+        "static": false
+      },
+      "seek": {
+        "owner": "J4.B",
+        "name": "seekTo",
+        "parameters": [
+          "int",
+          "long"
+        ],
+        "returns": "void",
+        "static": false
+      }
+    },
+    "fields": {
+      "topMasks": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+        "name": "T",
+        "type": "android.util.SparseArray"
+      },
+      "bottomMasks": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+        "name": "U",
+        "type": "android.util.SparseArray"
+      },
+      "maskFirst": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a",
+        "name": "c",
+        "type": "int"
+      },
+      "maskLast": {
+        "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a",
+        "name": "d",
+        "type": "int"
+      },
+      "wordBegin": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+        "name": "d",
+        "type": "int"
+      },
+      "wordDuration": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+        "name": "e",
+        "type": "int"
+      },
+      "bindingRoot": {
+        "owner": "androidx.databinding.ViewDataBinding",
+        "name": "d",
+        "type": "android.view.View"
+      },
+      "holderBinding": {
+        "owner": "com.apple.android.music.player.f1$b",
+        "name": "u",
+        "type": "androidx.databinding.ViewDataBinding"
+      },
+      "adapterCallback": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "y",
+        "type": "com.apple.android.music.player.fragment.N"
+      },
+      "callbackFragment": {
+        "owner": "com.apple.android.music.player.fragment.N",
+        "name": "a",
+        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
+      },
+      "featherPixels": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "b0",
+        "type": "float"
+      },
+      "listenerMask": {
+        "owner": "com.apple.android.music.player.t",
+        "name": "f",
+        "type": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a"
+      },
+      "listenerColors": {
+        "owner": "com.apple.android.music.player.t",
+        "name": "g",
+        "type": "[I"
+      },
+      "listenerFeather": {
+        "owner": "com.apple.android.music.player.t",
+        "name": "e",
+        "type": "float"
+      },
+      "listenerRtl": {
+        "owner": "com.apple.android.music.player.t",
+        "name": "a",
+        "type": "boolean"
+      },
+      "wordText": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+        "name": "c",
+        "type": "java.lang.String"
+      },
+      "wordAnimator": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+        "name": "o",
+        "type": "android.animation.Animator"
+      },
+      "words": {
+        "owner": "com.apple.android.music.player.A$a",
+        "name": "G",
+        "type": "android.util.ArrayMap"
+      },
+      "backgroundWords": {
+        "owner": "com.apple.android.music.player.A$a",
+        "name": "H",
+        "type": "android.util.ArrayMap"
+      },
+      "pronunciationWords": {
+        "owner": "com.apple.android.music.player.A$a",
+        "name": "I",
+        "type": "android.util.ArrayMap"
+      },
+      "pronunciationBackgroundWords": {
+        "owner": "com.apple.android.music.player.A$a",
+        "name": "J",
+        "type": "android.util.ArrayMap"
+      }
+    },
+    "evidence": {
+      "sourceIdentity": "com.apple.android.music / 7.0.0-beta / 1609",
+      "memberSource": "1609 decoded DEX member inventory and targeted native V/d0/W/i0/player.t/Flex source",
+      "runtimeVerified": false,
+      "maskKey": "visual Flex row first child index; c/d delimit that row child range",
+      "clock": "getCurrentPosition on the native browser, WordProperties begin/duration in milliseconds",
+      "ownership": "retain native ValueAnimator/AnimatorSet; take over only registered wrapped-word update callbacks"
+    }
   }
 }

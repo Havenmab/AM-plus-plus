@@ -150,6 +150,25 @@ def verify_fragment_contracts(document, classes, failures):
     sections = {name: document.get(name) for name in (
         'fragmentDualPane', 'fragmentLyricsRuntime', 'fragmentKaraokeWidth', 'fragmentTabletVideoHandoff')}
     sections['fragmentChrome.members'] = (document.get('fragmentChrome') or {}).get('members')
+    # Optional independent renderer correction. Missing roles cannot silently pass as an empty inventory.
+    wrap = document.get('lyricWrapSweep')
+    if wrap is not None:
+        if not isinstance(wrap, dict) or wrap.get('contractVersion') != 1:
+            failures.append('lyricWrapSweep: missing versioned contract')
+        else:
+            required = {
+                'methods': {'build', 'update', 'rushUpdate', 'staticMask', 'rebind', 'bind', 'recycle', 'document',
+                            'clearMasks', 'textView', 'maskUpdate', 'animationTag', 'mediaBrowser',
+                            'mediaPosition', 'seek', 'pause', 'pauseRequested', 'resume'},
+                'fields': {'topMasks', 'bottomMasks', 'maskFirst', 'maskLast', 'wordBegin', 'wordDuration',
+                           'bindingRoot', 'holderBinding', 'adapterCallback', 'callbackFragment', 'featherPixels',
+                           'listenerMask', 'listenerColors', 'listenerFeather', 'listenerRtl', 'wordText', 'wordAnimator',
+                           'words', 'backgroundWords', 'pronunciationWords', 'pronunciationBackgroundWords'},
+            }
+            for group, roles in required.items():
+                for role in sorted(roles - wrap.get(group, {}).keys()):
+                    failures.append(f'lyricWrapSweep.{group}.{role}: missing required role')
+            sections['lyricWrapSweep'] = wrap
     main = sections.get('fragmentDualPane') or {}
     policy = main.get('songLayoutPolicy')
     if policy == '1606-column':

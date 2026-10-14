@@ -11,6 +11,7 @@ object ModuleConstants {
     const val FEATURE_PHONE_LIQUID_GLASS = "phone_liquid_glass"
     const val FEATURE_FUTURE_BLUR = "future_blur"
     const val FEATURE_CJK_KARAOKE_ANIMATION = "cjk_karaoke_animation"
+    const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"

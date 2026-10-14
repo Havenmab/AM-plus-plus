@@ -2,7 +2,7 @@
 
 本手册供维护者为一个具体 Apple Music 构建建立、维护和验收 AM++ 接入。适配对象是包名、versionName 和 versionCode 组成的精确版本组合；正式版、beta 和同名的不同构建分别处理。手册覆盖当前 Activity、Fragment 两类宿主，并作为后续版本的统一流程。
 
-配套文档：[适配清单](host-adaptation-checklist.md)用于核对工作是否完整，[功能保全与验收矩阵](feature-preservation.md)定义功能行为和人工场景。本手册描述当前架构与适配方法；单次任务的排查过程、代码改动和构建日志保存在任务记录中。
+各功能的运行规则、成员契约和维护入口集中在本手册；[适配清单](host-adaptation-checklist.md)集中逐项核对与人工场景，[功能保全与验收矩阵](feature-preservation.md)定义跨功能边界和结果记录方式。单次任务的排查过程、代码改动和构建日志保存在任务记录中。
 
 ## 1. 适用范围与版本登记
 
@@ -48,6 +48,7 @@
 | `hookTargets` | HLE Hook 入口、签名约束、调用方约束及 `runtimeMemberNames` |
 | `settings` / `chrome` | 设置入口、原生设置模型、导航和播放器资源或旧宿主契约 |
 | `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
+| `cjk.terminalGradient` | 可选的 CJK 末词羽化补偿精确契约：扫光/余量方法、reader、行词向量、词 ID/时间与动画标签 |
 | `lyricBlur` | 两类页面族独立使用的完整歌词模糊契约：显示提交、文档/行身份、绑定、词动画、视图、触摸/滚动与 Seek |
 | `catalogQueryRenames` | 实际目录查询 owner 与方法映射，配合完整签名和调用路径核对 |
 | Fragment 专用区域 | 双栏、歌词运行时、逐字宽度、视频接力、chrome 和恢复所需契约 |
@@ -176,23 +177,202 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ## 7. 各功能的适配要点
 
-### 7.1 歌词模糊的独立契约
+维护规则集中在本节：[歌词模糊](#lyrics-blur)、[CJK 辉光与末词扫光](#cjk-animation)。成员核对与完整人工场景集中在 [适配清单](host-adaptation-checklist.md)。
 
-`AppleMusicLyricBlurContract` 对两类页面族都解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。代码维护的必需角色、当前 profile 与 `scripts/verify-host-profile.py` 清单同步维护，JSON 漏写角色不能绕过预检。
+<a id="lyrics-blur"></a>
 
-适配时独立核对实际显示提交、文档/行身份、四路词动画、首句时间与播放位置、绑定/回收、触摸/滚动和 Seek。混淆名、声明 owner 和类型关系以当前安装包为准；Native 事件不替代宿主已应用的显示集合。
+### 7.1 歌词模糊适配与维护
 
-显示规则、前奏/延迟三点处理、状态分层、效果所有权和人工场景统一维护在 [歌词模糊维护指南](lyrics-blur-guide.md)。
+`AppleMusicLyricBlurContract` 对两类页面族均解析独立 `lyricBlur` 区域，不依赖双栏开关或双栏契约解析成功。以下规则用于已登记构建维护和新版本适配；精确版本、成员与能力资格仍以当前 profile 为准。
 
-### 7.2 其他功能与共同规则
+#### 7.1.1 显示行为
+
+| 项目 | 规则 |
+|---|---|
+| 高亮歌词 | 正常跟随时焦点半径和边缘权重目标均为 0；实际效果可以在 300ms 内逐渐清晰 |
+| 过渡 | 清晰与模糊两个方向均为 300ms 线性插值；同目标事件不重启动画，目标改变时从当前值接续 |
+| 已唱歌词 | 从距离 0 起，基础半径为 `0、13、17、22px`，更远保持 22px |
+| 待唱歌词 | 从距离 0 起，基础半径为 `0、8、13、17、22px`，更远保持 22px |
+| 用户偏移 | 使用现有配置键、单位和范围，高亮目标 0 不受偏移影响 |
+| 无三点前奏 | 有首句时间与播放位置或宿主前奏状态的证据时，文档首句清晰，后续按原曲线模糊 |
+| 三点延迟显示 | 三点实际绑定、显示且有尺寸后，平滑切到间奏距离；首句未高亮时基础目标为 8px，已高亮仍为 0 |
+| 间奏 | 锚点为间奏后的第一条歌词序号；最近的已唱、待唱歌词分别按距离 1；三点自身不施加模块模糊 |
+| Credits | 单独分类，继承文档末尾歌词的焦点强度 |
+| 歌词结束 | 保留末句期间最后有效的焦点和模糊分布，不因高亮集合变空让整页清晰；文档变化与 Seek 清除旧焦点 |
+| 用户浏览 | 触摸或用户拖动后平滑解除焦点模糊；长按与用户惯性滚动继续保持浏览模式 |
+| 恢复跟随 | 手指离开且列表空闲 1 秒后，按最新显示状态平滑恢复；再次触摸或滚动撤销计时 |
+| 程序滚动 | 宿主自动跟随不会主动进入浏览模式 |
+| 平板边缘 | 上下 10% 区域、最大 5px；浏览模式保留边缘效果 |
+
+前奏、间奏和高亮保护分开保存。前奏确认在文档变化和 Seek 时清除，在宿主实际显示行/词或进入其他间奏时更新；不能仅因空高亮集合就推断为前奏或间奏，也不能把第一条可见行伪装成高亮。
+
+#### 7.1.2 分层与入口
+
+| 层 | 职责与维护入口 |
+|---|---|
+| `core` | [LyricBlurState](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricBlurState.kt)：事件、代际、归并、保护集合、焦点与交互；[BidirectionalBlurPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/BidirectionalBlurPolicy.kt)：原半径曲线、偏移、量化与插值 |
+| `host-api` | [LyricBlurHostPort](../host-api/src/main/java/dev/amenhancer/module/hook/LyricBlurHostPort.kt)：文档、显示快照与行身份接口；不暴露宿主私有对象 |
+| `host-applemusic` 契约 | [AppleMusicLyricBlurContract](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurContract.kt)：解析 profile、必需角色及类型关系；[HostPort](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurHostPort.kt)：读取宿主已经应用的显示状态 |
+| `host-applemusic` 会话 | [Runtime](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBlurRuntime.kt)：Hook 与活动视图；[LyricBlurViewSession](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurViewSession.kt)：每个 root 的绑定、恢复任务和帧驱动 |
+| `host-applemusic` 渲染 | [Renderer](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurViewRenderer.kt)：逻辑行动画与边缘几何；[EffectOwner](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricBlurEffectOwner.kt)：效果写入与恢复 |
+| `hook-runtime` | [HookRegistrationScope](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrationScope.kt)：PREPARING、激活与关闭 |
+| 装配 | [AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 创建唯一 [能力目标](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicBidirectionalLyricBlurTarget.kt)；`app` 保留设置、门禁与能力状态入口 |
+
+Credits 与三点语义标记由 [LyricCreditsRowResourceHook](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricCreditsRowResourceHook.kt) 接入。字体、翻译、CJK 和双栏通过现有架构协作，模糊不依赖双栏开关或双栏安装成功。
+
+仅混淆名变化、语义一致时，主要更新精确 profile。宿主提交时序、模型或生命周期变化时，修改相应 Contract、HostPort 或 Runtime；共享状态与渲染规则继续复用。新页面族必须重新分析，不能仅凭主版本号选旧接入。
+
+#### 7.1.3 宿主契约与显示读取
+
+必需角色由代码维护。新增依赖时同步更新 `AppleMusicLyricBlurContract`、当前 profile 和 `scripts/verify-host-profile.py` 的独立清单；JSON 少写一个角色不能绕过安装预检。
+
+每个构建独立核对以下链路：
+
+- Fragment 生命周期、binding、精确 RecyclerView、子项监听、触摸和滚动状态。
+- 逐行与逐字 adapter 的提交、快照、位置映射、类型、稳定 ID、文档安装、绑定及回收。
+- 文档 token/reader、native 行和词 ID、首句时间与当前媒体浏览器播放位置。
+- 主词、背景词、发音与背景发音四路模型及实际文字动画、开始/结束/取消释放；纯装饰动画不延长保护。
+- Native、VM 刷新及媒体控制器各个实际 Seek 入口。
+
+方法记录实际声明 owner、参数、返回类型、static 和调用方式，字段记录 owner、完整类型及对象归属。沿实际 `extends` / `implements` 关系确认继承或接口成员；使用 DEX 的擦除签名，不把反编译工具推断的泛型、类型或修复名称当作契约。
+
+| 身份或角色 | 用途 |
+|---|---|
+| `nativeLineId` | 文档内原生歌词身份，用于显示保护与文档映射 |
+| `lyricOrdinal` | 文档内歌词序号，用于距离计算 |
+| `adapterPosition` | 当前列表位置，经 adapter 映射后才能对应歌词 |
+| `nativeLineId/nativeWordId` getter | 原生对象 ID 角色，与 adapter getter 分开登记 |
+| `lineId/wordId` getter | adapter 稳定 ID 角色，用于核对当前 holder 与绑定身份 |
+| `nativeLineBegin/nativeLineEnd/mediaBrowser/mediaPosition` | 首句时间、文档最大结束时间与当前播放位置；前奏和歌词结束所需证据 |
+| `wordAnimationTag` | 当前构建的标记接口 getter；识别主动画中的纯位移子项 |
+
+在 adapter 实际提交方法完成后重新读取其显示集合，包括宿主因输入是旧集合子集而跳过更新的情况。宿主等待 ItemAnimator、再向 Handler 提交期间，继续使用已应用的显示状态。Native 和 VM 事件可以触发刷新，不能直接把新 raw 集合替换为显示集合，也不能因 Native Hook 安装成功永久屏蔽其他来源。
+
+词保护读取四路模型的主文字动画，递归排除 `KARAOKE_WORD_LIFT_TAG` 位移子项；`p` 中的辉光、缩放和回落不作为高亮证据。只观察相关文字子动画的开始、结束与取消，及时触发快照刷新；不等待整个装饰动画组结束，不使用固定 grace 或修改宿主动画。模型归属复用弱身份映射，避免绑定字段改变 `hashCode` 后丢失结束通知。保护集合与焦点独立：即使焦点进入间奏，仍在显示的高亮/词行保持目标 0。
+
+Native vector、pointer 及包装对象在 Hook 当次同步解码，只向主线程提交复制出的数值。`Complete` 空集合、`Pending`、`Partial` 和 `Failed` 分别处理；不完整读取不能解释为空高亮。没有可信显示状态时平滑解除焦点模糊，等待下一次有效事件恢复。`NO_POSITION`、未知类型和身份不一致的行不参与距离计算。
+
+#### 7.1.4 文档、视图与交互生命周期
+
+每个歌词 root 有独立会话，全屏和右栏可同时存在。事件按适用的视图、文档、播放与交互代际校验；所有状态在主线程串行归并，一帧使用同一份状态与行快照。
+
+文档安装、清空、adapter 替换及自定义 TTML 重装更新文档代际，即使宿主包装对象引用未变化。Seek 更新播放代际，清理旧词流和过渡；集合缩小不能作为 Seek 证据。
+
+末句进入有效高亮后记录当前焦点；后续真实高亮继续更新它，显示集合正常清空后转为独立 `Ending` 焦点，保留原曲线与清晰锚点的边缘保护。暂停打开或重建时，可用完整文档的最大 `getEnd()` 与当前播放位置确认结束，再使用末句焦点。读取失败不当作正常结束，文档变化和 Seek 清除旧记录；手动浏览与 1 秒恢复规则继续生效。
+
+动画按逻辑行保存。同一歌词再次出现可衔接原进度；View 换绑时撤销旧租约，按新行状态初始化，不继承旧半径。首次取得 adapter、文档、binding 或行布局就安排首帧，包括暂停时打开歌词；初始化等待仅在后续宿主事件重读，不增加固定延迟轮询。
+
+观察原生触摸与滚动方法，不替换 `OnTouchListener`，不消费事件。浏览期间高亮更新只更新状态；恢复任务携带会话和交互代际，再次触摸、继续滚动、换歌或销毁均使旧任务失效。
+
+关闭视图取消帧回调、恢复任务和监听，释放仍拥有的效果。旧会话回调不得操作新视图。
+
+#### 7.1.5 渲染、所有权与安装
+
+焦点半径和边缘保护权重分别按 300ms 动画计算：
+
+```text
+最终半径 = 量化并限制到 0–32(
+    max(动画中的焦点半径, 当前边缘半径 × 动画中的边缘权重)
+)
+```
+
+边缘使用经过行 View 变换、位移与列表滚动的矩形，视口扣除 padding。几何更新不重启焦点动画。每个会话保留一个帧驱动，合并脏状态与动画推进；动画结束且状态、几何不变时停止请求连续帧。`DECAL` 效果最多缓存 32 个，量化半径及宿主效果版本不变时不重复写入。
+
+存在模块模糊时，由渲染会话持有列表裁剪租约：关闭 RecyclerView 的逐子项边界裁剪，让模糊自然扩散，避免短小的 Credits 行出现矩形硬边；列表自身仍按当前视口与宿主显式裁剪范围的交集裁剪，原有 padding 和外层渐隐保留。尺寸或宿主裁剪范围变化时更新，不改变行高、间距、字体、透明度或原半径曲线；半径全部归零、行释放、列表替换或会话关闭时归还仍拥有的裁剪属性。实现只使用 SDK 属性，由各精确版本共用，不增加混淆成员契约。
+
+Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffect` 写入，记录最新已知宿主效果；模块写入带重入标记并与宿主效果合成。释放只撤销仍由模块拥有的最后写入，恢复已知的最新宿主效果。初始效果未知的既有 View 不强行接管，不使用效果 getter、隐藏 API 或 `alpha = 1f` 清理。
+
+安装顺序固定为：精确版本资格与 Android 门禁 → 解析全部必需契约 → PREPARING scope 注册 Hook 和清理 → 全部成功后 activate → 返回能力状态。必需解析或注册失败关闭整组，报告降级并保留宿主原生行为。
+
+#### 7.1.6 诊断
+
+沿用 `AMPP-LYRIC-PROBE` 入口，DEBUG 启用后才输出详细事件。每会话最多 128 条，ID/行观察最多 32 项，重复摘要与失败原因合并限量。记录构建、来源、各代际、行映射、保护集合、焦点、模式、目标/实际焦点半径及动画时间，不记录歌词文本。
+
+逐项核对及人工场景见 [清单：歌词模糊](host-adaptation-checklist.md#lyrics-blur-checks)。
+
+<a id="cjk-animation"></a>
+
+### 7.2 CJK 辉光与末词扫光适配
+
+#### 7.2.1 功能范围与开关
+
+现有 `cjkKaraokeAnimationEnabled` 同时控制 CJK 辉光和末词扫光补偿，不增加配置键或独立开关。修改设置后按原安装方式重启宿主生效；关闭时不安装这两部分 hook。
+
+辉光沿用单个、未合并 CJK 词的原生触发门槛、前景绑定、回落和结束清理。末词补偿依据原生词序列识别尾词，不额外要求该尾词触发长尾辉光。
+
+末词补偿只调整逐字内部渐变终点及其配套的延迟补亮动画，不修改原生逐字时间、词分组、整行切换、滚动或位移。本实现不包含词动画防中断、重新绑定保护或换行遮罩修正。
+
+#### 7.2.2 代码与安装链
+
+| 层 | 入口 | 责任 |
+|---|---|---|
+| `core` | [CjkTerminalGradientPolicy.kt](../core/src/main/kotlin/dev/amenhancer/module/hook/CjkTerminalGradientPolicy.kt) | 羽化终点余量规则，不依赖 Android 或宿主成员 |
+| `host-applemusic` | [AppleMusicCjkTerminalGradientTarget.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) | `TerminalGradientContract`、末词识别、原生扫光 hook 和失败释放 |
+| `host-applemusic` | [AppleMusicCjkKaraokeAnimationTarget.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkKaraokeAnimationTarget.kt) | 辉光安装成功后安装末词补偿，合并能力状态 |
+| `host-applemusic` | [AppleMusicHostFactory.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) | 将当前精确 profile 和宿主 ClassLoader 注入补偿能力 |
+| `app` | [CjkKaraokeAnimationFeature.kt](../app/src/main/java/dev/amenhancer/module/hook/CjkKaraokeAnimationFeature.kt) | 读取现有开关，决定是否安装整个 CJK 能力 |
+
+末词契约在安装前通过 `FragmentProfileMembers` 解析完整成员清单。两个新 hook 使用同一 `HookRegistrationScope`，全部注册完成后才激活；失败关闭 scope，部分注册的回调保持失活。
+
+#### 7.2.3 末词补偿规则
+
+渐变的完全高亮边缘落后于扫光前缘一个羽化宽度。终点刚好停在字形右端时，羽化尾部尚未通过末字，末字会留下未完全高亮的区域。
+
+对于合法的 CJK 尾词扫光，终点余量改为 `max(original, feather)`。仅接受有限数值及 `0 < feather <= 1`；原生余量已经更大时保留它，无效几何保持原生结果。
+
+末词选择读取当前 reader 对应行的完整原文和原生发音向量，分别选出合法 `end` 最大的词 ID；相同 `end` 取向量中后出现的词。向量大小必须在 `2..4096`，词时间必须满足 `begin >= 0` 且 `end > begin`。两路 ID 独立读取，结果按 reader 弱引用与行 ID 缓存。
+
+补偿只作用于当前 `d0` 调用中的对应 CJK 词，保留第八个参数（零基索引 7）为 `true` 的原生分支和 Latin 文本。`c0` 的词对象必须与当前扫光词一致；线程作用域在嵌套调用和异常退出后恢复。
+
+有效几何补偿发生后，从 `d0` 的动画返回列表移除标签为 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 的延迟动画，避免已完成的遮罩被随后补亮覆盖。其他动画及原生逐字时长保留；未发生有效补偿时保留原动画列表。
+
+#### 7.2.4 精确版本契约
+
+目前仅以下档案声明 `cjk.terminalGradient`：
+
+| 宿主 | profile | 契约 |
+|---|---|---|
+| `7.0.0-beta / 1606` | [7.0.0-beta-1606.json](../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1606.json) | `contractVersion = 1` |
+| `7.0.0-beta / 1609` | [7.0.0-beta-1609.json](../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1609.json) | `contractVersion = 1` |
+
+缺少本契约的已登记版本保留原有辉光，安装信息明确报告末词补偿不支持。已声明契约但成员解析或注册失败时，CJK 能力报告降级，已安装的辉光继续运行。未知版本不借用这两个档案。
+
+以下简写仅用于阅读：`A` 为 `com.apple.android.music.player.A`，`Word` 为 `com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e`，`Flex` 为 `com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout`，`Mask` 为 `Flex$a`。新版本必须核对完整 owner、参数、返回值和静态属性。
+
+| 角色 | 1606 / 1609 成员或关系 |
+|---|---|
+| `build` | 实例 `A.d0(Integer, Mask[], Word, List, Flex, boolean, boolean, boolean, int): ArrayList` |
+| `margin` | 静态 `A.c0(float, Flex, Mask, Word, ViewDataBinding, boolean): float` |
+| `reader` | 实例字段 `A.p: com.apple.android.music.ttml.j` |
+| `rowId` / `wordId` / `text` | `Word.a: int` / `Word.b: int` / `Word.c: String` |
+| `readerLine` / `lineGet` | reader 的 `a(int)` 返回 `LyricsLine$LyricsLinePtr`，其 `get()` 返回原生行 |
+| `lineWords` / `linePronunciationWords` | 原生行的 `getWords()` / `getPronunciationWords()` 返回 `LyricsWordVector` |
+| `vectorSize` / `vectorGet` / `wordGet` | `size(): long`、`get(long)` 返回词指针、指针 `get()` 返回原生词 |
+| `wordBegin` / `wordEnd` / `nativeWordId` | `LyricsTiming.getBegin()/getEnd(): int`、原生词 `getWordId(): int` |
+| `animationTag` | `N7.c.getTag(): Object`；接口方法以 `invocationOnly` 解析 |
+
+`TerminalGradientContract` 固定要求上述 13 个方法角色和 4 个字段角色，JSON 漏写任何角色均不能通过安装前解析。辉光使用的 `cjk.foregroundTextField` 和 `bindingOwners` 继续独立核对，不由末词契约代替。
+
+#### 7.2.5 后续版本适配
+
+1. 核对精确宿主身份和原生扫光调用链，确认 `build`、`margin` 仍负责相同的几何计算；不能只凭名字或参数数量复制档案。
+2. 更新 `cjk.terminalGradient` 的全部描述符，确认 reader 按行取词、词 ID 和词时间的含义，以及原文/发音的独立 ID。
+3. 核对第八个参数的分支语义、羽化宽度单位、延迟动画标签和标签接口。若参数语义变化，连同 Kotlin 分支规则一起适配。
+4. 确认文档替换、词序列或发音更新时 reader 的替换方式。若新宿主复用同一 reader 并改写词数据，需要增加相应缓存失效入口。
+5. 核对完整必需角色清单与安装状态；使用离线接口工具时确认它显式覆盖本契约，其他区域的检查结果不能代替本项结果。
+6. 由使用者手动验收，并按实际宿主和场景记录结果。仅编译成功或静态成员匹配不等于真机动画通过。
+
+末词羽化规则、原生尾词选择和延迟补亮处理源自 Tcrrry-Lyrics-Plugin 1.0.6 的 `NativeTerminalGradientFix.kt`（GPL-3.0）。AM++ 增加精确成员契约、原子注册及现有 CJK 开关联动，详见 [第三方来源说明](../THIRD_PARTY_NOTICES.md)。
+
+逐项核对及人工场景见 [清单：CJK 辉光与末词扫光](host-adaptation-checklist.md#cjk-animation-checks)。
+
+### 7.3 其他功能与共同规则
 
 | 功能 | 必须保持的业务与接入规则 |
 |---|---|
 | 当前歌曲身份 | 元数据转换器、当前 item 和歌曲 ID 对应实际播放对象；异步结果再次核对当前歌曲 |
 | 自定义歌词 | 原生 TTML 解析、有效指针检查、普通/无官方歌词歌曲、多 ID、禁用优先级、异步重应用和重复注入抑制 |
 | 自动补全 | 既有触发条件、来源顺序、手动/禁用优先级、代次控制、重试和缓存策略；切歌后旧结果不能注入 |
-| 模糊 | 已提交显示快照、ID/序号/位置分离、双向300ms原曲线、用户浏览和空闲1秒恢复；每视图会话、效果所有权独立于双栏 |
-| CJK | 单词作用域、前景文本、合并高亮及动画结束清理；保留宿主位移 |
 | 字体 | TTF/OTF、后台加载、重试、行词一致、视图重建和原字体恢复；区分 Hook 安装与字体就绪 |
 | 名称修正 | 原地区/cn/jp 模式、原名与标识证据、目录查询、离线及持久缓存、显示优先级；各表面单独安装与报告 |
 | 玻璃 | Android API、精确资格、导航/mini 区域、采样、触摸、展开过渡和属性恢复；材质准备完成后接管原生呈现 |

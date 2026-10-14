@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## Tcrrry Lyrics terminal CJK gradient
+
+The terminal CJK feather-margin rule, native last-word selection, and delayed
+rush-gradient removal are adapted from Tcrrry-Lyrics-Plugin 1.0.6's
+`NativeTerminalGradientFix.kt` (Tcrrry, GPL-3.0).
+Source: https://github.com/tcrrry/Tcrrry-Lyrics-Plugin
+AM++ adds exact host member contracts and binds installation to the existing
+CJK glow setting. Source license: `LICENSE` in the upstream project.
+
 ## AM++ media plugin tablet components
 
 Selected output-routing, output icons, volume controls, and native playback-mode

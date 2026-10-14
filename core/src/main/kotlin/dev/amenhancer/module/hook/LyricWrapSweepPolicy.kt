@@ -55,3 +55,12 @@ fun lyricWrapGradientPositions(fragment: LyricSweepFragment, edge: Float, feathe
         floatArrayOf(0f, edge.coerceIn(left, right), (edge + feather).coerceIn(left, right), 1f)
     else floatArrayOf(0f, (edge - feather).coerceIn(left, right), edge.coerceIn(left, right), 1f)
 }
+
+/** Preserve the opaque prefix and feather front when the next native span takes the same row. */
+fun lyricWrapHandoffPositions(positions: FloatArray, previous: FloatArray, rtl: Boolean): FloatArray? {
+    fun valid(values: FloatArray): Boolean = values.size == 4 && values[0] == 0f && values[3] == 1f &&
+        values.all { it.isFinite() && it in 0f..1f } && values[1] <= values[2]
+    if (!valid(positions) || !valid(previous)) return null
+    return if (rtl) floatArrayOf(0f, minOf(positions[1], previous[1]), minOf(positions[2], previous[2]), 1f)
+    else floatArrayOf(0f, maxOf(positions[1], previous[1]), maxOf(positions[2], previous[2]), 1f)
+}

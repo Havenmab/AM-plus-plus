@@ -66,6 +66,8 @@ internal class LyricWrapSweepContract(profile: AppleMusicHostProfile, loader: Cl
         check(ViewGroup::class.java.isAssignableFrom(clearMasks.declaringClass))
         check(topMasks.declaringClass == clearMasks.declaringClass && bottomMasks.declaringClass == clearMasks.declaringClass)
         check(maskUpdate.declaringClass == maskFirst.declaringClass && maskFirst.declaringClass == maskLast.declaringClass)
+        check(maskUpdate.parameterTypes.contentEquals(arrayOf(IntArray::class.java, FloatArray::class.java,
+            java.lang.Float::class.java)))
         check(listenerMask.declaringClass == update.declaringClass && listenerMask.type == maskUpdate.declaringClass)
         check(update.parameterTypes.contentEquals(arrayOf(ValueAnimator::class.java)))
         check(rushUpdate.parameterTypes.contentEquals(arrayOf(ValueAnimator::class.java)))

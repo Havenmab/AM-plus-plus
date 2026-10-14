@@ -63,12 +63,15 @@ internal class AppleMusicLyricWrapSweepTarget(
     private class MaskOwner(flex: ViewGroup, val bottom: Boolean) {
         val flex = WeakReference(flex)
     }
+    private class Handoff(val recipe: Recipe, val geometry: LyricWrapSweepGeometry, var positions: FloatArray)
+    private class HandoffWrite(val handoff: Handoff, val positions: FloatArray)
 
     private val sweeps = WeakIdentityMap<ValueAnimator, Sweep>()
     private val rushes = WeakIdentityMap<ValueAnimator, Sweep>()
     private val staticFrames = WeakIdentityMap<ViewGroup, MutableMap<Boolean, StaticFrame>>()
     private val layoutObservers = WeakIdentityMap<ViewGroup, View.OnLayoutChangeListener>()
     private val maskOwners = WeakIdentityMap<Any, MaskOwner>()
+    private val handoffs = WeakIdentityMap<Any, Handoff>()
     private var registration: HookRegistrationScope? = null
     private var lastFailure: String? = null
 
@@ -88,6 +91,38 @@ internal class AppleMusicLyricWrapSweepTarget(
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (param.throwable != null) return
                     guarded { installSweep(contract, param) }
+                }
+            })
+            hook(contract.maskUpdate, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val mask = param.thisObject ?: return
+                    val handoff = handoffs[mask] ?: return
+                    guarded {
+                        if (!handoff.geometry.valid(contract)) {
+                            handoffs.remove(mask)
+                            return@guarded
+                        }
+                        val colors = param.args[0] as? IntArray ?: return@guarded
+                        val adapter = handoff.recipe.adapter.get()
+                        if (adapter == null || contract.isInactiveStatic(adapter, colors)) {
+                            handoffs.remove(mask)
+                            return@guarded
+                        }
+                        if (!isSweepPalette(colors, handoff.recipe.rtl)) return@guarded
+                        val positions = param.args[1] as? FloatArray ?: return@guarded
+                        val corrected = lyricWrapHandoffPositions(positions, handoff.positions, handoff.recipe.rtl)
+                            ?: return@guarded
+                        // Only shader stops change; Apple's mask.i, colors and native animator remain intact.
+                        if (!corrected.contentEquals(positions)) param.args[1] = corrected
+                        param.extras[HANDOFF_WRITE] = HandoffWrite(handoff, corrected)
+                    }
+                }
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val write = param.extras.remove(HANDOFF_WRITE) as? HandoffWrite ?: return
+                    val mask = param.thisObject ?: return
+                    // A failed write must not advance the recorded visible boundary.
+                    if (param.throwable == null && handoffs[mask] === write.handoff)
+                        write.handoff.positions = write.positions
                 }
             })
             hook(contract.update, object : ModernMethodHook() {
@@ -146,6 +181,7 @@ internal class AppleMusicLyricWrapSweepTarget(
                         // A delayed fade on an obsolete mask cannot revoke a newer binding's ownership.
                         if (bankFor(contract, flex, mask) != owner.bottom) return@guarded
                         staticFrames[flex]?.remove(owner.bottom)
+                        forgetHandoffs { it.flex.get() === flex && it.bottom == owner.bottom }
                         retire { it.recipe.flex.get() === flex && it.recipe.bottom == owner.bottom }
                     }
                 }
@@ -159,6 +195,7 @@ internal class AppleMusicLyricWrapSweepTarget(
                         val models = contract.wordMaps.flatMap { (it.get(holder) as? Map<*, *>)?.values.orEmpty() }
                         retire { it.recipe.belongsTo(root) && models.none { model -> model === it.recipe.word.get() } }
                         forgetFrames { it.recipe.belongsTo(root) && models.none { model -> model === it.recipe.word.get() } }
+                        forgetHandoffs { it.belongsTo(root) && models.none { model -> model === it.word.get() } }
                         sweeps.keys().forEach { animator ->
                             sweeps[animator]?.takeIf { it.recipe.belongsTo(root) }?.recipe?.geometry = null
                         }
@@ -177,6 +214,9 @@ internal class AppleMusicLyricWrapSweepTarget(
                 }
             })
             hook(contract.staticMask, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    guarded { releaseInactiveHandoff(contract, param) }
+                }
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (param.throwable != null) return
                     guarded { restoreStatic(contract, param) }
@@ -193,6 +233,7 @@ internal class AppleMusicLyricWrapSweepTarget(
                             val root = contract.bindingRoot.get(binding) as? View ?: return@guarded
                             retire { it.recipe.belongsTo(root) }
                             forgetFrames { it.recipe.belongsTo(root) }
+                            forgetHandoffs { it.belongsTo(root) }
                         }
                     }
                 })
@@ -201,18 +242,21 @@ internal class AppleMusicLyricWrapSweepTarget(
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     retire { it.recipe.adapter.get() === param.thisObject }
                     forgetFrames { it.recipe.adapter.get() === param.thisObject }
+                    forgetHandoffs { it.adapter.get() === param.thisObject }
                 }
             })
             hook(contract.clearMasks, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     retire { it.recipe.flex.get() === param.thisObject }
                     (param.thisObject as? ViewGroup)?.let(staticFrames::remove)
+                    forgetHandoffs { it.flex.get() === param.thisObject }
                 }
             })
             hook(contract.seek, object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     retire { it.recipe.browser.get() === param.thisObject }
                     forgetFrames { it.recipe.browser.get() === param.thisObject }
+                    forgetHandoffs { it.browser.get() === param.thisObject }
                     guarded {
                         // Release Apple's word.o gate before LiveData can replay a word at the new position.
                         sweeps.keys().forEach { animator ->
@@ -248,6 +292,7 @@ internal class AppleMusicLyricWrapSweepTarget(
                 layoutObservers.keys().forEach { view -> layoutObservers[view]?.let(view::removeOnLayoutChangeListener) }
                 layoutObservers.clear()
                 maskOwners.clear()
+                handoffs.clear()
             }
             scope.activate()
             registration = scope
@@ -375,7 +420,15 @@ internal class AppleMusicLyricWrapSweepTarget(
             if (previous == null || previous.flex.get() !== flex || previous.bottom != recipe.bottom)
                 maskOwners[mask] = MaskOwner(flex, recipe.bottom)
         }
-        return geometry.render(contract, progress, colors, feather)
+        if (!geometry.render(contract, progress, colors, feather)) return false
+        if (progress >= 1f && isSweepPalette(colors, recipe.rtl)) masks.forEachIndexed { index, mask ->
+            val end = geometry.plan.fragments[index].end
+            val completed = floatArrayOf(0f, end, end, 1f)
+            val previous = handoffs[mask]?.takeIf { it.recipe.rtl == recipe.rtl && it.geometry.valid(contract) }
+            val positions = previous?.let { lyricWrapHandoffPositions(completed, it.positions, recipe.rtl) } ?: completed
+            handoffs[mask] = Handoff(recipe, geometry, positions)
+        }
+        return true
     }
 
     private fun restoreFrames(contract: LyricWrapSweepContract, view: ViewGroup) {
@@ -387,6 +440,7 @@ internal class AppleMusicLyricWrapSweepTarget(
         val observer = View.OnLayoutChangeListener { source, _, _, _, _, _, _, _, _ ->
             val flex = source as? ViewGroup ?: return@OnLayoutChangeListener
             guarded {
+                forgetHandoffs { it.flex.get() === flex }
                 staticFrames[flex]?.values?.forEach { it.recipe.geometry = null }
                 sweeps.keys().forEach { animator ->
                     sweeps[animator]?.takeIf { it.recipe.flex.get() === flex }?.recipe?.geometry = null
@@ -404,6 +458,31 @@ internal class AppleMusicLyricWrapSweepTarget(
             frames.entries.removeAll { predicate(it.value) }
             if (frames.isEmpty()) staticFrames.remove(view)
         }
+    }
+
+    private fun forgetHandoffs(predicate: (Recipe) -> Boolean) {
+        handoffs.keys().forEach { mask ->
+            handoffs[mask]?.let { if (predicate(it.recipe)) handoffs.remove(mask) }
+        }
+    }
+
+    private fun releaseInactiveHandoff(contract: LyricWrapSweepContract, param: ModernMethodHook.MethodHookParam) {
+        val adapter = param.thisObject ?: return
+        val flex = param.args[2] as? ViewGroup ?: return
+        val bottom = when ((param.args[6] as? Enum<*>)?.name) { "TOP" -> false; "BOTTOM" -> true; else -> return }
+        val word = param.args[0]
+        val colors = param.args[3] as? IntArray
+        val inactive = word == null || colors == null || contract.isInactiveStatic(adapter, colors)
+        val position = if (inactive) null else contract.browser(adapter)?.let(contract::position)
+        if (inactive || position == null || position < contract.wordBegin.getInt(word))
+            forgetHandoffs { it.flex.get() === flex && it.bottom == bottom }
+    }
+
+    private fun isSweepPalette(colors: IntArray, rtl: Boolean): Boolean {
+        if (colors.size != 4 || colors[0] != colors[1] || colors[2] != colors[3]) return false
+        val firstAlpha = colors[0] ushr 24
+        val lastAlpha = colors[3] ushr 24
+        return if (rtl) firstAlpha < lastAlpha else firstAlpha > lastAlpha
     }
 
     private fun bankFor(contract: LyricWrapSweepContract, flex: ViewGroup, mask: Any): Boolean? {
@@ -430,5 +509,9 @@ internal class AppleMusicLyricWrapSweepTarget(
                 ModernXposedRuntime.log("Wrapped lyric callback kept native behavior: $reason", error)
             }
         }
+    }
+
+    private companion object {
+        const val HANDOFF_WRITE = "lyricWrapSweep.handoffWrite"
     }
 }

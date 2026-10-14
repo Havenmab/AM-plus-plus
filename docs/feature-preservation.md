@@ -63,7 +63,7 @@
 | 资料库 | 模型/属性 getter、列表或 Compose、重建后的显示一致 |
 | 专辑 | 标题/艺术家、容器与歌曲条目一致 |
 | 歌单 | 容器、条目、刷新和原生操作保持 |
-| 艺术家 | 页面及关联集合的名称证据与显示一致 |
+| 艺术家 | 页面及关联集合的名称证据与显示一致；已声明的 Compose 表面核对头部/top-songs 刷新、原名恢复、Success 切换和缺契约降级，见[专项清单](host-adaptation-checklist.md#artist-compose-profile-checks) |
 | 主页与封面 | 主页模型/条目重绑定及实际封面加载路径正确，连续性有单独结果 |
 
 Epoxy、DataBinding、Compose/LiveData、辅助 getter 和目录接口均属于表面依赖。因缺失或歧义降级的表面应明确标记，其他独立表面继续保留原生或已安装行为。

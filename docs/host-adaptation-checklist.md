@@ -155,6 +155,32 @@
 - [ ] 原生点击、菜单、跳页和封面加载语义保留。
 - [ ] 已知降级与新回归分开记录，没有扩大匹配范围以绕过歧义。
 
+<a id="artist-compose-profile-checks"></a>
+
+### Compose 艺人页检查
+
+接入职责及必需角色见[适配手册的 Compose 艺人页说明](host-adaptation-guide.md#artist-compose-profile)。仅已声明的版本填写本项；完全未声明的版本记录不适用。
+
+- [ ] 当前精确档案同时声明两个 Compose 角色和 `artistComposeProfile.contractVersion`；缺少角色/契约/类时，独立安装组明确报告降级。
+- [ ] 七个方法、六个不同实例字段和 Success 构造器均有当前包完整描述符；必需角色、profile、`verification` 和离线工具清单同步。
+- [ ] 核对 setUiState 的真实参数、实例调用、返回值和 Success 类型关系，未用直接父类或参数个数猜测。
+- [ ] 核对 header/shelves builder 返回值、字段类型及六参数构造顺序；native ID/revision 与相等性规则明确。
+- [ ] 核对 MediaEntity 的 getType/getTitle/getViews、views 值的具体类型与 getEntities 返回数组；不猜测 getData 回退。1607 的新增 getter 包内确认独立记录，不能借用 1609 结果。
+- [ ] top-songs 的艺人关联先于 enrich；原地区判断继续来自歌曲，不根据艺人名字或 logo 推断。
+- [ ] 新 Success、loading/error、非艺人和缺 ID/属性会撤销旧会话；旧 pending 完成不会释放新会话的 pending。
+- [ ] 排队任务绑定会话身份，执行时核对活动作用域；组关闭取消自己的任务并清理状态/引用，其他 HLE 表面继续工作。
+- [ ] `index.json` 中全部档案参与角色/契约覆盖检查，新增版本不靠修改硬编码文件列表。
+
+| 人工场景 | 观察重点 |
+|---|---|
+| 1607 / 1609 分别打开艺人页 | 头部与 top-songs 副标题按当前歌曲地区修正；logo、点击、菜单和跳页正常 |
+| 有缓存 / alias 延迟到达 | 首次发布和后续 Compose 刷新均显示当前实体，原生 revision 保留 |
+| 艺人 A→B、返回或切入 loading/error | 旧页任务不能发布到新 Success，不残留旧艺人/歌曲引用 |
+| 非艺人或缺 ID/属性的 Success | 保留原生显示并清理此前保存的艺人状态 |
+| 关闭修正或切换模式并重开 | 原名恢复与现有缓存优先级一致，按版本记录结果 |
+| 声明缺类/字段/getter 或安装失败 | Compose 表面显示降级，原生页面和其他 HLE 表面保持可用 |
+| 安装作用域关闭时已有延迟刷新 | 不再调用旧 owner 的 setUiState，也不取消其他表面的队列任务 |
+
 ## 4. Activity 页面族检查
 
 仅在实际选择 legacy-activity 时填写。Fragment 构建标记本节不适用。

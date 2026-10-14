@@ -46,6 +46,7 @@
 | `capabilities` | 玻璃、蜂窝、收起拦截、播放器恢复等独立资格 |
 | `indexed` | 类、方法、字段映射；支持精确契约的路径还填写 `methodContracts` / `fieldContracts` |
 | `hookTargets` | HLE Hook 入口、签名约束、调用方约束及 `runtimeMemberNames` |
+| `artistComposeProfile` | 可选 Compose 艺人页的完整方法、字段、构造器和艺人类型/top-songs key；声明后必须完成安装前契约解析 |
 | `settings` / `chrome` | 设置入口、原生设置模型、导航和播放器资源或旧宿主契约 |
 | `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
 | `cjk.terminalGradient` | 可选的 CJK 末词羽化补偿精确契约：扫光/余量方法、reader、行词向量、词 ID/时间与动画标签 |
@@ -383,6 +384,32 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 名称修正至少覆盖播放器、队列、历史、操作表、最近搜索、资料库、专辑、歌单、艺术家和主页。除目标方法外，还需核对模型绑定、Epoxy holder、LiveData、辅助 getter 和实际封面加载路径。一个表面成功不能代表整项能力成功。
 
 目录查询需核对实际接口、请求结构和后续返回路径；Compose/LiveData 需核对当前类型别名及真实参数类型。名称相同或反射调用成功不足以确认它们仍服务于同一表面。
+
+<a id="artist-compose-profile"></a>
+
+### Compose 艺人页名称修正
+
+1607 与 1609 的艺人页由 `profiles2.GenericProfileViewModel` 发布不可变 Success 状态。本接入沿用 HLE 的 `AppleArtistSurfaceHost`、entity/alias、歌曲地区证据、元数据应用和刷新队列；宿主私有对象留在 `host-applemusic`。没有新增艺人查询通道，也不根据艺人名称推断语言或替换 logo。
+
+`ARTIST_SURFACE_CLASSES` 的 `compose_profile_view_model` 和 `compose_profile_success_state` 是表面声明；完整调用信息集中在 `artistComposeProfile`。两个角色或本区域中任意一项已声明，就尝试安装独立的 `hle.artist-compose-profile` 组。缺少另一角色、契约或实际成员时报告降级；完全未声明的旧档案不安装该表面。角色缓存只有在当前档案的全部声明解析成功后才完成。
+
+| 必需契约角色 | 应核对的内容 |
+|---|---|
+| 方法 `setUiState` | 实际声明 owner、状态参数、void 返回及实例调用；Success 可赋给该参数，不猜测其直接父类 |
+| 方法 `headerData` / `shelves` | 以 MediaEntity 为参数；返回类型分别与 Success 的 header/shelves 字段一致 |
+| 方法 `entityType` / `entityTitle` / `entityViews` | 实际 MediaEntity 的 String/String/Map getter 完整签名 |
+| 方法 `viewEntities` | 当前 views map 值对象的实例 getter，返回 MediaEntity[]；1609 的泛型签名确认值为 `internals.Relationship` |
+| 字段 `id` / `title` / `header` / `shelves` / `entity` / `revision` | 六个不同的 Success 实例字段，完整类型分别与构造器和 builder 一致 |
+| 构造器 `success` | 当前 Success owner 和完整参数顺序；契约 v1 为 id、title、header、shelves、entity、long revision |
+| `artistType` / `topSongsView` | 当前包中的艺人类型与热门歌曲 key；现有档案为 artists / top-songs |
+
+`ArtistComposeProfileContract` 复用现有成员解析器，在注册前解析并校验全部句柄、静态/实例、返回值、字段及类型关系。`REQUIRED` 和 `scripts/verify-host-profile.py` 的独立清单由代码维护；JSON 漏写角色不能绕过预检。`verification` 同步登记附属 getter。views 路径按已声明的值类型调用，不猜测 `getData` 回退。
+
+`ArtistComposeProfileSessions` 管理弱 owner、当前 Success、艺人/歌曲引用和 pending 刷新。每次原生 Success 替换都会关闭旧会话并取消其排队任务；loading/error、非艺人或缺少 ID/属性同样清理。帧队列以会话身份区分工作，执行前确认会话仍属于活动安装组。作用域关闭只清理该组的引用、状态与待执行任务，已从队列取出的旧任务也会因会话失活而跳过。
+
+alias 到达或恢复原名时，按当前实体重建 title/header/shelves 并发布 Success；v1 保留原生 ID 和 revision。后续版本若调整状态布局、构造参数顺序、相等性、发布线程或生命周期，需要重新分析对应 Contract/Runtime/Session，不能只改混淆名。仅名称或类型别名变化时优先修改精确档案。适配覆盖检查从 `index.json` 遍历，不写死版本文件列表。
+
+1607 与 1609 均保留 `runtimeVerified=false`。本次新增 views/getter 契约的包内依据来自本地 1609 DEX；1607 使用同名 MediaAPI 和其原有 `profiles.X` 头部映射，新增 getter 仍需对照 1607 安装包。人工场景见[清单中的 Compose 艺人页检查](host-adaptation-checklist.md#artist-compose-profile-checks)，结果按具体版本单独填写。
 
 旧 Activity Editorial 处理和 Fragment 原生视频策略分别保留。停用的全局目录语言功能及未启用的播放模式 UI 不因新增档案自动获得启用。
 

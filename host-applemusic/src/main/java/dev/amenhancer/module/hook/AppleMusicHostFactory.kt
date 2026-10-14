@@ -84,6 +84,7 @@ object AppleMusicHostFactory {
             cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(resolver,
                 profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
                 AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
+            lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

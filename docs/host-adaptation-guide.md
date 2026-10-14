@@ -51,6 +51,7 @@
 | `layoutVariants` / `cjk` | 歌词 binding、渐变和前景文本等版本数据 |
 | `cjk.terminalGradient` | 可选的 CJK 末词羽化补偿精确契约：扫光/余量方法、reader、行词向量、词 ID/时间与动画标签 |
 | `lyricBlur` | 两类页面族独立使用的完整歌词模糊契约：显示提交、文档/行身份、绑定、词动画、视图、触摸/滚动与 Seek |
+| `lyricWrapSweep` | 可选的跨行歌词扫光精确契约：原生扫光调用、动画更新与退场渐暗回调、静态遮罩与暗色调色板、视觉行遮罩键与词时间、媒体时间轴及暂停/恢复/Seek 入口 |
 | `catalogQueryRenames` | 实际目录查询 owner 与方法映射，配合完整签名和调用路径核对 |
 | Fragment 专用区域 | 双栏、歌词运行时、逐字宽度、视频接力、chrome 和恢复所需契约 |
 | `verification` | 离线检查需要的 DEX 描述符、字段类型、资源名和辅助接口证据 |
@@ -178,7 +179,7 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ## 7. 各功能的适配要点
 
-维护规则集中在本节：[歌词模糊](#lyrics-blur)、[CJK 辉光与末词扫光](#cjk-animation)。成员核对与完整人工场景集中在 [适配清单](host-adaptation-checklist.md)。
+维护规则集中在本节：[歌词模糊](#lyrics-blur)、[CJK 辉光与末词扫光](#cjk-animation)、[跨行歌词扫光](#lyric-wrap-sweep)。成员核对与完整人工场景集中在 [适配清单](host-adaptation-checklist.md)。
 
 <a id="lyrics-blur"></a>
 
@@ -301,7 +302,7 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 
 辉光沿用单个、未合并 CJK 词的原生触发门槛、前景绑定、回落和结束清理。末词补偿依据原生词序列识别尾词，不额外要求该尾词触发长尾辉光。
 
-末词补偿只调整逐字内部渐变终点及其配套的延迟补亮动画，不修改原生逐字时间、词分组、整行切换、滚动或位移。本实现不包含词动画防中断、重新绑定保护或换行遮罩修正。
+末词补偿只调整逐字内部渐变终点及其配套的延迟补亮动画，不修改原生逐字时间、词分组、整行切换、滚动或位移。本实现不包含词动画防中断、重新绑定保护或换行遮罩修正；跨行遮罩修复是独立能力，见 [7.3 跨行歌词扫光](#lyric-wrap-sweep)，不受本开关、本契约或本注册作用域控制。
 
 #### 7.2.2 代码与安装链
 
@@ -367,7 +368,149 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 
 逐项核对及人工场景见 [清单：CJK 辉光与末词扫光](host-adaptation-checklist.md#cjk-animation-checks)。
 
-### 7.3 其他功能与共同规则
+<a id="lyric-wrap-sweep"></a>
+
+### 7.3 跨行歌词扫光适配（独立能力）
+
+宿主原生逐字高亮按 TTML 词处理；词跨多个视觉行时几何按行计算，后续行容易落后或残留暗边。本能力在保留宿主原生 `ValueAnimator`/`AnimatorSet` 与歌词身份的前提下，只修正跨行词的遮罩几何与进度。
+
+它是独立能力：使用自己的能力集合、契约区域、注册作用域与安装状态，不读取 `cjkKaraokeAnimationEnabled`，不依赖 `cjk.terminalGradient` 的安装结果。两者会接入同一个原生 `d0`，但契约和作用域独立：单行尾词保留 7.2 补偿；跨行接管成功后由本节更新各行遮罩及片段羽化，原生单行更新被抑制，避免叠加写入。能力键为 `ModuleConstants.FEATURE_LYRIC_WRAP_SWEEP`（`lyric_wrap_sweep`），由 `LyricWrapSweepFeature` 通过能力接口安装，没有独立设置项。
+
+模块启用后，仅当当前精确 profile 在顶层声明 `lyricWrapSweep` 且 `contractVersion = 1` 时默认安装，无需手动开启；未声明的已登记版本明确报告不支持并保留原生渲染。当前声明本契约的版本为 `7.0.0-beta / 1609`。
+
+#### 7.3.1 代码与安装链
+
+| 层 | 入口 | 责任 |
+|---|---|---|
+| `core` | [LyricWrapSweepPolicy.kt](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricWrapSweepPolicy.kt) | 跨行片段计划、局部进度、边缘终点、词进度、渐变位置与跨 span 交接边界；不依赖 Android 或宿主成员 |
+| `host-api` | [TargetAdaptation.kt](../host-api/src/main/java/dev/amenhancer/module/hook/TargetAdaptation.kt) | `LyricWrapSweepTarget` 能力接口与默认不支持实现 |
+| `host-applemusic` 契约 | [LyricWrapSweepContract.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepContract.kt) | 解析 `lyricWrapSweep` 成员、校验类型关系、读取媒体浏览器位置并识别延迟补亮动画 |
+| `host-applemusic` 几何 | [LyricWrapSweepGeometry.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepGeometry.kt) | 视觉行识别、跨行判定、弱引用几何校验与多遮罩写入 |
+| `host-applemusic` 目标 | [AppleMusicLyricWrapSweepTarget.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricWrapSweepTarget.kt) | Hook 注册、接管与退役、静态帧缓存、布局失效与失败释放 |
+| `host-applemusic` 装配 | [AppleMusicHostFactory.kt](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) | 注入当前精确 profile 与宿主 ClassLoader |
+| `app` | [LyricWrapSweepFeature.kt](../app/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepFeature.kt) | 通过能力接口安装并上报能力状态 |
+| `hook-runtime` | [HookRegistrationScope](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrationScope.kt) | PREPARING、激活与关闭 |
+
+契约在安装前由 `FragmentProfileMembers` 解析完整必需角色；全部注册成功后才 activate。必需解析或注册失败时关闭 scope、报告降级，并保持宿主原生渲染。
+
+#### 7.3.2 接管规则与时间轴
+
+模块不新建动画器或全局计时器。仅在动画器已注册、其更新监听器的遮罩身份与注册来源遮罩一致、且 RTL 方向与注册方向一致时，才抑制原生单行写入并改为多遮罩写入；其余情况保持原生回调。同一 flexbox 与同一 bank 只保留最新注册的接管：注册新词时，先前同 flexbox 同 bank 的接管立即退役。
+
+进度使用同一毫秒时间轴：词起止来自宿主词对象的 `begin`/`duration`，播放位置来自原生媒体浏览器 `getCurrentPosition`。初始与每帧进度都读取 `(position - begin) / duration` 的限幅值；同一接管内只前进，原生完成 tick 完成整词，向后 Seek 后由新接管重新计算较低进度。仅在几何已就绪、词已开始且尚未结束（`position >= begin` 且初始进度 < 1）时，把动画时长最多缩至实际剩余段；延迟布局不先改时长。不把 JNI 事件 duration 或原生 listener 的行内横坐标误当整词进度。暂停与恢复作用于该词原生 `AnimatorSet`，保留其子动画归属。
+
+进度按实际视觉行字形宽度累计：每个视觉行按其在 flexbox 中的归一化左右边界构成片段，局部进度与边缘终点由累计宽度决定，完全高亮的边缘在本行完成时到达片段末端。多行结束时随行尾字形宽度的羽化已包含在该终点计算内，不需要额外补亮动画。
+
+#### 7.3.3 遮罩、静态恢复与生命周期
+
+| 时机 | 处理 |
+|---|---|
+| 宿主 `build` 之后 | 仅当词实际跨多个视觉行时注册接管；保留原生扫光及延迟单行补亮动画的调度。主扫光每次先释放当前接管标记，成功绘制后才重新持有；`rushUpdate` 仅在仍持有且上次绘制的几何仍有效时抑制单行补亮写入，失败时保留原生回调 |
+| 跨行词完成绘制后 / `maskUpdate` 写入 | 只有跨行几何实际完成绘制且颜色为方向一致的四 stop 渐变时，才为其遮罩记录已亮边界。后继原生扫光、补亮与静态写入只在原几何身份仍有效时约束两个 stop：LTR 不后退，RTL 不前移；写入成功后才更新记录。颜色、`mask.i`、原生动画时间与调度保留 |
+| 宿主 `staticMask`（`W`）之前 | 词为空、未开始、媒体位置不可用或前缀调色板为原生暗色时，先清除对应 flexbox/bank 的交接保护，再让原版绘制；不能让上一段亮色边界覆盖未来行或暗色状态 |
+| 宿主 `staticMask`（`W`）之后 | 先清除同 flexbox 同 bank 的旧静态帧；词为空、未开始、前缀调色板为原生暗色或形状不支持时保留原生结果。其余已开始的跨行词保存静态帧；同 flexbox 同 bank 有活动接管时，按该接管的最新进度、颜色与羽化重绘；无活动接管时按当前播放位置重建，羽化按当前宽度重算 |
+| 宿主 `fadeUpdate`（`A$o.onAnimationUpdate`）之前 | 通过弱引用记录的遮罩与 flexbox/bank 对应关系核对当前遮罩身份，清除该 bank 静态帧和交接保护并退役旧扫光与补亮写入；原版渐暗回调继续执行。过期遮罩不撤销新绑定的接管 |
+| 宿主 `rebind`（`i0`）前后 | 前置核对 holder 四路词 Map 中的对象身份，退役已不属于当前行的接管/静态帧/交接保护并使几何失效；后置重绘保留的静态帧 |
+| 布局变化 | 对应 flexbox 的布局变化清除交接保护，使缓存几何失效并按当前状态重绘 |
+| `bind` / `recycle` 之前 | 退役绑定根所属的接管与静态帧，清除其交接保护 |
+| `document` 之前 | 退役该 adapter 的接管与静态帧，清除其交接保护 |
+| `clearMasks` 之前 | 退役该 flexbox 的接管并清除其静态帧及交接保护 |
+| `seek` 之前 | 退役该媒体浏览器的接管与静态帧，清除交接保护，取消该词原生 `wordAnimator` 释放 `word.o` 去重门禁，使新位置可重新建立动画 |
+| `pause` / `pauseRequested` / `resume` 之后 | 同步所属 adapter 的原生词动画集暂停或恢复，发音子动画缺少独立 owner 时使用其原生扫光动画 |
+| 作用域关闭 | 清空接管、静态帧、交接保护与遮罩归属，移除布局监听 |
+
+退役后的回调不得写入新绑定的行或替换后的文档；被退役的动画器不再产生原生单行写入。
+
+`W` 同时服务于已唱词恢复和未来歌词行的初始化，不能把该方法被调用当作词已开始的依据。原生初始化可用该行最后一个词及暗色前缀绘制未唱状态；模块仅在媒体位置不早于词 `begin` 时重建跨行静态帧。未到开始时间时保留原生暗色，不能把限幅后的零进度映射到 span 起点并点亮其前缀。缓存帧在每次重绘前重新检查开始时间；未来词或无效绑定替换旧状态时，应清掉对应 bank 的旧帧，避免重绑定与布局回调再次覆盖原生结果。
+
+词已开始或已结束也不代表该行应保持高亮。静态恢复必须读取 `W` 的前缀调色板（第 4 个参数），并按原版内容比较规则识别前景/背景暗色数组；原生暗色状态不保存亮色静态帧。退场渐暗绕过 `W` 直接写遮罩，必须由精确 `fadeUpdate` 入口撤销缓存及旧动画写入权限，避免后续布局或重绑定恢复亮色。入场渐亮的首帧也可能使用暗色前缀，不能仅凭该前缀退役活动扫光；退场以专用回调为准，亮暗曲线继续由宿主控制。
+
+跨行词最后片段结束后，下一 span 可能只占一个视觉行并回到原生扫光。跨行片段把完全亮色 stop 推至自身终点，但原生 `mask.i` 仍保存限于该片段的前沿；原生后继按前沿减羽化宽度绘制，可能使前一段尾部重新进入渐变。交接保护在已完成的跨行遮罩上记住两个实际绘制 stop，并以几何快照校验宽度、文本/Layout 和遮罩身份，只让后续兼容方向的四 stop 渐变继续前进。后继仍使用原版动画；不通过抬高 `mask.i` 消耗短 span 的扫光余量，也不全局关闭羽化。纯暗色写入释放该遮罩保护，其他不兼容颜色/位置形状保持原生。
+
+#### 7.3.4 几何语义与已知边界
+
+遮罩的键是视觉 Flexbox 行的首个 child 索引（精确档案的 `maskFirst`，即 `Flex$a.c`），`maskLast`（`Flex$a.d`）界定该行 child 范围；`topMasks`/`bottomMasks`（`Flex` 的 `T`/`U` 字段）按该键索引。它不是 TTML `lineId`、歌词序号或 adapter position。绑定到同一遮罩行的多个视觉片段按字形宽度并集累计。
+
+同一 flexbox 内，`TOP` / `BOTTOM` 是原文与发音两个垂直遮罩 bank（不是前景与背景）：`staticMask` 的位置枚举决定使用哪个 bank，`build` 一侧由来源遮罩落在哪个 bank 判定。前景与背景是两个独立 flexbox（当前版本为原生 `p9.Y` 与 `p9.X`），二者不共享同一组 bank。模块只接管该词所在的 flexbox 与其 bank，另一 bank 及另一 flexbox 保持宿主原生。
+
+以下情况不接管多行扫光并保留宿主原生动画（fail-open）：单行词、片段数少于 2、无法构造单行文本片段（文本宽度、行数或布局无效）、宽度或边界无效、绑定与遮罩行对应不唯一。单行后继只有共享已完成跨行词的有效遮罩时才受交接边界保护；其他单行写入透传。混合方向复合形状（同一视觉行在文本顺序中被重复访问）无法用单一遮罩表示，同样保持原生。几何在宽度、布局或绑定身份变化后失效并重绘。
+
+跨行计划生成的两个羽化 stop 与写回 `mask.i` 的边缘值均钳制在该片段边界内，完成当前词不会提前点亮下一词。交接层只保留已经实际写入的后继边界，防止旧静态刷新拉回已经前进的扫光；不凭歌词长度预测未来边缘。文本内容与原生词文本、TextView 内容及 Layout 身份均参与复用校验。一个 TextView 自身包含多行的复合形状当前保留原生，不能作为本能力已修复的场景。
+
+#### 7.3.5 精确版本契约
+
+目前仅以下档案声明顶层 `lyricWrapSweep`：
+
+| 宿主 | profile | 契约 |
+|---|---|---|
+| `7.0.0-beta / 1609` | [7.0.0-beta-1609.json](../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1609.json) | `contractVersion = 1` |
+
+缺少本契约的已登记版本报告不支持并保留原生渲染；已声明契约但成员解析或注册失败时报告降级，同样保留原生行为。未知版本不借用 1609 档案。
+
+以下简写仅用于阅读：`A` 为 `com.apple.android.music.player.A`，`Word` 为 `com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e`，`Flex` 为 `com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout`，`Mask` 为 `Flex$a`，`Anim` 为 `com.apple.android.music.player.t`，`Holder` 为 `com.apple.android.music.player.f1$b`，`Callback` 为 `com.apple.android.music.player.fragment.N`，`Browser` 为 `J4.B`。新版本必须核对完整 owner、参数、返回值和静态属性。
+
+| 方法角色 | 1609 成员 |
+|---|---|
+| `build` | 实例 `A.d0(Integer, Mask[], Word, List, Flex, boolean, boolean, boolean, int): ArrayList` |
+| `update` | 实例 `Anim.onAnimationUpdate(ValueAnimator): void` |
+| `rushUpdate` | 实例 `com.apple.android.music.player.u.onAnimationUpdate(ValueAnimator): void` |
+| `fadeUpdate` | 实例 `A$o.onAnimationUpdate(ValueAnimator): void` |
+| `staticMask` | 实例 `A.W(Word, List, Flex, int[], int[], boolean, Flex$b): void` |
+| `rebind` | 实例 `A.i0(A$a, int): void` |
+| `bind` | 实例 `A.k(RecyclerView$D, int): void` |
+| `recycle` | 实例 `A.r(RecyclerView$D): void` |
+| `document` | 实例 `A.R(SongInfo$SongInfoPtr): void` |
+| `clearMasks` | 实例 `Flex.v(): void` |
+| `textView` | 静态 `A.v0(androidx.databinding.ViewDataBinding): CustomTextView` |
+| `maskUpdate` | 实例 `Mask.b(int[], float[], Float): void` |
+| `animationTag` | `N7.c.getTag(): Object`；以 `invocationOnly` 解析 |
+| `mediaBrowser` | 实例 `ia.a$c.getMediaBrowser(): J4.w` |
+| `mediaPosition` | 实例 `Browser.getCurrentPosition(): long` |
+| `seek` | 实例 `Browser.seekTo(int, long): void` |
+| `pause` / `pauseRequested` / `resume` | 实例 `A.I(): void` / `A.J(): void` / `A.K(): void` |
+
+| 字段角色 | 1609 成员 |
+|---|---|
+| `topMasks` / `bottomMasks` | `Flex.T` / `Flex.U`：`SparseArray` |
+| `maskFirst` / `maskLast` | `Mask.c` / `Mask.d`：`int` |
+| `wordBegin` / `wordDuration` | `Word.d` / `Word.e`：`int` |
+| `wordText` / `wordAnimator` | `Word.c`：`String` / `Word.o`：`Animator` |
+| `words` / `backgroundWords` / `pronunciationWords` / `pronunciationBackgroundWords` | `A$a.G` / `H` / `I` / `J`：`ArrayMap` |
+| `bindingRoot` | `androidx.databinding.ViewDataBinding.d`：`View` |
+| `holderBinding` | `Holder.u`：`ViewDataBinding` |
+| `adapterCallback` / `callbackFragment` | `A.y`：`fragment.N` / `Callback.a`：`PlayerLyricsViewFragment` |
+| `featherPixels` | `A.b0`：`float` |
+| `listenerMask` / `listenerColors` / `listenerFeather` / `listenerRtl` | `Anim.f`：`Flex$a` / `Anim.g`：`int[]` / `Anim.e`：`float` / `Anim.a`：`boolean` |
+| `foregroundInactiveColors` / `backgroundInactiveColors` | `A.P` / `A.Y`：`int[]`；原版前景/背景暗色调色板 |
+| `fadeMask` | `A$o.f`：`Flex$a`；原版退场渐暗写入的遮罩 |
+
+除角色本身外，安装前还校验以下类型关系，缺少任一项即视为契约不成立：
+
+1. `build`、`rebind`、`adapterCallback` 同一 owner；`build` 的第 3 个参数类型与 `wordBegin`/`wordDuration` 的 owner 一致。
+2. `clearMasks` 声明在 `ViewGroup` 子类上；`topMasks`/`bottomMasks` 与 `clearMasks` 同 owner。
+3. `maskUpdate`、`maskFirst`、`maskLast` 同 owner（`Mask`），`maskUpdate` 的参数严格为 `int[]`、`float[]` 和可空装箱 `Float`；第二个参数是 shader stop，第三个参数更新原版 `mask.i`。
+4. `listenerMask` 的 owner 与 `update` 相同，且其类型等于 `maskUpdate` 的 owner。
+5. `update` 的唯一参数为 `ValueAnimator`；`bindingRoot` 的类型是 `View` 子类。
+6. `callbackFragment` 的 owner 等于 `adapterCallback` 的类型；`mediaBrowser` 的 owner 可由 `callbackFragment` 类型赋值；`mediaPosition` 的 owner 可由 `mediaBrowser` 的返回类型赋值。
+7. `rushUpdate` 的唯一参数为 `ValueAnimator`；词文本、词动画与词时间字段同 owner；四路词 Map 声明于 `rebind` 的 holder 参数类型，字段为 Map 子类。
+8. `fadeUpdate` 的唯一参数为 `ValueAnimator`；`fadeMask` 与该回调同 owner，字段类型等于 `maskUpdate` 的 owner；两路暗色调色板与 `build` 同 owner，字段类型为 `int[]`。
+
+`LyricWrapSweepContract` 固定要求上述 19 个方法角色和 24 个字段角色，另要求 `contractVersion = 1` 且档案 `productionEnabled`；JSON 漏写任何角色均不能通过安装前解析。`scripts/verify-host-profile.py` 与 `scripts/verify-profile-data.py` 的必需角色清单应与本契约同步维护。
+
+#### 7.3.6 后续版本适配
+
+1. 核对精确宿主身份与原生扫光调用链，确认 `build`、`update`、`staticMask` 仍负责相同的跨行几何和动画更新，不能只凭名字或参数数量复制档案。
+2. 更新 `lyricWrapSweep` 的全部描述符，确认视觉行遮罩键仍是首个 child 索引、`maskLast` 仍是该行范围，以及原文/发音两个 bank 的字段。
+3. 核对词对象的时间字段单位与 `begin`/`duration` 语义，确认媒体浏览器的播放位置与词时间处于同一毫秒时间轴；不一致时连同进度与时长规则一起适配。
+4. 核对延迟补亮动画的标签接口、取值与精确更新回调，确认抑制写入只针对当前仍有效持有遮罩的接管；主扫光失败或上次绘制几何失效时须透传原生补亮。标签语义变化时同步修改 Kotlin 判断。单行尾词仍由 7.2 补偿处理，跨行词使用本节片段羽化，不能叠加两套遮罩写入。
+5. 核对 `staticMask` 前缀参数与前景/背景暗色调色板的比较规则，以及退场渐暗绕过静态入口时的实际更新回调和遮罩字段；区分入场暗色首帧与退场状态，保留宿主亮暗曲线。
+6. 核对后继 span 的主扫光、补亮和静态恢复是否均经 `maskUpdate` 写入；确认四个 stop 为 `0, s1, s2, 1`，LTR 颜色为高 alpha / 高 alpha / 低 alpha / 低 alpha，RTL 顺序相反，以及 `mask.i` 的原生前沿语义。若形状或语义改变，连同交接保护一起适配，不能直接扩大原生进度。
+7. 核对换绑、回收、文档替换、清空遮罩、布局变化、暗色写入和 Seek 的实际入口，确认退役与静态帧/交接保护失效仍然覆盖；新增入口需要同步代码与档案。
+8. 由使用者手动验收，并按实际宿主和场景记录结果。仅静态成员匹配或构建成功不等于真机通过。
+
+逐项核对及人工场景见 [清单：跨行歌词扫光](host-adaptation-checklist.md#lyric-wrap-sweep-checks)。各版本的实际验收结果应记录于对应PR或独立验收记录，手册和清单保持通用维护规则与验收标准。
+
+### 7.4 其他功能与共同规则
 
 | 功能 | 必须保持的业务与接入规则 |
 |---|---|

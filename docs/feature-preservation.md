@@ -15,6 +15,7 @@
 | 6.5.2 / 1586 | legacy-activity | 已登记 | 已登记 | 已登记 | 已登记 | 不适用 |
 | 6.5.3 / 1599 | legacy-activity | 已登记 | 已登记 | 已登记 | 已登记 | 不适用 |
 | 7.0.0-beta / 1606 | fragment-content | 已登记 | 已登记 | 已登记 | 未启用 | 已登记 |
+| 7.0.0-beta / 1607 | fragment-content | 已登记 | 已登记 | 已登记 | 未启用 | 已登记 |
 | 7.0.0-beta / 1609 | fragment-content | 已登记 | 已登记 | 已登记 | 未启用 | 已登记 |
 
 其他组合按未登记构建处理。新增版本应独立填写整份矩阵，不能继承相邻构建的人工结果。旧 Activity 行为以既有档案和冻结夹具为依据；通用文档更新不替换冻结基线。
@@ -72,7 +73,7 @@
 | 资料库 | 模型/属性 getter、列表或 Compose、重建后的显示一致 |
 | 专辑 | 标题/艺术家、容器与歌曲条目一致 |
 | 歌单 | 容器、条目、刷新和原生操作保持 |
-| 艺术家 | 页面及关联集合的名称证据与显示一致 |
+| 艺术家 | 页面及关联集合的名称证据与显示一致；已声明的 Compose 表面核对头部/top-songs 刷新、原名恢复、Success 切换和缺契约降级，见[专项清单](host-adaptation-checklist.md#artist-compose-profile-checks) |
 | 主页与封面 | 主页模型/条目重绑定及实际封面加载路径正确，连续性有单独结果 |
 
 Epoxy、DataBinding、Compose/LiveData、辅助 getter 和目录接口均属于表面依赖。因缺失或歧义降级的表面应明确标记，其他独立表面继续保留原生或已安装行为。
@@ -135,6 +136,7 @@ Epoxy、DataBinding、Compose/LiveData、辅助 getter 和目录接口均属于�
 | 6.5.2 / 1586 | 已登记，旧基线保留 | 当前代码逐项回归待验收 |
 | 6.5.3 / 1599 | 已登记，旧基线及两项降级保留 | 当前代码逐项回归待验收；降级单独记录 |
 | 7.0.0-beta / 1606 | 精确契约档案，runtimeVerified=false | 当前布局、视频及其他场景待独立验收 |
+| 7.0.0-beta / 1607 | 精确档案及 Compose 艺人页契约，runtimeVerified=false | 新增 MediaAPI getter 的包内核对及各功能人工验收待独立完成 |
 | 7.0.0-beta / 1609 | 精确契约档案，runtimeVerified=false | 以下已确认场景；其余仍待逐项验收 |
 
 ### 已取得的人工反馈

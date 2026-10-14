@@ -188,6 +188,87 @@ def verify_fragment_contracts(document, classes, failures):
     return checks
 
 
+def verify_artist_compose_contract(document, classes, failures):
+    """Optional artist surface; a partial declaration cannot suppress required invocation checks."""
+    surface = document.get('hookTargets', {}).get('ARTIST_SURFACE_CLASSES', [])
+    declared = [target.get('runtimeMemberNames', {}).get('ARTIST_RUNTIME_ROLE') for target in surface]
+    roles = {'compose_profile_view_model', 'compose_profile_success_state'}
+    if 'artistComposeProfile' not in document and not roles.intersection(declared):
+        return 0
+    for role in sorted(roles):
+        if declared.count(role) != 1:
+            failures.append(f'artistComposeProfile: expected one surface role {role}')
+    data = document.get('artistComposeProfile')
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('artistComposeProfile: missing versioned contract')
+        return 0
+    for key in ('artistType', 'topSongsView'):
+        if not isinstance(data.get(key), str) or not data[key].strip():
+            failures.append(f'artistComposeProfile.{key}: missing semantic key')
+    required = {
+        'methods': {'setUiState', 'headerData', 'shelves', 'entityType', 'entityTitle', 'entityViews', 'viewEntities'},
+        'fields': {'id', 'title', 'header', 'shelves', 'entity', 'revision'},
+        'constructors': {'success'},
+    }
+    primitive = {'void': 'V', 'long': 'J', 'int': 'I', 'boolean': 'Z'}
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[') else 'L' + name.replace('.', '/') + ';')
+    checks = 0
+    for group, expected in required.items():
+        entries = data.get(group, {})
+        if not isinstance(entries, dict):
+            failures.append(f'artistComposeProfile.{group}: invalid inventory')
+            continue
+        for role in sorted(expected - entries.keys()):
+            failures.append(f'artistComposeProfile.{group}.{role}: missing required role')
+        for role, contract in entries.items():
+            checks += 1
+            try:
+                native = classes.get(descriptor(contract['owner']), {})
+                if group == 'fields':
+                    valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                             and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+                else:
+                    name = '<init>' if group == 'constructors' else contract['name']
+                    returns = 'V' if group == 'constructors' else descriptor(contract['returns'])
+                    signature = name + '(' + ''.join(map(descriptor, contract['parameters'])) + ')' + returns
+                    flags = native.get('method_access', {}).get(signature)
+                    valid = (flags is not None and not flags & (8 | 0x40 | 0x400 | 0x1000)
+                             and (group == 'constructors' or contract['static'] is False))
+                if not valid:
+                    failures.append(f'artistComposeProfile.{group}.{role}: invalid exact instance descriptor')
+            except (KeyError, TypeError, AttributeError) as error:
+                failures.append(f'artistComposeProfile.{group}.{role}: incomplete descriptor ({error})')
+    try:
+        m, f, c = data['methods'], data['fields'], data['constructors']['success']
+        surface_classes = {target['runtimeMemberNames']['ARTIST_RUNTIME_ROLE']: target['className'] for target in surface}
+        vm, state, entity = (surface_classes[role] for role in
+                             ('compose_profile_view_model', 'compose_profile_success_state', 'media_entity'))
+        assert all(m[role]['owner'] == vm for role in ('setUiState', 'headerData', 'shelves'))
+        assert all(f[role]['owner'] == state for role in required['fields'])
+        assert len({f[role]['name'] for role in required['fields']}) == 6
+        assert [f[role]['type'] for role in ('id', 'title', 'shelves', 'entity', 'revision')] == [
+            'java.lang.String', 'java.lang.String', 'java.util.List', entity, 'long']
+        assert c['owner'] == state and c['parameters'] == [f[role]['type'] for role in
+                                                        ('id', 'title', 'header', 'shelves', 'entity', 'revision')]
+        assert m['setUiState']['returns'] == 'void' and len(m['setUiState']['parameters']) == 1
+        ancestor = descriptor(state)
+        publisher_type = descriptor(m['setUiState']['parameters'][0])
+        while ancestor in classes and ancestor != publisher_type:
+            ancestor = classes[ancestor]['super']
+        assert ancestor == publisher_type
+        for role in ('headerData', 'shelves'):
+            assert m[role]['parameters'] == [entity]
+            assert m[role]['returns'] == f['header' if role == 'headerData' else 'shelves']['type']
+        for role, returns in (('entityType', 'java.lang.String'), ('entityTitle', 'java.lang.String'),
+                              ('entityViews', 'java.util.Map')):
+            assert m[role]['owner'] == entity and m[role]['parameters'] == [] and m[role]['returns'] == returns
+        assert m['viewEntities']['parameters'] == [] and m['viewEntities']['returns'] == '[L' + entity + ';'
+    except (KeyError, TypeError, AttributeError, AssertionError) as error:
+        failures.append(f'artistComposeProfile: state/entity/builder relationship mismatch ({error})')
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path, help="APK, XAPK or APKS (all DEX splits are checked)")
@@ -267,6 +348,7 @@ def main():
                 document = json.loads(candidate.read_text(encoding="utf-8"))
         if document:
             checks += verify_fragment_contracts(document, classes, failures)
+            checks += verify_artist_compose_contract(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',
                              'double':'D','byte':'B','short':'S','char':'C'}

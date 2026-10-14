@@ -63,6 +63,12 @@ internal class ComposeProfileRefRegistry {
         refsByMediaId.size
     }
 
+    fun clear() = synchronized(lock) {
+        refsByMediaId.clear()
+        mediaIdsByOwner.clear()
+        while (queue.poll() != null) Unit
+    }
+
     /** Test seam: behave as if [owner] had been garbage collected. */
     internal fun simulateCollected(owner: Any) = synchronized(lock) {
         mediaIdsByOwner.remove(owner)

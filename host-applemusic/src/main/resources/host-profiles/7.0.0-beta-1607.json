@@ -12,7 +12,8 @@
     "apksSha256": "f58003c5e5f8e386eb789838c52250385ff001f9f1ba52eeaecad610a87cd1f6",
     "status": "descriptor-verified-user-testing",
     "runtimeVerified": false,
-    "metadataCallPaths": "Derived from the 7.0.0-beta-1606 profile by remapping every obfuscated DEX descriptor against the 1607 base.apk (all DEX files); scripts/verify-host-profile.py --glass passes against the binary 1607 package. Compose artist page roles mirror the 1609 profile with the 1607 header type com.apple.android.music.profiles.X."
+    "metadataCallPaths": "Derived from the 7.0.0-beta-1606 profile by remapping every obfuscated DEX descriptor against the 1607 base.apk (all DEX files); scripts/verify-host-profile.py --glass passes against the binary 1607 package. Compose artist page roles mirror the 1609 profile with the 1607 header type com.apple.android.music.profiles.X.",
+    "composeArtistContract": "Complete instance methods, six distinct Success fields and constructor are recorded in artistComposeProfile v1. 1609 DEX confirms MediaEntity.getViews returns Map<String, Relationship> and Relationship.getEntities returns MediaEntity[]. 1607 uses the same named MediaAPI contract and its existing profiles.X header mapping; the added getters still need confirmation against the 1607 package. No getData fallback; runtime acceptance remains pending."
   },
   "indexed": {
     "classes": {
@@ -1214,10 +1215,7 @@
         "requiredInvokedMethodDescriptors": [],
         "className": "com.apple.android.music.profiles2.GenericProfileViewModel",
         "runtimeMemberNames": {
-          "ARTIST_RUNTIME_ROLE": "compose_profile_view_model",
-          "ARTIST_COMPOSE_SET_UI_STATE_METHOD": "setUiState",
-          "ARTIST_COMPOSE_HEADER_DATA_METHOD": "createProfileHeaderData",
-          "ARTIST_COMPOSE_SHELVES_METHOD": "extractShelves"
+          "ARTIST_RUNTIME_ROLE": "compose_profile_view_model"
         },
         "requiredCallerMethodNames": [],
         "contractId": "ARTIST_SURFACE_CLASSES",
@@ -1235,13 +1233,7 @@
         "requiredInvokedMethodDescriptors": [],
         "className": "com.apple.android.music.profiles2.d$d",
         "runtimeMemberNames": {
-          "ARTIST_RUNTIME_ROLE": "compose_profile_success_state",
-          "ARTIST_COMPOSE_STATE_ID_FIELD": "a",
-          "ARTIST_COMPOSE_STATE_TITLE_FIELD": "b",
-          "ARTIST_COMPOSE_STATE_HEADER_FIELD": "c",
-          "ARTIST_COMPOSE_STATE_SHELVES_FIELD": "d",
-          "ARTIST_COMPOSE_STATE_ENTITY_FIELD": "e",
-          "ARTIST_COMPOSE_STATE_REVISION_FIELD": "f"
+          "ARTIST_RUNTIME_ROLE": "compose_profile_success_state"
         },
         "requiredCallerMethodNames": [],
         "contractId": "ARTIST_SURFACE_CLASSES",
@@ -2241,7 +2233,9 @@
       "Lcom/apple/android/music/mediaapi/models/MediaEntity;": [
         "getTitle()Ljava/lang/String;",
         "getAttributes()Lcom/apple/android/music/mediaapi/models/internals/Attributes;",
-        "getShortName()Ljava/lang/String;"
+        "getShortName()Ljava/lang/String;",
+        "getType()Ljava/lang/String;",
+        "getViews()Ljava/util/Map;"
       ],
       "Lcom/apple/android/music/mediaapi/models/Song;": [
         "getShortName()Ljava/lang/String;",
@@ -2451,6 +2445,9 @@
       ],
       "Lcom/apple/android/music/profiles2/d$d;": [
         "<init>(Ljava/lang/String;Ljava/lang/String;Lcom/apple/android/music/profiles/X;Ljava/util/List;Lcom/apple/android/music/mediaapi/models/MediaEntity;J)V"
+      ],
+      "Lcom/apple/android/music/mediaapi/models/internals/Relationship;": [
+        "getEntities()[Lcom/apple/android/music/mediaapi/models/MediaEntity;"
       ]
     },
     "fields": {
@@ -2615,7 +2612,7 @@
     }
   },
   "knownDegradations": [],
-  "profileRevision": 1,
+  "profileRevision": 2,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -4587,6 +4584,113 @@
       "ending": "Maximum LyricsTiming.getEnd and current media browser position; retain the final applied focus after lyric display becomes empty",
       "prelude": "First lyric getBegin and the current Fragment media browser getCurrentPosition; independent of the 7000ms dots gate",
       "scroll": "setScrollState/getScrollState and observed native touch methods; child h(p), p.d/p.b"
+    }
+  },
+  "artistComposeProfile": {
+    "contractVersion": 1,
+    "artistType": "artists",
+    "topSongsView": "top-songs",
+    "methods": {
+      "setUiState": {
+        "owner": "com.apple.android.music.profiles2.GenericProfileViewModel",
+        "name": "setUiState",
+        "parameters": [
+          "com.apple.android.music.profiles2.d"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "headerData": {
+        "owner": "com.apple.android.music.profiles2.GenericProfileViewModel",
+        "name": "createProfileHeaderData",
+        "parameters": [
+          "com.apple.android.music.mediaapi.models.MediaEntity"
+        ],
+        "returns": "com.apple.android.music.profiles.X",
+        "static": false
+      },
+      "shelves": {
+        "owner": "com.apple.android.music.profiles2.GenericProfileViewModel",
+        "name": "extractShelves",
+        "parameters": [
+          "com.apple.android.music.mediaapi.models.MediaEntity"
+        ],
+        "returns": "java.util.List",
+        "static": false
+      },
+      "entityType": {
+        "owner": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "name": "getType",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
+      },
+      "entityTitle": {
+        "owner": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "name": "getTitle",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
+      },
+      "entityViews": {
+        "owner": "com.apple.android.music.mediaapi.models.MediaEntity",
+        "name": "getViews",
+        "parameters": [],
+        "returns": "java.util.Map",
+        "static": false
+      },
+      "viewEntities": {
+        "owner": "com.apple.android.music.mediaapi.models.internals.Relationship",
+        "name": "getEntities",
+        "parameters": [],
+        "returns": "[Lcom.apple.android.music.mediaapi.models.MediaEntity;",
+        "static": false
+      }
+    },
+    "fields": {
+      "id": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "a",
+        "type": "java.lang.String"
+      },
+      "title": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "b",
+        "type": "java.lang.String"
+      },
+      "header": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "c",
+        "type": "com.apple.android.music.profiles.X"
+      },
+      "shelves": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "d",
+        "type": "java.util.List"
+      },
+      "entity": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "e",
+        "type": "com.apple.android.music.mediaapi.models.MediaEntity"
+      },
+      "revision": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "name": "f",
+        "type": "long"
+      }
+    },
+    "constructors": {
+      "success": {
+        "owner": "com.apple.android.music.profiles2.d$d",
+        "parameters": [
+          "java.lang.String",
+          "java.lang.String",
+          "com.apple.android.music.profiles.X",
+          "java.util.List",
+          "com.apple.android.music.mediaapi.models.MediaEntity",
+          "long"
+        ]
+      }
     }
   }
 }

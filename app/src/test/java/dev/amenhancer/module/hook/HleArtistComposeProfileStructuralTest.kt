@@ -40,9 +40,11 @@ class HleArtistComposeProfileStructuralTest {
     @Test
     fun composeProfileClearsSavedSuccessWhenLeavingSuccessAndIsolatesRefreshQueueIdentity() {
         val body = composeBody()
-        assertTrue(body.contains("clearComposeProfileOwner(owner)"))
+        assertTrue(body.contains("clearComposeProfileOwner(owner, installation)"))
         assertTrue(body.contains("slot = COMPOSE_PROFILE_REFRESH_SLOT"))
-        assertTrue(body.contains("composeProfileRefreshPending.remove(owner)"))
+        assertTrue(body.contains("sessions.finishRefresh(session)"))
+        assertTrue(body.contains("runtime.hookRegistrar.onInstallationClose"))
+        assertTrue(body.contains("sessions.isCurrent(session)"))
         assertTrue(
             source(
                 "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/AppleArtistSurfaceHooks.kt",
@@ -74,19 +76,30 @@ class HleArtistComposeProfileStructuralTest {
     }
 
     @Test
-    fun only1609DeclaresTheComposeArtistRoles() {
+    fun everyIndexedProfileKeepsItsComposeDeclarationAndInvocationInventoryTogether() {
         val directory = "host-applemusic/src/main/resources/host-profiles"
         val roles = listOf("compose_profile_view_model", "compose_profile_success_state")
-        listOf("6.5.0-1580", "6.5.1-1583", "6.5.2-1586", "6.5.3-1599", "7.0.0-beta-1606", "7.0.0-beta-1609")
-            .forEach { name ->
-                val profile = JSONObject(source("$directory/$name.json"))
-                val targets = profile.getJSONObject("hookTargets").getJSONArray("ARTIST_SURFACE_CLASSES")
-                val declared = (0 until targets.length()).mapNotNull { index ->
-                    targets.getJSONObject(index).getJSONObject("runtimeMemberNames")
-                        .optString("ARTIST_RUNTIME_ROLE").takeIf(roles::contains)
-                }
-                assertEquals(name, if (name.endsWith("1609")) roles else emptyList<String>(), declared)
+        val index = JSONObject(source("$directory/index.json")).getJSONArray("profiles")
+        (0 until index.length()).map(index::getString).forEach { name ->
+            val profile = JSONObject(source("$directory/$name"))
+            val targets = profile.getJSONObject("hookTargets").getJSONArray("ARTIST_SURFACE_CLASSES")
+            val declared = (0 until targets.length()).mapNotNull { targetIndex ->
+                targets.getJSONObject(targetIndex).getJSONObject("runtimeMemberNames")
+                    .optString("ARTIST_RUNTIME_ROLE").takeIf(roles::contains)
             }
+            assertEquals(name, if (profile.has("artistComposeProfile")) roles else emptyList<String>(), declared)
+            if (declared.isNotEmpty()) {
+                val contract = profile.getJSONObject("artistComposeProfile")
+                assertEquals(name, 1, contract.getInt("contractVersion"))
+                assertTrue(contract.getJSONObject("methods").keys().asSequence().toSet().containsAll(listOf(
+                    "setUiState", "headerData", "shelves", "entityType", "entityTitle", "entityViews", "viewEntities",
+                )))
+                assertTrue(contract.getJSONObject("fields").keys().asSequence().toSet().containsAll(listOf(
+                    "id", "title", "header", "shelves", "entity", "revision",
+                )))
+                assertTrue(contract.getJSONObject("constructors").has("success"))
+            }
+        }
     }
 
     @Test
@@ -94,10 +107,10 @@ class HleArtistComposeProfileStructuralTest {
         val hooks = source(
             "host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/metadata/AppleArtistSurfaceHooks.kt",
         )
-        val state = hooks.substringAfter("private fun onComposeProfileState(").substringBefore("registerComposeProfile(mediaId, owner)")
-        assertEquals(4, Regex("return clearComposeProfileOwner\\(owner\\)").findAll(state).count())
-        assertTrue(state.contains("composeProfileRefs.unregister(owner)"))
-        assertTrue(hooks.contains("private val composeProfileRefs = ComposeProfileRefRegistry()"))
+        val state = hooks.substringAfter("private fun onComposeProfileState(").substringBefore("val session = sessions.replace")
+        assertTrue(state.contains("members.isArtistEntity(entity)"))
+        assertTrue(state.contains("clearComposeProfileOwner(owner, installation)"))
+        assertTrue(hooks.contains("sessions.replace(owner, mediaId, state)"))
         assertFalse(hooks.contains("ConcurrentLinkedQueue<WeakReference<Any>>"))
     }
 }

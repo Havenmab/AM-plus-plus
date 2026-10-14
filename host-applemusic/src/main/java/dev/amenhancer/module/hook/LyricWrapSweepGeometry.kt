@@ -44,6 +44,8 @@ internal class LyricWrapSweepGeometry private constructor(
         }
     }
 
+    fun maskIdentities(): List<Any>? = masks.map { it.get() ?: return null }
+
     fun render(contract: LyricWrapSweepContract, progress: Float, colors: IntArray, feather: Float): Boolean {
         if (!progress.isFinite() || colors.size != 4 || !feather.isFinite() || feather !in 0f..1f || !valid(contract)) return false
         val targets = masks.map { it.get() ?: return false }

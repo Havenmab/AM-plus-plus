@@ -56,15 +56,19 @@ internal class AppleMusicLyricWrapSweepTarget(
         var lastProgress = initialProgress
         var colors: IntArray? = null
         var feather = 0f
-        var hasRendered = false
+        var ownsMasks = false
     }
 
-    private class StaticFrame(val recipe: Recipe, val colors: IntArray)
+    private class StaticFrame(val recipe: Recipe, val colors: IntArray, val prefixColors: IntArray)
+    private class MaskOwner(flex: ViewGroup, val bottom: Boolean) {
+        val flex = WeakReference(flex)
+    }
 
     private val sweeps = WeakIdentityMap<ValueAnimator, Sweep>()
     private val rushes = WeakIdentityMap<ValueAnimator, Sweep>()
     private val staticFrames = WeakIdentityMap<ViewGroup, MutableMap<Boolean, StaticFrame>>()
     private val layoutObservers = WeakIdentityMap<ViewGroup, View.OnLayoutChangeListener>()
+    private val maskOwners = WeakIdentityMap<Any, MaskOwner>()
     private var registration: HookRegistrationScope? = null
     private var lastFailure: String? = null
 
@@ -92,6 +96,8 @@ internal class AppleMusicLyricWrapSweepTarget(
                     val sweep = sweeps[animator] ?: return
                     // A seek/recycle invalidates this callback even if the host ends its old set later.
                     if (sweep.retired) { param.result = null; return }
+                    // A failed tick relinquishes ownership instead of preserving a historical success flag.
+                    sweep.ownsMasks = false
                     val listener = param.thisObject ?: return
                     guarded {
                         if (contract.listenerMask.get(listener) !== sweep.sourceMask.get() ||
@@ -105,12 +111,11 @@ internal class AppleMusicLyricWrapSweepTarget(
                             ?: return@guarded
                         // Only the new sweep created after a backward seek may reduce the visible progress.
                         val progress = if (animator.animatedFraction >= 1f) 1f else maxOf(sweep.lastProgress, timed)
-                        val geometry = sweep.recipe.prepare(contract) ?: return@guarded
-                        if (geometry.render(contract, progress, colors, feather)) {
+                        if (renderGeometry(contract, sweep.recipe, progress, colors, feather)) {
                             sweep.lastProgress = progress
                             sweep.colors = colors
                             sweep.feather = feather
-                            sweep.hasRendered = true
+                            sweep.ownsMasks = true
                             param.result = null
                         }
                     }
@@ -120,8 +125,29 @@ internal class AppleMusicLyricWrapSweepTarget(
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val animator = param.args.firstOrNull() as? ValueAnimator ?: return
                     val sweep = rushes[animator] ?: return
-                    // Until valid geometry has actually rendered, retain the original fallback.
-                    if (sweep.retired || sweep.hasRendered) param.result = null
+                    if (sweep.retired) { param.result = null; return }
+                    if (!sweep.ownsMasks) return
+                    sweep.ownsMasks = false
+                    guarded {
+                        // A rush can run after the primary animator ended; recheck the last rendered geometry.
+                        if (sweep.recipe.geometry?.valid(contract) != true) return@guarded
+                        sweep.ownsMasks = true
+                        param.result = null
+                    }
+                }
+            })
+            hook(contract.fadeUpdate, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    guarded {
+                        val listener = param.thisObject ?: return@guarded
+                        val mask = contract.fadeMask.get(listener) ?: return@guarded
+                        val owner = maskOwners[mask] ?: return@guarded
+                        val flex = owner.flex.get() ?: return@guarded
+                        // A delayed fade on an obsolete mask cannot revoke a newer binding's ownership.
+                        if (bankFor(contract, flex, mask) != owner.bottom) return@guarded
+                        staticFrames[flex]?.remove(owner.bottom)
+                        retire { it.recipe.flex.get() === flex && it.recipe.bottom == owner.bottom }
+                    }
                 }
             })
             hook(contract.rebind, object : ModernMethodHook() {
@@ -221,6 +247,7 @@ internal class AppleMusicLyricWrapSweepTarget(
                 staticFrames.clear()
                 layoutObservers.keys().forEach { view -> layoutObservers[view]?.let(view::removeOnLayoutChangeListener) }
                 layoutObservers.clear()
+                maskOwners.clear()
             }
             scope.activate()
             registration = scope
@@ -270,7 +297,7 @@ internal class AppleMusicLyricWrapSweepTarget(
             override fun onAnimationEnd(animation: Animator) { animatorRef.get()?.let(sweeps::remove) }
             override fun onAnimationCancel(animation: Animator) { sweep.retired = true }
         })
-        // Keep native scheduling; only suppress a rush after multi-row rendering actually succeeded.
+        // Keep native scheduling; suppress a rush only while the last rendered geometry is still owned.
         animations.filterIsInstance<ValueAnimator>().filter(contract::isRush).forEach { rush ->
             rushes[rush] = sweep
             val rushRef = WeakReference(rush)
@@ -290,6 +317,8 @@ internal class AppleMusicLyricWrapSweepTarget(
         staticFrames[flex]?.remove(bottom)
         val word = param.args[0] ?: return
         val bindings = param.args[1] as? List<*> ?: return
+        val prefixColors = param.args[3] as? IntArray ?: return
+        if (contract.isInactiveStatic(adapter, prefixColors)) return
         val colors = param.args[4] as? IntArray ?: return
         val rtl = param.args[5] as? Boolean ?: return
         if (!LyricWrapSweepGeometry.spansRows(contract, bindings, flex, bottom)) return
@@ -300,7 +329,7 @@ internal class AppleMusicLyricWrapSweepTarget(
         if (position < begin || lyricWrapWordProgress(begin, contract.wordDuration.getInt(word), position) == null) return
         val content = contract.wordText.get(word) as? String ?: return
         val recipe = Recipe(adapter, word, browser, flex, bindings, content, bottom, rtl)
-        val frame = StaticFrame(recipe, colors.copyOf())
+        val frame = StaticFrame(recipe, colors.copyOf(), prefixColors.copyOf())
         val frames = staticFrames[flex] ?: mutableMapOf<Boolean, StaticFrame>().also { staticFrames[flex] = it }
         frames[bottom] = frame
         observeLayout(contract, flex)
@@ -310,9 +339,10 @@ internal class AppleMusicLyricWrapSweepTarget(
     private fun renderFrame(contract: LyricWrapSweepContract, frame: StaticFrame) {
         val word = frame.recipe.word.get() ?: return
         val browser = frame.recipe.browser.get() ?: return
+        val adapter = frame.recipe.adapter.get() ?: return
         val position = contract.position(browser) ?: return
         val begin = contract.wordBegin.getInt(word)
-        if (position < begin) {
+        if (position < begin || contract.isInactiveStatic(adapter, frame.prefixColors)) {
             frame.recipe.flex.get()?.let { view ->
                 val frames = staticFrames[view]
                 if (frames != null && frames[frame.recipe.bottom] === frame) frames.remove(frame.recipe.bottom)
@@ -325,14 +355,27 @@ internal class AppleMusicLyricWrapSweepTarget(
                 it.recipe.bottom == frame.recipe.bottom
         }
         if (active != null) {
+            active.ownsMasks = false
             val colors = active.colors ?: return
-            active.recipe.prepare(contract)?.render(contract, active.lastProgress, colors, active.feather)
+            active.ownsMasks = renderGeometry(contract, active.recipe, active.lastProgress, colors, active.feather)
         } else {
-            val adapter = frame.recipe.adapter.get() ?: return
             val flex = frame.recipe.flex.get() ?: return
             val feather = contract.featherPixels.getFloat(adapter) / maxOf(flex.width, 1)
-            frame.recipe.prepare(contract)?.render(contract, progress, frame.colors, feather)
+            renderGeometry(contract, frame.recipe, progress, frame.colors, feather)
         }
+    }
+
+    private fun renderGeometry(contract: LyricWrapSweepContract, recipe: Recipe, progress: Float,
+        colors: IntArray, feather: Float): Boolean {
+        val geometry = recipe.prepare(contract) ?: return false
+        val flex = recipe.flex.get() ?: return false
+        val masks = geometry.maskIdentities() ?: return false
+        masks.forEach { mask ->
+            val previous = maskOwners[mask]
+            if (previous == null || previous.flex.get() !== flex || previous.bottom != recipe.bottom)
+                maskOwners[mask] = MaskOwner(flex, recipe.bottom)
+        }
+        return geometry.render(contract, progress, colors, feather)
     }
 
     private fun restoreFrames(contract: LyricWrapSweepContract, view: ViewGroup) {

@@ -26,13 +26,14 @@ def main():
             wrap = profile['lyricWrapSweep']
             assert wrap.get('contractVersion') == 1, f'missing wrap sweep contract: {filename}'
             required_wrap = {
-                'methods': {'build', 'update', 'rushUpdate', 'staticMask', 'rebind', 'bind', 'recycle', 'document',
+                'methods': {'build', 'update', 'rushUpdate', 'fadeUpdate', 'staticMask', 'rebind', 'bind', 'recycle', 'document',
                             'clearMasks', 'textView', 'maskUpdate', 'animationTag', 'mediaBrowser',
                             'mediaPosition', 'seek', 'pause', 'pauseRequested', 'resume'},
                 'fields': {'topMasks', 'bottomMasks', 'maskFirst', 'maskLast', 'wordBegin', 'wordDuration',
                            'bindingRoot', 'holderBinding', 'adapterCallback', 'callbackFragment', 'featherPixels',
                            'listenerMask', 'listenerColors', 'listenerFeather', 'listenerRtl', 'wordText', 'wordAnimator',
-                           'words', 'backgroundWords', 'pronunciationWords', 'pronunciationBackgroundWords'},
+                           'words', 'backgroundWords', 'pronunciationWords', 'pronunciationBackgroundWords',
+                           'foregroundInactiveColors', 'backgroundInactiveColors', 'fadeMask'},
             }
             for group, roles in required_wrap.items():
                 assert roles <= wrap.get(group, {}).keys(), f'missing wrap sweep {group}: {filename}'

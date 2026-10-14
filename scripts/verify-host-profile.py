@@ -157,13 +157,14 @@ def verify_fragment_contracts(document, classes, failures):
             failures.append('lyricWrapSweep: missing versioned contract')
         else:
             required = {
-                'methods': {'build', 'update', 'rushUpdate', 'staticMask', 'rebind', 'bind', 'recycle', 'document',
+                'methods': {'build', 'update', 'rushUpdate', 'fadeUpdate', 'staticMask', 'rebind', 'bind', 'recycle', 'document',
                             'clearMasks', 'textView', 'maskUpdate', 'animationTag', 'mediaBrowser',
                             'mediaPosition', 'seek', 'pause', 'pauseRequested', 'resume'},
                 'fields': {'topMasks', 'bottomMasks', 'maskFirst', 'maskLast', 'wordBegin', 'wordDuration',
                            'bindingRoot', 'holderBinding', 'adapterCallback', 'callbackFragment', 'featherPixels',
                            'listenerMask', 'listenerColors', 'listenerFeather', 'listenerRtl', 'wordText', 'wordAnimator',
-                           'words', 'backgroundWords', 'pronunciationWords', 'pronunciationBackgroundWords'},
+                           'words', 'backgroundWords', 'pronunciationWords', 'pronunciationBackgroundWords',
+                           'foregroundInactiveColors', 'backgroundInactiveColors', 'fadeMask'},
             }
             for group, roles in required.items():
                 for role in sorted(roles - wrap.get(group, {}).keys()):

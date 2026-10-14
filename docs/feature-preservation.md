@@ -36,7 +36,7 @@
 | 在线查找与自动补全 | 手动来源保留；自动来源 AMLL→Lunabeat→AM-Lyrics；既有触发条件、manual/disabled 优先、代次与退避、缓存/ETag | 缺词/非逐字/缺翻译、网络失败、离线、手动与自动切换 | 在线/自动歌词业务和原生接入 |
 | 模糊 | 已提交行/实际词动画保护，原前后曲线、双向300ms、用户浏览及空闲1秒恢复；独立会话与效果所有权，保留Android门禁/配置范围/宿主透明度 | 首句、无三点前奏与延迟三点、重叠/子集、延迟提交、Seek、复用、暂停重建、拖动惯性、双栏边缘与释放 | [手册：歌词模糊](host-adaptation-guide.md#lyrics-blur)、[清单：人工验收](host-adaptation-checklist.md#lyrics-blur-checks) |
 | CJK 动画 | 单词作用域、汉字/日文/韩文、前景文本、合并高亮和结束清理；同开关启停末词羽化补偿，保留原生逐字时长和位移；跨行遮罩修复为独立能力，不受本开关控制 | 短尾词全亮、长尾辉光、Latin 原生规则、重叠高亮、快速切歌、动画取消、开关重启 | [手册：CJK](host-adaptation-guide.md#cjk-animation)、[清单：人工验收](host-adaptation-checklist.md#cjk-animation-checks) |
-| 跨行歌词扫光 | 独立能力：仅当精确档案声明顶层 `lyricWrapSweep` v1 时接管跨行词的原生扫光动画，保留宿主动画器与歌词身份、原生毫秒时间轴和暂停/恢复；按实际视觉行字形宽度累计，多行终点羽化内建；单行/不完整几何与不支持形状保持原生 | 两行/三行跨行词、词内中段 Seek（前/后）、暂停恢复、切歌与行回收、字体或字号变化/旋转/双栏、原文与发音、前景与背景 flexbox、RTL 与不支持形状 | [手册：跨行歌词扫光](host-adaptation-guide.md#lyric-wrap-sweep)、[清单：人工验收](host-adaptation-checklist.md#lyric-wrap-sweep-checks) |
+| 跨行歌词扫光 | 独立能力：仅当精确档案声明顶层 `lyricWrapSweep` v1 时接管跨行词的原生扫光动画，保留宿主动画器与歌词身份、原生毫秒时间轴和暂停/恢复；按实际视觉行字形宽度累计，多行终点羽化内建；静态恢复遵守原生暗色状态，退场渐暗清缓存并撤销旧写入；仅当前有效接管抑制补亮，单行/不完整几何与不支持形状保持原生 | 两行/三行跨行词、未来行与已唱行亮暗、入场及退场、词内中段 Seek（前/后）、暂停恢复、切歌与行回收、字体或字号变化/旋转/双栏、原文与发音、前景与背景 flexbox、RTL 与不支持形状 | [手册：跨行歌词扫光](host-adaptation-guide.md#lyric-wrap-sweep)、[清单：人工验收](host-adaptation-checklist.md#lyric-wrap-sweep-checks) |
 | 字体 | TTF/OTF、后台加载与重试、普通行/逐字一致、旋转/重建和原字体恢复 | 导入、加载失败、切换/禁用、后台和恢复 | LyricsTypefaceSession、字体业务 |
 | 歌词面板 | binding、附属容器、RecyclerView、同步度量、渐变与监听生命周期一致 | 普通/逐字/翻译/背景/静态/间奏/credits、滚动和高亮锚点 | 歌词 runtime、layoutVariants |
 | 平板双栏 | 原生 SONG/QUEUE、独立歌词、门禁、布局/锚点、原生封面比例与恢复 | 横竖屏、多窗口、歌词可用性、切页及重建 | 双栏能力和视图会话 |

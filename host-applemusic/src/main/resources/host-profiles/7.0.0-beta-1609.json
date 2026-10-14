@@ -5021,6 +5021,15 @@
         "returns": "void",
         "static": false
       },
+      "fadeUpdate": {
+        "owner": "com.apple.android.music.player.A$o",
+        "name": "onAnimationUpdate",
+        "parameters": [
+          "android.animation.ValueAnimator"
+        ],
+        "returns": "void",
+        "static": false
+      },
       "staticMask": {
         "owner": "com.apple.android.music.player.A",
         "name": "W",
@@ -5260,11 +5269,26 @@
         "owner": "com.apple.android.music.player.A$a",
         "name": "J",
         "type": "android.util.ArrayMap"
+      },
+      "foregroundInactiveColors": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "P",
+        "type": "[I"
+      },
+      "backgroundInactiveColors": {
+        "owner": "com.apple.android.music.player.A",
+        "name": "Y",
+        "type": "[I"
+      },
+      "fadeMask": {
+        "owner": "com.apple.android.music.player.A$o",
+        "name": "f",
+        "type": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a"
       }
     },
     "evidence": {
       "sourceIdentity": "com.apple.android.music / 7.0.0-beta / 1609",
-      "memberSource": "1609 decoded DEX member inventory and targeted native V/d0/W/i0/player.t/Flex source",
+      "memberSource": "1609 decoded DEX member inventory and targeted native V/d0/W/i0/player.t/A$o/Flex source",
       "runtimeVerified": false,
       "maskKey": "visual Flex row first child index; c/d delimit that row child range",
       "clock": "getCurrentPosition on the native browser, WordProperties begin/duration in milliseconds",

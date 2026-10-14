@@ -9,17 +9,19 @@ import org.json.JSONObject
 /** Dependencies are code-owned and resolved once, before any callback is activated. */
 internal class LyricWrapSweepContract(profile: AppleMusicHostProfile, loader: ClassLoader, names: JSONObject) {
     private val members = FragmentProfileMembers(loader, names, "lyricWrapSweep", FragmentMemberRequirements(
-        methods = setOf("build", "update", "rushUpdate", "staticMask", "rebind", "bind", "recycle", "document",
+        methods = setOf("build", "update", "rushUpdate", "fadeUpdate", "staticMask", "rebind", "bind", "recycle", "document",
             "clearMasks", "textView", "maskUpdate", "animationTag", "mediaBrowser", "mediaPosition",
             "seek", "pause", "pauseRequested", "resume"),
         fields = setOf("topMasks", "bottomMasks", "maskFirst", "maskLast", "wordBegin", "wordDuration",
             "bindingRoot", "holderBinding", "adapterCallback", "callbackFragment", "featherPixels",
             "listenerMask", "listenerColors", "listenerFeather", "listenerRtl", "wordText", "wordAnimator",
-            "words", "backgroundWords", "pronunciationWords", "pronunciationBackgroundWords"),
+            "words", "backgroundWords", "pronunciationWords", "pronunciationBackgroundWords",
+            "foregroundInactiveColors", "backgroundInactiveColors", "fadeMask"),
     ))
     val build = members.method("build")
     val update = members.method("update")
     val rushUpdate = members.method("rushUpdate")
+    val fadeUpdate = members.method("fadeUpdate")
     val staticMask = members.method("staticMask")
     val rebind = members.method("rebind")
     val bind = members.method("bind")
@@ -52,6 +54,9 @@ internal class LyricWrapSweepContract(profile: AppleMusicHostProfile, loader: Cl
     val listenerRtl = members.field("listenerRtl")
     val wordText = members.field("wordText")
     val wordAnimator = members.field("wordAnimator")
+    val foregroundInactiveColors = members.field("foregroundInactiveColors")
+    val backgroundInactiveColors = members.field("backgroundInactiveColors")
+    val fadeMask = members.field("fadeMask")
     val wordMaps = listOf("words", "backgroundWords", "pronunciationWords", "pronunciationBackgroundWords").map(members::field)
 
     init {
@@ -64,6 +69,11 @@ internal class LyricWrapSweepContract(profile: AppleMusicHostProfile, loader: Cl
         check(listenerMask.declaringClass == update.declaringClass && listenerMask.type == maskUpdate.declaringClass)
         check(update.parameterTypes.contentEquals(arrayOf(ValueAnimator::class.java)))
         check(rushUpdate.parameterTypes.contentEquals(arrayOf(ValueAnimator::class.java)))
+        check(fadeUpdate.parameterTypes.contentEquals(arrayOf(ValueAnimator::class.java)))
+        check(fadeMask.declaringClass == fadeUpdate.declaringClass && fadeMask.type == maskUpdate.declaringClass)
+        check(listOf(foregroundInactiveColors, backgroundInactiveColors).all {
+            it.declaringClass == build.declaringClass && it.type == IntArray::class.java
+        })
         check(wordText.declaringClass == wordBegin.declaringClass && wordAnimator.declaringClass == wordBegin.declaringClass)
         check(wordAnimator.type == android.animation.Animator::class.java)
         check(wordMaps.all { it.declaringClass == rebind.parameterTypes[0] && Map::class.java.isAssignableFrom(it.type) })
@@ -80,6 +90,11 @@ internal class LyricWrapSweepContract(profile: AppleMusicHostProfile, loader: Cl
     }
 
     fun position(browser: Any): Long? = (mediaPosition.invoke(browser) as? Long)?.takeIf { it >= 0L }
+
+    /** Match the host's W branch, which treats both native inactive palettes as unsung/dim. */
+    fun isInactiveStatic(adapter: Any, colors: IntArray): Boolean =
+        colors.contentEquals(foregroundInactiveColors.get(adapter) as IntArray) ||
+            colors.contentEquals(backgroundInactiveColors.get(adapter) as IntArray)
 
     fun isRush(animation: Any): Boolean = animationTag.declaringClass.isInstance(animation) &&
         animationTag.invoke(animation) == "KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG"

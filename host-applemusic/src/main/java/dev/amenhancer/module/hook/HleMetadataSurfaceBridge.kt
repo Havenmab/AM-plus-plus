@@ -197,6 +197,10 @@ internal class HleMetadataSurfaceBridge(
         installSafely("collection") { collectionSurfaceHooks.installHooks() }
         installSafely("artist-top-songs") { artistSurfaceHooks.installTopSongHooks() }
         installSafely("artist-profile") { artistSurfaceHooks.installProfileHooks() }
+        // Stage declared Compose surfaces even when a target is missing, so failure is reported.
+        if (artistSurfaceHooks.hasComposeProfileSurface()) {
+            installSafely("artist-compose-profile") { artistSurfaceHooks.installComposeProfileHooks() }
+        }
         installSafely("listen-now-artwork") { listenNowHooks.installArtworkContinuityHooks() }
         installSafely("listen-now-binding") { listenNowHooks.installMetadataBindingHooks() }
         installSafely("recently-searched") { mediaApiMetadataCoordinator.installRecentlySearchedHooks() }

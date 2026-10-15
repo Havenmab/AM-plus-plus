@@ -84,7 +84,7 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(models.contains("val phoneLiquidGlassExpandReboundPercent: Int"))
         assertTrue(models.contains("val phoneLiquidGlassMiniReboundPercent: Int"))
         assertTrue(models.contains("val phoneLiquidGlassMiniSinkBounceDp: Int"))
-        assertTrue(settings.contains("if (settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled)"))
+        assertTrue(settings.contains("if (collapseAvailable && settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled)"))
         assertTrue(settings.contains("ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND"))
         assertTrue(settings.contains("ModuleText.BOTTOM_BAR_EXPAND_REBOUND"))
         assertTrue(settings.contains("ModuleText.BOTTOM_BAR_MINI_REBOUND"))
@@ -188,6 +188,8 @@ class PhoneLiquidGlassStructuralRegressionTest {
     @Test
     fun `drives the scroll collapse from the gesture on compose pages`() {
         val session = source("dev/amenhancer/module/hook/PhoneGlassSession.kt")
+        val controller = source("dev/amenhancer/module/hook/GlassBarCollapseController.kt")
+        val collapseInput = source("dev/amenhancer/module/hook/GlassBarCollapseInput.kt")
         val tracker = source("dev/amenhancer/module/hook/GlassTouchCollapseTracker.kt")
         val factory = source("dev/amenhancer/module/hook/FragmentChromeFactory.kt")
         val runtime = source("dev/amenhancer/module/hook/FragmentGlassRuntime.kt")
@@ -196,10 +198,11 @@ class PhoneLiquidGlassStructuralRegressionTest {
 
         // Library / New / parts of Search are Compose scenes: their scrolling never moves a
         // native container, so the scroll listener alone observes nothing and the gesture is
-        // the signal that actually reaches those pages. Both sources must stay wired.
-        assertTrue(session.contains("addOnScrollChangedListener(collapseScrollListener)"))
+        // the signal that actually reaches those pages. The controller owns the listener, the
+        // input owns the gesture, and the session only hands them the tree and the observation.
+        assertTrue(controller.contains("addOnScrollChangedListener(scrollListener)"))
         assertTrue(session.contains("open fun observeContentTouch(event: MotionEvent): Boolean?"))
-        assertTrue(session.contains("collapseTouch.move(event.rawX, event.rawY, event.eventTime)"))
+        assertTrue(collapseInput.contains("touch.move(event.rawX, event.rawY, event.eventTime)"))
         // The content root is the page's ancestor: one dispatch per gesture, before any child
         // consumes it. It is forwarded under its own callback so it cannot collide with the
         // mini player's press handling.
@@ -216,7 +219,7 @@ class PhoneLiquidGlassStructuralRegressionTest {
 
     @Test
     fun `routes the page's own scrolling into the bar through one direction convention`() {
-        val session = source("dev/amenhancer/module/hook/PhoneGlassSession.kt")
+        val collapseInput = source("dev/amenhancer/module/hook/GlassBarCollapseInput.kt")
         val accumulator = source("dev/amenhancer/module/hook/GlassScrollCollapse.kt")
         val tracker = source("dev/amenhancer/module/hook/GlassTouchCollapseTracker.kt")
 
@@ -225,7 +228,7 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // feed the negation of its delta; the unchanged delta would invert the bar on every
         // native page. The touch path reaches the same convention through finger travel.
         assertTrue(accumulator.contains("fun accumulate(deltaY: Int): Boolean?"))
-        assertTrue(session.contains("collapseAccumulator.accumulate(previous - offset)"))
+        assertTrue(collapseInput.contains("scroll.accumulate(previous - offset)"))
         // Both sources share the accumulator, so they cannot disagree on when the bar may move.
         assertTrue(tracker.contains("GlassScrollCollapseAccumulator(thresholdPx)"))
         // The exit distance is the bar's own occupied height, so it has to follow the collapse.
@@ -239,7 +242,7 @@ class PhoneLiquidGlassStructuralRegressionTest {
         val phone = source("dev/amenhancer/module/hook/FragmentPhoneGlassSession.kt")
         val factory = source("dev/amenhancer/module/hook/FragmentChromeFactory.kt")
         val runtime = source("dev/amenhancer/module/hook/FragmentGlassRuntime.kt")
-        val gesture = source("dev/amenhancer/module/hook/GlassCollapsedMiniGesture.kt")
+        val regions = source("dev/amenhancer/module/hook/GlassBarTouchRegions.kt")
 
         // The 7.0 Fragment path is the one that runs on the phone host.
         assertTrue(factory.contains("observer.onMiniTouch(binding.viewSessionIdentity"))
@@ -248,7 +251,6 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // player: its play/pause and skip buttons and its tap-to-open-player are the host's, and
         // consuming the gesture here is exactly what made those working controls dead.
         assertTrue(session.contains("override fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean? = null"))
-        assertTrue(phone.contains("collapsedMiniTouch(event)"))
         assertTrue(phone.contains("return null"))
         // The module must never synthesise the player-open action: the host already wires a click
         // (and long-click) listener to the mini touch panel, so any route of our own would be a
@@ -256,34 +258,20 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(!session.contains("openPlayerFromCollapsedMini"))
         assertTrue(!session.contains("performClick()"))
         assertTrue(!session.contains("target.dispatchTouchEvent(forwarded)"))
-        // `collapsedMiniTouch` therefore reports ownership rather than a consumed result, and the
-        // content-root seam uses it to EXCLUDE the gesture from the collapse signal instead of
+        // The region test reports ownership of the mini's band rather than a consumed result, and
+        // the content-root seam uses it to EXCLUDE the gesture from the collapse signal instead of
         // claiming it. Returning null there is what keeps native dispatch untouched.
-        assertTrue(session.contains("protected fun collapsedMiniTouch(event: MotionEvent): Boolean"))
-        assertTrue(session.contains("val miniGesture = collapsedMiniTouch(event)"))
-        assertTrue(session.contains("if (navigationGesture || miniGesture) { resetCollapseInput(); return null }"))
-        assertTrue(session.contains("open fun observeContentTouch(event: MotionEvent): Boolean?"))
         assertTrue(factory.contains("observer.onContentTouch(binding.viewSessionIdentity, event)"))
         assertTrue(runtime.contains("override fun onContentTouch(identity: Any, event: MotionEvent): Boolean?"))
         assertTrue(phone.contains("override fun observeContentTouch(event: MotionEvent): Boolean?"))
-        // The lift still belongs to the mini's gesture: letting it through would let the drag's
-        // velocity decide the bar's direction. Ownership is therefore read before it is cleared.
-        assertTrue(session.contains("val owned = collapsedMiniGesture.owning"))
-        assertTrue(session.contains("MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {"))
-        // Only the gesture's ORIGIN is recorded now — no tap-versus-drag classification, because
-        // which control the finger landed on is the host's business.
-        assertTrue(gesture.contains("val owning: Boolean get() = active"))
-        assertTrue(!gesture.contains("dragged"))
         // The hit test must cover the mini player and nothing else. Collapsed, the native root
         // keeps its full-row width, so including it there made every tap on the row — the capsule
         // and the search control included — count as "on the mini".
-        assertTrue(session.contains("private fun hitsMiniPlayer(event: MotionEvent): Boolean"))
+        assertTrue(regions.contains("fun mini(event: MotionEvent, progress: Float, root: View?, content: View?, glass: View?): Boolean"))
         // Collapsed, only the two narrowed surfaces are tested; expanded, the mini is alone in its
-        // band so its own bounds suffice.
-        assertTrue(session.contains("listOfNotNull(miniGlass, miniContent)"))
-        assertTrue(session.contains("listOfNotNull(miniContent, miniRoot)"))
-        assertTrue(!session.contains("listOfNotNull(miniGlass, miniRoot, miniContent)"))
-        assertTrue(session.contains("COLLAPSED_TOUCH_MIN_PROGRESS"))
+        // band so its own bounds suffice — and the root is never one of them.
+        assertTrue(regions.contains("if (progress < 0.9f) listOfNotNull(content, root) else listOfNotNull(glass, content)"))
+        assertTrue(!regions.contains("listOfNotNull(glass, root, content)"))
     }
 
     @Test
@@ -295,11 +283,12 @@ class PhoneLiquidGlassStructuralRegressionTest {
         val tabs = projectFile("glass/src/main/kotlin/com/kyant/backdrop/catalog/components/LiquidBottomTabs.kt")
         val navigation = projectFile("glass/src/main/kotlin/dev/amenhancer/glass/GlassNavigation.kt")
         val policy = projectFile("glass/src/main/kotlin/dev/amenhancer/glass/GlassBarCollapse.kt")
+        val layout = projectFile("glass/src/main/kotlin/dev/amenhancer/glass/GlassBarCollapseLayout.kt")
+        val controller = source("dev/amenhancer/module/hook/GlassBarCollapseController.kt")
+        val regions = source("dev/amenhancer/module/hook/GlassBarTouchRegions.kt")
 
-        // The mini is shorter than the collapsed row, so it shares a TOP edge with the taller
-        // capsule and its centre sits 2.5dp high. It must sink by half the difference to centre.
         assertTrue(policy.contains("fun miniDrop(expandedMiniHeightPx: Float, collapsedRowHeightPx: Float, p: Float): Float"))
-        assertTrue(session.contains("GlassBarCollapsePolicy.miniDrop("))
+        assertTrue(controller.contains("GlassBarCollapsePolicy.miniDrop("))
         // `miniRoot.translationY` already has an owner, so the drop is threaded through that one
         // owner rather than written by a second writer on the same property.
         assertTrue(port.contains("fun syncMiniPresentation(miniRoot: View?, miniDropPx: Float = 0f)"))
@@ -325,9 +314,13 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // same capsule functions, on the same raw (unclamped) spring, with the same drop.
         assertTrue(!policy.contains("fun searchScale(p: Float): Float"))
         assertTrue(!navigation.contains("searchScale"))
-        assertTrue(navigation.contains("GlassBarCollapsePolicy.searchWidth("))
-        assertTrue(navigation.contains("GlassBarCollapsePolicy.capsuleHeight(rowHeightPx, controlPx, raw)"))
-        assertTrue(navigation.contains("GlassBarCollapsePolicy.collapseDrop("))
+        // The two renderers and the host's native touch hit test all take the row's control
+        // geometry from the ONE shared entry point, so the control that is drawn and the region
+        // that answers for it cannot drift apart.
+        assertTrue(layout.contains("fun controls("))
+        assertTrue(navigation.contains("GlassBarCollapseLayout.controls("))
+        assertTrue(tabs.contains("GlassBarCollapseLayout.controls("))
+        assertTrue(regions.contains("GlassBarCollapseLayout.controls("))
         // ...and it must inherit the capsule's REBOUND DISTANCE, not just its curve. The control
         // travels one cell where the capsule travels the whole row, so interpolating its own width
         // gave it ~1dp of overshoot against the capsule's ~14dp — the "no big rebound" report.
@@ -346,25 +339,23 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(policy.contains("return offset.coerceAtMost(maxExpandReboundPx.coerceAtLeast(0f))"))
         // The clamp must not touch the collapse side: it narrows, so it cannot run out of room.
         assertTrue(policy.contains("if (offset <= 0f || !maxExpandReboundPx.isFinite()) return offset"))
-        // Both callers pass the gap, so the two side buttons are clamped identically.
-        assertTrue(navigation.contains("maxExpandReboundPx = with(density) { GlassBarCollapsePolicy.GAP_DP.dp.toPx() }"))
-        assertTrue(tabs.contains("maxExpandReboundPx = expandRoomPx"))
-        assertTrue(tabs.contains("val expandRoomPx = with(density) { dev.amenhancer.glass.GlassBarCollapsePolicy.GAP_DP.dp.toPx() }"))
+        // Both callers pass the gap through that entry point, so the two side buttons are clamped
+        // identically.
+        assertTrue(layout.contains("val expandRoomPx = GlassBarCollapsePolicy.GAP_DP * density"))
+        assertTrue(layout.contains("expandReboundScale, expandRoomPx,"))
         // ONE amplitude pair, shared by the capsule and the search control.
         assertTrue(navigation.contains("collapseReboundScale: Float = 1f"))
         assertTrue(navigation.contains("expandReboundScale: Float = 1f"))
-        assertTrue(session.contains("collapseReboundScale = collapseReboundPercent / 100f"))
-        assertTrue(session.contains("expandReboundScale = expandReboundPercent / 100f"))
-        // The amplitudes must be COMPOSE STATE, not plain fields. A plain field is
-        // invisible to the composition — the slider updates it but the already-composed row never
-        // re-reads it, so the bar keeps animating with a stale value until some unrelated
-        // recomposition happens to pick the new one up. That is exactly "0% still rebounds,
-        // sometimes it works".
-        assertTrue(session.contains("protected var collapseReboundPercent by mutableIntStateOf("))
-        assertTrue(session.contains("protected var expandReboundPercent by mutableIntStateOf("))
-        assertTrue(session.contains("protected var miniSinkBounceDp by mutableIntStateOf("))
-        assertTrue(session.contains("collapseReboundPercent = ModuleSettings.normalizePhoneLiquidGlassCollapseReboundPercent("))
-        assertTrue(session.contains("expandReboundPercent = ModuleSettings.normalizePhoneLiquidGlassExpandReboundPercent("))
+        // The session hands the controller's ONE appearance to the renderer, so the capsule and
+        // the search control cannot disagree on the amplitudes.
+        assertTrue(session.contains("collapseReboundScale = barCollapse.appearance.collapseReboundScale"))
+        assertTrue(session.contains("expandReboundScale = barCollapse.appearance.expandReboundScale"))
+        // The amplitudes must be COMPOSE STATE, not plain fields: a plain field is invisible to
+        // the composition, so the slider would update it while the already-composed row kept
+        // animating with the stale value. The controller owns them as one normalized state object.
+        assertTrue(controller.contains("var appearance by mutableStateOf(GlassBarCollapseAppearance())"))
+        assertTrue(controller.contains("ModuleSettings.normalizePhoneLiquidGlassCollapseReboundPercent("))
+        assertTrue(controller.contains("ModuleSettings.normalizePhoneLiquidGlassExpandReboundPercent("))
         // The signed clamp, with the spring's own shape preserved on both sides.
         assertTrue(policy.contains("const val SPRING_OVERSHOOT_LIMIT = 0.09f"))
         assertTrue(policy.contains("fun sprungFraction(value: Float, limit: Float = SPRING_OVERSHOOT_LIMIT): Float"))
@@ -376,8 +367,6 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(policy.contains("const val CONTROL_DP = GlassPolicy.MINI_HEIGHT_DP"))
         assertTrue(policy.contains("const val ROW_DP = CONTROL_DP"))
         assertTrue(policy.contains("fun collapseDrop(expandedBoxHeightPx: Float, collapsedControlHeightPx: Float, p: Float): Float"))
-        assertTrue(navigation.contains("GlassBarCollapsePolicy.collapseDrop(rowHeightPx, controlPx, raw)"))
-        assertTrue(!navigation.contains("(rowHeightPx - heightPx) / 2f"))
         // The mini drops by the WHOLE leftover space, not half: half left its bottom edge floating
         // above the buttons' line, which is the "collapsed row drifted upwards" report.
         assertTrue(policy.contains("val bottomAnchor = (collapsedRowHeightPx - expandedMiniHeightPx).coerceAtLeast(0f)"))
@@ -388,8 +377,8 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(policy.contains("fun miniSinkOvershoot("))
         assertTrue(policy.contains("val excess = (p - progress(p)).coerceIn(0f, springOvershoot)"))
         assertTrue(policy.contains("val CollapseOvershoot: Float = run {"))
-        assertTrue(session.contains("amplitudePx = miniSinkBounceDp * density"))
-        assertTrue(session.contains("springOvershoot = dev.amenhancer.glass.GlassBarCollapseSprings.CollapseOvershoot"))
+        assertTrue(controller.contains("appearance.miniSinkBounceDp * density"))
+        assertTrue(controller.contains("GlassBarCollapseSprings.CollapseOvershoot"))
         // The collapsed mini player's taps being dead. The tab-drag gesture is a `pointerInput`
         // on the row box, which is `fillMaxWidth()`; while it is PRESENT the row is a full-width
         // Compose hit target, and Compose tells the View system the event was handled as soon as a
@@ -415,23 +404,11 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(session.contains("override fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean? = null"))
         assertTrue(!session.contains("openPlayerFromCollapsedMini"))
         assertTrue(!session.contains("performClick()"))
-        // ...but it must still be able to tell the two failure modes apart on device.
-        assertTrue(session.contains("private fun traceRowTap(event: MotionEvent)"))
-        assertTrue(session.contains("\"row tap -> \${if (hitsMiniPlayer(event)) \"mini\" else \"outside\"}\""))
-        // Dragging the mini player upward opens the full player, and that long
-        // upward travel arrives on the same content-root seam the collapse tracker watches — where
-        // it reads as "the page scrolled down" and collapses the bar. Coming back therefore left the
-        // bar collapsed, while a *tap* (too short to clear the slop) did not. The exclusion must
-        // therefore apply in EVERY state, not only once collapsed.
-        assertTrue(session.contains("private fun hitsMiniPlayer(event: MotionEvent): Boolean"))
-        assertTrue(session.contains("if (!hitsMiniPlayer(event)) {"))
-        assertTrue(!session.contains("collapse.value < COLLAPSED_TOUCH_MIN_PROGRESS || !hitsMiniPlayer(event)"))
-        // Expanded, the mini is the only thing in its band, so the test uses its own bounds; the
-        // collapsed narrowing is still needed because the native root keeps its full-row width.
-        assertTrue(session.contains("if (collapse.value < COLLAPSED_TOUCH_MIN_PROGRESS) {"))
-        assertTrue(session.contains("listOfNotNull(miniContent, miniRoot)"))
-        assertTrue(session.contains("listOfNotNull(miniGlass, miniContent)"))
-        assertTrue(session.contains("return bottomAnchor + dip"))
+        // Dragging the mini player upward opens the full player, and that long upward travel
+        // arrives on the same content-root seam the collapse tracker watches, where it reads as
+        // "the page scrolled down". The region test therefore answers for the mini first and never
+        // claims the event, so the exclusion holds in EVERY state, not only once collapsed.
+        assertTrue(session.contains("GlassBarTouchRegions.mini(event, barCollapse.progress, miniRoot, miniContent, miniGlass)"))
         // The dip must not become a second writer on the mini's vertical position.
         assertTrue(!session.contains("miniRoot?.translationY ="))
         // The selection droplet is omitted rather than faded: `Modifier.alpha` sits inside
@@ -520,21 +497,18 @@ class PhoneLiquidGlassStructuralRegressionTest {
 
     @Test
     fun `the mini player rebounds with the row`() {
-        val session = source("dev/amenhancer/module/hook/PhoneGlassSession.kt")
+        val controller = source("dev/amenhancer/module/hook/GlassBarCollapseController.kt")
         // The mini was the one surface on the row that could not spring back, because its slot
-        // and its drop both short-circuited on `p <= 0f` — which is exactly where the return
-        // rebound lives. Both early returns are gone.
-        //
-        // Comments are stripped first: the replacements deliberately *quote* the removed guards to
-        // explain why they must not come back, so a raw substring search would match the
-        // explanation rather than the code.
-        val code = session.lines().joinToString("\n") { it.substringBefore("//") }
-        assertTrue(!code.contains("if (p <= 0f) return expanded"))
-        assertTrue(!code.contains("if (p <= 0f) return 0f"))
+        // and its drop both short-circuited while the collapse progress sat at 0 — which is exactly
+        // where the return rebound lives. Both now gate on the same presentation flag, which stays
+        // true while the return spring runs.
+        assertTrue(controller.contains("val hasPresentation: Boolean get() = enabled || isRunning || progress != 0f"))
+        assertTrue(controller.contains("if (!hasPresentation) return expanded"))
+        assertTrue(controller.contains("if (!hasPresentation) return 0f"))
         // The slot now rides the sprung fraction, so the mini's own glass backplate rebounds on the
         // same spring as the two side buttons.
-        assertTrue(code.contains("val fraction = dev.amenhancer.glass.GlassBarCollapsePolicy.sprungFraction("))
-        assertTrue(code.contains("miniStartMargin(\n            expanded[0].toFloat(), capsule, gap, fraction,"))
-        assertTrue(code.contains("miniEndMargin(\n            expanded[1].toFloat(), endReserve, fraction,"))
+        assertTrue(controller.contains("val fraction = policy.sprungFraction(progress, appearance.miniReboundScale, appearance.miniReboundScale)"))
+        assertTrue(controller.contains("miniStartMargin("))
+        assertTrue(controller.contains("miniEndMargin("))
     }
 }

@@ -22,7 +22,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -41,15 +40,12 @@ import dev.amenhancer.glass.NativeButtonInput
 import dev.amenhancer.glass.NativeLiquidButton
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TargetConfigClient
-import dev.amenhancer.module.model.EnhancementDefaults
 import dev.amenhancer.module.model.FeatureHealth
 import dev.amenhancer.module.model.FeatureState
 import dev.amenhancer.module.model.ModuleSettings
 import java.util.IdentityHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 
 @RequiresApi(33)
 internal open class PhoneGlassSession(
@@ -125,47 +121,11 @@ internal open class PhoneGlassSession(
     private var underlap = false
     private var scanNeeded = true
     private var scrollTargets: List<View> = emptyList()
-    private var composeScrollTargets: List<View> = emptyList()
+    private var composeScenes: List<View> = emptyList()
     private var hierarchyDirty = false
-    // AM++ scroll collapse. `collapse.value` is snapshot state, so the navigation and mini
-    // glass islands both read this one animation and can never drift apart.
-    private val collapse = androidx.compose.animation.core.Animatable(0f)
-    private val collapseScope = kotlinx.coroutines.CoroutineScope(
-        androidx.compose.ui.platform.AndroidUiDispatcher.Main + kotlinx.coroutines.SupervisorJob(),
-    )
-    private val collapseAccumulator by lazy {
-        GlassScrollCollapseAccumulator(COLLAPSE_SCROLL_THRESHOLD_DP * density)
-    }
-    private val collapseScrollOffsets = IdentityHashMap<View, Int>()
-    /**
-     * Remembers whether the gesture in progress began on the **collapsed** mini player, so the
-     * collapse tracker can stand down for it. Nothing is consumed; see [collapsedMiniTouch].
-     */
-    private val collapsedMiniGesture = GlassCollapsedMiniGesture()
-    private var navigationGestureDownTime: Long? = null
-    private var collapseScrollGestureAllowed = false
-    private var collapseTouchInProgress = false
-    private var collapseGestureDirection: Boolean? = null
-    private var collapseScrollTarget: View? = null
-    private var collapseBoundaryTarget: View? = null
-    /**
-     * Second signal source: the gesture itself. Compose pages expose no native scroll container,
-     * so their scrolling is invisible to [collapseScrollListener] and only the touch that drives
-     * it can be observed. Built on first use because it needs the activity's touch slop.
-     */
-    private val collapseTouch by lazy {
-        GlassTouchCollapseTracker(
-            slopPx = ViewConfiguration.get(activity).scaledTouchSlop.toFloat(),
-            flingPxPerSecond = ViewConfiguration.get(activity).scaledMinimumFlingVelocity.toFloat(),
-            thresholdPx = COLLAPSE_SCROLL_THRESHOLD_DP * density,
-        )
-    }
-    /** Shared snapshot gate for native signals and Compose. Only an opted-in phone adapter qualifies. */
-    private var collapseEnabled by mutableStateOf(false)
+    private val barCollapse = GlassBarCollapseController(activity, hostBinding,
+        inputActive = { activated && !closed && isCollapsed }, failure = ::scheduleFailure)
     private val collapseSupported: Boolean get() = !geometry.sideBySide && hostBinding.supportsScrollCollapse
-    private var collapseTarget = false
-    private var collapseFrames: kotlinx.coroutines.Job? = null
-    private val collapseScrollListener = ViewTreeObserver.OnScrollChangedListener { onScrollChanged() }
     private val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
         scanNeeded = true; hierarchyDirty = true; hostBinding.invalidateViews()
     }
@@ -178,35 +138,6 @@ internal open class PhoneGlassSession(
     // height consumer (frame, content padding, peek) agrees within a frame.
     protected var bottomGapDp = GlassPolicy.BOTTOM_DP
     private var navBlurDp = GlassPolicy.PANEL_BLUR_DP.toInt()
-    /**
-     * Collapse-animation amplitudes, read live so the settings rows take effect on the next
-     * collapse instead of needing a host restart.
-     *
-     * These are **Compose state**, not plain fields, and that is the fix for "setting the rebound to
-     * 0% still rebounds, sometimes". A plain field is invisible to the composition: the slider
-     * updates it, but the already-composed `GlassNavigation` never re-reads it, so the bar keeps
-     * animating with whatever value was captured the last time something *else* happened to
-     * recompose the row. That is exactly the intermittent behaviour — it "works sometimes" when an
-     * unrelated recomposition (a tab change, a rotation) happens to pick the new value up.
-     *
-     * The two amplitudes are deliberately **shared** by the capsule and the detached search control:
-     * the user asked for control over "the rebound" of the buttons, and two independent sliders would
-     * let the two side buttons drift into animating differently — which is the exact complaint that
-     * started this line of work.
-     */
-    protected var collapseReboundPercent by mutableIntStateOf(EnhancementDefaults.GLASS_COLLAPSE_REBOUND_PERCENT)
-    protected var expandReboundPercent by mutableIntStateOf(EnhancementDefaults.GLASS_EXPAND_REBOUND_PERCENT)
-    /**
-     * The **mini player's** rebound amplitude, on its own scale.
-     *
-     * Separate from the two above because the travels differ by ~6x: the mini's margins span
-     * `ROW_DP + GAP_DP = 51dp` while the side buttons span the whole row (~317dp). At a shared 100%
-     * the buttons move 8dp — already clamped by the gap — while the mini moves 1.4dp, so a single
-     * slider cannot make both read the same. Both directions of the mini's motion use this value.
-     */
-    protected var miniReboundPercent by mutableIntStateOf(EnhancementDefaults.GLASS_MINI_REBOUND_PERCENT)
-    protected var miniSinkBounceDp by mutableIntStateOf(EnhancementDefaults.GLASS_MINI_SINK_BOUNCE_DP)
-
     /** Capsule geometry shared by every occupied-height consumer; a diverging form overrides this. */
     protected open val geometry: GlassGeometry get() = GlassGeometry.Phone
 
@@ -352,13 +283,7 @@ internal open class PhoneGlassSession(
             }
             attachHandler.removeCallbacks(retryAttach)
             retryPending = false
-            // Resolve the collapse gate **before** anything reads it. The settings tick below only
-            // runs every 500ms, and in between the scroll listener, the gesture path and
-            // `GlassNavigation`'s own wiring all consult this flag — so leaving it at its safe
-            // default would mean a phone whose user has the feature on would not collapse for the
-            // first half-second, and a tablet could briefly collapse before the tick corrected it.
-            val initialSettings = config.settings()
-            collapseEnabled = collapseSupported && initialSettings.phoneLiquidGlassCollapseEnabled
+            barCollapse.configure(glassSettings, collapseSupported)
             val bg = ViewBackdrop(content, ::scheduleFailure).also { backdrop = it; it.start() }
             refreshMenu()
             // Bottom fade: blurred, washed-out strip under the tabs, matching the
@@ -374,10 +299,10 @@ internal open class PhoneGlassSession(
             glass.alpha = 0f
             glass.content { HostConfiguration { GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab, panelBlur = navBlurDp.dp,
                 // A null progress keeps legacy and tablet navigation in its expanded layout.
-                collapseProgress = if (collapseEnabled) ::collapseProgress else null,
-                onExpandRequest = { requestCollapse(false) },
-                collapseReboundScale = collapseReboundPercent / 100f,
-                expandReboundScale = expandReboundPercent / 100f) } }
+                collapseProgress = if (barCollapse.hasPresentation) ::collapseProgress else null,
+                onExpandRequest = barCollapse::expand,
+                collapseReboundScale = barCollapse.appearance.collapseReboundScale,
+                expandReboundScale = barCollapse.appearance.expandReboundScale) } }
             val navSlot = capsuleMarginsPx(frame.width, mini = false)
             frame.addView(glass, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(GlassPolicy.NAV_HEIGHT_DP), Gravity.TOP).apply {
                 leftMargin = navSlot[0]; rightMargin = navSlot[1]
@@ -385,10 +310,9 @@ internal open class PhoneGlassSession(
             observer = activity.window.decorView.viewTreeObserver.also {
                 it.addOnPreDrawListener(this)
                 it.addOnGlobalLayoutListener(layoutListener)
-                if (collapseEnabled) it.addOnScrollChangedListener(collapseScrollListener)
             }
-            if (collapseEnabled) driveCollapseFrames()
         }
+        barCollapse.attach(activity.window.decorView.viewTreeObserver)
         val root = (find(ChromeResource.MINI_PLAYER) ?: find(ChromeResource.MINI_PLAYER_TOUCH_PANEL)) as? FrameLayout
         val content = root?.findViewById<View>(resourceId(ChromeResource.MINI_PLAYER_CONTENT))
         if (root != null && (root !== miniRoot || content !== miniContent)) {
@@ -466,11 +390,7 @@ internal open class PhoneGlassSession(
             hostConfiguration = Configuration(activity.resources.configuration)
             // A new configuration re-measures every slot, so the collapsed geometry would be
             // computed against a stale width. Return to the expanded bar and start over.
-            requestCollapse(false)
-            navigationGestureDownTime = null
-            collapseScrollGestureAllowed = false
-            collapsedMiniGesture.reset()
-            resetCollapseInput()
+            barCollapse.expand()
         }
         val nav = navigation ?: return
         val snapshot = hostBinding.navigation(nav)
@@ -492,7 +412,10 @@ internal open class PhoneGlassSession(
             foreground = Color(fg)
             accent = Color(hostAccent)
         }
-        if (selectedId != selected) selectedId = selected
+        if (selectedId != selected) {
+            barCollapse.expand()
+            selectedId = selected
+        }
     }
 
     /**
@@ -505,98 +428,14 @@ internal open class PhoneGlassSession(
         runCatching { activity.resources.getResourceEntryName(itemId).contains("search", ignoreCase = true) }
             .getOrDefault(false)
 
-    /**
-     * Whether the scroll collapse is allowed to move the bar right now.
-     *
-     * While the full player is open the bar is fading out under a full-screen sheet, and the
-     * collapsed geometry would fight the native transition; the same applies before the glass
-     * has taken over. Both conditions simply hold the bar at its expanded geometry.
-     */
-    private val collapseActive: Boolean
-        get() = activated && collapseEnabled && !closed && slide <= 0.001f
-
-    /** Native fling continuation for the container hit by the current page gesture. */
-    private fun onScrollChanged() {
-        if (!collapseActive || !collapseScrollGestureAllowed || navigationGestureDownTime != null || collapsedMiniGesture.owning) {
-            collapseScrollOffsets.clear(); collapseAccumulator.reset(); return
-        }
-        runCatching {
-            val target = collapseScrollTarget?.takeIf { it.isShown } ?: return
-            val offset = hostBinding.verticalScrollOffset(target) ?: return
-            val previous = collapseScrollOffsets.put(target, offset) ?: offset
-            // Updating peek and padding during collapse can change this offset in either direction.
-            // While a finger is down it alone owns the direction; keep native baselines current.
-            if (collapseTouchInProgress || collapse.isRunning) {
-                collapseAccumulator.reset()
-                return
-            }
-            val direction = collapseGestureDirection ?: return
-            val decision = collapseAccumulator.accumulate(previous - offset) ?: return
-            // A fling continues the last deliberate finger direction. Layout correction, changing
-            // row-height estimates and edge rebound must not reverse a settled bar on their own.
-            if (decision == direction && decision != collapseTarget) {
-                GlassCollapseDiagnostics.event("scroll source -> ${if (decision) "collapse" else "expand"}")
-                requestCollapse(decision)
-            }
-        }.onFailure { error -> scheduleFailure(error) }
-    }
-
-    /**
-     * Drives the bar between its expanded and collapsed geometry.
-     *
-     * The target and the animation spec are chosen together, in the same frame, because
-     * `animateTo` only adopts a spec at the moment the animation starts; deriving the direction
-     * from an animation frame instead would pick the wrong spring for a reversal. The animation
-     * itself keeps its current value and velocity, so a mid-flight reversal stays continuous.
-     */
-    fun requestCollapse(collapsed: Boolean) {
-        // Repeated scroll events requesting the same endpoint must not restart its spring.
-        if (collapseTarget == collapsed) return
-        collapseTarget = collapsed
-        val target = if (collapsed) 1f else 0f
-        val spec = if (collapsed) dev.amenhancer.glass.GlassBarCollapseSpec
-        else dev.amenhancer.glass.GlassBarExpandSpec
-        // Begin retargeting now, including a reversal before the previous job's first frame.
-        // Animatable keeps the current velocity and cancels the previous spring internally.
-        collapseScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-            collapse.animateTo(target, spec)
-        }
-        driveCollapseFrames()
-    }
-
-    /**
-     * Keeps the host traversing while the bar moves.
-     *
-     * The peek height and the mini player's margins are native properties, and this session only
-     * writes them from `onPreDraw`. An animation that only changed Compose state would therefore
-     * move the glass while the native mini player and the sheet's peek stayed where they were —     * and because nothing else invalidates the tree, no further `onPreDraw` would even arrive.
-     * Requesting a traversal per value change keeps the two in step; when the bar is at rest the
-     * flow is silent and the host is left alone.
-     */
-    private fun driveCollapseFrames() {
-        if (collapseFrames != null) return
-        collapseFrames = collapseScope.launch {
-            snapshotFlow { collapse.value }.collect {
-                activity.window.decorView.postOnAnimation { activity.window.decorView.invalidate() }
-            }
-        }
-    }
-
-    private fun observeScrollCollapse(observe: Boolean) {
-        val tree = activity.window.decorView.viewTreeObserver
-        if (!tree.isAlive) return
-        if (observe) tree.addOnScrollChangedListener(collapseScrollListener)
-        else tree.removeOnScrollChangedListener(collapseScrollListener)
-    }
-
-    /** Current collapse progress; read by both glass islands and by every geometry consumer. */
-    protected fun collapseProgress(): Float = collapse.value
+    /** Shared animation read by Compose, the native mini, content padding and peek. */
+    protected fun collapseProgress(): Float = barCollapse.progress
 
     private fun selectTab(id: Int): Int {
         if (tabs.none { it.id == id && it.enabled }) return selectedId
         // Choosing a destination returns the bar to its expanded form: the collapsed capsule
         // shows one glyph, so a selection made from it would otherwise be unverifiable.
-        requestCollapse(false)
+        barCollapse.expand()
         runCatching {
             navigation?.let { hostBinding.selectNavigation(it, id) }
             refreshMenu()
@@ -616,34 +455,7 @@ internal open class PhoneGlassSession(
                     activity.window.decorView.post { close() }
                     return true
                 }
-                // The profiled phone capability and the live switch must agree on every signal path.
-                val liveSettings = config.settings()
-                val collapseWanted = collapseSupported && liveSettings.phoneLiquidGlassCollapseEnabled
-                if (collapseWanted != collapseEnabled) {
-                    collapseEnabled = collapseWanted
-                    observeScrollCollapse(collapseWanted)
-                    navigationGestureDownTime = null
-                    collapseScrollGestureAllowed = false
-                    collapsedMiniGesture.reset()
-                    resetCollapseInput()
-                    if (!collapseWanted) requestCollapse(false)
-                }
-                if (!collapseEnabled && collapse.value != 0f) requestCollapse(false)
-                // The amplitudes are read on the same tick as the toggle that gates them. Writing
-                // Compose state here is what makes the slider take effect on the next collapse:
-                // a plain field would be captured by the composition once and never re-read.
-                collapseReboundPercent = ModuleSettings.normalizePhoneLiquidGlassCollapseReboundPercent(
-                    liveSettings.phoneLiquidGlassCollapseReboundPercent,
-                )
-                expandReboundPercent = ModuleSettings.normalizePhoneLiquidGlassExpandReboundPercent(
-                    liveSettings.phoneLiquidGlassExpandReboundPercent,
-                )
-                miniReboundPercent = ModuleSettings.normalizePhoneLiquidGlassMiniReboundPercent(
-                    liveSettings.phoneLiquidGlassMiniReboundPercent,
-                )
-                miniSinkBounceDp = ModuleSettings.normalizePhoneLiquidGlassMiniSinkBounceDp(
-                    liveSettings.phoneLiquidGlassMiniSinkBounceDp,
-                )
+                barCollapse.configure(config.settings(), collapseSupported)
             }
             refreshMenu()
             if (!activated && backdrop?.ready == true && navGlass?.isLaidOut == true && glassMenuReady) {
@@ -662,23 +474,8 @@ internal open class PhoneGlassSession(
                 }
                 navigation?.alpha = if (menuReady) 0f else 1f
                 updateGeometry()
-                // The host's sheet reconciliation and this session's scroll collapse both drive
-                // the same peek, and they must not run at the same time.
-                //
-                // `reconcileCollapsedPlayer()` compares the player sheet's laid-out top against
-                // the native collapsed offset and, on a mismatch, either restarts the native
-                // settle animation or returns true — and a true return here makes `onPreDraw`
-                // return false, which *cancels that frame's draw*. That is correct while the peek
-                // is parked: a stale sheet should not be painted in the wrong place. But the
-                // collapse deliberately animates the peek on every frame, so the sheet is
-                // *supposed* to be moving while the check expects it to be still. Left unguarded
-                // the two fight, and the cancelled draws show up as dropped frames.
-                //
-                // Standing the check down while the bar is in motion is also the more correct
-                // reading: reconciling against a moving target is meaningless. It resumes the
-                // moment the spring settles, so the host still gets its correction — the final
-                // value change posts one more frame, and `isRunning` is already false by then.
-                if (!collapse.isRunning && reconcileCollapsedPlayer()) return false
+                // Peek is moving while the bar animates; reconcile the native sheet once it settles.
+                if (!barCollapse.isRunning && reconcileCollapsedPlayer()) return false
                 val sourceNeedsLayout = updateUnderlap()
                 val transitionNeedsLayout = updateTransition()
                 val waitingForCapture = glassConsumersVisible && backdrop?.ready == false && canRefreshBackdrop()
@@ -772,47 +569,7 @@ internal open class PhoneGlassSession(
         listOf(ChromeResource.PLAYER_ROOT, ChromeResource.PLAYER_TOP_SHADOW, ChromeResource.BACKGROUND_LAYERS, ChromeResource.MOTION_SWITCHER, ChromeResource.PLAYER_FRAGMENTS_HOST).mapNotNull(::find).forEach(::save)
     }
 
-    /**
-     * How far the mini player sinks so its **bottom edge lands on the collapsed row's bottom edge**,
-     * which is the line the two side buttons are bottom-anchored to.
-     *
-     * Zero while expanded and on the side-by-side tablet row, which has no collapse.
-     *
-     * This is the whole leftover space, not half of it. Centring the mini left its bottom edge a few
-     * dp above the buttons', which made the collapsed row read as having drifted upwards relative to
-     * the expanded bar — the row's bottom edge is the one the expanded bar already occupied.
-     *
-     * The user's sink bounce is added here rather than animated separately, so the mini's vertical
-     * position keeps exactly one writer: this value is threaded through `syncMiniPresentation`,
-     * which owns `miniRoot.translationY`. A second animation on the same property would fight it.
-     */
-    protected fun miniDropPx(): Float {
-        if (!collapseEnabled) return 0f
-        val p = collapse.value
-        if (!p.isFinite()) return 0f
-        // No `if (p <= 0f) return 0f` early return. The expand side (`p < 0`) is exactly where the
-        // return rebound lives, so that guard was silently dropping the mini player's half of it.
-        // Both terms below are already exactly zero for every `p >= 0`, so removing the guard only
-        // adds motion on the return.
-        //
-        // The mini's rebound is **horizontal, not vertical**: it is the same height as the row, so
-        // it has no vertical travel left to overshoot. Its width springs instead, through the
-        // margins in `collapseAwareMiniSlot`, which is the surface the user actually sees move.
-        val bottomAnchor = dev.amenhancer.glass.GlassBarCollapsePolicy.miniDrop(
-            dp(geometry.miniHeightDp).toFloat(),
-            dp(dev.amenhancer.glass.GlassBarCollapsePolicy.ROW_DP).toFloat(),
-            p,
-        )
-        // The dip rides the collapse spring's own overshoot, so it needs no animation of its own
-        // and cannot drift out of phase with the capsule's rebound. It is zero for the whole
-        // travel and at rest, and non-zero only while the spring is past its end point.
-        val dip = dev.amenhancer.glass.GlassBarCollapsePolicy.miniSinkOvershoot(
-            amplitudePx = miniSinkBounceDp * density,
-            springOvershoot = dev.amenhancer.glass.GlassBarCollapseSprings.CollapseOvershoot,
-            p = p,
-        )
-        return bottomAnchor + dip
-    }
+    protected fun miniDropPx(): Float = barCollapse.miniDropPx(dp(geometry.miniHeightDp).toFloat())
 
     private fun updateGeometry() {
         val height = dp(GlassPolicy.NAV_HEIGHT_DP + bottomGapDp) + bottomInset
@@ -822,7 +579,8 @@ internal open class PhoneGlassSession(
             // The capsule slots may follow the host width (see the tablet row);
             // resync every surface whenever a resolved slot edge changes.
             val navSlot = capsuleMarginsPx(frame.width, mini = false)
-            val miniSlot = collapseAwareMiniSlot(capsuleMarginsPx(frame.width, mini = true))
+            val miniSlot = barCollapse.miniMargins(capsuleMarginsPx(frame.width, mini = true), hasDetachedSearch,
+                hostConfiguration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
             fun applySlot(view: View?, slot: IntArray) {
                 val surface = view ?: return
                 val params = surface.layoutParams as? ViewGroup.MarginLayoutParams ?: return
@@ -854,47 +612,6 @@ internal open class PhoneGlassSession(
     }
 
     /**
-     * Narrows the mini slot into the collapsed row: one gap after the withdrawn capsule, and one
-     * gap before the detached search control. Only the phone's stacked form collapses; the
-     * tablet row already shares one line and passes `sideBySide`, so it keeps its own slots.
-     *
-     * Both margins are expressed the same way the expanded slot is (insets from the row edges),
-     * so the result feeds the existing `applySlot` compare-then-write unchanged.
-     *
-     * The progress handed to the margin functions is the **sprung** fraction, not the clamped one,
-     * so the mini player's own glass backplate rebounds on the return exactly as the two side
-     * buttons do. There is deliberately no `if (p <= 0f)` early return any more: that guard
-     * returned the resting slot for the whole expand side, which is precisely where the rebound
-     * lives, so the mini was the one surface on the row that could not spring back.
-     */
-    private fun collapseAwareMiniSlot(expanded: IntArray): IntArray {
-        if (!collapseEnabled) return expanded
-        val p = collapse.value
-        val capsule = dp(dev.amenhancer.glass.GlassBarCollapsePolicy.CAPSULE_DP).toFloat()
-        val gap = dp(dev.amenhancer.glass.GlassBarCollapsePolicy.GAP_DP).toFloat()
-        // The detached search control only exists when the menu actually yields a search tab;
-        // without it the mini runs to the row's end edge instead of leaving a hole.
-        val endReserve = if (hasDetachedSearch) {
-            dp(dev.amenhancer.glass.GlassBarCollapsePolicy.SEARCH_DP).toFloat() + gap
-        } else 0f
-        // The mini's own amplitude in BOTH directions. It has one slider rather than the buttons'
-        // two because its travel is ~6x shorter, so its collapse and expand overshoots are both
-        // sub-2dp and a user cannot meaningfully want them different.
-        val scale = miniReboundPercent / 100f
-        val fraction = dev.amenhancer.glass.GlassBarCollapsePolicy.sprungFraction(p, scale, scale)
-        val left = dev.amenhancer.glass.GlassBarCollapsePolicy.miniStartMargin(
-            expanded[0].toFloat(), capsule, gap, fraction,
-        )
-        val right = dev.amenhancer.glass.GlassBarCollapsePolicy.miniEndMargin(
-            expanded[1].toFloat(), endReserve, fraction,
-        )
-        return intArrayOf(
-            left.roundToInt().coerceAtLeast(0),
-            right.roundToInt().coerceAtLeast(0),
-        )
-    }
-
-    /**
      * True only when the current menu offers a detachable search tab, i.e. search is the last
      * tab and detaching it still leaves a real tab strip behind. Mirrors
      * [NavigationSnapshot.searchTab] for the legacy menu path, which builds its own tab list.
@@ -904,7 +621,7 @@ internal open class PhoneGlassSession(
 
     override fun peekHeight(): Int =
         GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry,
-            collapse = collapse.value) + if (miniVisible) dimen(ChromeResource.SHADOW_HEIGHT) else 0
+            collapse = barCollapse.progress) + if (miniVisible) dimen(ChromeResource.SHADOW_HEIGHT) else 0
 
     override fun observeNativePeek(height: Int) = nativePeek.observe(height)
 
@@ -943,15 +660,9 @@ internal open class PhoneGlassSession(
             scrollTargets = candidates.filter { child ->
                 generateSequence(child.parent) { it.parent }.takeWhile { it !== root }.none { parent -> candidates.any { it === parent } }
             }
-            composeScrollTargets = contentViews.filter(hostBinding::isComposeScene)
-                .mapNotNull(hostBinding::verticalScrollTouchTarget).distinct()
-            // Compose pages expose no scroll container at all, which is why the gesture path
-            // exists; naming the classes that *were* found makes that distinction visible on a
-            // device instead of inferred from the source.
-            GlassCollapseDiagnostics.event(
-                "scroll targets=${scrollTargets.size}" +
-                    scrollTargets.joinToString(prefix = " [", postfix = "]", separator = ", ") { it.javaClass.simpleName },
-            )
+            composeScenes = contentViews.filter(hostBinding::isComposeScene)
+            barCollapse.updateTargets(scrollTargets,
+                composeScenes.mapNotNull(hostBinding::verticalScrollTouchTarget).distinct())
         }
         val terminal = scrollTargets
         // A view that stopped being a target (for example the pager RecyclerView we no
@@ -965,11 +676,9 @@ internal open class PhoneGlassSession(
         // Library / New / parts of Search are Compose scenes in 1586. They do
         // not expose RecyclerView children. Padding their View viewport removes
         // the very pixels the backdrop needs; their own content owns scrolling.
-        val composeScene = descendants(root).any { view ->
-            view.isShown && view.height > 0 && hostBinding.isComposeScene(view)
-        }
-        val occupied = if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry, collapse = collapse.value) else 0
-        if (terminal.isEmpty() && !composeScene) {
+        val occupied = if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry, collapse = barCollapse.progress) else 0
+        val composeSceneVisible = composeScenes.any { it.isShown && it.height > 0 }
+        if (terminal.isEmpty() && !composeSceneVisible) {
             underlap = false
             if (root.paddingBottom != occupied) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, occupied)
             return sourceNeedsLayout
@@ -1023,13 +732,7 @@ internal open class PhoneGlassSession(
                     // row to its expanded geometry smoothly.
                     val left = (miniMarginPx[0] * (1f - materialProgress) + sideInset).roundToInt()
                     val right = (miniMarginPx[1] * (1f - materialProgress) + sideInset).roundToInt()
-                    // The centring drop is NOT added here. `miniOffsetInSheet` is sampled from the
-                    // native mini's live window position, which already includes the drop this
-                    // session writes through `syncMiniPresentation`; adding it again would sink
-                    // the glass by twice the centring distance, which is exactly the difference
-                    // between centring on the row and sitting on its bottom edge. The native
-                    // content and the material over it therefore move as one because they are
-                    // driven by the one translation the native root owns.
+                    // The native position already includes miniDropPx; do not apply it twice.
                     val top = (miniOffsetInSheet * (1f - materialProgress)).roundToInt()
                     val collapsedHeight = dp(geometry.miniHeightDp)
                     val height = (collapsedHeight + (sheet.height - collapsedHeight) * progress).roundToInt().coerceAtLeast(collapsedHeight)
@@ -1126,7 +829,7 @@ internal open class PhoneGlassSession(
     }
 
     override fun redirectedPadding(view: Any?): Int? = if (activated && view === source) {
-        if (underlap) 0 else if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry, collapse = collapse.value) else 0
+        if (underlap) 0 else if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry, collapse = barCollapse.progress) else 0
     } else null
 
     // Only the tablet form narrows the full-width host touch surfaces.
@@ -1134,174 +837,8 @@ internal open class PhoneGlassSession(
 
     override fun shouldBypassPlayerIntercept(event: MotionEvent): Boolean = false
 
-    /**
-     * The collapsed row's own touch owner.
-     *
-     * The phone form claims **nothing** here. The collapsed mini player is a complete mini player:
-     * its play/pause and skip buttons and its tap-to-open-player all belong to the host, and the
-     * module draws the glass *under* that native content rather than replacing it. Consuming the
-     * gesture at this seam is what made those working controls dead — the row looked interactive
-     * and every tap was swallowed into one action.
-     *
-     * The tablet keeps its own redirect: its two native touch owners are full-width and the
-     * rendered capsules are what the user is actually aiming at, so that form has to re-target.
-     */
+    /** The phone mini stays native; the tablet form separately narrows its host touch surface. */
     override fun dispatchCollapsedMiniTouch(view: View, event: MotionEvent): Boolean? = null
-
-    /**
-     * Whether [event] lands on the **mini player**, in whichever state the bar is in.
-     *
-     * The collapsed row is three separate controls: the withdrawn capsule, the mini player, and the
-     * detached search control. The capsule and the search control are Compose-drawn in the module's
-     * own row and handle their own taps, so this region has to stop at the mini player's edges or it
-     * swallows them and all three controls collapse into one action.
-     *
-     * Expanded, the mini player is the only thing in its band, so the test is simply its own bounds
-     * and no narrowing applies. Collapsed, only the two **narrowed** surfaces are tested — the glass
-     * island and the native content, both laid out to the collapsed mini slot. The native mini
-     * *root* is deliberately excluded: it keeps its expanded, full-row width (only its height and its
-     * content are narrowed), so testing it made every tap anywhere on the row — the capsule and the
-     * search control included — count as "on the mini player".
-     */
-    private fun hitsMiniPlayer(event: MotionEvent): Boolean {
-        val targets = if (collapse.value < COLLAPSED_TOUCH_MIN_PROGRESS) {
-            listOfNotNull(miniContent, miniRoot)
-        } else {
-            listOfNotNull(miniGlass, miniContent)
-        }
-        return targets.any { hitsView(it, event) }
-    }
-
-    private fun hitsView(view: View, event: MotionEvent): Boolean {
-        if (!view.isShown || view.width <= 0 || view.height <= 0) return false
-        val location = IntArray(2).also(view::getLocationOnScreen)
-        return event.rawX >= location[0] && event.rawX < location[0] + view.width &&
-            event.rawY >= location[1] && event.rawY < location[1] + view.height
-    }
-
-    private fun hitsNavigationChrome(event: MotionEvent): Boolean {
-        val glass = navGlass ?: return false
-        if (!glass.isShown || glass.alpha <= 0.001f || glass.width <= 0 || glass.height <= 0) return false
-        val policy = dev.amenhancer.glass.GlassBarCollapsePolicy
-        val p = collapse.value
-        // The expanded drag node spans the row. Once removed, only the two visible controls
-        // own chrome input; the empty middle must remain available to the page when mini is absent.
-        if (policy.dragEnabled(p)) return hitsView(glass, event)
-        val location = IntArray(2).also(glass::getLocationOnScreen)
-        val x = event.rawX - location[0]
-        val y = event.rawY - location[1]
-        val rowWidth = glass.width.toFloat()
-        val control = policy.CONTROL_DP * density
-        val height = policy.capsuleHeight(GlassPolicy.NAV_HEIGHT_DP * density, control, p)
-        val top = (GlassPolicy.NAV_HEIGHT_DP * density - height) / 2f +
-            policy.collapseDrop(GlassPolicy.NAV_HEIGHT_DP * density, control, p)
-        val room = policy.GAP_DP * density
-        val rtl = hostConfiguration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        fun hitsControl(left: Float, width: Float): Boolean {
-            // Match Compose's default minimum touch target, including the 43dp compact controls.
-            val extraX = (48f * density - width).coerceAtLeast(0f) / 2f
-            val extraY = (48f * density - height).coerceAtLeast(0f) / 2f
-            return x >= left - extraX && x < left + width + extraX &&
-                y >= top - extraY && y < top + height + extraY
-        }
-        val capsuleWidth = policy.capsuleWidth(rowWidth, control, p,
-            collapseReboundPercent / 100f, expandReboundPercent / 100f, room)
-        if (hitsControl(if (rtl) rowWidth - capsuleWidth else 0f, capsuleWidth)) return true
-        if (!hasDetachedSearch || !policy.searchInteractive(p)) return false
-        val cell = dev.amenhancer.glass.GlassTabGeometry(rowWidth, 4f * density, 0f, tabs.size).tabWidth
-        val searchWidth = policy.searchWidth(cell, control, rowWidth, p,
-            collapseReboundPercent / 100f, expandReboundPercent / 100f, room)
-        return hitsControl(if (rtl) 0f else rowWidth - searchWidth, searchWidth)
-    }
-
-    private fun resetCollapseInput() {
-        collapseTouch.reset()
-        collapseAccumulator.reset()
-        collapseScrollOffsets.clear()
-        collapseScrollGestureAllowed = false
-        collapseTouchInProgress = false
-        collapseGestureDirection = null
-        collapseScrollTarget = null
-        collapseBoundaryTarget = null
-    }
-
-    /**
-     * Traces a tap on the collapsed row so the two possible failures can be told apart on device.
-     *
-     * "Tapping the mini does nothing" has two very different causes and the log must separate them:
-     *
-     * - `row tap -> mini` means the module's own row recognised the tap as landing on the mini
-     *   player, so if the mini still does nothing the event was taken before it could reach the
-     *   native view — the overlay is the culprit.
-     * - `row tap -> outside` means the module does **not** even think the tap was on the mini, which
-     *   points at the geometry instead: the mini's slot, the overlay's band, or the hit test.
-     *
-     * It also prints the band the overlay occupies and the mini's own rect, so the two can be
-     * compared directly rather than inferred. Called on the down event only, so a gesture costs one
-     * line, and rate-limited by [GlassCollapseDiagnostics] like every other trace here.
-     */
-    private fun traceRowTap(event: MotionEvent) {
-        val location = IntArray(2)
-        val rects = listOfNotNull(miniGlass, miniContent).joinToString(" ") { view ->
-            view.getLocationOnScreen(location)
-            "${location[0]},${location[1]} ${view.width}x${view.height}"
-        }
-        navFrame?.let { frame ->
-            frame.getLocationOnScreen(location)
-            GlassCollapseDiagnostics.log(
-                "row tap -> ${if (hitsMiniPlayer(event)) "mini" else "outside"}" +
-                    " at ${event.rawX.toInt()},${event.rawY.toInt()}" +
-                    " p=${collapse.value}" +
-                    " overlay=${location[0]},${location[1]} ${frame.width}x${frame.height}" +
-                    " mini=[$rects]",
-            )
-        }
-    }
-
-    /**
-     * Reports whether [event] belongs to a gesture that began on the mini player.
-     *
-     * **Nothing is consumed.** The mini player is a complete mini player in both states: its
-     * play/pause and skip buttons and its tap-to-open-player are the host's, and the module
-     * deliberately draws the glass *under* that native content instead of replacing it. Earlier
-     * rounds consumed the event here, which is exactly what left those working controls dead.
-     *
-     * The module needs the gesture's *origin* for two reasons, and both apply in **every** state:
-     *
-     * 1. The content root observes every page gesture for the scroll collapse, and a finger busy
-     *    with the mini must not withdraw the bar underneath itself.
-     * 2. Dragging the mini player **upward** opens the full player, and that drag is a long upward
-     *    travel on the same seam. Fed to the collapse tracker it reads as "the page scrolled down"
-     *    and collapses the bar — which is why dragging the mini open and coming back left the bar
-     *    collapsed, while *tapping* it open (too short to clear the slop) did not. The origin is
-     *    therefore recorded regardless of the current collapse value, not only once collapsed.
-     *
-     * So this records the origin and reports it, and [observeContentTouch] stands its collapse
-     * tracker down for the whole gesture — including the lift, which is why the ending event
-     * reports `true` before clearing the flag.
-     */
-    protected fun collapsedMiniTouch(event: MotionEvent): Boolean {
-        if (!activated || closed || !collapseEnabled) return false
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                traceRowTap(event)
-                if (!hitsMiniPlayer(event)) {
-                    collapsedMiniGesture.reset()
-                } else {
-                    collapsedMiniGesture.down(event.rawX, event.rawY)
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                // Reported before clearing: the lift still belongs to the mini's gesture, and
-                // letting it through would let the drag's velocity decide the bar's direction.
-                val owned = collapsedMiniGesture.owning
-                collapsedMiniGesture.reset()
-                return owned
-            }
-            else -> Unit
-        }
-        return collapsedMiniGesture.owning
-    }
 
     private fun miniGlassPosition(event: MotionEvent): Pair<Float, Float>? {
         val glass = miniGlass ?: return null
@@ -1314,81 +851,13 @@ internal open class PhoneGlassSession(
             )
     }
 
-    /**
-     * Content-root gesture observation, the collapse signal source for Compose pages.
-     *
-     * Observation only: the event is never consumed, never delayed and never rewritten, so native
-     * dispatch, every host control and the player drag behave exactly as they did. The decision
-     * comes from finger travel alone, which is why this path works on a Compose scene where no
-     * native scroll container exists to watch.
-     *
-     * The content root is an ancestor of the mini player, so it sees the mini's gestures first.
-     * They are *not* consumed — the collapsed mini is a complete mini player and its controls must
-     * work — but they must not drive the collapse either: a finger busy with the mini would
-     * otherwise withdraw the bar underneath itself. The gesture is therefore excluded from the
-     * collapse signal while still being delivered to the host untouched.
-     *
-     * A pointer count above one is ignored entirely: a pinch or a two-finger gesture is not a
-     * scroll, and letting it drive the bar would move the bottom chrome while the user zooms.
-     */
+    /** Observes one root event; the host still owns dispatch and every native mini control. */
     open fun observeContentTouch(event: MotionEvent): Boolean? {
-        if (!activated || closed) return null
-        if (!collapseEnabled) return null
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            // Keep origin ownership even if the finger later leaves the controls or they move.
-            navigationGestureDownTime = event.downTime.takeIf { hitsNavigationChrome(event) }
-        }
-        val navigationGesture = navigationGestureDownTime == event.downTime
-        val miniGesture = collapsedMiniTouch(event)
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            // Keep the same ownership through native fling events after UP. A bar tap can also
-            // restore a page's list position, which must not be mistaken for a new page scroll.
-            collapseScrollGestureAllowed = !navigationGesture && !miniGesture
-            collapseTouchInProgress = true
-            collapseGestureDirection = null
-            collapseScrollTarget = scrollTargets.firstOrNull { hitsView(it, event) }
-            collapseBoundaryTarget = collapseScrollTarget
-                ?: composeScrollTargets.firstOrNull { hitsView(it, event) }
-            collapseScrollOffsets.clear()
-            collapseAccumulator.reset()
-        }
-        if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.pointerCount > 1) {
-            resetCollapseInput()
-        }
-        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            navigationGestureDownTime = null
-        }
-        // Excluded, not claimed: the return value stays null so the host still receives the event.
-        if (navigationGesture || miniGesture) { resetCollapseInput(); return null }
-        if (event.pointerCount > 1) { collapseTouch.reset(); return null }
-        if (!collapseActive) { resetCollapseInput(); return null }
-        val decision = when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { collapseTouch.down(event.rawX, event.rawY, event.eventTime); null }
-            MotionEvent.ACTION_MOVE -> collapseTouch.move(event.rawX, event.rawY, event.eventTime)
-            MotionEvent.ACTION_UP -> collapseTouch.up(event.rawX, event.rawY, event.eventTime)
-            MotionEvent.ACTION_CANCEL -> { collapseTouch.reset(); null }
-            else -> null
-        }
-        if (event.actionMasked == MotionEvent.ACTION_UP) collapseTouchInProgress = false
-        if (decision != null) {
-            val direction = if (decision) 1 else -1
-            // Finger displacement alone also exists while pulling against an edge or on a static
-            // page. Query the actual native/Compose scroll owner before changing the bar target.
-            // Compose has already seen DOWN by this MOVE/UP and knows the correct semantics node.
-            val canScroll = collapseBoundaryTarget?.takeIf { it.isShown }?.let {
-                hostBinding.canScrollVertically(it, direction)
-            } == true
-            if (!canScroll) {
-                collapseGestureDirection = null
-                collapseAccumulator.reset()
-                collapseScrollOffsets.clear()
-                return null
-            }
-            collapseGestureDirection = decision
-            if (decision != collapseTarget) {
-                GlassCollapseDiagnostics.event("touch source -> ${if (decision) "collapse" else "expand"}")
-                requestCollapse(decision)
-            }
+        barCollapse.observeTouch(event) {
+            GlassBarTouchRegions.mini(event, barCollapse.progress, miniRoot, miniContent, miniGlass) ||
+                GlassBarTouchRegions.navigation(event, navGlass, barCollapse.progress, density,
+                    hostConfiguration.layoutDirection == View.LAYOUT_DIRECTION_RTL, tabs.size,
+                    hasDetachedSearch, barCollapse.appearance)
         }
         return null
     }
@@ -1410,10 +879,7 @@ internal open class PhoneGlassSession(
     override fun foreground(active: Boolean) {
         if (!active) {
             captureWait.timedOut(0L, false)
-            navigationGestureDownTime = null
-            collapseScrollGestureAllowed = false
-            collapsedMiniGesture.reset()
-            resetCollapseInput()
+            barCollapse.resetInput()
         }
         navGlass?.foreground(active); navScrim?.foreground(active); miniGlass?.foreground(active)
     }
@@ -1436,9 +902,9 @@ internal open class PhoneGlassSession(
         retryPending = false
         observer?.takeIf { it.isAlive }?.removeOnPreDrawListener(this)
         observer?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(layoutListener)
-        observer?.takeIf { it.isAlive }?.removeOnScrollChangedListener(collapseScrollListener)
-        collapseScope.cancel()
-        collapseScrollOffsets.clear()
+        barCollapse.close()
+        scrollTargets = emptyList()
+        composeScenes = emptyList()
         backdrop?.close()
         listOfNotNull(navGlass, navScrim, miniGlass).forEach { (it.parent as? ViewGroup)?.removeView(it) }
         states.forEach { (view, state) -> state.restore(view) }
@@ -1464,26 +930,6 @@ internal open class PhoneGlassSession(
      * shrinks every page instead of adding scroll space, so the page content stops above
      * the glass and the bar samples empty background. Pad the lists inside the pages. */
     private fun isViewPagerPageHost(view: View): Boolean = hostBinding.isPagerPageHost(view)
-
-    private companion object {
-        /**
-         * Scroll distance, in dp, the user must commit to before the bar flips. Small enough
-         * that a deliberate flick registers immediately, large enough that a jitter or a
-         * one-pixel bounce at the end of a list does not move the bar.
-         */
-        const val COLLAPSE_SCROLL_THRESHOLD_DP = 6f
-
-        /**
-         * Collapse progress at which the mini player starts owning its own touches.
-         *
-         * Set near the end of the travel so the region does not become a tap target while the row
-         * is still visibly a moving target: a tap landing mid-collapse would expand a bar the user
-         * never finished collapsing. Above this the row is settled and the mini's bounds are its
-         * final ones.
-         */
-        const val COLLAPSED_TOUCH_MIN_PROGRESS = 0.9f
-    }
-
 
     private class NativeViewState(view: View) {
         private val currentValues = HashMap<String,Any?>(24)

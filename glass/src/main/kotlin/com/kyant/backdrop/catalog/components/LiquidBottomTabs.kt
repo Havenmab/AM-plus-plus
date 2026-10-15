@@ -152,34 +152,20 @@ fun LiquidBottomTabs(
         InteractiveHighlight(
             animationScope = animationScope,
             position = { size, _ -> Offset(highlightAnchor.x(), size.height / 2f) },
-            // Clipped to the same capsule the glass draws. On the wide bar the difference is
-            // invisible; on the withdrawn 43dp circle it is the difference between a round press
-            // glow and a square shadow behind a round button.
+            // Clipped to the capsule the glass draws, so the press glow stays round on the
+            // withdrawn 43dp circle.
             shape = Capsule(),
         )
     }
 
     /**
-     * AM++: whether the tab-drag gesture may exist **at all**, as opposed to merely being
-     * inactive.
+     * AM++: whether the tab-drag gesture may exist **at all**, rather than merely being inactive.
      *
-     * This is the collapsed mini player's taps being dead. `freeDragBridge.modifier` is a
-     * `pointerInput` on the row box, which is `fillMaxWidth()` — so while it is present the row is a
-     * full-width Compose hit target. When the bar collapses, the mini player sinks into exactly that
-     * band, so the overlay sits over the mini and claims every tap meant for it. Compose reports the
-     * event as handled to the Android View system as soon as a pointer lands on *any* pointer-input
-     * node, whether or not that node consumes it — which is why the module's own Compose controls in
-     * the same row kept working (they are inside the same Compose tree, so its internal hit testing
-     * still reaches them) while the native mini, which lives in a different subtree, got nothing.
-     * Removing the earlier consumption seams could not help: the event was never reaching the mini
-     * to begin with.
-     *
-     * So the node must be **absent**, not idle, whenever the row does not own a drag. The progress
-     * lambda is held in a `rememberUpdatedState` and read inside `derivedStateOf`, so the gate is
-     * created once and reduces the per-frame spring value to a single boolean: this outer scope then
-     * recomposes only when the gate actually flips — about twice per collapse — instead of on every
-     * animation frame. Keying the `remember` on the lambda itself would not do that, because a
-     * bound callable reference is not guaranteed to be the same instance across recompositions.
+     * `freeDragBridge.modifier` is a `pointerInput` on the fillMaxWidth row box, and Compose
+     * reports a pointer that lands on any pointer-input node as handled even when that node does
+     * not consume it. The collapsed mini player sinks into that band, so the node has to be
+     * **absent** while the row owns no drag. The gate is a `derivedStateOf` over the progress
+     * lambda, so this scope recomposes when the gate flips and not on every animation frame.
      */
     val collapseProgressState = rememberUpdatedState(collapseProgress)
     val dragEnabled by remember {
@@ -189,16 +175,12 @@ fun LiquidBottomTabs(
     }
 
     BoxWithConstraints(
-        // AM++ scroll collapse: the box is pinned to the *expanded* bar height so it does not
-        // shrink with the panel. That fixed box is what lets the panel withdraw upwards while
-        // keeping the capsule the same distance above the screen edge, and it keeps
-        // `constraints.maxWidth` at the expanded row width the panel interpolates away from.
-        // The alignment stays `CenterStart` as in the reference. Each child is dropped onto the
-        // collapsed row's centre line by `collapseDropPx`, which is 0 at progress 0, so every
-        // value below is bit-identical to the reference while expanded.
+        // AM++ scroll collapse: the box is pinned to the *expanded* bar height so the panel can
+        // withdraw inside it, and `constraints.maxWidth` stays the expanded row width the panel
+        // interpolates away from. The alignment stays `CenterStart` as in the reference.
         //
-        // AM++: the drag gesture is applied only while the row actually owns it. Left on, its
-        // full-width hit region swallowed every tap on the collapsed mini player underneath.
+        // AM++: the drag gesture exists only while the row owns it; its full-width hit region
+        // would otherwise cover the collapsed mini player.
         modifier.then(if (dragEnabled) freeDragBridge.modifier else Modifier)
             .fillMaxWidth().height(panelHeight),
         contentAlignment = Alignment.CenterStart
@@ -209,76 +191,42 @@ fun LiquidBottomTabs(
         // value outside [0, 1] would be invalid.
         val collapseRaw = collapseProgress()
         val expandedWidthPx = constraints.maxWidth.toFloat()
+        val expandedPanelHeightPx = with(density) { panelHeight.toPx() }
         val controlPx = with(density) { dev.amenhancer.glass.GlassBarCollapsePolicy.CONTROL_DP.dp.toPx() }
-        // The room the capsule's growing edge actually has: the gap between it and the mini player.
-        // The expand rebound is clamped to it, because that growth is a fraction of the ROW's travel
-        // while the gap is a fixed dp — on a wide screen the fraction alone would push the capsule
-        // into the mini player. See `reboundOffset`.
-        val expandRoomPx = with(density) { dev.amenhancer.glass.GlassBarCollapsePolicy.GAP_DP.dp.toPx() }
-        val panelWidthPx = dev.amenhancer.glass.GlassBarCollapsePolicy.capsuleWidth(
-            expandedWidthPx,
-            controlPx,
-            collapseRaw,
+        // The panel's width, height and bottom-anchored placement come from the shared entry point,
+        // the one the host's native touch hit test calls, so the drawn capsule and the region that
+        // answers for it cannot drift apart.
+        val controls = dev.amenhancer.glass.GlassBarCollapseLayout.controls(
+            rowWidthPx = expandedWidthPx,
+            rowHeightPx = expandedPanelHeightPx,
+            density = density.density,
+            tabsCount = tabsCount,
+            progress = collapseRaw,
             collapseReboundScale = collapseReboundScale,
             expandReboundScale = expandReboundScale,
-            maxExpandReboundPx = expandRoomPx,
+            leadingWidthPx = leadingPx,
         )
-        // The **clamped** width, i.e. the same travel without the rebound. The tab row's own
+        val panelWidthPx = controls.capsuleWidth
+        val panelHeightPx = controls.height
+        // The **clamped** width, i.e. the same travel without the rebound: the tab row's own
         // geometry (cell width, the droplet's position, drag hit-testing) is derived from this
         // rather than from the sprung width, so the SELECTOR does not rebound even though the
-        // BACKPLATE does. The two are deliberately different: the backplate is the thing that
-        // should visibly spring back, while a selection indicator that wobbles with it just reads
-        // as the tabs being misaligned. Inside the travel the two are equal.
+        // BACKPLATE does. Inside the travel the two are equal.
         val restingWidthPx = dev.amenhancer.glass.GlassBarCollapsePolicy.lerp(
             expandedWidthPx,
             controlPx,
             dev.amenhancer.glass.GlassBarCollapsePolicy.progress(collapseRaw),
         )
-        val panelHeightPx = dev.amenhancer.glass.GlassBarCollapsePolicy.capsuleHeight(
-            with(density) { panelHeight.toPx() },
-            controlPx,
-            collapseRaw,
-        )
         val panelWidthDp = with(density) { panelWidthPx.toDp() }
         val panelHeightDp = with(density) { panelHeightPx.toDp() }
         val restingWidthDp = with(density) { restingWidthPx.toDp() }
-        // The same travel with the height rebound removed. The SELECTOR uses this; the backplate
-        // uses the sprung value. See the note on `restingWidthPx`.
-        val restingHeightDp = with(density) {
-            dev.amenhancer.glass.GlassBarCollapsePolicy.capsuleHeight(
-                panelHeight.toPx(),
-                controlPx,
-                dev.amenhancer.glass.GlassBarCollapsePolicy.progress(collapseRaw),
-            ).toDp()
-        }
-        val expandedPanelHeightPx = with(density) { panelHeight.toPx() }
-        /**
-         * Downward shift that **bottom-anchors** the shrinking panel: its bottom edge stays on the
-         * expanded bar's bottom edge for the whole travel.
-         *
-         * The box keeps the expanded height and the panel is centred in it, so a panel that shrank
-         * pulled its own bottom edge up by half the shrink — the collapsed bar visibly floated above
-         * where the expanded one had been. Dropping it by `(box - collapsedControl) / 2` scaled by the
-         * spring puts the bottom edge back on that line at every progress, not just at the ends.
-         *
-         * The **collapsed** height is what goes in, not the animating one: feeding the live height
-         * would make the two terms cancel and the drop would vanish.
-         *
-         * At progress 0 the drop is 0 and the panel fills the box, so the expanded bar is
-         * bit-identical to the reference.
-         */
-        val collapseDropPx = dev.amenhancer.glass.GlassBarCollapsePolicy.collapseDrop(
-            expandedPanelHeightPx,
-            controlPx,
-            collapseRaw,
-        )
+        // The box centres its children on the row's own centre line, so the translation that lands
+        // the panel's top edge on the shared `top` is that value less the centring it applies.
+        val collapseDropPx = controls.top - (expandedPanelHeightPx - controls.height) / 2f
         val expandedContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.expandedContentAlpha(collapseRaw)
         val compactContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.compactContentAlpha(collapseRaw)
-        // Every horizontal base below is the **resting** panel, not the sprung one, so the tab row,
-        // the droplet, the highlight and the drag hit regions do not ride the backplate's overshoot.
-        // That split is deliberate: the backplate is what should visibly spring back, while a
-        // selection indicator that wobbles with it reads as the tabs being misaligned. Inside the
-        // travel the two widths are identical, so nothing changes except during the overshoot.
+        // Every horizontal base below is the **resting** panel, so the tab row, the droplet, the
+        // highlight and the drag hit regions do not ride the backplate's overshoot.
         val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
         val tabWidth = geometry.tabWidth
 
@@ -402,20 +350,13 @@ fun LiquidBottomTabs(
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .then(interactiveHighlight.modifier)
-                // `requiredWidth`/`requiredHeight`, NOT `width`/`height`. This is what makes the
-                // expand rebound visible at all, and it was the whole reason it appeared to be
-                // missing: the panel's expanded width *is* the row's width, so any outward
-                // overshoot asks for a size the box cannot offer, and the plain size modifiers
-                // coerce the request into the incoming constraints. The overshoot was computed
-                // correctly and then silently dropped at measurement — ~8.5dp of travel that never
-                // reached the screen. The required variants bypass that coercion, and the box is
-                // `CenterStart`, so the extra width extends away from the anchored start edge, i.e.
-                // towards the mini player, which is where the rebound belongs.
-                //
-                // Nothing clips it: the row does not clip its children and `GlassHostView` measures
-                // its composition a 32dp bleed wider than its own bounds precisely so the lens and
-                // shadow have room. The 8dp gap beside the control is the budget, and it is clamped
-                // to exactly that in `capsuleWidth`.
+                // `requiredWidth`/`requiredHeight`, NOT `width`/`height`: the expanded panel *is*
+                // the row's width, so the plain size modifiers would coerce the expand overshoot
+                // back into the incoming constraints and drop it at measurement. The box is
+                // `CenterStart`, so the extra width extends away from the anchored start edge,
+                // towards the mini player, and nothing clips it — the row does not clip its
+                // children and `GlassHostView` measures a 32dp bleed for the lens and shadow. The
+                // 8dp gap is the budget, clamped in `GlassBarCollapseLayout`.
                 .requiredHeight(panelHeightDp)
                 .requiredWidth(panelWidthDp)
                 .padding(4f.dp),
@@ -470,19 +411,17 @@ fun LiquidBottomTabs(
                         onDrawSurface = { drawRect(containerColor) }
                     )
                     .then(interactiveHighlight.modifier)
-                    // `required*` to match the backplate above: this layer is invisible itself but
-                    // is recorded into `tabsBackdrop` for the droplet to refract, so if it kept the
-                    // coerced size while the backplate grew, the droplet would refract a strip that
-                    // no longer lines up with the glass it sits on.
+                    // `required*` to match the backplate above: this layer is invisible but is what
+                    // the droplet refracts, so a coerced size would refract a strip that no longer
+                    // lines up with the glass.
                     .requiredHeight(panelHeightDp - 8f.dp)
                     .requiredWidth(panelWidthDp)
                     .padding(horizontal = 4f.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // The droplet refracts this layer, so its tabs must narrow and fade with the
-                // visible row or the capsule would show a stale, wider tab strip. Pinned to the
-                // resting width for the same reason as the visible row above.
+                // The droplet refracts this layer, so its tabs narrow and fade with the visible row
+                // and stay pinned to the resting width.
                 Row(
                     Modifier.width(restingWidthDp - 8f.dp).fillMaxHeight().alpha(expandedContentAlpha),
                     verticalAlignment = Alignment.CenterVertically,
@@ -491,16 +430,10 @@ fun LiquidBottomTabs(
             }
         }
 
-        // AM++ scroll collapse: the droplet is the tab row's selection indicator, so it
-        // withdraws with that row. Left visible it would float over the collapsed
-        // capsule's own glyph.
-        //
-        // It is **omitted** rather than faded, and that is not an optimisation. `Modifier.alpha`
-        // is an inner layer here: placed after `drawBackdrop` it wraps only the node's children,
-        // while the droplet's own surface, highlight and shadow are drawn by `drawBackdrop`
-        // itself and so escape the alpha entirely — at full collapse that left a translucent
-        // 1dp-wide sliver sitting on the capsule. `tabWidth` also collapses to `coerceAtLeast(1dp)`
-        // once the panel is narrower than its own insets, so there is nothing left to draw anyway.
+        // AM++ scroll collapse: the droplet is the tab row's selection indicator, so it withdraws
+        // with that row. It is **omitted** rather than faded because `Modifier.alpha` is an inner
+        // layer here: the droplet's own surface, highlight and shadow are drawn by `drawBackdrop`
+        // and would escape the alpha, leaving a sliver on the capsule.
         if (expandedContentAlpha > 0.001f) {
             Box(
                 Modifier

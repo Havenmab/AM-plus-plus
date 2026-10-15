@@ -116,24 +116,14 @@ internal class FragmentPhoneGlassSession(
         if (activated && !reported) { reported = true; ready() }
         return draw
     }
-    // The inherited `observeContentTouch` from PhoneGlassSession satisfies the lifecycle: the page
-    // gesture that drives the scroll collapse arrives through the content root, not the mini panel.
-    //
-    // The mini panel's own touches are **never consumed**. The collapsed mini player is a complete
-    // mini player — its play/pause and skip buttons and its tap-to-open-player are the host's — and
-    // the module draws the glass under that native content rather than replacing it. The panel is
-    // still observed so the collapse tracker can stand down for a gesture that began there, and so
-    // the press highlight on the glass follows the finger; both are side effects only.
     override fun observeMiniTouch(event: MotionEvent): Boolean? {
-        collapsedMiniTouch(event)
         observeTouch(event)
         return null
     }
-    // Named explicitly: the lifecycle carries a no-op default so forms without a collapse can
-    // ignore the signal, and the compiler needs to be told which of the two to use. The collapse
-    // signal and the collapsed row's tap claim both arrive on this one seam.
+
     override fun observeContentTouch(event: MotionEvent): Boolean? =
         super<PhoneGlassSession>.observeContentTouch(event)
+
     private fun reconcileNativeMaterials() {
         // BlurView can reuse a recorded RenderNode without entering draw(). Own the actual
         // native alpha too, so a resume-time setAlpha(1) cannot reveal it behind the glass.

@@ -80,17 +80,14 @@ fun GlassNavigation(
     onDrawer: (() -> Unit)? = null,
     /**
      * AM++ scroll collapse: 0 = one capsule with every tab, 1 = withdrawn capsule + detached
-     * search. **Null means this host does not support the collapse at all**, which is the
-     * explicit opt-in: the search tab is only ever detached when a host asks for the collapse,
-     * so the tablet's top navigation and every other caller keep their full tab strip.
+     * search. **Null means this host does not support the collapse at all**, so the search tab is
+     * only ever detached for hosts that opt in.
      */
     collapseProgress: (() -> Float)? = null,
     onExpandRequest: (() -> Unit)? = null,
     /**
-     * The collapse's rebound amplitudes, as fractions of each spring's own overshoot. Shared by the
-     * capsule and the detached search control so the two side buttons cannot animate differently.
-     * [collapseReboundScale] is the visible collapse bounce; [expandReboundScale] is the return
-     * direction, where each button grows back towards the mini player.
+     * Rebound amplitudes as fractions of each spring's own overshoot, shared by the capsule and the
+     * detached search control. [expandReboundScale] is the return direction, towards the mini.
      */
     collapseReboundScale: Float = 1f,
     expandReboundScale: Float = 1f,
@@ -105,18 +102,14 @@ fun GlassNavigation(
     fun request(tab: GlassTab) {
         if (!tab.enabled || select.value(tab.id) != tab.id) rejectedSelection++
     }
-    // Only the last tab may detach: the collapsed row keeps the expanded order, so pulling a
-    // search tab out of the middle would silently reorder the visible destinations. An
-    // unresolved search leaves the row as a single capsule that only shrinks.
+    // Only the last tab may detach: the collapsed row keeps the expanded order, so pulling a search
+    // tab out of the middle would reorder the visible destinations.
     val searchTab = tabs.lastOrNull()?.takeIf {
         collapseProgress != null && it.isSearch && tabs.size > 2
     }
-    // The capsule always keeps **every** tab, including search. At progress 0 that is the
-    // shipped bar, one capsule of five cells; dropping search here would have silently narrowed
-    // the expanded bar to four cells and left search unreachable at rest. By the time the
-    // capsule has withdrawn the whole row is faded out, so the cell count no longer has any
-    // visual effect — the detach is drawn by the search square fading in at the row's end, not
-    // by removing a cell.
+    // The capsule keeps **every** tab, search included: dropping it would narrow the *expanded* bar,
+    // where the tab is the way to reach search. Collapsed, the row has faded out anyway, so the
+    // detach is the search square fading in at the row's end.
     val inCapsule = tabs
     val progress: () -> Float = collapseProgress ?: { 0f }
     // Read once per composition so the gate below cannot disagree with the alpha it mirrors.
@@ -124,9 +117,8 @@ fun GlassNavigation(
     // A menu replacement must discard gestures whose indices refer to the old menu.
     key(tabs.map { it.id }, rejectedSelection) {
         val selection = remember { { confirmedIndex.value } }
-        // The bar occupies only the top `panelHeight` of the host island; the remainder is the
-        // lift below the capsule. Detaching the search control into its own slot therefore needs
-        // this row box, so it can share the capsule's bottom edge instead of the island's.
+        // The bar occupies only the top `panelHeight` of the host island, so the detached control
+        // needs this row box to share the capsule's bottom edge instead of the island's.
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxWidth().height(panelHeight).align(Alignment.TopStart)) {
                 LiquidBottomTabs(
@@ -166,9 +158,7 @@ fun GlassNavigation(
                     inCapsule.forEach { tab ->
                         LiquidBottomTab(
                             // A faded tab row must stop navigating: `alpha(0f)` hides a subtree
-                            // without disabling it, so an invisible cell could otherwise swallow
-                            // a tap. The row is inert exactly while its own glyphs are the ones
-                            // being hidden, which is also when the compact capsule owns the tap.
+                            // without disabling it, so an invisible cell could absorb a tap.
                             onClick = { if (expandedInteractive) request(tab) },
                             modifier = Modifier.semantics {
                                 selected = tab.id == selectedId
@@ -219,11 +209,8 @@ fun GlassNavigation(
 
 /**
  * The search destination, drawn as its own capsule at the row's end edge once the main capsule
- * withdraws. It is the same control the expanded bar already offers as the last tab; only its
- * container changes, so both states select the same destination.
- *
- * The material is deliberately the same call as the main panel: a detached control that used a
- * different glass recipe would read as a foreign element rather than the same bar come apart.
+ * withdraws. It is the control the expanded bar already offers as the last tab, so both states
+ * select the same destination, and it uses the same glass recipe as the main panel.
  */
 @Composable
 private fun BoxScope.DetachedSearchControl(
@@ -238,18 +225,13 @@ private fun BoxScope.DetachedSearchControl(
     leadingWidth: Dp,
     collapseProgress: () -> Float,
     onSelect: () -> Unit,
-    /**
-     * User-set rebound amplitudes, shared with the capsule so the two side buttons cannot disagree.
-     * [expandReboundScale] is the return direction, where each button grows back towards the mini
-     * player.
-     */
+    /** User-set rebound amplitudes, shared with the capsule. See [GlassNavigation]. */
     collapseReboundScale: Float = 1f,
     expandReboundScale: Float = 1f,
 ) {
     val density = LocalDensity.current
-    // The raw spring, deliberately unclamped. The capsule and the mini player both ride it
-    // through its overshoot; a clamped curve here would be the one element on the row that does
-    // not, which is exactly what made this control read as a separate animation.
+    // The raw spring, unclamped, so this control rides the same overshoot as the capsule and the
+    // mini player.
     val raw = collapseProgress()
     val alpha = GlassBarCollapsePolicy.searchAlpha(raw)
     if (alpha <= 0.001f) return
@@ -262,44 +244,27 @@ private fun BoxScope.DetachedSearchControl(
     ) {
         val rowWidthPx = with(density) { maxWidth.toPx() }
         val rowHeightPx = with(density) { rowHeight.toPx() }
-        // The drawn circle is the mini player's height, so the three controls on the collapsed row
-        // are the same size and share one band.
-        val controlPx = with(density) { GlassBarCollapsePolicy.CONTROL_DP.dp.toPx() }
-        // The control's expanded footprint is the cell this destination already occupies in the
-        // expanded tab row, so the collapsed control is literally that cell narrowing into the
-        // circle — the same transformation the capsule performs at the other end of the row. It is
-        // deliberately not the whole row width: the capsule's expanded width is the whole row
-        // because it holds every tab, whereas this control only ever stood for one cell, and a
-        // row-wide box would still be ~95px wide at full opacity and would cover the mini player.
-        val cellPx = GlassTabGeometry(rowWidthPx, with(density) { 4f.dp.toPx() },
-            with(density) { leadingWidth.toPx() }, tabsCount).tabWidth
-        // Both dimensions go through the capsule's own two functions, on the same raw progress, so
-        // the control inherits the identical spring, curve and overshoot rather than a lookalike.
-        // The width additionally inherits the capsule's *rebound distance*: this control only
-        // travels one cell where the capsule travels the whole row, so its own overshoot would be
-        // about a fourteenth of the capsule's and would not read as the same animation. Inside the
-        // travel the extra term is zero, so the appearance is unchanged.
-        //
-        // This box is end-aligned, so the control's **end edge is pinned and its start edge travels**.
-        // That is what puts the whole rebound on the side facing the mini player: the button reaches
-        // back towards it and settles, instead of swelling symmetrically about its own centre.
-        val widthPx = GlassBarCollapsePolicy.searchWidth(
-            cellPx, controlPx, rowWidthPx, raw,
+        // The shared entry point the host's own hit test calls: the width is this control's expanded
+        // tab cell narrowing with the capsule's rebound, and `top` is its bottom-anchored placement.
+        val controls = GlassBarCollapseLayout.controls(
+            rowWidthPx = rowWidthPx,
+            rowHeightPx = rowHeightPx,
+            density = density.density,
+            tabsCount = tabsCount,
+            progress = raw,
             collapseReboundScale = collapseReboundScale,
             expandReboundScale = expandReboundScale,
-            // The room this control's growing edge has: the gap between it and the mini player.
-            maxExpandReboundPx = with(density) { GlassBarCollapsePolicy.GAP_DP.dp.toPx() },
+            leadingWidthPx = with(density) { leadingWidth.toPx() },
         )
-        val heightPx = GlassBarCollapsePolicy.capsuleHeight(rowHeightPx, controlPx, raw)
-        // Bottom-anchored on the expanded bar's bottom edge, so the collapsed row's bottom edge is at
-        // the same height as the expanded one rather than a few dp above it.
-        val dropPx = GlassBarCollapsePolicy.collapseDrop(rowHeightPx, controlPx, raw)
         Box(
             Modifier
-                .width(with(density) { widthPx.toDp() })
-                .height(with(density) { heightPx.toDp() })
+                // Top-end anchored and placed by the shared `top`: only the start edge travels, so
+                // the rebound lands on the side facing the mini player.
+                .align(Alignment.TopEnd)
+                .width(with(density) { controls.searchWidth.toDp() })
+                .height(with(density) { controls.height.toDp() })
                 .alpha(alpha)
-                .graphicsLayer { translationY = dropPx }
+                .graphicsLayer { translationY = controls.top }
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { Capsule() },
@@ -311,13 +276,11 @@ private fun BoxScope.DetachedSearchControl(
                     },
                     onDrawSurface = { drawRect(containerColor) },
                 )
-                // The press feedback is clipped to the same capsule the glass draws, so this
-                // button and the withdrawn capsule at the other end of the row give **identical**
-                // press feedback. They are both square layout nodes, so an unclipped indication
-                // reads as a square behind a round button on either of them.
+                // Clipped to the capsule the glass draws: the layout node is square, so an
+                // unclipped indication would show a square behind a round button.
                 .clip(Capsule())
-                // Only interactive once it is actually on screen: below that the bar is still the
-                // expanded tab strip, where the same destination is reachable as the last cell.
+                // Interactive only once it is on screen; below that the expanded tab strip holds
+                // the same destination.
                 .then(
                     if (GlassBarCollapsePolicy.searchInteractive(raw)) {
                         Modifier
@@ -327,16 +290,9 @@ private fun BoxScope.DetachedSearchControl(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // The search button is a **destination**, so it carries the accent exactly like the
-            // capsule's compact face does — when search is the selected tab this control IS the
-            // selection, and leaving it uncoloured made the collapsed row look like nothing was
-            // selected while the expanded row had clearly shown red.
-            //
-            // The tint is applied to a **copy** of the drawable, for the same reason the compact
-            // face copies: `tab.icon` is the very drawable the expanded tab row paints, so tinting
-            // it in place would repaint that tab for the rest of the session and the red would
-            // follow the tab through every later selection. `remember`ed against the tint so the
-            // per-frame collapse animation does not allocate one per frame.
+            // Search is a destination, so it carries the accent like the capsule's compact face.
+            // The tint goes on a **copy**: `tab.icon` is the drawable the expanded tab row paints,
+            // and tinting it in place would repaint that tab for the rest of the session.
             val resources = LocalContext.current.resources
             val icon = remember(tab.icon, selected, accent) {
                 val source = tab.icon
@@ -363,13 +319,8 @@ private fun BoxScope.DetachedSearchControl(
 /**
  * The withdrawn capsule's face: the selected tab's glyph, so the user can still tell where they
  * are. A selected search tab falls back to the first tab's glyph and drops the accent, because
- * search has already left the capsule and the red accent means "the capsule's own selection".
- *
- * The glyph is **copied** before it is tinted. `GlassTab.icon` is the very drawable the expanded
- * tab row paints, so tinting it in place would repaint that tab for the rest of the session: the
- * accent would survive the bar expanding again and follow the tab through every later selection,
- * because a `Drawable`'s tint belongs to the drawable and not to this composition. The copy is
- * remembered against the tint so the per-frame collapse animation does not allocate one per frame.
+ * search has left the capsule. The glyph is **copied** before it is tinted, since a `Drawable`'s
+ * tint belongs to the drawable and would repaint the expanded tab row.
  */
 @Composable
 private fun CompactSelectionGlyph(
@@ -385,8 +336,7 @@ private fun CompactSelectionGlyph(
     val resources = LocalContext.current.resources
     val icon = remember(glyph?.icon, tint) {
         val source = glyph?.icon
-        // Only a copy is ever tinted. If the drawable exposes no constant state there is nothing
-        // safe to tint, so the glyph is drawn untinted rather than recolouring the shared one.
+        // No constant state means nothing safe to copy, so the glyph is drawn untinted.
         val copy = source?.constantState?.newDrawable(resources)?.mutate()
         copy?.setTint(tint.toArgb())
         copy ?: source

@@ -3,33 +3,9 @@ package dev.amenhancer.module.hook
 import kotlin.math.abs
 
 /**
- * Turns one touch gesture into a collapse/expand intent.
- *
- * Library, New and parts of Search are Compose scenes: their scrolling happens entirely inside
- * Compose and never moves a native scroll container, so the `OnScrollChangedListener` path
- * observes nothing on exactly the pages where the bar should withdraw. The gesture itself is
- * therefore the second signal source — a finger travelling up means the page is scrolling down.
- *
- * The flip rules stay in [GlassScrollCollapseAccumulator] so both sources agree on when the bar
- * is allowed to move; this class only decides what counts as deliberate travel:
- *
- * - Travel inside the platform's touch slop is jitter and does not even open the gesture. The
- *   slop distance is then subtracted rather than counted, so a nudge that barely clears the
- *   slop still has to travel the whole threshold before the bar moves.
- * - The gesture locks to one axis the moment it clears the slop, exactly like a native scroll
- *   container. The host is full of horizontal surfaces — carousels, the pager, the tab row's own
- *   drag — and without the lock a sideways swipe with a little vertical drift would withdraw the
- *   bottom bar. A gesture that locks horizontally is abandoned for good.
- * - Sub-pixel movement is carried instead of dropped. A slow drag reports a fraction of a pixel
- *   per event, and truncating each event on its own would lose the entire gesture.
- * - A flick can lift before it has travelled the threshold, after which the page keeps scrolling
- *   with no further events to observe. A lift that displacement never decided is therefore also
- *   judged on the velocity of the last [VELOCITY_WINDOW_MS] of the gesture.
- *
- * A decision is reported at most once per accumulator threshold, in the same `true` = collapse /
- * `false` = expand / `null` = leave the bar alone vocabulary the scroll path uses.
- *
- * Android-free so the rules stay unit-testable.
+ * Pure single-pointer direction tracker: subtract touch slop, lock the first axis and retain
+ * fractional travel. A short flick may use trailing velocity on UP; CANCEL must call [reset].
+ * The caller owns scroll reachability and decides whether an intent may change the bar.
  */
 internal class GlassTouchCollapseTracker(
     slopPx: Float,

@@ -31,9 +31,6 @@ import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.EnhancementDefaults
 import dev.amenhancer.module.model.ModuleSettings
-import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
-import dev.amenhancer.module.hook.TabletModeQualifier
-import dev.amenhancer.module.hook.targetBuild
 import java.lang.ref.WeakReference
 
 internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
@@ -321,10 +318,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         onChooseFont: () -> Unit,
         onClearFont: () -> Unit,
     ) {
-        val hostBuild = targetBuild(activity)
-        val collapseAvailable = android.os.Build.VERSION.SDK_INT >= 33 &&
-            !TabletModeQualifier.isOfficialTablet(activity) &&
-            AppleMusicHostProfiles.supportsGlassScrollCollapse(hostBuild.versionCode, hostBuild.versionName)
+        val collapseAvailable = nativeBridge.supportsGlassScrollCollapse(activity)
         parent.addView(embeddedCard(activity, localizedText(ModuleText.FEATURES), outlined = false) {
             addView(embeddedSettingRow(
                 activity,

@@ -276,6 +276,7 @@
 - [ ] Fragment 手机与平板均通过共用 mini 启动恢复接入，分别核对 `miniBlur` 的原生显示语义；已显示不重复补调，原生登录与当前对象条件均保留，显示方法按当前 profile 的准确静态/实例形式调用。
 - [ ] mini 首次检查及每 250ms、最多 40 次检查的恢复窗口正确；手机和平板均覆盖账号/队列延迟恢复、未登录、无当前对象、超时与显示入口异常，条件未满足时保持原生状态。
 - [ ] mini 延迟回调只操作 owner 当前且已附着的 root，销毁后取消；旋转、view 重建及重新附着后旧回调不影响新会话，恢复入口沿用既有玻璃安装资格。
+- [ ] 收缩设置的可用性通过 `SettingsViewBridge.supportsGlassScrollCollapse(activity)` 查询，UI 不导入具体宿主 profile；适配层保留 SDK、官方平板布局与精确版本能力闸门，旧页面族默认不可用。
 - [ ] 底栏收缩单独核对 `capabilities.glassScrollCollapse` 与手机底导航资格；目前仅 7.0.0-beta/1606、1607、1609 开放，未登记构建、旧 Activity 及所有 `is_tablet` 布局保持展开，不显示收缩及回弹设置；旧平板收缩字段不影响资格。
 - [ ] 原生位移由宿主端口读取实际宿主类的 `computeVerticalScrollOffset(): int`，发现容器时解析并缓存；RecyclerView/ListView 不依赖模块 AndroidX 类型或 `scrollY`，单类读取失败不关闭整个玻璃功能，会话销毁清理缓存。
 - [ ] 页面原生拖动和惯性滚动、Compose 手势均能驱动收缩与展开；切页或布局恢复不沿用上一手势的残余位移，横向和多指手势不误触发。

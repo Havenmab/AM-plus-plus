@@ -38,6 +38,12 @@ internal object FragmentSettingsNativeFactory {
         runtime(loader, names).onOpen = onOpen
         return object : SettingsViewBridge {
             override val supportsViewFallback = false
+            override fun supportsGlassScrollCollapse(activity: Activity): Boolean {
+                val build = targetBuild(activity)
+                return android.os.Build.VERSION.SDK_INT >= 33 &&
+                    !TabletModeQualifier.isOfficialTablet(activity) &&
+                    AppleMusicHostProfiles.supportsGlassScrollCollapse(build.versionCode, build.versionName)
+            }
             override fun fragmentView(fragment: Any): ViewGroup? = runCatching {
                 fragment.javaClass.getMethod("getView").invoke(fragment) as? ViewGroup
             }.getOrNull()

@@ -4,7 +4,7 @@ import kotlin.math.abs
 
 /**
  * Pure single-pointer direction tracker: subtract touch slop, lock the first axis and retain
- * fractional travel. A short flick may use trailing velocity on UP; CANCEL must call [reset].
+ * fractional travel. An undecided short flick may use aligned velocity on UP; CANCEL calls [reset].
  * The caller owns scroll reachability and decides whether an intent may change the bar.
  */
 internal class GlassTouchCollapseTracker(
@@ -51,7 +51,7 @@ internal class GlassTouchCollapseTracker(
     fun move(x: Float, y: Float, timeMs: Long): Boolean? = track(x, y, timeMs, lift = false)
 
     /**
-     * Ends the gesture: consumes the final position, then falls back to the lift velocity.
+     * Ends the gesture. A lift may resolve an undecided flick, but cannot reverse a MOVE decision.
      *
      * A gesture that never cleared the slop, or that locked to the horizontal axis, is a tap, a
      * wobble or a sideways swipe, and reports nothing whatever its velocity.
@@ -70,6 +70,10 @@ internal class GlassTouchCollapseTracker(
 
     private fun track(x: Float, y: Float, timeMs: Long, lift: Boolean): Boolean? {
         if (!active || !x.isFinite() || !y.isFinite()) return null
+        if (lift && decided) {
+            active = false
+            return null
+        }
         val delta = y - lastY
         lastY = y
         if (committed) {
@@ -94,13 +98,23 @@ internal class GlassTouchCollapseTracker(
         val velocity = if (lift) velocity(y, timeMs) else 0f
         if (lift) active = false
         slideWindow(y, timeMs)
-        // Displacement wins: it is measured, while the velocity only stands in for travel that
-        // was never observed. Once this gesture has decided, the lift adds nothing.
-        feed()?.let { decided = true; return it }
+        val gestureDirection = when {
+            y < downY -> true
+            y > downY -> false
+            else -> null
+        }
+        // MOVE may deliberately reverse. UP only completes a flick in its overall direction;
+        // contact-position changes on release must not become a new opposite gesture.
+        feed()?.let { decision ->
+            if (!lift || decision == gestureDirection) {
+                decided = true
+                return decision
+            }
+        }
         if (!lift || fling == 0f || decided) return null
         return when {
-            velocity <= -fling -> { decided = true; true }
-            velocity >= fling -> { decided = true; false }
+            velocity <= -fling && gestureDirection == true -> { decided = true; true }
+            velocity >= fling && gestureDirection == false -> { decided = true; false }
             else -> null
         }
     }

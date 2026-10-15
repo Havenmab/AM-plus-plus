@@ -290,6 +290,7 @@
 - [ ] 收缩职责边界核对：`GlassBarCollapseController` 是唯一动画 owner（启用与外观状态、目标布尔、单个 `Animatable`、协程作用域和滚动监听生命周期），导航、mini、padding 与 peek 只读同一进度；`PhoneGlassSession` 只创建该 controller 并接入解析出的应用几何，没有重复的收缩数学或动画。
 - [ ] 手势与命中核对：整次页面手势状态只由 `GlassBarCollapseInput` 持有；`GlassBarTouchRegions` 只按屏幕空间判断 chrome 命中、不消费或改写事件，原生 mini 控件分派不变；胶囊和分离搜索的宽高及 top 共用 `GlassBarCollapseLayout.controls(...)`，绘制与触摸命中一致。
 - [ ] 动画驱动核对：进度由 `Animatable.animateTo` 驱动，每帧回调只请求宿主 `postInvalidateOnAnimation`，动画结束或取消的收尾补发最后一帧；没有常驻 `snapshotFlow` 采集或逐帧轮询。层级接入、前台恢复及设置刷新确认当前观察器，替换后重新绑定滚动监听，销毁后不再绑定。
+- [ ] 连续同方向划动分别核对收缩和展开：MOVE 已确认后，抬手触点回带不产生相反目标；未决短促滑动的抬手速度/位移只沿整次手势净方向补判；手指未离屏时真正反向拖动仍能改变目标，原生与 Compose 页面均覆盖。
 - [ ] 扫描与缓存核对：缓存的是已发现的 Compose 场景列表及其语义 owner，每帧只对已发现场景根检查 `isShown` 与高度、不缓存可见性布尔；整树枚举、边界 owner 与起点目标集合只在层级失效时更新。
 - [ ] 展开语义核对：关闭开关的展开过渡由导航、mini、padding 与 peek 共用同一条曲线；`expand()` 清理旧手势与惯性；切换导航目的地（含宿主主动更新选中项）和配置变化都触发展开，会话重建不保留旧状态；mini 槽位边距按布局方向以 start/end 计算，RTL 下两侧互换。
 - [ ] 玻璃开关与双栏开关的资格独立，材质就绪时序和失败恢复明确。

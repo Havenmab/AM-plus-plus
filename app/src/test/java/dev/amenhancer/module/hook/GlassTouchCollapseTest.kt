@@ -82,13 +82,44 @@ class GlassTouchCollapseTest {
         assertNull(tracker.up(0f, 500f, 60L))
     }
 
-    @Test fun `the lift velocity does not override a displacement decision`() {
+    @Test fun `release movement cannot reverse an already decided swipe`() {
+        val tracker = tracker()
+        repeat(3) { index ->
+            val start = index * 100L
+            tracker.down(0f, 500f, start)
+            assertTrue(tracker.move(0f, 440f, start + 16L)!!)
+            // The release moves back more than the 6px threshold, but less than touch slop.
+            assertNull(tracker.up(0f, 448f, start + 20L))
+        }
+        repeat(3) { index ->
+            val start = 400L + index * 100L
+            tracker.down(0f, 500f, start)
+            assertFalse(tracker.move(0f, 560f, start + 16L)!!)
+            assertNull(tracker.up(0f, 552f, start + 20L))
+        }
+    }
+
+    @Test fun `an undecided flick cannot follow an opposite release delta`() {
         val tracker = tracker()
         tracker.down(0f, 500f, 0L)
-        // A long, deliberate upward drag: the measured displacement decides, and it says collapse.
-        assertTrue(tracker.move(0f, 440f, 16L)!!)
-        // Even though the lift is fast, the gesture has already reported and must not repeat.
-        assertNull(tracker.up(0f, 439f, 20L))
+        assertNull(tracker.move(0f, 475f, 16L))
+        assertNull(tracker.move(0f, 471f, 32L))
+        assertNull(tracker.up(0f, 477f, 34L))
+        tracker.down(0f, 500f, 100L)
+        assertNull(tracker.move(0f, 525f, 116L))
+        assertNull(tracker.move(0f, 529f, 132L))
+        assertNull(tracker.up(0f, 523f, 134L))
+    }
+
+    @Test fun `lift velocity must agree with the overall flick direction`() {
+        val tracker = tracker()
+        tracker.down(0f, 500f, 0L)
+        assertNull(tracker.move(0f, 475f, 101L))
+        // A fresh velocity window makes a 2px release shift look like 2000px/s.
+        assertNull(tracker.up(0f, 477f, 102L))
+        tracker.down(0f, 500f, 200L)
+        assertNull(tracker.move(0f, 525f, 301L))
+        assertNull(tracker.up(0f, 523f, 302L))
     }
 
     @Test fun `a reversal discards the previous direction`() {

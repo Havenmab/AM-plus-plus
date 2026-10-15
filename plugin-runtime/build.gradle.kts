@@ -12,5 +12,8 @@ dependencies {
     testImplementation("org.json:json:20240303")
 }
 tasks.withType<Test>().configureEach {
-    providers.gradleProperty("pluginFixture").orNull?.let { systemProperty("pluginFixture", it) }
+    providers.gradleProperty("pluginFixture").orNull?.let {
+        systemProperty("pluginFixture", it)
+        inputs.file(it).withPropertyName("pluginFixture").withPathSensitivity(PathSensitivity.NONE)
+    }
 }

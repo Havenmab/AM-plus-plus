@@ -171,6 +171,9 @@ internal class FragmentPlayerArtworkRecovery(
     private fun card(root: View): View? = lookup(root).card()
 
     private fun desired(cover: View): FragmentArtworkRecoveryPolicy.SlotSize? {
+        FragmentTabletDualPaneCoordinator.artworkSize(cover)?.let {
+            return FragmentArtworkRecoveryPolicy.SlotSize(it.width, it.height)
+        }
         val slot = cover.parent as? ViewGroup ?: return null
         return FragmentArtworkRecoveryPolicy.nativeSquare(slot.width, slot.height, slot.isLaidOut)
     }

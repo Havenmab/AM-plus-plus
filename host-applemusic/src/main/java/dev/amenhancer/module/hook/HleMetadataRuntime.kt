@@ -101,6 +101,7 @@ internal class HleMetadataRuntime(
         ).distinct() + moduleApplicationInfo?.splitSourceDirs.orEmpty(),
     )
     private val runtime = AppleMusicProviderRuntime(module, classLoader)
+    private val installation = HleMetadataInstallation(runtime.hookRegistrar)
     private val playbackHooks = ApplePlaybackHooks()
     private val metadataStore = AppleMetadataOverrideStore()
     private val catalogResolver = AppleInternalCatalogResolver(
@@ -175,6 +176,13 @@ internal class HleMetadataRuntime(
     }
 
     fun install(): TargetCapabilityInstall {
+        return try { installRuntime() } catch (error: Throwable) {
+            installation.close()
+            throw error
+        }
+    }
+
+    private fun installRuntime(): TargetCapabilityInstall {
         runtime.attach(application, hookResolver)
         MediaMetadataCache.setProfile(requestPlan.cacheNamespace)
         catalogResolver.applyRegionConfiguration(
@@ -192,14 +200,14 @@ internal class HleMetadataRuntime(
             runtime = runtime,
             catalogResolver = { catalogResolver },
         )
-        runCatching { contentLocalizationHooks.installMediaApiLocalization() }
-            .onFailure { ProviderLogger.error("HLE MediaApi localization hook failed", it) }
-        runCatching { contentLocalizationHooks.installCatalogRequestLocalization() }
-            .onFailure { ProviderLogger.error("HLE catalog executor localization hook failed", it) }
-        runCatching { contentLocalizationHooks.installContentHttpLocalization() }
-            .onFailure { ProviderLogger.error("HLE content HTTP localization hook failed", it) }
-        runCatching { contentLocalizationHooks.installAmpApiHttpLocalization() }
-            .onFailure { ProviderLogger.error("HLE amp-api localization hook failed", it) }
+        // Region replacement installs five layers; the catalog-executor and amp-api
+        // layers are the fork's additions and keep their own names so an
+        // undeclared profile target reports as a named degradation instead of a
+        // silent whole-runtime failure.
+        installation.install("media-api-localization") { contentLocalizationHooks.installMediaApiLocalization() }
+        installation.install("catalog-request-localization") { contentLocalizationHooks.installCatalogRequestLocalization() }
+        installation.install("content-http-localization") { contentLocalizationHooks.installContentHttpLocalization() }
+        installation.install("amp-api-http-localization") { contentLocalizationHooks.installAmpApiHttpLocalization() }
 
         frameworkHooks = AppleFrameworkMetadataHooks(
             runtime = runtime,
@@ -219,14 +227,15 @@ internal class HleMetadataRuntime(
             host = playbackHost(),
         )
 
-        frameworkHooks.installMediaSessionMetadata()
-        frameworkHooks.installMediaSessionQueue()
-        frameworkHooks.installPlaybackNotificationMetadata()
-        ApplePlaybackMetadataHooks(
+        installation.install("media-session-metadata") { frameworkHooks.installMediaSessionMetadata() }
+        installation.install("media-session-queue") { frameworkHooks.installMediaSessionQueue() }
+        installation.install("playback-notification") { frameworkHooks.installPlaybackNotificationMetadata() }
+        val playbackMetadataHooks = ApplePlaybackMetadataHooks(
             runtime = runtime,
             playbackHooks = { playbackHooks },
             metadataCoordinator = playbackCoordinator,
-        ).installHooks()
+        )
+        installation.install("playback-metadata") { playbackMetadataHooks.installHooks() }
 
         contentItemHooks = AppleContentItemMetadataHooks(
             runtime = runtime,
@@ -298,7 +307,7 @@ internal class HleMetadataRuntime(
                 )
             },
         )
-        contentItemHooks.installHooks()
+        installation.install("content-item") { contentItemHooks.installHooks() }
 
         queueMetadataHooks = AppleQueueMetadataHooks(
             runtime = runtime,
@@ -373,8 +382,7 @@ internal class HleMetadataRuntime(
                 override fun hasLivePlaybackItem(mediaId: String) = bridgeHasLivePlaybackItem(mediaId)
             },
         )
-        runCatching { queueMetadataHooks.installHooks() }
-            .onFailure { ProviderLogger.info("HLE queue metadata hooks unavailable: ${it.message}") }
+        installation.install("queue-history") { queueMetadataHooks.installHooks() }
 
         actionSheetMetadataHooks = AppleActionSheetMetadataHooks(
             runtime = runtime,
@@ -422,8 +430,7 @@ internal class HleMetadataRuntime(
                 ) = ProviderLogger.diagnostic("$event: $details")
             },
         )
-        runCatching { actionSheetMetadataHooks.installHooks() }
-            .onFailure { ProviderLogger.info("HLE action-sheet metadata hooks unavailable: ${it.message}") }
+        installation.install("action-sheet") { actionSheetMetadataHooks.installHooks() }
 
         // The generic adapter is intentionally not used for the specialized
         // HLE surface points: installing both would double-hook the same
@@ -447,6 +454,7 @@ internal class HleMetadataRuntime(
             overrideAccountLanguage = requestPlan.overrideAccountLanguage,
             restoreOriginalMetadata = requestPlan.probesOriginalMetadata,
             profileId = requestPlan.cacheNamespace,
+            installation = installation,
             observeMetadataCacheClear = metadataCacheClearObserver::observe,
         )
         installedBridge.install()
@@ -468,7 +476,7 @@ internal class HleMetadataRuntime(
         bridgeMedia3MetadataDetails = surfaceBridge::media3MetadataDetails
         bridgeIsCurrentMetadataSurfaceMediaId = surfaceBridge::isCurrentMetadataSurfaceMediaId
 
-        return TargetCapabilityInstall.Active(
+        return installation.result(
             "HLE metadata runtime installed for ${version.displayName}; " +
                 "region=${region.catalogStorefront ?: "account"}, " +
                 "restoreOriginal=${requestPlan.probesOriginalMetadata}, " +

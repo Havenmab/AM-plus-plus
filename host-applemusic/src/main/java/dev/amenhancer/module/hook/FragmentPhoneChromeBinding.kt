@@ -7,7 +7,7 @@ import android.view.ViewGroup
 import dev.amenhancer.module.host.OwnedHostProperty
 import java.util.IdentityHashMap
 
-/** Exact 1606 phone contracts, cached per Fragment root. No native types escape this adapter. */
+/** Exact current-build phone contracts, cached per Fragment root. */
 internal class FragmentPhoneChromeBinding(
     private val owner: Any,
     private val activity: Activity,
@@ -23,17 +23,15 @@ internal class FragmentPhoneChromeBinding(
     private val types = names.getJSONObject("views")
     private val scrollTypes = types.getJSONArray("scrollTypes").let { a -> (0 until a.length()).map(a::getString).toSet() }
     private val scrollClasses = IdentityHashMap<Class<*>, Boolean>()
-    private val behavior = names.getJSONObject("behavior")
-    private val behaviorType = contract.playerBehavior.type
-    private val collapsed = FragmentChromeContract.field(behaviorType, behavior.getString("collapsedTopField"), java.lang.Integer.TYPE)
-    private val peek = FragmentChromeContract.field(behaviorType, behavior.getString("peekField"), java.lang.Integer.TYPE)
-    private val autoPeek = FragmentChromeContract.field(behaviorType, behavior.getString("autoPeekField"), java.lang.Boolean.TYPE)
-    private val expanded = FragmentChromeContract.method(behaviorType, behavior.getString("expandedTopMethod"))
-    private val writePeek = FragmentChromeContract.method(behaviorType, behavior.getString("peekMethod"), java.lang.Integer.TYPE, java.lang.Boolean.TYPE)
+    private val collapsed = contract.collapsedSheetTop
+    private val peek = contract.peek
+    private val autoPeek = contract.autoPeek
+    private val expanded = contract.expandedSheetTop
+    private val writePeek = contract.writePeek
     private val nav = checkNotNull(find(ChromeResource.BOTTOM_NAVIGATION))
-    private val menu = FragmentChromeContract.method(nav.javaClass, "getMenu")
-    private val selected = FragmentChromeContract.method(nav.javaClass, "getSelectedItemId")
-    private val select = FragmentChromeContract.method(nav.javaClass, "setSelectedItemId", java.lang.Integer.TYPE)
+    private val menu = contract.navigationMenu
+    private val selected = contract.navigationSelected
+    private val select = contract.navigationSelect
     private val drawerId = activity.resources.getIdentifier(names.getString("drawerQualifier"), "bool", activity.packageName)
     private val blurViews = listOf("bottomNavigationBlur", "miniBlur").mapNotNull { role ->
         activity.resources.getIdentifier(contract.resources.getString(role), "id", activity.packageName)

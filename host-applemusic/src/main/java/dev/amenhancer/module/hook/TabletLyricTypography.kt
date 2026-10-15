@@ -21,9 +21,9 @@ internal object TabletLyricTypography {
         applyPrimaryLyricTextSize(root, resolvePrimaryLyricTextIds(root))
     }
 
-    fun attach(fragment: Any) {
+    fun attach(fragment: Any, recyclerGetter: java.lang.reflect.Method) {
         val recycler = runCatching {
-            ModernXposedRuntime.callMethod(fragment, "getRecyclerView") as? ViewGroup
+            recyclerGetter.invoke(fragment) as? ViewGroup
         }.getOrNull() ?: return
         if (!isTargetTabletLandscape(recycler)) return
         val state = synchronized(states) {

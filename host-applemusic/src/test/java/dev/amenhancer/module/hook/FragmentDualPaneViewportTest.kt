@@ -13,8 +13,8 @@ class FragmentDualPaneViewportTest {
         assertTrue(checkNotNull(effective) > 0) // Native A.n0 requires a positive effective width.
     }
 
-    @Test fun landscapeKeepsItsExistingHalfWidthIncludingOddWidths() {
-        assertEquals(1612, FragmentDualPanePolicy.rightPaneWidth(3392, true, 42))
-        assertEquals(1613, FragmentDualPanePolicy.rightPaneWidth(3393, true, 42))
+    @Test fun landscapeUsesWiderLyricsViewportIncludingOddWidths() {
+        assertEquals(1782, FragmentDualPanePolicy.rightPaneWidth(3392, true, 42))
+        assertEquals(1783, FragmentDualPanePolicy.rightPaneWidth(3393, true, 42))
     }
 }

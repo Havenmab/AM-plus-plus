@@ -437,6 +437,7 @@ internal class AppleListenNowHooks(
                         resolvedArtworkSubmit.compatibilityFallback}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 主页 Listen Now 封面连续性 Hook 安装失败", it)
         }
     }
@@ -645,6 +646,7 @@ internal class AppleListenNowHooks(
                     "fallback=${resolvedOnModelBound.compatibilityFallback}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 主页 Listen Now 文字绑定 Hook 安装失败", it)
         }
     }

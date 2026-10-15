@@ -11,7 +11,7 @@ internal fun File.readRefactorComponent(): String {
     val components = when (name) {
         "AppleMusicDualPaneTarget.kt" -> listOf("DualPaneResourceBindings.kt","LegacyLyricsLayoutProfiles.kt",
             "AppleMusicDualPaneTarget.kt","LegacyTabletQualification.kt","DualPaneViewMount.kt",
-            "DualPaneFragmentStateBridge.kt","DualPaneReflectionAccess.kt").map { hook+it }
+            "DualPaneFragmentStateBridge.kt","DualPaneReflectionAccess.kt","TabletArtworkLayoutLease.kt").map { hook+it }
         "HleMetadataSurfaceBridge.kt" -> listOf(hook+"HleMetadataSurfaceBridge.kt",hook+"MetadataHostAdapters.kt")
         "AppleInternalCatalogResolver.kt" -> listOf("AppleInternalCatalogResolver.kt","CatalogPersistentAccess.kt",
             "CatalogRequestScheduling.kt","CatalogOriginalResolution.kt","NativeCatalogQueryAccess.kt",

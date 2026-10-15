@@ -107,7 +107,12 @@ internal class AppleInAppMetadataApplier(
         }
         val libraryComposeStates =
             if (forceRebind) librarySurfaceHooks.refreshComposeStates(mediaId, alias) else 0
-        if (forceRebind) artistSurfaceHooks.refreshComposeMetadata(mediaId, alias)
+        // Two distinct surfaces share this call site: the fork's album-detail Compose
+        // metadata refresh and upstream's artist Compose profile sessions. Keep both.
+        val albumComposeMetadata =
+            if (forceRebind) artistSurfaceHooks.refreshComposeMetadata(mediaId, alias) else 0
+        val artistComposeProfiles =
+            if (forceRebind) artistSurfaceHooks.refreshComposeProfiles(mediaId) else 0
         val dataBindingTargets =
             if (forceRebind) dataBindingHooks.refreshDataBindings(mediaId, alias) else 0
         val listenNowDataBindingTargets =
@@ -119,7 +124,8 @@ internal class AppleInAppMetadataApplier(
         if (
             metadataApplied + playbackItemApplied + containerItemApplied +
             libraryEntitiesApplied + playlistRowsApplied + libraryControllers +
-            libraryComposeStates + dataBindingTargets + listenNowDataBindingTargets +
+            libraryComposeStates + albumComposeMetadata + artistComposeProfiles +
+            dataBindingTargets + listenNowDataBindingTargets +
             queueAdapterTargets + genericRecyclerTargets > 0
         ) {
             ProviderLogger.info(
@@ -129,6 +135,8 @@ internal class AppleInAppMetadataApplier(
                     "containers=$containerItemApplied, libraryEntities=$libraryEntitiesApplied, " +
                     "playlistRows=$playlistRowsApplied, libraryControllers=$libraryControllers, " +
                     "libraryComposeStates=$libraryComposeStates, " +
+                    "albumComposeMetadata=$albumComposeMetadata, " +
+                    "artistComposeProfiles=$artistComposeProfiles, " +
                     "dataBindings=$dataBindingTargets, " +
                     "listenNowDataBindings=$listenNowDataBindingTargets, " +
                     "queueAdapters=$queueAdapterTargets, " +
@@ -142,6 +150,7 @@ internal class AppleInAppMetadataApplier(
             librarySurfaceHooks.hasEntityRefs(mediaId) ||
             librarySurfaceHooks.hasControllerRefs(mediaId) ||
             librarySurfaceHooks.hasComposeStateRefs(mediaId) ||
+            artistSurfaceHooks.hasComposeProfileRefs(mediaId) ||
             dataBindingHooks.hasRefs(mediaId) ||
             dataBindingHooks.hasGenericRecyclerRefs(mediaId) ||
             queueMetadataHooks.hasCapturedMediaId(mediaId) && queueMetadataHooks.hasLiveAdapter()
@@ -315,6 +324,7 @@ internal class AppleInAppMetadataApplier(
         librarySurfaceHooks.restoreOriginalEntities().forEach { mediaId ->
             librarySurfaceHooks.refreshControllers(mediaId)
             librarySurfaceHooks.refreshComposeStates(mediaId)
+            artistSurfaceHooks.refreshComposeProfiles(mediaId)
             dataBindingHooks.refreshDataBindings(mediaId)
         }
         registry.allLiveContainerItemRefs().forEach { ref ->

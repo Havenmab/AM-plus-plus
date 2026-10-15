@@ -32,6 +32,7 @@ internal class HleMetadataSurfaceBridge(
     internal val overrideAccountLanguage: Boolean,
     internal val restoreOriginalMetadata: Boolean,
     internal val profileId: String,
+    private val installation: HleMetadataInstallation,
     /**
      * Runs once before every resolution seam so the one-shot 「清空检索库」 signal
      * is handled before the request can answer from a cache.  Idempotent; the
@@ -209,6 +210,10 @@ internal class HleMetadataSurfaceBridge(
         installSafely("collection") { collectionSurfaceHooks.installHooks() }
         installSafely("artist-top-songs") { artistSurfaceHooks.installTopSongHooks() }
         installSafely("artist-profile") { artistSurfaceHooks.installProfileHooks() }
+        // Stage declared Compose surfaces even when a target is missing, so failure is reported.
+        if (artistSurfaceHooks.hasComposeProfileSurface()) {
+            installSafely("artist-compose-profile") { artistSurfaceHooks.installComposeProfileHooks() }
+        }
         installSafely("listen-now-artwork") { listenNowHooks.installArtworkContinuityHooks() }
         installSafely("listen-now-binding") { listenNowHooks.installMetadataBindingHooks() }
         installSafely("recently-searched") { mediaApiMetadataCoordinator.installRecentlySearchedHooks() }
@@ -514,9 +519,7 @@ internal class HleMetadataSurfaceBridge(
     internal fun createHostAdapters(): HostAdapters = createMetadataHostAdapters()
 
     internal fun installSafely(name: String, block: () -> Unit) {
-        runCatching(block).onFailure {
-            ProviderLogger.error("HLE $name surface hook unavailable", it)
-        }
+        installation.install(name, block)
     }
 
     internal fun currentIdentity(): ActivePlaybackMediaIdentity = ActivePlaybackMediaIdentity(

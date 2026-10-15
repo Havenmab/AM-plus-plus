@@ -1,65 +1,126 @@
 package dev.amenhancer.module.hook
 
 import org.json.JSONObject
-import java.lang.reflect.Field
-import java.lang.reflect.Method
 
-/** Exact APK contracts are profile-owned, never inferred from a host version string. */
+/** The complete native chrome inventory is resolved before any callback is registered. */
 internal class FragmentChromeContract(loader: ClassLoader, val names: JSONObject) {
-    val content = loader.loadClass(names.getString("contentClass"))
-    val player = loader.loadClass(names.getString("playerClass"))
-    val model = loader.loadClass(names.getString("navigationModelClass"))
-    val kind = loader.loadClass(names.getString("navigationKindClass"))
-    val callback = loader.loadClass(names.getString("navigationCallbackClass"))
-    val composer = loader.loadClass(names.getString("composerClass"))
-    val renderTab = method(content, names.getString("renderTab"), model, java.lang.Long.TYPE,
-        callback, composer, java.lang.Integer.TYPE)
-    val viewModel = method(content, names.getString("navigationViewModel"))
-    val modelKind = field(model, names.getString("modelKind"), kind)
-    val kindId = method(kind, names.getString("kindId"))
-    val kindLabel = method(kind, names.getString("kindLabel"))
-    val kindIcon = method(kind, names.getString("kindIcon"))
-    val invokeCallback = method(callback, "invoke", Any::class.java)
-    val slide = loader.loadClass(names.getString("slideCallbackClass")).let {
-        method(it, names.getString("slideMethod"), android.view.View::class.java, java.lang.Float.TYPE)
-    }
-    val slidePlayer = field(slide.declaringClass, names.getString("slidePlayerField"), player)
-    val progress = method(slide.declaringClass, "d", java.lang.Float.TYPE)
-    val playerBehavior = field(player, "c", loader.loadClass("com.google.android.material.bottomsheet.BottomSheetBehavior"))
-    val behaviorState = field(playerBehavior.type, "p0", java.lang.Integer.TYPE)
-    val playerSlide = field(player, names.getString("playerSlideCallbackField"), slide.declaringClass)
-    val slideProgress = field(slide.declaringClass, names.getString("slideProgressField"), java.lang.Float.TYPE)
-    val playerOf = method(content, names.getString("playerOf"))
-    val libraryModel = method(content, names.getString("libraryViewModel"))
-    val libraryTitle = method(libraryModel.returnType, "getLibraryTabName")
-    val drawerOf = method(loader.loadClass(names.getString("activityClass")), names.getString("drawerOf"))
-    val drawerOpen = method(drawerOf.returnType, names.getString("drawerOpen"))
-    val nativeMenuListener = field(content, names.getString("menuListenerField"), loader.loadClass(names.getString("menuListenerClass")))
-    val selectMenuItem = method(nativeMenuListener.type, names.getString("menuSelectMethod"), android.view.MenuItem::class.java)
-    val activityTouch = android.app.Activity::class.java.getDeclaredMethod("dispatchTouchEvent", android.view.MotionEvent::class.java)
+    private val members = FragmentProfileMembers(loader, names.getJSONObject("members"), "fragmentChrome.members",
+        FragmentChromeInventory.required)
+    val content = members.type(names.getString("contentClass"))
+    val player = members.type(names.getString("playerClass"))
+    val model = members.type(names.getString("navigationModelClass"))
+    val kind = members.type(names.getString("navigationKindClass"))
+    val renderTab = members.method("renderTab")
+    val viewModel = members.method("navigationViewModel")
+    val modelKind = members.field("modelKind")
+    val kindId = members.method("kindId")
+    val kindLabel = members.method("kindLabel")
+    val kindIcon = members.method("kindIcon")
+    val invokeCallback = members.method("invokeCallback")
+    val slide = members.method("slide")
+    val slidePlayer = members.field("slidePlayer")
+    val progress = members.method("progress")
+    val playerBehavior = members.field("playerBehavior")
+    val behaviorState = members.field("behaviorState")
+    val playerSlide = members.field("playerSlide")
+    val slideProgress = members.field("slideProgress")
+    val playerOf = members.method("playerOf")
+    val libraryModel = members.method("libraryViewModel")
+    val libraryTitle = members.method("libraryTitle")
+    val drawerOf = members.method("drawerOf")
+    val drawerOpen = members.method("drawerOpen")
+    val nativeMenuListener = members.field("menuListener")
+    val selectMenuItem = members.method("selectMenuItem")
+    val activityTouch = members.method("activityTouch")
+    val tabletMiniMargins = members.method("miniMargins")
+    val blurDraw = members.method("blurDraw")
+    val activityOf = members.method("getActivity")
+    val createView = members.method("createView")
+    val viewCreated = members.method("viewCreated")
+    val destroyView = members.method("destroyView")
+    val view = members.method("getView")
+    val selectedTab = members.method("selectedTab")
+    val navigationTabs = members.method("navigationTabs")
+    val liveDataValue = members.method("liveDataValue")
+    val navigationMenu = members.method("navigationMenu")
+    val navigationSelected = members.method("navigationSelected")
+    val navigationSelect = members.method("navigationSelect")
+    val drawerMenu = members.method("drawerMenu")
+    val collapsedSheetTop = members.field("collapsedSheetTop")
+    val peek = members.field("peek")
+    val autoPeek = members.field("autoPeek")
+    val expandedSheetTop = members.method("expandedSheetTop")
+    val writePeek = members.method("writePeek")
+    val browser = members.method("browser")
+    val currentItem = members.method("currentItem")
+    val accountReady = members.method("accountReady")
+    val miniVisible = members.method("miniVisible")
     val resources = names.getJSONObject("resources")
-    val tabletMiniMargins = names.getJSONObject("tablet").let {
-        method(loader.loadClass(it.getString("miniMarginsOwner")), it.getString("miniMarginsMethod"),
-            android.view.View::class.java, java.lang.Float.TYPE, java.lang.Float.TYPE).also { target ->
-            check(java.lang.reflect.Modifier.isStatic(target.modifiers) && target.returnType == java.lang.Void.TYPE)
-        }
-    }
-    val blurDraw = method(loader.loadClass(names.getString("blurClass")), "draw", android.graphics.Canvas::class.java)
 
-    companion object {
-        fun method(type: Class<*>, name: String, vararg parameters: Class<*>): Method {
-            var current: Class<*>? = type
-            while (current != null) {
-                val found = runCatching { current!!.getDeclaredMethod(name, *parameters) }.getOrNull()
-                if (found != null) return found.apply { isAccessible = true }
-                current = current.superclass
-            }
-            throw NoSuchMethodException("${type.name}#$name(${parameters.joinToString { it.name }})")
+    init {
+        // Descriptors must also fit the role's caller, not merely exist somewhere in the APK.
+        fun shape(role: String, returns: Class<*>, vararg parameters: Class<*>, static: Boolean = false) {
+            val method = members.method(role)
+            check(method.returnType == returns && method.parameterTypes.contentEquals(parameters) &&
+                java.lang.reflect.Modifier.isStatic(method.modifiers) == static) { "Chrome role signature mismatch: $role" }
         }
-        fun field(type: Class<*>, name: String, expected: Class<*>): Field =
-            type.getDeclaredField(name).apply {
-                check(this.type == expected) { "${type.name}#$name descriptor mismatch" }
-                isAccessible = true
-            }
+        val integer = Integer.TYPE
+        val floating = java.lang.Float.TYPE
+        val boolean = java.lang.Boolean.TYPE
+        val void = Void.TYPE
+        shape("renderTab", void, model, java.lang.Long.TYPE, members.type(names.getString("navigationCallbackClass")),
+            members.type(names.getString("composerClass")), integer)
+        shape("kindId", integer); shape("kindIcon", integer); shape("kindLabel", String::class.java)
+        shape("invokeCallback", Any::class.java, Any::class.java)
+        shape("slide", void, android.view.View::class.java, floating)
+        shape("progress", void, floating)
+        shape("playerOf", player)
+        shape("selectedTab", kind)
+        shape("liveDataValue", Any::class.java)
+        shape("drawerOpen", void)
+        shape("selectMenuItem", void, android.view.MenuItem::class.java)
+        shape("miniMargins", void, android.view.View::class.java, floating, floating, static = true)
+        shape("blurDraw", void, android.graphics.Canvas::class.java)
+        shape("createView", android.view.View::class.java, android.view.LayoutInflater::class.java,
+            android.view.ViewGroup::class.java, android.os.Bundle::class.java)
+        shape("viewCreated", void, android.view.View::class.java, android.os.Bundle::class.java)
+        shape("destroyView", void); shape("getView", android.view.View::class.java)
+        shape("navigationMenu", android.view.Menu::class.java); shape("drawerMenu", android.view.Menu::class.java)
+        shape("navigationSelected", integer); shape("navigationSelect", void, integer)
+        shape("expandedSheetTop", integer); shape("writePeek", void, integer, boolean)
+        shape("accountReady", boolean, static = true)
+        shape("activityTouch", boolean, android.view.MotionEvent::class.java)
+        val staticMini = java.lang.reflect.Modifier.isStatic(miniVisible.modifiers)
+        if (staticMini) shape("miniVisible", void, content, boolean, static = true)
+        else shape("miniVisible", void, boolean)
+        check(android.app.Activity::class.java.isAssignableFrom(activityOf.returnType)) { "Chrome activity getter mismatch" }
+        check(liveDataValue.declaringClass.isAssignableFrom(navigationTabs.returnType) &&
+            liveDataValue.declaringClass.isAssignableFrom(libraryTitle.returnType)) { "Chrome LiveData roles mismatch" }
+        check(navigationTabs.declaringClass.isAssignableFrom(viewModel.returnType) &&
+            libraryTitle.declaringClass.isAssignableFrom(libraryModel.returnType) &&
+            drawerOpen.declaringClass.isAssignableFrom(drawerOf.returnType) &&
+            currentItem.declaringClass.isAssignableFrom(browser.returnType)) { "Chrome getter receiver mismatch" }
+        check(modelKind.type == kind && slidePlayer.type == player && playerSlide.type == slide.declaringClass &&
+            progress.declaringClass == slide.declaringClass &&
+            selectMenuItem.declaringClass.isAssignableFrom(nativeMenuListener.type)) { "Chrome owner fields mismatch" }
+        listOf(behaviorState, collapsedSheetTop, peek).forEach { check(it.type == integer) }
+        check(autoPeek.type == boolean && slideProgress.type == floating)
+        check(playerBehavior.type == members.type("com.google.android.material.bottomsheet.BottomSheetBehavior"))
+        listOf(viewModel, libraryModel, libraryTitle, drawerOf, navigationTabs, activityOf, browser, currentItem).forEach {
+            check(!java.lang.reflect.Modifier.isStatic(it.modifiers) && it.parameterCount == 0 && it.returnType != void)
+        }
     }
+}
+
+internal object FragmentChromeInventory {
+    val required = FragmentMemberRequirements(
+        methods = setOf("renderTab", "navigationViewModel", "kindId", "kindLabel", "kindIcon", "invokeCallback",
+            "slide", "progress", "playerOf", "libraryViewModel", "libraryTitle", "drawerOf", "drawerOpen",
+            "selectMenuItem", "miniMargins", "blurDraw", "getActivity", "createView", "viewCreated", "destroyView",
+            "getView", "selectedTab", "navigationTabs", "liveDataValue", "navigationMenu", "navigationSelected",
+            "navigationSelect", "drawerMenu", "expandedSheetTop", "writePeek", "browser", "currentItem",
+            "accountReady", "miniVisible", "activityTouch"),
+        fields = setOf("modelKind", "slidePlayer", "playerBehavior", "behaviorState", "playerSlide", "slideProgress",
+            "menuListener", "collapsedSheetTop", "peek", "autoPeek"),
+    )
 }

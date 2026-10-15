@@ -156,6 +156,7 @@ internal class AppleContentLocalizationHooks(
                     "fallback=${resolved.compatibilityFallback}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 内容本地化参数 Hook 安装失败", it)
         }
     }
@@ -318,6 +319,7 @@ internal class AppleContentLocalizationHooks(
                     "${resolved.target.methodName}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("$label Hook 安装失败", it)
         }
     }

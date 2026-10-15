@@ -48,7 +48,7 @@ internal class AppleMetadataSurfaceRuntime(
     private var activePageOwner = WeakReference<Any>(null)
 
     fun installLifecycleHooks() {
-        val activityInstalled = runCatching {
+        val activityGroup = runtime.hookRegistrar.stageInstallation("hle.metadata-lifecycle.activity") {
             val activityResume = Activity::class.java.getDeclaredMethod("onResume")
                 .apply { isAccessible = true }
             val activityPause = Activity::class.java.getDeclaredMethod("onPause")
@@ -59,10 +59,8 @@ internal class AppleMetadataSurfaceRuntime(
             runtime.hookRegistrar.installHook(activityPause, before = { chain ->
                 chain.thisObject?.let(::onSurfacePaused)
             })
-        }.onFailure {
-            ProviderLogger.error("Apple Music Activity 元数据生命周期 Hook 安装失败", it)
-        }.isSuccess
-        val fragmentInstalled = runCatching {
+        }
+        val fragmentGroup = runtime.hookRegistrar.stageInstallation("hle.metadata-lifecycle.fragment") {
             val profiled = NativeMetadataLifecycleContract.resolve(
                 runtime.hookResolver.version,
                 runtime.classLoader::loadClass,
@@ -78,14 +76,15 @@ internal class AppleMetadataSurfaceRuntime(
             runtime.hookRegistrar.installHook(fragmentPause, before = { chain ->
                 chain.thisObject?.let(::onSurfacePaused)
             })
-        }.onFailure {
+        }
+        if (fragmentGroup.scope.isClosed) {
             ProviderLogger.info(
                 "Apple Music Fragment 元数据生命周期契约不可用，改用页面控制器边界"
             )
-        }.isSuccess
+        }
         ProviderLogger.info(
             "Apple Music 元数据页面生命周期 Hook 已安装: " +
-                "activity=$activityInstalled, fragment=$fragmentInstalled"
+                "activity=${!activityGroup.scope.isClosed}, fragment=${!fragmentGroup.scope.isClosed}"
         )
     }
 

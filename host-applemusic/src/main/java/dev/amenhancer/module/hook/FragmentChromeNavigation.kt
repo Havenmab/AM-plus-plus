@@ -16,27 +16,27 @@ internal class FragmentChromeNavigation(
 ) : NavigationPort, AutoCloseable {
     private val listeners = LinkedHashSet<(NavigationSnapshot) -> Unit>()
     private val vm = contract.viewModel.invoke(owner)!!
-    private val selected = FragmentChromeContract.method(vm.javaClass, "getSelectedTab")
-    private val live = FragmentChromeContract.method(vm.javaClass, "getGetBottomTabsLiveData").invoke(vm)!!
-    private val value = FragmentChromeContract.method(live.javaClass, "getValue")
+    private val selected = contract.selectedTab
+    private val live = contract.navigationTabs.invoke(vm)!!
+    private val value = contract.liveDataValue
     private val menuMethod: Method? = if (placement == NavigationPlacement.BOTTOM)
-        FragmentChromeContract.method(view.javaClass, "getMenu") else null
+        contract.navigationMenu else null
     private val selectedIdMethod: Method? = if (menuMethod != null)
-        FragmentChromeContract.method(view.javaClass, "getSelectedItemId") else null
+        contract.navigationSelected else null
     private val selectMethod: Method? = if (menuMethod != null)
-        FragmentChromeContract.method(view.javaClass, "setSelectedItemId", java.lang.Integer.TYPE) else null
+        contract.navigationSelect else null
     private var key: List<Any?> = emptyList()
     private var revision = 0L
     private var models = emptyMap<Int, Any>()
     private var last: NavigationSnapshot? = null
     private var iconConfiguration = 0
     private val icons = HashMap<Int, android.graphics.drawable.Drawable?>()
-    private val activity = FragmentChromeContract.method(owner.javaClass, "getActivity").invoke(owner) as Activity
+    private val activity = contract.activityOf.invoke(owner) as Activity
     private val drawerView = activity.findViewById<View>(view.resources.getIdentifier(
         contract.resources.getString("drawerNavigation"), "id", activity.packageName))
-    private val drawerMenu = drawerView?.let { FragmentChromeContract.method(it.javaClass, "getMenu").invoke(it) as? Menu }
+    private val drawerMenu = drawerView?.let { contract.drawerMenu.invoke(it) as? Menu }
     private val libraryTitleLive = contract.libraryTitle.invoke(contract.libraryModel.invoke(owner))
-    private val libraryTitleValue = libraryTitleLive?.let { FragmentChromeContract.method(it.javaClass, "getValue") }
+    private val libraryTitleValue = libraryTitleLive?.let { contract.liveDataValue }
     private var closed = false
 
     override fun snapshot(): NavigationSnapshot {

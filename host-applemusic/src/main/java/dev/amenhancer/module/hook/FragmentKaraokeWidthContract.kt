@@ -4,19 +4,24 @@ import android.view.View
 import org.json.JSONObject
 
 /** All members are resolved once, before registration; the row callback performs no discovery. */
-internal class FragmentKaraokeWidthContract(lyrics: Class<*>, names: JSONObject) {
-    private val loader = lyrics.classLoader!!
-    val adapter = loader.loadClass(names.getString("adapterClass"))
-    private val holder = loader.loadClass(names.getString("holderClass"))
-    private val binding = loader.loadClass(names.getString("bindingClass"))
-    private val holderBase = loader.loadClass(names.getString("holderBindingClass"))
-    val bind = FragmentChromeContract.method(adapter, names.getString("bindMethod"), holder, java.lang.Integer.TYPE)
-    private val adapterField = FragmentChromeContract.field(lyrics, names.getString("adapterField"), adapter)
-    private val widthField = FragmentChromeContract.field(adapter, names.getString("widthField"), java.lang.Integer.TYPE)
-    private val bindingField = FragmentChromeContract.field(holderBase, names.getString("bindingField"), checkNotNull(binding.superclass))
-    private val itemField = FragmentChromeContract.field(holder, names.getString("itemField"), View::class.java)
-    private val flexbox = FragmentChromeContract.field(binding, names.getString("flexboxField"),
-        loader.loadClass(names.getString("flexboxClass")))
+internal class FragmentKaraokeWidthContract(lyrics: Class<*>, names: JSONObject, members: FragmentProfileMembers) {
+    val adapter = members.type(names.getString("adapterClass"))
+    private val holder = members.type(names.getString("holderClass"))
+    private val binding = members.type(names.getString("bindingClass"))
+    private val holderBase = members.type(names.getString("holderBindingClass"))
+    val bind = members.method("bind")
+    private val adapterField = members.field("adapter")
+    private val widthField = members.field("width")
+    private val bindingField = members.field("binding")
+    private val itemField = members.field("item")
+    private val flexbox = members.field("flexbox")
+
+    init {
+        check(adapterField.declaringClass == lyrics && adapterField.type == adapter)
+        check(bind.declaringClass == adapter && bind.parameterTypes.contentEquals(arrayOf(holder, Int::class.javaPrimitiveType)))
+        check(bindingField.declaringClass == holderBase && bindingField.type == binding.superclass)
+        check(itemField.declaringClass == holder && itemField.type == View::class.java)
+    }
 
     fun owns(fragment: Any, candidate: Any) = adapterField.get(fragment) === candidate
     fun initialized(candidate: Any) = widthField.getInt(candidate) > 0

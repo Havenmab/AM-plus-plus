@@ -80,9 +80,10 @@ class RightLyricsPaneStructuralRegressionTest {
         assertTrue(source.contains("container.addOnLayoutChangeListener(listener)"))
         assertTrue(source.contains("refreshHighlightAnchor(container, fragmentReference)"))
         assertTrue(compactSource.contains(
-            "installHighlightAnchorResizeSync(fragment) TabletLyricTypography.attach(fragment)",
+            "installHighlightAnchorResizeSync(fragment) TabletLyricTypography.attach(fragment, recyclerGetter)",
         ))
-        assertTrue(source.contains("ModernXposedRuntime.callMethod(currentFragment, \"j2\")"))
+        assertTrue(source.contains("lyricsMetricsMethod = lyricsMetricsResolution.valueOrNull()"))
+        assertTrue(source.contains("lyricsMetricsMethod?.invoke(currentFragment)"))
         assertTrue(source.contains("WeakReference(fragment)"))
         assertTrue(source.contains("LyricsLayoutFieldProfiles.resolve(fragment.javaClass)"))
         assertTrue(source.contains("profile.synchronizedMetrics.first()"))

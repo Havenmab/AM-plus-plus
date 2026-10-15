@@ -264,6 +264,7 @@ private fun productionFeatureInstallationModule(
                 registerResources = { AppleMusicHostFactory.registerLyricAuxiliaryResources() },
             ),
             FeatureInstallationPlan(feature = CjkKaraokeAnimationFeature()),
+            FeatureInstallationPlan(feature = LyricWrapSweepFeature()),
             FeatureInstallationPlan(
                 feature = LyricsTypefaceFeature(),
                 registerResources = lyricsTypefaceSession::registerResources,

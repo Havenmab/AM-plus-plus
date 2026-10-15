@@ -139,6 +139,7 @@ internal class ApplePlaybackItemConversionHooks(
                 "Apple Music App 容器跳转项/PlaybackItem 转换 Hook 已安装"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music App 内容项/PlaybackItem 转换 Hook 安装失败", it)
         }
     }

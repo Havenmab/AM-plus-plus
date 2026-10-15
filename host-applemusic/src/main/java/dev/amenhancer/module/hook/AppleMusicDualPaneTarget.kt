@@ -33,6 +33,7 @@ internal class AppleMusicDualPaneTarget(
     private val targetBuild: TargetBuild = TargetBuild.UNKNOWN,
 ) : DualPaneTarget {
     private val anchorResizeListeners = WeakHashMap<View, View.OnLayoutChangeListener>()
+    private var lyricsMetricsMethod: Method? = null
 
     override fun install(): TargetCapabilityInstall {
         val controllerInitializeResolution = symbols.resolve(AppleMusicSymbols.PlayerControllerInitialize)
@@ -73,10 +74,12 @@ internal class AppleMusicDualPaneTarget(
             lyricsFragmentClass,
         )
         val lyricsMetricsResolution = symbols.resolve(AppleMusicSymbols.LyricsFragmentUpdateMetrics)
-        val lyricsMetricsHooks = installLandscapeLyricsMetricsHook(lyricsMetricsResolution.valueOrNull())
+        lyricsMetricsMethod = lyricsMetricsResolution.valueOrNull()
+        val lyricsMetricsHooks = installLandscapeLyricsMetricsHook(lyricsMetricsMethod, lyricsFragmentClass)
         val lyricsTypographyResolution = symbols.resolve(AppleMusicSymbols.LyricsFragmentOnResume)
         val lyricsTypographyHooks = installLandscapeLyricsTypographyHook(
             lyricsTypographyResolution.valueOrNull(),
+            lyricsFragmentClass,
         )
         val failures = listOfNotNull(
             controllerInitializeResolution,
@@ -175,13 +178,15 @@ internal class AppleMusicDualPaneTarget(
      * owned by dual-pane rather than future-blur: disabling blur must not
      * shrink the tablet player back to the stock 24sp size.
      */
-    private fun installLandscapeLyricsTypographyHook(onResume: Method?): Int {
+    private fun installLandscapeLyricsTypographyHook(onResume: Method?, fragmentClass: Class<*>?): Int {
         onResume ?: return 0
+        fragmentClass ?: return 0
+        val recyclerGetter = runCatching { CachedMethods.exact(fragmentClass, "getRecyclerView") }.getOrNull() ?: return 0
         return if (hook(onResume, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     param.thisObject?.let { fragment ->
                         installHighlightAnchorResizeSync(fragment)
-                        TabletLyricTypography.attach(fragment)
+                        TabletLyricTypography.attach(fragment, recyclerGetter)
                     }
                 }
             })
@@ -204,12 +209,13 @@ internal class AppleMusicDualPaneTarget(
     ): Int {
         animateChrome ?: return 0
         lyricsFragmentClass ?: return 0
+        val chromeGetter = runCatching { CachedMethods.exact(lyricsFragmentClass, "f2") }.getOrNull() ?: return 0
         return if (hook(animateChrome, object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val fragment = param.thisObject ?: return
                     if (!lyricsFragmentClass.isInstance(fragment)) return
                     val chrome = runCatching {
-                        ModernXposedRuntime.callMethod(fragment, "f2") as? View
+                        chromeGetter.invoke(fragment) as? View
                     }.getOrNull() ?: return
                     if (!TabletModeQualifier.isEligible(chrome.context)) return
                     chrome.visibility = View.GONE
@@ -231,13 +237,15 @@ internal class AppleMusicDualPaneTarget(
      * all of its normal calculations, then remove the same control height and
      * refresh the same RecyclerView it refreshes in j2().
      */
-    private fun installLandscapeLyricsMetricsHook(updateMetrics: Method?): Int {
+    private fun installLandscapeLyricsMetricsHook(updateMetrics: Method?, fragmentClass: Class<*>?): Int {
         updateMetrics ?: return 0
+        fragmentClass ?: return 0
+        val chromeGetter = runCatching { CachedMethods.exact(fragmentClass, "f2") }.getOrNull() ?: return 0
         return if (hook(updateMetrics, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val fragment = param.thisObject ?: return
                     val controls = runCatching {
-                        ModernXposedRuntime.callMethod(fragment, "f2") as? View
+                        chromeGetter.invoke(fragment) as? View
                     }.getOrNull() ?: return
                     if (!TabletModeQualifier.isEligible(controls.context)) return
                     val profile = LyricsLayoutFieldProfiles.resolve(fragment.javaClass) ?: return
@@ -301,7 +309,7 @@ internal class AppleMusicDualPaneTarget(
             if (!container.isAttachedToWindow || container.height <= 0) return@post
             if (!TabletModeQualifier.isEligible(container.context)) return@post
             runCatching {
-                ModernXposedRuntime.callMethod(currentFragment, "j2")
+                lyricsMetricsMethod?.invoke(currentFragment)
             }.onFailure {
                 dualPaneDebug("lyrics anchor resize sync failed: $it")
             }
@@ -348,7 +356,7 @@ internal class AppleMusicDualPaneTarget(
                 ?: return@runCatching null
             dualPaneField(binding.javaClass, profile.recycler)?.get(binding)
         }.getOrNull() as? View ?: return
-        if (runCatching { ModernXposedRuntime.callMethod(recycler, "S") }.isFailure) {
+        if (runCatching { CachedMethods.exact(recycler.javaClass, "S").invoke(recycler) }.isFailure) {
             recycler.requestLayout()
         }
     }
@@ -544,7 +552,7 @@ internal class AppleMusicDualPaneTarget(
         val lyrics = enumConstant(playerStateClass, DUAL_PANE_LYRICS_STATE) ?: return false
 
         forceSongState(controller, playerStateClass, song)
-        val manager = ModernXposedRuntime.callMethod(controller, "getChildFragmentManager") ?: return false
+        val manager = CachedMethods.exact(controller.javaClass, "getChildFragmentManager").invoke(controller) ?: return false
         if (isTargetStateSaved(manager)) return false
 
         // 6.5.2 declares the fragment accessor as f() and 6.5.3 as e(); both declare the tag
@@ -603,7 +611,7 @@ internal class AppleMusicDualPaneTarget(
         var lastFailure: Throwable? = null
         for (name in names) {
             try {
-                return ModernXposedRuntime.callMethod(receiver, name, *args)
+                return CachedMethods.callLegacy(receiver, name, *args)
             } catch (failure: Throwable) {
                 lastFailure = failure
             }
@@ -619,14 +627,14 @@ internal class AppleMusicDualPaneTarget(
                 .firstOrNull { !Modifier.isStatic(it.modifiers) && stateClass.isAssignableFrom(it.type) }
                 ?.let { setDualPaneField(it, controller, song) }
 
-        runCatching { ModernXposedRuntime.callMethod(controller, "C1", false) }
+        runCatching { CachedMethods.exact(controller.javaClass, "C1", java.lang.Boolean.TYPE).invoke(controller, false) }
         // 6.5.2 declares this state LiveData as field S and 6.5.3 as Q (both builds shift the
         // controller fields after the two media items), so the field is located by its type.
         dualPaneFieldByType(controller.javaClass) { field -> field.type.name == DUAL_PANE_MUTABLE_LIVE_DATA }
             ?.let { field ->
                 runCatching {
                     val liveData = field.apply { isAccessible = true }.get(controller)
-                    if (liveData != null) ModernXposedRuntime.callMethod(liveData, "setValue", song)
+                    if (liveData != null) CachedMethods.exact(liveData.javaClass, "setValue", Any::class.java).invoke(liveData, song)
                 }
             }
     }
@@ -640,7 +648,7 @@ internal class AppleMusicDualPaneTarget(
         root.getTag(R.id.am_enhancer_dual_pane_state) as? DualPaneState
 
     private fun controllerRoot(controller: Any): View? = runCatching {
-        ModernXposedRuntime.callMethod(controller, "getView") as? View
+        CachedMethods.exact(controller.javaClass, "getView").invoke(controller) as? View
     }.getOrNull()
 
     private fun installForControllerRoot(controller: Any, root: View?, source: String) {

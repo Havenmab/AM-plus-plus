@@ -183,6 +183,7 @@ internal class AppleInAppArtworkContinuityHooks(
                     "fallback=${resolvedDelegate.compatibilityFallback}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 资料库封面连续性 Hook 安装失败", it)
         }
     }

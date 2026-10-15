@@ -26,16 +26,34 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
     private val build = targetBuild(context)
     private val names = checkNotNull(AppleMusicHostProfiles.find(build.packageName,build.versionName,build.versionCode))
         .document.getJSONObject("settings")
+    private data class PreferenceMembers(
+        val constructor: java.lang.reflect.Constructor<*>,
+        val key: java.lang.reflect.Field,
+        val title: Method,
+        val summary: Method,
+    )
+    private val preferenceMembers = HashMap<Class<*>, PreferenceMembers>()
+    private val fieldLists = HashMap<Class<*>, List<java.lang.reflect.Field>>()
+    private val clickFields = HashMap<Class<*>, java.lang.reflect.Field?>()
+    private val keyFields = HashMap<Class<*>, java.lang.reflect.Field?>()
+    private val groupAccessors = HashMap<Pair<Class<*>, Class<*>>, NativePreferenceGroupAccessors?>()
+    private fun fields(type: Class<*>) = fieldLists.getOrPut(type) { type.declaredFields.toList() }
+    private fun members(type: Class<*>) = preferenceMembers.getOrPut(type) {
+        PreferenceMembers(type.getConstructor(Context::class.java),
+            type.getDeclaredField(names.getString("keyField")).apply { isAccessible = true },
+            CachedMethods.exact(type, names.getString("titleMethod"), CharSequence::class.java),
+            CachedMethods.exact(type, names.getString("summaryMethod"), CharSequence::class.java))
+    }
     override fun refreshNativePreferenceAdapter(root: ViewGroup?) {
         val recycler = root?.let(::findRecyclerView) ?: return
         runCatching {
-            val adapter = recycler.javaClass.getMethod("getAdapter").invoke(recycler) ?: return
-            adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
+            val adapter = CachedMethods.exact(recycler.javaClass, "getAdapter").invoke(recycler) ?: return
+            CachedMethods.exact(adapter.javaClass, "notifyDataSetChanged").invoke(adapter)
         }
     }
 
     override fun fragmentView(fragment: Any): ViewGroup? = runCatching {
-        ModernXposedRuntime.callMethod(fragment, "getView") as? ViewGroup
+        CachedMethods.exact(fragment.javaClass, "getView").invoke(fragment) as? ViewGroup
     }.getOrNull()
 
     override fun findSettingsListOverlayContainer(root: View): ViewGroup? {
@@ -88,7 +106,7 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
             // AndroidX 6.5.1/6.5.2 maps PreferenceFragmentCompat.findPreference()
             // to t0(String); keep this as a fallback for repacked builds where
             // the PreferenceScreen field is not directly discoverable.
-            ModernXposedRuntime.callMethod(fragment, names.getString("findMethod"), key)
+            CachedMethods.callLegacy(fragment, names.getString("findMethod"), key)
         }.getOrNull()
         if (existing != null) {
             val keeper = screen?.let {
@@ -98,11 +116,10 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
             return hasNativePreferenceClick(preferenceClass, keeper)
         }
 
-        val preference = preferenceClass
-            .getConstructor(Context::class.java)
-            .newInstance(activity)
+        val native = runCatching { members(preferenceClass) }.getOrNull() ?: return false
+        val preference = native.constructor.newInstance(activity)
         val keyWasSet = runCatching {
-            preferenceClass.getDeclaredField(names.getString("keyField")).apply { isAccessible = true }.set(preference, key)
+            native.key.set(preference, key)
             true
         }.getOrDefault(false)
         if (!keyWasSet) {
@@ -110,19 +127,15 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
         }
         // On the verified 6.5.1/6.5.2 AndroidX builds, K is setTitle and J is
         // setSummary (J rejects a SummaryProvider, which distinguishes them).
-        preferenceClass.getDeclaredMethod(names.getString("titleMethod"), CharSequence::class.java)
-            .apply { isAccessible = true }
-            .invoke(preference, ModuleText.MODULE_SETTINGS.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
-        preferenceClass.getDeclaredMethod(names.getString("summaryMethod"), CharSequence::class.java)
-            .apply { isAccessible = true }
-            .invoke(preference, ModuleText.MODULE_SETTINGS_SUMMARY.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
+        native.title.invoke(preference, ModuleText.MODULE_SETTINGS.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
+        native.summary.invoke(preference, ModuleText.MODULE_SETTINGS_SUMMARY.text(locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()))
         if (!installNativePreferenceClick(preferenceClass, preference, activity)) return false
 
         val targetScreen = screen ?: return false
         // AndroidX 6.5.1/6.5.2 maps PreferenceGroup.P() to addPreference(); S()
         // is the corresponding remove path. Add once, then normalize the
         // whole screen so repeated lifecycle callbacks cannot accumulate rows.
-        ModernXposedRuntime.callMethod(targetScreen, names.getString("addMethod"), preference)
+        CachedMethods.exact(targetScreen.javaClass, names.getString("addMethod"), preferenceClass).invoke(targetScreen, preference)
         val keeper = removeDuplicateNativePreferences(
             targetScreen,
             preferenceClass,
@@ -165,7 +178,7 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
     ): List<Any> {
         var current: Class<*>? = screen.javaClass
         while (current != null) {
-            for (field in current.declaredFields) {
+            for (field in fields(current)) {
                 if (!java.util.List::class.java.isAssignableFrom(field.type)) continue
                 val list = runCatching {
                     field.apply { isAccessible = true }.get(screen) as? List<*>
@@ -207,8 +220,17 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
         screen: Any,
         preferenceClass: Class<*>,
     ): NativePreferenceGroupAccessors? {
+        val key = screen.javaClass to preferenceClass
+        if (!groupAccessors.containsKey(key)) groupAccessors[key] = resolveNativePreferenceGroupAccessors(key.first, preferenceClass)
+        return groupAccessors[key]
+    }
+
+    private fun resolveNativePreferenceGroupAccessors(
+        screenClass: Class<*>,
+        preferenceClass: Class<*>,
+    ): NativePreferenceGroupAccessors? {
         val hierarchy = buildList {
-            var current: Class<*>? = screen.javaClass
+            var current: Class<*>? = screenClass
             while (current != null) {
                 add(current)
                 current = current.superclass
@@ -238,25 +260,19 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
     }
 
     private fun nativePreferenceKey(preference: Any): String? {
-        var current: Class<*>? = preference.javaClass
-        while (current != null) {
-            val field = current.declaredFields.firstOrNull {
-                it.name == names.getString("keyField") && it.type == String::class.java
-            }
-            if (field != null) {
-                return runCatching {
-                    field.apply { isAccessible = true }.get(preference) as? String
-                }.getOrNull()
-            }
-            current = current.superclass
+        val type = preference.javaClass
+        if (!keyFields.containsKey(type)) {
+            keyFields[type] = generateSequence(type as Class<*>?) { it.superclass }.firstNotNullOfOrNull { owner ->
+                fields(owner).firstOrNull { it.name == names.getString("keyField") && it.type == String::class.java }
+            }?.apply { isAccessible = true }
         }
-        return null
+        return runCatching { keyFields[type]?.get(preference) as? String }.getOrNull()
     }
 
     private fun removeNativePreferenceFromBackingList(screen: Any, target: Any): Boolean {
         var current: Class<*>? = screen.javaClass
         while (current != null) {
-            for (field in current.declaredFields) {
+            for (field in fields(current)) {
                 if (!java.util.List::class.java.isAssignableFrom(field.type)) continue
                 val list = runCatching {
                     field.apply { isAccessible = true }.get(screen) as? MutableList<Any?>
@@ -302,13 +318,18 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
     }
 
     private fun findNativePreferenceClickField(preferenceClass: Class<*>): java.lang.reflect.Field? {
+        if (clickFields.containsKey(preferenceClass)) return clickFields[preferenceClass]
+        return resolveNativePreferenceClickField(preferenceClass).also { clickFields[preferenceClass] = it }
+    }
+
+    private fun resolveNativePreferenceClickField(preferenceClass: Class<*>): java.lang.reflect.Field? {
         val clickInterface = preferenceClass.declaredClasses.firstOrNull { nested ->
             nested.isInterface && nested.declaredMethods.any { method ->
                 method.parameterTypes.contentEquals(arrayOf(preferenceClass)) &&
                     method.returnType == Boolean::class.javaPrimitiveType
             }
         } ?: return null
-        return preferenceClass.declaredFields.firstOrNull { field ->
+        return fields(preferenceClass).firstOrNull { field ->
             field.type == clickInterface
         }
     }
@@ -316,21 +337,21 @@ internal class LegacySettingsViewBridge(context: Context, private val onOpen: (A
     private fun findNativePreferenceScreen(fragment: Any): Any? {
         var fragmentType: Class<*>? = fragment.javaClass
         while (fragmentType != null) {
-            val manager = fragmentType.declaredFields.asSequence()
+            val manager = fields(fragmentType).asSequence()
                 .mapNotNull { field ->
                     runCatching {
                         field.apply { isAccessible = true }.get(fragment)
                     }.getOrNull()
                 }
                 .firstOrNull { candidate ->
-                    candidate.javaClass.declaredFields.any { field ->
+                    fields(candidate.javaClass).any { field ->
                         field.type.name == names.getString("screenClass")
                     }
                 }
             if (manager != null) {
                 var managerType: Class<*>? = manager.javaClass
                 while (managerType != null) {
-                    val screen = managerType.declaredFields.asSequence()
+                    val screen = fields(managerType).asSequence()
                         .filter { it.type.name == names.getString("screenClass") }
                         .mapNotNull { field ->
                             runCatching {

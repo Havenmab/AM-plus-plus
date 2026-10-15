@@ -42,6 +42,9 @@ data class TargetAdaptation(
     val playerRecovery: PlayerRecoveryTarget = PlayerRecoveryTarget {
         TargetCapabilityInstall.Unsupported("Native player recovery is not available for this host")
     },
+    val lyricWrapSweep: LyricWrapSweepTarget = LyricWrapSweepTarget {
+        TargetCapabilityInstall.Unsupported("Wrapped lyric sweep has no exact host contract")
+    },
 ) {
 }
 
@@ -58,6 +61,10 @@ fun interface BidirectionalLyricBlurTarget {
 }
 
 fun interface CjkKaraokeAnimationTarget {
+    fun install(): TargetCapabilityInstall
+}
+
+fun interface LyricWrapSweepTarget {
     fun install(): TargetCapabilityInstall
 }
 

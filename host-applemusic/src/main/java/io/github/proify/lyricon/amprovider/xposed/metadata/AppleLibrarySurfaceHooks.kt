@@ -113,6 +113,7 @@ internal class AppleLibrarySurfaceHooks(
         WeakIdentityMap<Any, InAppMediaApiAttributeBinding>()
     private val mediaApiAttributeHookedMethods =
         ConcurrentHashMap.newKeySet<java.lang.reflect.Executable>()
+    private var attributeInstallation: io.github.proify.lyricon.amprovider.xposed.hooks.AppleHookInstallGroup? = null
     private val mediaApiSongIds =
         Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val catalogTarget by lazy {
@@ -143,6 +144,7 @@ internal class AppleLibrarySurfaceHooks(
     private var composeObserveTarget: AppleMusicHookTarget? = null
 
     fun installEntityHooks() {
+        attributeInstallation = runtime.hookRegistrar.currentInstallation()
         runCatching {
             val resolvedClasses = runtime.hookResolver.resolveClasses(
                 AppleMusicHookPoint.LIBRARY_ENTITY_CLASSES
@@ -255,6 +257,7 @@ internal class AppleLibrarySurfaceHooks(
                     "deserializationConstructors=$deserializationConstructors"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 资料库媒体快照 Hook 安装失败", it)
         }
     }
@@ -472,29 +475,36 @@ internal class AppleLibrarySurfaceHooks(
         kind: InAppLibraryEntityKind,
     ) {
         mediaApiAttributeBindings[attributes] = InAppMediaApiAttributeBinding(mediaId, kind)
-        AppleMediaApiTextAttribute.entries.forEach { attribute ->
+        val parent = attributeInstallation ?: return
+        if (parent.scope.isClosed) return
+        val methods = AppleMediaApiTextAttribute.entries.mapNotNull { attribute ->
             val getter = catalogMember(attribute.getterRuntimeMember)
             val method = runCatching {
                 AppleReflection.findMethodOrNull(attributes.javaClass, getter, parameterCount = 0)
-            }.getOrNull() ?: return@forEach
-            if (
-                method.returnType != String::class.java ||
-                !mediaApiAttributeHookedMethods.add(method)
-            ) return@forEach
-            runtime.hookRegistrar.installResultOverrideHook(method) { chain, original ->
-                val target = chain.thisObject ?: return@installResultOverrideHook original
-                val binding = mediaApiAttributeBindings[target]
-                    ?: return@installResultOverrideHook original
-                recordComposeMediaId(binding.mediaId)
-                host.recordCurrentRecyclerMediaId(binding.mediaId)
-                host.effectiveAlias(binding.mediaId)?.let { alias ->
-                    mediaApiAttributeOverride(binding.kind, attribute, alias)
-                } ?: original
+            }.getOrNull() ?: return@mapNotNull null
+            if (method.returnType != String::class.java || method in mediaApiAttributeHookedMethods) null
+            else attribute to method
+        }
+        if (methods.isEmpty()) return
+        runtime.hookRegistrar.stageInstallation("hle.library-attributes.${attributes.javaClass.name}", parent) {
+            methods.forEach { (attribute, method) ->
+                if (!mediaApiAttributeHookedMethods.add(method)) return@forEach
+                runtime.hookRegistrar.onInstallationClose { mediaApiAttributeHookedMethods.remove(method) }
+                runtime.hookRegistrar.installResultOverrideHook(method) { chain, original ->
+                    val target = chain.thisObject ?: return@installResultOverrideHook original
+                    val binding = mediaApiAttributeBindings[target]
+                        ?: return@installResultOverrideHook original
+                    recordComposeMediaId(binding.mediaId)
+                    host.recordCurrentRecyclerMediaId(binding.mediaId)
+                    host.effectiveAlias(binding.mediaId)?.let { alias ->
+                        mediaApiAttributeOverride(binding.kind, attribute, alias)
+                    } ?: original
+                }
+                ProviderLogger.info(
+                    "Apple Music Media API 属性 getter Hook 已安装: " +
+                        "class=${method.declaringClass.name}, method=${method.name}"
+                )
             }
-            ProviderLogger.info(
-                "Apple Music Media API 属性 getter Hook 已安装: " +
-                    "class=${method.declaringClass.name}, method=$getter"
-            )
         }
     }
 
@@ -621,6 +631,7 @@ internal class AppleLibrarySurfaceHooks(
                     "${resolvedObserve.target.className}#${resolvedObserve.target.methodName}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             activeComposeCapture.remove()
             ProviderLogger.error("Apple Music 资料库 Compose 局部刷新 Hook 安装失败", it)
         }
@@ -682,6 +693,7 @@ internal class AppleLibrarySurfaceHooks(
                     "buildMethods=${buildMethods.size}, fallback=${resolved.compatibilityFallback}"
             )
         }.onFailure {
+            runtime.hookRegistrar.reportInstallationFailure(it)
             ProviderLogger.error("Apple Music 资料库 Epoxy 局部刷新 Hook 安装失败", it)
         }
     }

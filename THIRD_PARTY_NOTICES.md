@@ -1,5 +1,24 @@
 # Third-Party Notices
 
+## Tcrrry Lyrics terminal CJK gradient
+
+The terminal CJK feather-margin rule, native last-word selection, and delayed
+rush-gradient removal are adapted from Tcrrry-Lyrics-Plugin 1.0.6's
+`NativeTerminalGradientFix.kt` (Tcrrry, GPL-3.0).
+Source: https://github.com/tcrrry/Tcrrry-Lyrics-Plugin
+AM++ adds exact host member contracts and binds installation to the existing
+CJK glow setting. Source license: `LICENSE` in the upstream project.
+
+## AM++ media plugin tablet components
+
+Selected output-routing, output icons, volume controls, and native playback-mode
+contracts are adapted from Kifranei/AM-plus-plus-media-plugin, commit `9e3f72b`
+(GPL-3.0). The host retains its own tablet proportions and artwork layout.
+The Halcyon Bluetooth name rules and Kifranei output vectors are retained.
+Flamingo volume vectors and their source record are packaged under `tablet-media/`.
+Apple's speaker/AirPods images retain their source and copyright notice in
+`tablet-media/AppleMusicOutputIcons.txt`; they are not covered by GPL.
+
 ## AMLyricBlur
 
 This project includes code adapted from `a23bc/amlyricblur`, commit

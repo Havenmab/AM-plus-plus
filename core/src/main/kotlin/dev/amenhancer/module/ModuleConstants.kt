@@ -46,6 +46,7 @@ object ModuleConstants {
     const val FEATURE_PHONE_LIQUID_GLASS = "phone_liquid_glass"
     const val FEATURE_FUTURE_BLUR = "future_blur"
     const val FEATURE_CJK_KARAOKE_ANIMATION = "cjk_karaoke_animation"
+    const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
@@ -55,7 +56,7 @@ object ModuleConstants {
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-10-apple-only-pronunciation"
+    const val BUILD_TAG = "2026-10-15-1.6.5-sync-region-lyricwrap-amll"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

@@ -477,4 +477,189 @@ class NativeLyricModelPolicyTest {
             ),
         )
     }
+
+    private fun payloadOutcome(
+        lane: Boolean,
+        selected: Boolean,
+        adapterFlag: Boolean?,
+    ) = NativeLyricModelPolicy.pronunciationPayloadOutcome(
+        hasConfirmedOfficialLane = lane,
+        pronunciationSelected = selected,
+        adapterPronunciationSelected = adapterFlag,
+    )
+
+    /**
+     * The post-refresh payload decision — the reported fix's own truth table: a
+     * confirmed Apple lane plus the user's preference must reach a live adapter
+     * whose flag is still `false`. A song without a confirmed lane, a user who
+     * switched pronunciation off, a flag that is already true and an unreadable
+     * adapter each keep their old outcome.
+     */
+    @Test
+    fun `the payload is dispatched only for a wanted confirmed lane on a stale flag`() {
+        assertEquals(
+            PronunciationPayloadOutcome.DISPATCHED,
+            payloadOutcome(lane = true, selected = true, adapterFlag = false),
+        )
+        // A song with no confirmed Apple lane is unchanged.
+        assertEquals(
+            PronunciationPayloadOutcome.NOT_AVAILABLE,
+            payloadOutcome(lane = false, selected = true, adapterFlag = false),
+        )
+        // A user who switched the pronunciation row off must not see it appear.
+        assertEquals(
+            PronunciationPayloadOutcome.PREFERENCE_OFF,
+            payloadOutcome(lane = true, selected = false, adapterFlag = false),
+        )
+        // The rows were already told; the replay is skipped.
+        assertEquals(
+            PronunciationPayloadOutcome.ALREADY_TRUE,
+            payloadOutcome(lane = true, selected = true, adapterFlag = true),
+        )
+        // The live adapter could not be read: never silently no-op.
+        assertEquals(
+            PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE,
+            payloadOutcome(lane = true, selected = true, adapterFlag = null),
+        )
+    }
+
+    @Test
+    fun `the payload tokens are the device diagnostic values`() {
+        assertEquals(
+            listOf(
+                "dispatched",
+                "skipped(not-available)",
+                "skipped(preference-off)",
+                "skipped(already-true)",
+                "skipped(adapter-unavailable)",
+            ),
+            PronunciationPayloadOutcome.entries.map { it.token },
+        )
+    }
+
+    private fun payloadLane(
+        stateLane: String? = null,
+        selectedLane: String? = null,
+        advertisedLane: String? = null,
+        probe: Boolean = false,
+        systemLyricsLanguage: String? = null,
+    ) = NativeLyricModelPolicy.pronunciationPayloadLane(
+        stateOfficialLane = stateLane,
+        selectedLane = selectedLane,
+        advertisedLane = advertisedLane,
+        hasOfficialLineProbe = probe,
+        systemLyricsLanguage = systemLyricsLanguage,
+    )
+
+    /**
+     * The payload lane resolution is what lets a **custom lyrics** (module
+     * supplement) track reach the guaranteed payload dispatch: its document is
+     * parsed into its own model, so the lane has to be confirmed from that model
+     * (its advertisement, the lane the setter accepted, or the per-line probe)
+     * rather than from the Apple advertisement the build gate read before the
+     * document was installed.
+     */
+    @Test
+    fun `the payload lane is confirmed from the strongest evidence and names its source`() {
+        // The accepted ask's own lane wins.
+        val state = payloadLane(stateLane = "ko-Latn", selectedLane = "ja-Latn", probe = true)
+        assertTrue(state.confirmed)
+        assertEquals("ko-Latn", state.language)
+        assertEquals(PronunciationLaneSource.STATE_OFFICIAL_LANE, state.source)
+
+        // Then the lane the native setter accepted (F2's own `z` evidence).
+        val selected = payloadLane(selectedLane = "ja-Latn", advertisedLane = "ko-Latn")
+        assertTrue(selected.confirmed)
+        assertEquals("ja-Latn", selected.language)
+        assertEquals(PronunciationLaneSource.CONFIRMED_SELECTION, selected.source)
+
+        // Then the model's live advertisement (the custom document's own lane).
+        val advertised = payloadLane(advertisedLane = "ko-Latn", probe = true)
+        assertTrue(advertised.confirmed)
+        assertEquals("ko-Latn", advertised.language)
+        assertEquals(PronunciationLaneSource.ADVERTISED_VECTOR, advertised.source)
+
+        // A partially-populated document: only the per-line probe confirms it, and
+        // the neutral Latin tag is synthesized from the system lyrics language.
+        val probe = payloadLane(probe = true)
+        assertTrue(probe.confirmed)
+        assertEquals(NativeLyricModelPolicy.FALLBACK_PRONUNCIATION_LANGUAGE, probe.language)
+        assertEquals("und-Latn", probe.language)
+        assertEquals(PronunciationLaneSource.LINE_PROBE, probe.source)
+
+        // The system lyrics language is reused when it is already a Latin tag, so
+        // the revealed track matches what the app expects; otherwise the neutral
+        // tag stands in. The text is always Apple's own getter output.
+        assertEquals("ja-Latn", payloadLane(probe = true, systemLyricsLanguage = "ja-Latn").language)
+        assertEquals("und-Latn", payloadLane(probe = true, systemLyricsLanguage = "ja").language)
+        assertEquals(
+            "und-Latn",
+            NativeLyricModelPolicy.probeConfirmedPronunciationLanguage(null),
+        )
+        assertEquals(
+            "ko-Latn",
+            NativeLyricModelPolicy.probeConfirmedPronunciationLanguage("ko-Latn"),
+        )
+    }
+
+    @Test
+    fun `the payload lane is never confirmed without evidence`() {
+        val none = payloadLane()
+        assertFalse(none.confirmed)
+        assertNull(none.language)
+        assertEquals(PronunciationLaneSource.NONE, none.source)
+        // A non-Latin tag confirms nothing, exactly like the availability rule.
+        assertFalse(payloadLane(stateLane = "ja").confirmed)
+        assertFalse(payloadLane(selectedLane = "ja").confirmed)
+        assertFalse(payloadLane(advertisedLane = "cmn-Hans").confirmed)
+        assertEquals(
+            PronunciationLaneSource.NONE,
+            payloadLane(stateLane = "ja", selectedLane = "ja", advertisedLane = "ja").source,
+        )
+    }
+
+    @Test
+    fun `the payload lane source tokens are the device diagnostic values`() {
+        assertEquals(
+            listOf("state", "confirmed", "advertised", "line-probe", "none"),
+            PronunciationLaneSource.entries.map { it.token },
+        )
+        // The custom path's late-lane reason is its own, not the build gate's none.
+        assertEquals("custom-lane", NativeLyricModelPolicy.REFRESH_REASON_CUSTOM_LANE)
+    }
+
+    /**
+     * The `<transliteration xml:lang>` tag a document we write must carry. It is
+     * the lane's name in the app's own lyric model, so it has to mirror the set
+     * HLE asks Apple for — `ja-Latn`, `ko-Latn`, `zh-Latn` — and can only stay
+     * neutral when the song's language is genuinely undetermined.
+     */
+    @Test
+    fun `the transliteration tag mirrors HLE's requested language set`() {
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ja"))
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ja-JP"))
+        assertEquals("ja-Latn", NativeLyricModelPolicy.transliterationLanguageTag("JPN"))
+        assertEquals("ko-Latn", NativeLyricModelPolicy.transliterationLanguageTag("ko-KR"))
+        assertEquals("ko-Latn", NativeLyricModelPolicy.transliterationLanguageTag("kor"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("zh-Hans"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("cmn"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("yue"))
+        assertEquals("zh-Latn", NativeLyricModelPolicy.transliterationLanguageTag("zh_Hant_TW"))
+        // `und`, an English song, an empty declaration and a null all keep the
+        // neutral tag: naming a language the song is not in would be worse than
+        // naming none, and no other language has a Latin romanization lane.
+        listOf(null, "", "  ", "und", "und-Latn", "en", "fr-FR").forEach { language ->
+            assertEquals(
+                "unexpected tag for $language",
+                NativeLyricModelPolicy.FALLBACK_PRONUNCIATION_LANGUAGE,
+                NativeLyricModelPolicy.transliterationLanguageTag(language),
+            )
+        }
+        assertEquals(
+            listOf(null, null, "ja", "ko", "zh", null),
+            listOf(null, "und", "ja", "ko", "zh", "en").map(
+                NativeLyricModelPolicy::transliterationScriptLanguage,
+            ),
+        )
+    }
 }

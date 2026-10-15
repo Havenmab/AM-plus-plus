@@ -358,6 +358,155 @@ class AppleMusic700NativeLyricsProfileTest {
     }
 
     @Test
+    fun `every word-lane row names its own decision in the log`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The per-row proof: unlike `pronunciation-word-spans` (which can only fire
+        // once the app has actually rendered a registered plan), this is emitted on
+        // the word getter for every row, including the ones that resolve to
+        // nothing, so a line that never reaches the word lane is never silent.
+        //
+        // The row names which of the native line's two lanes it is (`getter` plus
+        // `bg`): the lyric getter and the `x-bg` background getter share the line's
+        // begin, so without them the background row would be dropped from the log.
+        assertTrue(
+            hooks.contains(
+                "online-translation word-lane id=\$songId getter=\$getterName/\$parameterCount",
+            ),
+        )
+        assertTrue(hooks.contains("bg=\$background row=\$begin"))
+        assertTrue(hooks.contains("words=\$wordCount spans=\$spanCount"))
+        assertTrue(hooks.contains("match=\${supplementRow?.match?.token"))
+        assertTrue(hooks.contains("reason=\$reason"))
+        // The reasons name the first failing condition in decision order, so a
+        // document problem is distinguishable from a host problem.
+        assertTrue(hooks.contains("private fun reportWordLaneRow("))
+        listOf(
+            "\"lane-unavailable\"",
+            "\"no-row\"",
+            "\"no-bg-row\"",
+            "\"no-timed-spans\"",
+            "\"no-main-vector\"",
+            "\"no-render-adapter\"",
+            "\"ok\"",
+        ).forEach { reason -> assertTrue("missing $reason", hooks.contains(reason)) }
+        // Bounded: one row per lyric line **per getter** per model generation,
+        // capped; the getter is part of the key so both rows are named.
+        assertTrue(hooks.contains("MAX_WORD_LANE_ROWS"))
+        assertTrue(
+            hooks.contains("wordLaneRowKeys.add(\"\$songId:\$getterName/\$parameterCount:\$begin\")"),
+        )
+    }
+
+    @Test
+    fun `every background hook is probed and the app's gate is mirrored`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The small row is answered by four native methods, and the app only calls
+        // the word-level one after its line-level background gate passes
+        // (`player.A.k`). Every one of them must be hooked and named in the log, or
+        // a still-silent background row cannot be attributed.
+        listOf(
+            "getHtmlBackgroundVocalsLineText",
+            "getHtmlPronunciationBackgroundVocalsLineText",
+            "getBackgroundWords",
+            "getPronunciationBackgroundWords",
+        ).forEach { hook -> assertTrue("missing hook $hook", hooks.contains("\"$hook\"")) }
+        // Apple's own members behind those hooks come from the profile, never a
+        // guessed name.
+        assertTrue(hooks.contains("LYRICS_NATIVE_BACKGROUND_TEXT_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_BACKGROUND_WORDS_METHOD"))
+        assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
+        // The gate mirror: the background line text is only substituted when the
+        // app would accept it (non-empty and different from the background lyric),
+        // and Apple's own value is preferred and otherwise left untouched.
+        assertTrue(hooks.contains("private fun isUsableBackgroundPronunciation("))
+        assertTrue(hooks.contains("private fun backgroundSupplementGateText("))
+        assertTrue(hooks.contains("private fun backgroundLane("))
+        assertTrue(hooks.contains("AppleMusicRuntimeMember.LYRICS_NATIVE_BACKGROUND_TEXT_METHOD"))
+        // The bounded per-hook diagnostic.
+        assertTrue(
+            hooks.contains(
+                "online-translation background-hook id=\$songId hook=\$hook row=\$begin",
+            ),
+        )
+        assertTrue(hooks.contains("empty=\$empty supplied=\$supplied apple=\$apple"))
+        assertTrue(hooks.contains("private fun reportBackgroundHook("))
+        assertTrue(hooks.contains("MAX_BACKGROUND_HOOK_ROWS"))
+        assertTrue(
+            hooks.contains("backgroundHookKeys.add(\"\$songId:\$hook:\$begin\")"),
+        )
+        // Apple displays a background vocal without its wrapping parentheses, so
+        // the module normalizes the background lane's line text and every word
+        // slice through the core policy, drops a value that becomes empty, and
+        // reports `parens=stripped before=… after=…` when it actually changed.
+        assertTrue(hooks.contains("BackgroundParenthesisPolicy.strip("))
+        assertTrue(hooks.contains("BackgroundParenthesisPolicy.stripGroup("))
+        assertTrue(hooks.contains("private fun stripBackgroundParens("))
+        assertTrue(hooks.contains("parensToken(at ="))
+        assertTrue(hooks.contains("parensPosition("))
+        assertTrue(hooks.contains("parens=\$it"))
+        // The background row must still be served word-by-word from the overlay.
+        assertTrue(hooks.contains("lookupBackground("))
+        assertTrue(hooks.contains("background = true"))
+    }
+
+    @Test
+    fun `the romanization toggle is available for a supplement with a published lane`() {
+        val hooks = projectFile(
+            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
+        )
+        // The app's toggle reads `t2 = matchToSystemLyricsScript(
+        // getPronunciationLanguages()) != null && pronunciationSelected`, and its
+        // own advertisement stays empty for a document the module wrote, so the
+        // hook must fall back to the lane the published overlay carries.
+        assertTrue(hooks.contains("private fun pronunciationLaneForCurrentSong("))
+        assertTrue(hooks.contains("private fun supplementOverlayPronunciationLanguage("))
+        assertTrue(hooks.contains("overlay.pronunciationLanguages(songId)"))
+        assertTrue(hooks.contains("NativeLyricModelPolicy.isOfficialPronunciationLanguage"))
+        assertTrue(hooks.contains("nativeNames[AppleMusicRuntimeMember.LYRICS_NATIVE_SONG_PRONUNCIATION_LANGUAGES_METHOD]"))
+        // Apple-source songs keep their own behaviour: the overlay lane is only
+        // consulted for a supplement with a published pronunciation lane.
+        assertTrue(hooks.contains("supplementLaneAvailable(songId)"))
+        // The bounded per-song diagnostic names availability and its source.
+        assertTrue(
+            hooks.contains(
+                "online-translation pronunciation-toggle available=\$available source=\$source",
+            ),
+        )
+        assertTrue(hooks.contains("song=\$songId lang="))
+        assertTrue(hooks.contains("private fun reportPronunciationToggle("))
+        assertTrue(hooks.contains("MAX_PRONUNCIATION_TOGGLE_ROWS"))
+        assertTrue(hooks.contains("pronunciationToggleKeys.add("))
+    }
+
+    @Test
+    fun `the displayed document's own p timing is the overlay's line key`() {
+        val reader = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/AppleLyricTtmlReader.kt",
+        )
+        // The app's native line model carries the `<p>` element's own begin/end
+        // (`LyricsTimingParser::make`), so the reader must key the line the same
+        // way and only fall back to its timed spans when the `<p>` names none. A
+        // background vocal that starts after the line ends made the old
+        // last-span rule key the row past the app's line for good.
+        assertTrue(reader.contains("val begin = clockMs(beginAttribute.findAttribute(attributes))"))
+        assertTrue(reader.contains("val end = clockMs(endAttribute.findAttribute(attributes))"))
+        val store = projectFile(
+            "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/NativeLyricOverlayStore.kt",
+        )
+        // The lookup names which key answered, and only the unambiguous keys may.
+        listOf("EXACT_TIMING", "TIMING", "BEGIN", "TEXT", "MISSING").forEach { match ->
+            assertTrue("missing $match", store.contains(match))
+        }
+        assertTrue(store.contains("current.contentByBegin[begin]?.singleOrNull()"))
+        assertTrue(store.contains("current.contentByText[normalized]?.singleOrNull()"))
+    }
+
+    @Test
     fun `the native delivery wires HLE's word track instead of only the line getter`() {
         val hooks = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
@@ -366,11 +515,13 @@ class AppleMusic700NativeLyricsProfileTest {
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_WORDS_METHOD"))
         assertTrue(hooks.contains("LYRICS_NATIVE_PRONUNCIATION_BACKGROUND_TEXT_METHOD"))
-        // The HLE policy decides the track and aligns the romanization. The host
+        // The HLE policy decides the track and matches the displayed document's
+        // own timed transliteration spans to each native word by time. The host
         // now calls the Apple-first planner (which itself calls `wordTrack`), so
         // Apple's own word vector wins even when Apple left the line text empty.
         assertTrue(hooks.contains("ApplePronunciationPolicy.planPronunciationWords("))
-        assertTrue(hooks.contains("ApplePronunciationPolicy.displaySegments("))
+        assertTrue(hooks.contains("ApplePronunciationPolicy.matchPronunciationSpans("))
+        assertFalse(hooks.contains("ApplePronunciationPolicy.displaySegments("))
         // The render plan is consumed by the app's own word-render adapter, and
         // the vector type comes from the profile, never a guessed signature.
         assertTrue(hooks.contains("LYRICS_WORD_RENDER_ADAPTER"))
@@ -379,10 +530,13 @@ class AppleMusic700NativeLyricsProfileTest {
         // No synthesized native word: the adapter dereferences the parent line.
         assertFalse(hooks.contains("LyricsWordPtr"))
         assertFalse(hooks.contains("pushBack("))
-        // The next device log must prove the app asks for word-level data.
+        // The next device log must prove the app asks for word-level data and
+        // that the per-word spans landed one-to-one.
         assertTrue(hooks.contains("online-translation pronunciation-words"))
         assertTrue(hooks.contains("track=\${track.name}"))
         assertTrue(hooks.contains("words=\${vectorSize(resolved)}"))
+        assertTrue(hooks.contains("online-translation pronunciation-word-spans"))
+        assertTrue(hooks.contains("spans=\${spans.size} matched=\${matches.size}"))
     }
 
     @Test
@@ -391,12 +545,14 @@ class AppleMusic700NativeLyricsProfileTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleNativeLyricModelHooks.kt",
         )
         // Task-4 diagnostics: the next log must carry the decision inputs, not
-        // only the winning track. `mainTiming` is gone with the third-party text
-        // lane it described.
+        // only the winning track. `mainTiming` names the lane that supplied a
+        // main-timing render plan (Apple's own line/word text or the module's
+        // displayed document).
         assertTrue(hooks.contains("officialWords=\$officialWords"))
         assertTrue(hooks.contains("compat=\$officialWordsCompatible"))
-        assertFalse(hooks.contains("mainTiming=\${mainTimingSource.token}"))
-        assertFalse(hooks.contains("ApplePronunciationTextSource"))
+        assertTrue(hooks.contains("mainTiming=\${mainTimingSource.token}"))
+        assertTrue(hooks.contains("ApplePronunciationTextSource"))
+        assertTrue(hooks.contains("renderPlan=\$renderPlanRegistered"))
         assertTrue(hooks.contains("selected=\${track.name}"))
 
         // Late-word self-correction, mirroring the lane-ready trigger: the first

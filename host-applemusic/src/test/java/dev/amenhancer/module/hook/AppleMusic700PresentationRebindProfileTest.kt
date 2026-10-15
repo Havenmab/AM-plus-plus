@@ -43,8 +43,28 @@ class AppleMusic700PresentationRebindProfileTest {
             assertEquals("d", member(AppleMusicRuntimeMember.LYRICS_ADAPTER_ITEM_COUNT_METHOD))
             assertEquals("g", member(AppleMusicRuntimeMember.LYRICS_ADAPTER_NOTIFY_DATA_CHANGED_METHOD))
             assertEquals("O", member(AppleMusicRuntimeMember.LYRICS_ADAPTER_ACTIVE_LINES_UPDATE_METHOD))
+            // The app's own pronunciation flag: the payload replay writes this
+            // inherited `n1.e` and dispatches through the adapter's observable.
+            assertEquals(
+                "e",
+                member(AppleMusicRuntimeMember.LYRICS_ADAPTER_PRONUNCIATION_SELECTED_FIELD),
+            )
             assertFalse(target.allowFirstMatch)
         }
+    }
+
+    @Test
+    fun `1606 pins the fragment adapter field the payload replay reads`() {
+        val ui = AppleMusicHookProfiles
+            .exactTargets(version, AppleMusicHookPoint.LYRICS_UI_ON_CREATE_VIEW)
+            .single()
+        assertEquals(
+            "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+            ui.className,
+        )
+        // The live lyrics adapter (`Y0`/`A`, base `n1`) the payload replay reads
+        // off the fragment before dispatching the app's own pronunciation payload.
+        assertEquals("p0", ui.runtimeMemberNames[AppleMusicRuntimeMember.LYRICS_UI_ADAPTER_FIELD])
     }
 
     @Test

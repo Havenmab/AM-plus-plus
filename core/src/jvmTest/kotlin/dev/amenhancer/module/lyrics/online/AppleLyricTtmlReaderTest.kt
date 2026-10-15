@@ -50,7 +50,7 @@ class AppleLyricTtmlReaderTest {
     }
 
     @Test
-    fun `flattens a background vocal group to its syllables`() {
+    fun `keeps a background vocal group as its own lane`() {
         val ttml =
             """<tt xmlns="http://www.w3.org/ns/ttml" itunes:timing="Word" xml:lang="ja">""" +
                 """<body><div><p begin="1.000" end="3.000" itunes:key="L1">""" +
@@ -61,8 +61,48 @@ class AppleLyricTtmlReaderTest {
 
         val line = AppleLyricTtmlReader.read(ttml).single()
 
-        assertEquals(listOf("Main", "back", "ing"), line.words.map { it.text })
-        assertEquals("Main backing", line.text)
+        // The background is the small row under the lyric: its own words, its own
+        // extent and its own text. It is never folded into the main lane.
+        assertEquals(listOf("Main"), line.words.map { it.text })
+        assertEquals("Main", line.text)
+        assertEquals(listOf("back", "ing"), line.backgroundWords.map { it.text })
+        assertEquals(2_000L, line.backgroundWords.first().begin)
+        assertEquals(3_000L, line.backgroundWords.last().end)
+        assertEquals("backing", line.backgroundText)
+        // A line-level (untimed) background keeps no word slices.
+        assertTrue(line.backgroundRomanizationSpans.isEmpty())
+    }
+
+    @Test
+    fun `splits a head transliteration entry into main and background slices`() {
+        // The exact shape of the custom document's L19: the lyric's own spans and
+        // the `x-bg` group's spans are two independent sets in both the body and
+        // the transliteration track. Folding the background's `(boon)` into the
+        // main lane is what rendered `boon(boon)` on the last main word.
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">""" +
+                """<head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">""" +
+                """<transliterations><transliteration xml:lang="ja-Latn">""" +
+                """<text for="L1"><span begin="1.000" end="1.500">ri</span>""" +
+                """<span begin="1.500" end="2.000">boon</span>""" +
+                """<span ttm:role="x-bg"><span begin="2.100" end="2.500">(boon)</span></span>""" +
+                """</text></transliteration></transliterations>""" +
+                """</iTunesMetadata></metadata></head>""" +
+                """<body><div><p begin="1.000" end="2.000" itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">リ</span>""" +
+                """<span begin="1.500" end="2.000">ボーン</span>""" +
+                """<span ttm:role="x-bg"><span begin="2.100" end="2.500">(ボーン！)</span></span>""" +
+                """</p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals("riboon", line.romanization)
+        assertEquals(listOf("ri", "boon"), line.romanizationSpans.map { it.text })
+        assertEquals("(boon)", line.backgroundRomanization)
+        assertEquals(listOf(2_100L to "(boon)"), line.backgroundRomanizationSpans.map { it.begin to it.text })
+        assertEquals(listOf(2_500L), line.backgroundRomanizationSpans.map { it.end })
+        assertEquals(listOf("(ボーン！)"), line.backgroundWords.map { it.text })
     }
 
     @Test
@@ -108,6 +148,112 @@ class AppleLyricTtmlReaderTest {
         assertNull(AppleLyricTtmlReader.clockMs(null))
     }
 
+    /**
+     * The two places a source can carry romanization, counted separately for the
+     * custom-document diagnostic: an inline `ttm:role="x-roman"` span (not a role
+     * the 1606 parser knows) and a head `<transliteration>` entry keyed by `for`.
+     */
+    @Test
+    fun `counts inline roman spans and head entry keys`() {
+        val document = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+                xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word">
+              <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+                <transliterations><transliteration xml:lang="ja-Latn">
+                  <text for="L1">haro</text><text for="L2">wārudo</text>
+                </transliteration></transliterations>
+              </iTunesMetadata></metadata></head>
+              <body><div>
+                <p begin="1.0" end="2.0" itunes:key="L1"><span begin="1.0" end="2.0">世界</span>
+                  <span ttm:role="x-roman">haro</span></p>
+                <p begin="2.0" end="3.0" itunes:key="L2"><span begin="2.0" end="3.0">ワールド</span>
+                  <span ttm:role='x-roman'>wārudo</span></p>
+              </div></body>
+            </tt>
+        """.trimIndent()
+
+        assertEquals(listOf("L1", "L2"), AppleLyricTtmlReader.transliterationKeys(document))
+        assertEquals(2, AppleLyricTtmlReader.inlineRomanizationSpans(document))
+        // Apple's own document carries a head entry but no inline span.
+        assertEquals(0, AppleLyricTtmlReader.inlineRomanizationSpans(WORD_DOCUMENT))
+        assertEquals(listOf("L1"), AppleLyricTtmlReader.transliterationKeys(WORD_DOCUMENT))
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationKeys("not ttml"))
+    }
+
+    /**
+     * A Word-timed head entry carries one `<span begin end>` per lyric word (AMLL
+     * writes them inline as `x-roman`, which the converter migrates verbatim).
+     * The line string stays the concatenation for the line-lane fallback; the word
+     * getter needs the timed slices, which the old reader flattened away.
+     */
+    @Test
+    fun `reads a head transliteration entry's timed word slices`() {
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">""" +
+                """<head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">""" +
+                """<transliterations><transliteration xml:lang="ja-Latn">""" +
+                """<text for="L1"><span begin="1.000" end="1.500">ishou</span>""" +
+                """<span begin="1.500" end="1.700">ni</span></text>""" +
+                """</transliteration></transliterations>""" +
+                """</iTunesMetadata></metadata></head>""" +
+                """<body><div><p begin="1.000" end="1.700" itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">衣装</span>""" +
+                """<span begin="1.500" end="1.700">に</span></p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals("ishouni", line.romanization)
+        assertEquals(
+            listOf(1_000L to "ishou", 1_500L to "ni"),
+            line.romanizationSpans.map { it.begin to it.text },
+        )
+        assertEquals(listOf(1_500L, 1_700L), line.romanizationSpans.map { it.end })
+        // A line-level entry (WORD_DOCUMENT's `<text for="L1">haro</text>`) keeps
+        // no slices: there is no word-level lane to match.
+        assertTrue(AppleLyricTtmlReader.read(WORD_DOCUMENT).first().romanizationSpans.isEmpty())
+    }
+
+    @Test
+    fun `a line's own p timing wins over a background span that ends later`() {
+        // Apple's own Word-timed documents always end the `<p>` where its last span
+        // ends, but an AMLL document can put a background vocal *after* the lyric
+        // line. The app's native line model then carries the `<p>` timing
+        // (`LyricsTimingParser::make` reads the element's own begin/end), so a
+        // reader that took the line's end from its last span would key the line at
+        // 3.400 and miss the native line at 3.000 for good.
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" """ +
+                """itunes:timing="Word" xml:lang="ja">""" +
+                """<body><div><p begin="1.000" end="3.000" itunes:key="L1">""" +
+                """<span begin="1.000" end="2.000">Main</span>""" +
+                """<span ttm:role="x-bg"><span begin="3.100" end="3.400">(bon)</span></span>""" +
+                """</p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals(1_000L, line.begin)
+        assertEquals(3_000L, line.end)
+        // The background syllable is its own lane, not a main word, even when it
+        // starts after the `<p>` ends.
+        assertEquals(listOf(1_000L), line.words.map { it.begin })
+        assertEquals(listOf(3_100L), line.backgroundWords.map { it.begin })
+    }
+
+    @Test
+    fun `a paragraph with no timing falls back to its timed spans`() {
+        val ttml =
+            """<tt xmlns="http://www.w3.org/ns/ttml" itunes:timing="Word" xml:lang="ja">""" +
+                """<body><div><p itunes:key="L1">""" +
+                """<span begin="1.000" end="1.500">a</span>""" +
+                """<span begin="1.500" end="2.000">b</span></p></div></body></tt>"""
+
+        val line = AppleLyricTtmlReader.read(ttml).single()
+
+        assertEquals(1_000L, line.begin)
+        assertEquals(2_000L, line.end)
+    }
+
     private companion object {
         val WORD_DOCUMENT = """
             <?xml version='1.0' encoding='utf-8'?>
@@ -131,5 +277,49 @@ class AppleLyricTtmlReaderTest {
               </div></body>
             </tt>
         """.trimIndent()
+
+        /** AMLL's own head track: `<transliteration>` with no `xml:lang` at all. */
+        val UNNAMED_TRANSLITERATION_DOCUMENT = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+              <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+                <transliterations><transliteration>
+                  <text for="L1">ki</text>
+                </transliteration></transliterations>
+              </iTunesMetadata></metadata></head>
+              <body><div><p begin="0.0" end="1.0" itunes:key="L1"><span begin="0.0" end="1.0">き</span></p></div></body>
+            </tt>
+        """.trimIndent()
+    }
+
+    /**
+     * The diagnostic reads the displayed document's own tag: it is what the app's
+     * native parser keys the lane by, so a device log can compare it with the
+     * model's advertised vector.
+     */
+    @Test
+    fun `the head transliteration languages are read in order and de-duplicated`() {
+        assertEquals(
+            listOf("ja-Latn"),
+            AppleLyricTtmlReader.transliterationLanguages(WORD_DOCUMENT),
+        )
+        val twoTracks = WORD_DOCUMENT
+            .replace(
+                "<transliterations>",
+                "<transliterations>" +
+                    "<transliteration xml:lang=\"ko-Latn\"><text for=\"L1\">k</text></transliteration>" +
+                    "<transliteration xml:lang=\"ko-Latn\"><text for=\"L2\">k2</text></transliteration>",
+            )
+        assertEquals(
+            listOf("ko-Latn", "ja-Latn"),
+            AppleLyricTtmlReader.transliterationLanguages(twoTracks),
+        )
+        // An AMLL document that names no language reports none, which is exactly
+        // the state the lane-name fix has to remove.
+        assertEquals(
+            emptyList<String>(),
+            AppleLyricTtmlReader.transliterationLanguages(UNNAMED_TRANSLITERATION_DOCUMENT),
+        )
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationLanguages("not ttml"))
+        assertEquals(emptyList<String>(), AppleLyricTtmlReader.transliterationLanguages(""))
     }
 }

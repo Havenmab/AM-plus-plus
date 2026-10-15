@@ -16,6 +16,32 @@ data class AppleTtmlLine(
     val translation: String? = null,
     val backgroundTranslation: String? = null,
     val romanization: String? = null,
+    /**
+     * The line's timed romanization slices: the `<span begin end>` children of
+     * the head `<text for>` entry, in document order. A Word-timed document
+     * carries one per lyric word; [romanization] is their concatenation, kept for
+     * the line-lane fallback only.
+     */
+    val romanizationSpans: List<AppleTtmlWord> = emptyList(),
+    /**
+     * The line's own `ttm:role="x-bg"` background vocal, kept as a **separate**
+     * lane because the app's native line exposes it through its own getters
+     * (`getBackgroundWords` / `getPronunciationBackgroundWords`) and renders it as
+     * the small row under the lyric. It is never part of [text], [words] or
+     * [romanizationSpans].
+     */
+    val backgroundText: String? = null,
+    val backgroundWords: List<AppleTtmlWord> = emptyList(),
+    val backgroundRomanization: String? = null,
+    val backgroundRomanizationSpans: List<AppleTtmlWord> = emptyList(),
+    /**
+     * The line's lyric **with** its background in document order — what the
+     * online translation matcher aligns against, because a provider line usually
+     * inlines the background ("Got Ooh yeah baby") while the native line's own
+     * [text] is the lyric only. Never a lane key and never rendered: [text] stays
+     * the main-only value the app's getters and the overlay row are keyed by.
+     */
+    val fullText: String = text,
 )
 
 /**

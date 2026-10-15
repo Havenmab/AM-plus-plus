@@ -44,7 +44,25 @@ interface FragmentPlayerSurfaceObserver {
     fun onPreparing(root: ViewGroup) = Unit
     fun onCreated(surface: FragmentPlayerSurfacePort)
     fun onDestroyed(identity: Any)
-    /** Observation only: native dispatch, every mini control, and player drag continue unchanged. */
-    fun onMiniTouch(identity: Any, event: MotionEvent)
+    /**
+     * The mini panel's touches.
+     *
+     * Normally observation only: native dispatch, every mini control, and player drag continue
+     * unchanged. Returning non-null **consumes** the event, so the mini's own controls never see
+     * it — which is what lets a collapsed row turn the whole mini into one tap target. Returning
+     * null is the default and leaves dispatch completely untouched.
+     */
+    fun onMiniTouch(identity: Any, event: MotionEvent): Boolean? = null
+    /**
+     * The page's gestures, from the content root rather than the mini panel.
+     *
+     * Compose pages scroll entirely inside Compose and expose no native scroll container, so this
+     * gesture is the only signal the scroll collapse can observe. Returning non-null **consumes**
+     * the event at the root, which is how a tap on the collapsed row is claimed: the root is an
+     * ancestor of the mini panel, so it is reached whatever the host's internal view chain looks
+     * like, unlike a match on one specific panel view. Null is the default and leaves the event
+     * entirely alone, so the expanded bar and every page gesture are untouched.
+     */
+    fun onContentTouch(identity: Any, event: MotionEvent): Boolean? = null
     fun onFailure(identity: Any?, error: Throwable)
 }

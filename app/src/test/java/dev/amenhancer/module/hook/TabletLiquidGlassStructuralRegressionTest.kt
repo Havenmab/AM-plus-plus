@@ -93,7 +93,7 @@ class TabletLiquidGlassStructuralRegressionTest {
         val session = source("dev/amenhancer/module/hook/TabletDualPaneGlassSession.kt")
         val base = source("dev/amenhancer/module/hook/PhoneGlassSession.kt")
         // Nav pill left of one centered row, mini pill in the right slot, equal
-        // outer whitespace of frameWidth/6 ("留白长度一致"): the tablet override
+        // outer whitespace of frameWidth/6 ("留白长度一致): the tablet override
         // carves [W/6, 2W/5] for the nav and [19W/30, W/6] for the mini.
         assertTrue(session.contains("frameWidth * 19 / 30"))
         assertTrue(session.contains("frameWidth * 2 / 5"))
@@ -147,8 +147,10 @@ class TabletLiquidGlassStructuralRegressionTest {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
-        // Exactly the three existing glass keys: the tablet form reuses the phone toggle,
-        // gap and blur, so no new key exists and no migration was added.
+        // Exactly the glass keys. The tablet form reuses the phone toggle, gap and blur, and now
+        // has ONE tablet-specific key of its own: the scroll collapse is a different shape on the
+        // tablet row, so it is opted into separately rather than inherited from the phone switch.
+        // The collapse amplitudes remain extras of the phone toggle.
         val glassKeys = Regex("\"(phone_liquid_glass[a-z_]*)\"").findAll(schema)
             .map { it.groupValues[1] }.toSet()
         assertEquals(
@@ -156,6 +158,12 @@ class TabletLiquidGlassStructuralRegressionTest {
                 "phone_liquid_glass_enabled",
                 "phone_liquid_glass_bottom_gap_dp",
                 "phone_liquid_glass_panel_blur_dp",
+                "phone_liquid_glass_collapse_enabled",
+                "phone_liquid_glass_tablet_collapse_enabled",
+                "phone_liquid_glass_collapse_rebound_percent",
+                "phone_liquid_glass_expand_rebound_percent",
+                "phone_liquid_glass_mini_rebound_percent",
+                "phone_liquid_glass_mini_sink_bounce_dp",
             ),
             glassKeys,
         )

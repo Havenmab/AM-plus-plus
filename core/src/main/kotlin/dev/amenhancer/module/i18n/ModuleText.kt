@@ -150,6 +150,18 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     BOTTOM_BAR_HEIGHT_SUMMARY("Distance from the bottom of the screen", "底栏距屏幕底部的距离"),
     BOTTOM_BAR_BLUR("Bottom bar background blur", "底栏背景模糊强度"),
     BOTTOM_BAR_BLUR_SUMMARY("Applies to the bottom bar and mini player", "作用于底栏与迷你播放器"),
+    BOTTOM_BAR_COLLAPSE("Collapse on scroll", "随滚动收缩"),
+    BOTTOM_BAR_COLLAPSE_SUMMARY("Shrinks the bar while scrolling down; search detaches beside the mini player", "下滑页面时收起底栏，搜索键分离到迷你播放器右侧"),
+    BOTTOM_BAR_TABLET_COLLAPSE("Tablet collapse on scroll", "平板端随滚动收缩"),
+    BOTTOM_BAR_TABLET_COLLAPSE_SUMMARY("Untested · Tablet bottom bar collapses the same way; may look wrong", "未测试 · 让平板底栏也随滚动收缩，效果可能不正确"),
+    BOTTOM_BAR_COLLAPSE_REBOUND("Collapse rebound", "收缩回弹幅度"),
+    BOTTOM_BAR_COLLAPSE_REBOUND_SUMMARY("How far both side buttons spring back while collapsing · 35%% is recommended", "收缩时左右两个按钮的回弹幅度 · 推荐 35%%"),
+    BOTTOM_BAR_EXPAND_REBOUND("Expand rebound", "展开回弹幅度"),
+    BOTTOM_BAR_EXPAND_REBOUND_SUMMARY("How far both side buttons grow back towards the mini player", "展开时左右两个按钮朝迷你播放器方向长回并落定的幅度"),
+    BOTTOM_BAR_MINI_REBOUND("Mini player left/right rebound", "迷你播放器左右收缩回弹幅度"),
+    BOTTOM_BAR_MINI_REBOUND_SUMMARY("The mini player's own rebound as its left and right edges move; separate because its travel is far shorter than the buttons'", "迷你播放器左右两侧收缩时的回弹幅度 · 因行程远短于左右按钮故单独设置"),
+    BOTTOM_BAR_MINI_SINK_BOUNCE("Mini player sink bounce", "迷你播放器下沉回弹"),
+    BOTTOM_BAR_MINI_SINK_BOUNCE_SUMMARY("Extra dip past the mini player's resting height before it springs back · 4 dp is recommended", "迷你播放器下沉到最低点后额外多沉一点再弹回 · 推荐 4dp，0 为关闭"),
     BIDIRECTIONAL_LYRIC_BLUR("Bidirectional lyric blur", "双向歌词模糊"),
     BIDIRECTIONAL_LYRIC_BLUR_SUMMARY("Resumes one second after manual scrolling stops", "手动滚动停止 1 秒后恢复"),
     CJK_KARAOKE_ANIMATION("CJK lyric tail animation", "CJK 长尾歌词动画"),
@@ -203,6 +215,13 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     GOT_IT("Got it", "知道了"),
     LYRIC_BLUR_OFFSET("Lyric blur radius offset", "歌词模糊半径偏移"),
     RESET_DEFAULT("Reset to default", "恢复默认"),
+    /**
+     * The module's "this has never run on a device" marker, shown as a badge on the row.
+     *
+     * Kept generic rather than worded per-setting so it can mark any future unverified option; the
+     * row's own summary says what specifically is unproven.
+     */
+    BADGE_UNTESTED("Untested", "未测试"),
     SETTING_VALUE("%1\$s: %2\$s%3\$s", "%1\$s：%2\$s%3\$s"),
     MUSIC_DPI("Apple Music internal DPI", "Apple Music 内部 DPI"),
     MUSIC_DPI_DEFAULT_SUMMARY("Follow system · Enter 160–640, or 0 to reset", "跟随系统 · 填写 160–640，0 可清除覆盖"),

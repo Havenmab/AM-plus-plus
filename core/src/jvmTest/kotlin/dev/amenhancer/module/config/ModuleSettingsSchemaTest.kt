@@ -71,6 +71,12 @@ class ModuleSettingsSchemaTest {
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,
                 "phone_liquid_glass_panel_blur_dp" to 4,
+                "phone_liquid_glass_collapse_enabled" to true,
+                "phone_liquid_glass_tablet_collapse_enabled" to false,
+                "phone_liquid_glass_collapse_rebound_percent" to 35,
+                "phone_liquid_glass_expand_rebound_percent" to 100,
+                "phone_liquid_glass_mini_rebound_percent" to 100,
+                "phone_liquid_glass_mini_sink_bounce_dp" to 4,
                 "future_blur_enabled" to false,
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,
@@ -110,6 +116,12 @@ class ModuleSettingsSchemaTest {
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,
                 "phone_liquid_glass_panel_blur_dp" to 4,
+                "phone_liquid_glass_collapse_enabled" to true,
+                "phone_liquid_glass_tablet_collapse_enabled" to false,
+                "phone_liquid_glass_collapse_rebound_percent" to 35,
+                "phone_liquid_glass_expand_rebound_percent" to 100,
+                "phone_liquid_glass_mini_rebound_percent" to 100,
+                "phone_liquid_glass_mini_sink_bounce_dp" to 4,
                 "future_blur_enabled" to true,
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,
@@ -535,5 +547,127 @@ class ModuleSettingsSchemaTest {
         assertFalse(upgraded!!.containsKey("modify_locale"))
         assertFalse(upgraded.containsKey("modify_locale_target_tag"))
         assertEquals("original_hyper", upgraded["title_correction_mode"])
+    }
+
+    @Test
+    fun `collapse animation amplitudes default and round trip`() {
+        val defaults = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        // 35% is the recommended, deliberately understated collapse rebound; the expand rebound and
+        // the mini's own rebound keep the reference 100%, and the sink dip stays at 4dp.
+        assertEquals(35, defaults.phoneLiquidGlassCollapseReboundPercent)
+        assertEquals(100, defaults.phoneLiquidGlassExpandReboundPercent)
+        assertEquals(100, defaults.phoneLiquidGlassMiniReboundPercent)
+        assertEquals(4, defaults.phoneLiquidGlassMiniSinkBounceDp)
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                phoneLiquidGlassCollapseReboundPercent = 150,
+                phoneLiquidGlassExpandReboundPercent = 40,
+                phoneLiquidGlassMiniReboundPercent = 60,
+                phoneLiquidGlassMiniSinkBounceDp = 7,
+            ),
+        )
+        assertEquals(150, encoded["phone_liquid_glass_collapse_rebound_percent"])
+        assertEquals(40, encoded["phone_liquid_glass_expand_rebound_percent"])
+        assertEquals(60, encoded["phone_liquid_glass_mini_rebound_percent"])
+        assertEquals(7, encoded["phone_liquid_glass_mini_sink_bounce_dp"])
+        val decoded = ModuleSettingsSchema.decode(encoded)
+        assertEquals(150, decoded.phoneLiquidGlassCollapseReboundPercent)
+        assertEquals(40, decoded.phoneLiquidGlassExpandReboundPercent)
+        assertEquals(60, decoded.phoneLiquidGlassMiniReboundPercent)
+        assertEquals(7, decoded.phoneLiquidGlassMiniSinkBounceDp)
+
+        // 0 is a meaningful value on every one of them (no rebound / no dip), not "unset":
+        // decoding must keep it rather than falling back to the default.
+        val off = ModuleSettingsSchema.decode(
+            mapOf(
+                "phone_liquid_glass_collapse_rebound_percent" to 0,
+                "phone_liquid_glass_expand_rebound_percent" to 0,
+                "phone_liquid_glass_mini_rebound_percent" to 0,
+                "phone_liquid_glass_mini_sink_bounce_dp" to 0,
+            ),
+        )
+        assertEquals(0, off.phoneLiquidGlassCollapseReboundPercent)
+        assertEquals(0, off.phoneLiquidGlassExpandReboundPercent)
+        assertEquals(0, off.phoneLiquidGlassMiniReboundPercent)
+        assertEquals(0, off.phoneLiquidGlassMiniSinkBounceDp)
+    }
+
+    @Test
+    fun `collapse animation amplitudes clamp out-of-range and reject malformed values`() {
+        assertEquals(
+            ModuleSettings.MAX_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_collapse_rebound_percent" to 9999),
+            ).phoneLiquidGlassCollapseReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_collapse_rebound_percent" to -50),
+            ).phoneLiquidGlassCollapseReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MAX_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_expand_rebound_percent" to 9999),
+            ).phoneLiquidGlassExpandReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_expand_rebound_percent" to -50),
+            ).phoneLiquidGlassExpandReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MAX_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_rebound_percent" to 9999),
+            ).phoneLiquidGlassMiniReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_rebound_percent" to -50),
+            ).phoneLiquidGlassMiniReboundPercent,
+        )
+        assertEquals(
+            ModuleSettings.MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_sink_bounce_dp" to 99),
+            ).phoneLiquidGlassMiniSinkBounceDp,
+        )
+        assertEquals(
+            ModuleSettings.MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_sink_bounce_dp" to -3),
+            ).phoneLiquidGlassMiniSinkBounceDp,
+        )
+        // Malformed values fall back to the defaults rather than throwing. The collapse rebound's
+        // default is the recommended 35, not the reference 100.
+        assertEquals(
+            35,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_collapse_rebound_percent" to "lots"),
+            ).phoneLiquidGlassCollapseReboundPercent,
+        )
+        assertEquals(
+            100,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_expand_rebound_percent" to "lots"),
+            ).phoneLiquidGlassExpandReboundPercent,
+        )
+        assertEquals(
+            100,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_rebound_percent" to "lots"),
+            ).phoneLiquidGlassMiniReboundPercent,
+        )
+        assertEquals(
+            4,
+            ModuleSettingsSchema.decode(
+                mapOf("phone_liquid_glass_mini_sink_bounce_dp" to "deep"),
+            ).phoneLiquidGlassMiniSinkBounceDp,
+        )
     }
 }

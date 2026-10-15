@@ -71,8 +71,21 @@ internal class FragmentPhoneGlassSession(
             material = this
         }
     }
+    /**
+     * Where the row goes while the full player opens: straight down, by the bar's own occupied
+     * height, on the host's own `1 - exp(-20t)` curve.
+     *
+     * The exit distance follows the collapse, so the collapsed row slides by the collapsed height
+     * rather than the expanded one — otherwise the capsule would overshoot off the screen.
+     *
+     * This deliberately **slides even when collapsed**. An earlier revision crossfaded it to a
+     * fade-in-place at full collapse, on the reading that a withdrawn strip should not dive further
+     * down. The user asked for that to be reverted: the slide is the established behaviour in both
+     * states, and the fade made the collapsed row linger over the player page.
+     */
     override fun driveNavFrameExit(progress: Float) {
-        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry)
+        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry,
+            collapse = collapseProgress())
         navFrame?.translationY = FragmentPhoneGlassPolicy.navigationExit(progress, extent)
     }
     override fun onSlide(progress: Float) {
@@ -85,7 +98,7 @@ internal class FragmentPhoneGlassSession(
         super.suppressNativeChromeSeams()
         clearNativeBackground(native.find(ChromeResource.MINI_PLAYER_CONTENT))
         hideSeam(native.find(ChromeResource.NAVIGATION_TABS_DIVIDER))
-        native.syncMiniPresentation(miniRoot)
+        native.syncMiniPresentation(miniRoot, miniDropPx())
     }
     override fun onPreDraw(): Boolean {
         val draw = super.onPreDraw()
@@ -93,7 +106,24 @@ internal class FragmentPhoneGlassSession(
         if (activated && !reported) { reported = true; ready() }
         return draw
     }
-    override fun observeMiniTouch(event: MotionEvent) = observeTouch(event)
+    // The inherited `observeContentTouch` from PhoneGlassSession satisfies the lifecycle: the page
+    // gesture that drives the scroll collapse arrives through the content root, not the mini panel.
+    //
+    // The mini panel's own touches are **never consumed**. The collapsed mini player is a complete
+    // mini player — its play/pause and skip buttons and its tap-to-open-player are the host's — and
+    // the module draws the glass under that native content rather than replacing it. The panel is
+    // still observed so the collapse tracker can stand down for a gesture that began there, and so
+    // the press highlight on the glass follows the finger; both are side effects only.
+    override fun observeMiniTouch(event: MotionEvent): Boolean? {
+        collapsedMiniTouch(event)
+        observeTouch(event)
+        return null
+    }
+    // Named explicitly: the lifecycle carries a no-op default so forms without a collapse can
+    // ignore the signal, and the compiler needs to be told which of the two to use. The collapse
+    // signal and the collapsed row's tap claim both arrive on this one seam.
+    override fun observeContentTouch(event: MotionEvent): Boolean? =
+        super<PhoneGlassSession>.observeContentTouch(event)
     private fun reconcileNativeMaterials() {
         // BlurView can reuse a recorded RenderNode without entering draw(). Own the actual
         // native alpha too, so a resume-time setAlpha(1) cannot reveal it behind the glass.

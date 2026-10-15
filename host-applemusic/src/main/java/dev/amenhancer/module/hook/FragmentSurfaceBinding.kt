@@ -138,6 +138,12 @@ internal class FragmentSurfaceBinding(
         root.invalidate()
     }
     fun isMiniTouchPanel(view: View): Boolean = miniTouch === view
+    /**
+     * The content root is the page's ancestor, so its dispatch observes every gesture in the page
+     * exactly once, before any child consumes it. That makes it the right place to watch a
+     * Compose page's scrolling, which never reaches a native scroll container.
+     */
+    fun isContentRoot(view: View): Boolean = root === view
     /** Called before View.setAlpha: remember even host writes equal to our hidden value. */
     fun nativeAlphaWrite(view: View, alpha: Float): Float? {
         if (closed || writing) return null

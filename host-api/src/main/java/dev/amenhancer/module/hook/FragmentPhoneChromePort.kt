@@ -9,7 +9,16 @@ interface FragmentPhoneChromePort : ChromeHostBinding {
     fun eligible(): Boolean
     fun navigationFrameParams(height: Int): ViewGroup.MarginLayoutParams
     fun nativePeekBaseline(owner: Any): Int
-    fun syncMiniPresentation(miniRoot: View?)
+    /**
+     * Owns the native mini player's presentation translation.
+     *
+     * [miniDropPx] is the module's scroll-collapse drop: the mini is shorter than the collapsed
+     * row, so it sinks by half the difference to sit on the row's centre line instead of its top
+     * edge. It is threaded through this one call because this method already owns
+     * `miniRoot.translationY`; a second writer on that property is exactly the ownership conflict
+     * the binding exists to prevent.
+     */
+    fun syncMiniPresentation(miniRoot: View?, miniDropPx: Float = 0f)
     fun observeGlass(callbacks: FragmentPhoneGlassCallbacks): HostSubscription
 }
 

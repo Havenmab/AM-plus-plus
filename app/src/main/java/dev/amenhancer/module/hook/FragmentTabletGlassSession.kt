@@ -411,8 +411,8 @@ internal class FragmentTabletGlassSession(
         if (surface.anchor.width > 0 && surface.anchor.height > 0 && navigationReady() && navigationLaidOut())
             native.navigationOpacity() * FragmentPlayerSurfaceMotion.tabletFrame(slide).alpha else 0f
 
-    override fun observeMiniTouch(event: MotionEvent) {
-        if (!replacing) return
+    override fun observeMiniTouch(event: MotionEvent): Boolean? {
+        if (!replacing) return null
         listOfNotNull(mini).forEach { surface ->
             val point = IntArray(2).also(surface.glass::getLocationOnScreen)
             val x = event.rawX - point[0]
@@ -436,6 +436,8 @@ internal class FragmentTabletGlassSession(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> release(surface)
             }
         }
+        // Observation only: the tablet row never consumes the mini's touches.
+        return null
     }
 
     private fun release(surface: Surface) {

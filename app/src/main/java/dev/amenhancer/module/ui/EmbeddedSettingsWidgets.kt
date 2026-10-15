@@ -411,15 +411,16 @@ internal fun EmbeddedSettingsHost.embeddedBlurRadiusRow(
 
     /** SeekBar row for the gated liquid-glass extras, with a per-row one-tap default restore. */
 
-internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
-        activity: Activity,
-        title: String,
-        value: Int,
-        defaultValue: Int,
-        rangeMin: Int,
-        rangeMax: Int,
-        suffix: String,
-        onChanged: (Int) -> Unit,
+    internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
+            activity: Activity,
+            title: String,
+            value: Int,
+            defaultValue: Int,
+            rangeMin: Int,
+            rangeMax: Int,
+            suffix: String,
+            unit: String = "dp",
+            onChanged: (Int) -> Unit,
     ): View = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 12 else 16)
@@ -430,7 +431,7 @@ internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
             dp(activity, if (isEmbeddedPhone(activity)) 6 else 8),
         )
         val label = TextView(activity).apply {
-            text = localizedText(ModuleText.SETTING_VALUE, title, value, "dp")
+            text = localizedText(ModuleText.SETTING_VALUE, title, value, unit)
             textSize = embeddedTextSize(activity, 14f, 15f)
             setEmbeddedTextColor(activity) { colors -> colors.onSurface }
         }
@@ -469,7 +470,7 @@ internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     label.text = localizedText(ModuleText.SETTING_VALUE, title,
-                        (progress + rangeMin).coerceIn(rangeMin, rangeMax), "dp")
+                        (progress + rangeMin).coerceIn(rangeMin, rangeMax), unit)
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
@@ -483,7 +484,7 @@ internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
         }
         addView(seekBar, matchWidthWrapContent())
         reset.setOnClickListener {
-            label.text = localizedText(ModuleText.SETTING_VALUE, title, defaultValue, "dp")
+            label.text = localizedText(ModuleText.SETTING_VALUE, title, defaultValue, unit)
             seekBar.progress = defaultValue - rangeMin
             onChanged(defaultValue)
         }

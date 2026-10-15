@@ -47,6 +47,8 @@ internal class FragmentPhoneChromeBinding(
     private var direction: OwnedHostProperty<Int>? = null
     private var translation: OwnedHostProperty<Float>? = null
     private var translationBaseline = 0f
+    /** The root [translation] currently owns; ownership follows the view, not the content. */
+    private var translationRoot: View? = null
     private fun extra(role: String): View? = names.getJSONObject("presentation").optString(role).takeIf { it.isNotEmpty() }
         ?.let { activity.resources.getIdentifier(it, "id", activity.packageName) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
 
@@ -86,7 +88,7 @@ internal class FragmentPhoneChromeBinding(
     fun peek(owner: Any, value: Int): Int? = if (closed) null else callbacks?.peek(owner, value)
     fun replacesBlur(view: View): Boolean = !closed && callbacks?.replacing == true && blurViews.any { it === view }
 
-    override fun syncMiniPresentation(miniRoot: View?) {
+    override fun syncMiniPresentation(miniRoot: View?, miniDropPx: Float) {
         val content = find(ChromeResource.MINI_PLAYER_CONTENT) ?: return
         writing = true
         try {
@@ -101,7 +103,23 @@ internal class FragmentPhoneChromeBinding(
                 extra("buttons")?.let { buttons ->
                     direction = OwnedHostProperty({ buttons.layoutDirection }, { buttons.layoutDirection = it }).also(presentation::add)
                 }
+            }
+            // The mini root is owned independently of the content identity. It can arrive a frame
+            // or more after the content does, and tying its ownership to the `content !== mini`
+            // branch meant that a first call with a null root left `translation` null forever —
+            // the module's resting offset was then never written and the collapsed row's centring
+            // never reached the native controls, only the glass drawn over them.
+            if (translationRoot !== miniRoot) {
+                translation?.let { presentation.remove(it); it.close() }
+                translation = null
+                translationRoot = miniRoot
                 miniRoot?.let { root ->
+                    // Read plainly: at this point the module has never written to this root, so its
+                    // translation is the native resting value by definition. Subtracting the drop
+                    // here would be wrong — it would bake a negative offset into the baseline and
+                    // cancel the very drop this call is meant to apply. `restorePresentation()`
+                    // above has already returned any previous root to its native value, so a
+                    // re-capture after a content change is equally clean.
                     translationBaseline = root.translationY
                     translation = OwnedHostProperty({ root.translationY }, { root.translationY = it }).also(presentation::add)
                 }
@@ -109,12 +127,16 @@ internal class FragmentPhoneChromeBinding(
             elevation?.set(0f)
             nextPadding?.set(listOf(0, 0, 0, 0))
             direction?.set(View.LAYOUT_DIRECTION_LTR)
-            translation?.set(translationBaseline + dimension(ChromeResource.SHADOW_HEIGHT))
+            // The collapse drop is added to the baseline the module already writes, so the mini's
+            // resting offset and its centring on the collapsed row are one value from one owner.
+            translation?.set(translationBaseline + dimension(ChromeResource.SHADOW_HEIGHT) +
+                if (miniDropPx.isFinite()) miniDropPx else 0f)
         } finally { writing = false }
     }
     private fun restorePresentation() {
         presentation.forEach(AutoCloseable::close); presentation.clear()
-        mini = null; elevation = null; nextPadding = null; direction = null; translation = null
+        mini = null; elevation = null; nextPadding = null; direction = null
+        translation = null; translationRoot = null
     }
     override fun close() {
         if (closed) return

@@ -682,7 +682,23 @@ internal open class PhoneGlassSession(
                 }
                 navigation?.alpha = if (menuReady) 0f else 1f
                 updateGeometry()
-                if (reconcileCollapsedPlayer()) return false
+                // The host's sheet reconciliation and this session's scroll collapse both drive
+                // the same peek, and they must not run at the same time.
+                //
+                // `reconcileCollapsedPlayer()` compares the player sheet's laid-out top against
+                // the native collapsed offset and, on a mismatch, either restarts the native
+                // settle animation or returns true — and a true return here makes `onPreDraw`
+                // return false, which *cancels that frame's draw*. That is correct while the peek
+                // is parked: a stale sheet should not be painted in the wrong place. But the
+                // collapse deliberately animates the peek on every frame, so the sheet is
+                // *supposed* to be moving while the check expects it to be still. Left unguarded
+                // the two fight, and the cancelled draws show up as dropped frames.
+                //
+                // Standing the check down while the bar is in motion is also the more correct
+                // reading: reconciling against a moving target is meaningless. It resumes the
+                // moment the spring settles, so the host still gets its correction — the final
+                // value change posts one more frame, and `isRunning` is already false by then.
+                if (!collapse.isRunning && reconcileCollapsedPlayer()) return false
                 val sourceNeedsLayout = updateUnderlap()
                 val transitionNeedsLayout = updateTransition()
                 val waitingForCapture = glassConsumersVisible && backdrop?.ready == false && canRefreshBackdrop()

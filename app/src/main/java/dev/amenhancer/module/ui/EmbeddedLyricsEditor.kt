@@ -29,6 +29,10 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
     ) {
         val entry = group?.primary
         var source = entry?.source ?: CustomLyricsSources.MANUAL
+        // Whether the document is the user's own. Set by an edit below or by a
+        // local-file import, cleared by an explicit online re-import; the
+        // automatic refresh never converts over an owned document.
+        var userEdited = entry?.userEdited ?: false
         val fields = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(activity, 20), dp(activity, 4), dp(activity, 20), dp(activity, 4))
@@ -44,10 +48,11 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             hint = localizedText(ModuleText.DISPLAY_NAME),
             initial = entry?.displayName ?: song?.title.orEmpty(),
         )
+        val initialTtml = entry?.let { controller.readLyrics(it.appleMusicId) }.orEmpty()
         val ttmlInput = embeddedLyricsEditorInput(
             activity = activity,
             hint = localizedText(ModuleText.TTML_CONTENT),
-            initial = entry?.let { controller.readLyrics(it.appleMusicId) }.orEmpty(),
+            initial = initialTtml,
             multiline = true,
         )
         val sourceLabel = TextView(activity).apply {
@@ -67,6 +72,9 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                 ttmlInput = ttmlInput,
             ) { importedSource ->
                 source = importedSource
+                // An explicit online re-import adopts the source's document
+                // again, so the automatic path may keep updating it.
+                userEdited = false
                 updateSourceLabel()
             }
         }
@@ -91,6 +99,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                         pendingTtmlImport = { imported ->
                             ttmlInput.setText(imported)
                             source = CustomLyricsSources.MANUAL
+                            userEdited = true
                             updateSourceLabel()
                         }
                         launchSafPicker(
@@ -142,14 +151,21 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                 } else if (ttmlInput.text.toString().isBlank()) {
                     ttmlInput.error = localizedText(ModuleText.TTML_REQUIRED)
                 } else {
+                    val ttml = ttmlInput.text.toString()
+                    // Editing the content at all makes the document the user's
+                    // own, even when it arrived from an automatic source: the
+                    // refresh must not convert their correction away again. A
+                    // save that changed nothing keeps the source updatable.
+                    val owned = userEdited || ttml != initialTtml
                     runAsync(activity) {
                         saveMany(
                             CustomLyricsMultiIdDraft(
                                 appleMusicIds = ids,
                                 displayName = nameInput.text.toString(),
-                                ttml = ttmlInput.text.toString(),
+                                ttml = ttml,
                                 source = source,
                                 enabled = entry?.enabled ?: true,
+                                userEdited = owned,
                             ),
                             group?.appleMusicIds.orEmpty(),
                         )
@@ -349,6 +365,7 @@ internal fun EmbeddedSettingsHost.embeddedLyricsSourceName(source: String): Stri
         CustomLyricsSources.AMLL -> "AMLL"
         CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.AM_LYRICS_REPOSITORY)
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
+        CustomLyricsSources.KUWO -> "酷我"
         else -> localizedText(ModuleText.MANUAL_TTML)
     }
 

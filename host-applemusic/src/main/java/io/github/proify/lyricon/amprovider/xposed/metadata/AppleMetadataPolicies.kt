@@ -151,6 +151,11 @@ internal fun changedAssociatedArtistAlias(
     updatedAlias: AppleInternalCatalogResolver.Alias?,
 ): AppleInternalCatalogResolver.Alias? = updatedAlias?.takeIf { it != previousAlias }
 
+internal fun shouldPublishAssociatedArtistAliasToCurrentPlayback(
+    mediaId: String,
+    currentPlaybackMediaId: String?,
+): Boolean = mediaId.isNotBlank() && mediaId == currentPlaybackMediaId
+
 internal fun inAppLibraryControllerRefreshDelayMillis(
     strategy: InAppLibraryControllerBuildStrategy,
     lastBuildUptimeMillis: Long?,
@@ -336,6 +341,37 @@ internal fun originalSongRetryLanguage(
     resolution: AppleInternalCatalogResolver.OriginalResolution,
 ): String? = resolution.language?.takeIf {
     resolution.alias == null && resolution.originKnown
+}
+
+/**
+ * A song probe that ended with neither an alias nor any catalog-identity facts (`originKnown`
+ * is false) never obtained an ISRC, genre or artist relationship.  That is a failed identity
+ * lookup -- the device log shows `outcome=timeout` -- not proof that the original name does not
+ * exist, so the caller must leave it retryable under the existing cache-miss policy instead of
+ * concluding the song permanently.
+ *
+ * An identity that *was* known but yielded no alias stays conclusive and is not retryable here:
+ * its ISRC/genre evidence was already used to probe every supported original region.
+ */
+internal fun shouldRetryMissingOriginalSongIdentity(
+    resolution: AppleInternalCatalogResolver.OriginalResolution,
+): Boolean = resolution.alias == null && !resolution.originKnown
+
+internal fun originalArtistLanguageFromSongResolution(
+    resolution: AppleInternalCatalogResolver.OriginalResolution,
+    localizedArtist: String?,
+): String? {
+    if (!resolution.originKnown ||
+        !shouldUseAssociatedArtistEntities(
+            artistIds = resolution.artistIds,
+            artistCredit = localizedArtist,
+        )
+    ) {
+        return null
+    }
+    return resolution.language?.let(
+        AppleInternalCatalogResolver::supportedOriginalLanguageOrNull
+    )
 }
 
 internal fun stableArtistCacheKeys(keys: Collection<String>): Set<String> =

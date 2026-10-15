@@ -1,0 +1,427 @@
+package dev.amenhancer.module.lyrics.online
+
+import java.text.Normalizer
+import kotlin.math.abs
+
+/** How a passing candidate is chosen from the scored, source-ordered candidates. */
+enum class LyricSelectionMode {
+    /** First candidate in the configured source order whose score passes. */
+    FIRST_PASSING,
+
+    /** Highest-scoring passing candidate, regardless of source order. */
+    GLOBAL_BEST,
+}
+
+/** A candidate paired with its computed match score. */
+data class ScoredSong(
+    val song: SongSearchResult,
+    val score: Int,
+)
+
+/**
+ * The per-component evidence behind one candidate's [LyricMatchPolicy.calculateScore].
+ * Every field is one of the weights the scorer has always used; [total] is their
+ * sum, so the diagnostics and the pass/fail decision can never disagree.
+ */
+data class ScoreBreakdown(
+    val title: Int,
+    val artist: Int,
+    val album: Int,
+    val duration: Int,
+    val features: Int,
+) {
+    val total: Int get() = title + artist + album + duration + features
+}
+
+/**
+ * Ported match scoring and candidate selection from HyperLyricsEnhanced's
+ * `OnlineLyricTargeter` / `OnlineLyricTargeterPolicy`, reduced to a pure
+ * function over this module's own models.
+ *
+ * The Android-specific simplification step is injected as [toSimplified], so the
+ * policy has no platform dependency; callers that need 繁体→简体 pass their own
+ * converter, while tests and other callers get an identity default.
+ */
+object LyricMatchPolicy {
+
+    /** A candidate at or above this score is accepted outright. */
+    const val PASS_SCORE = 85
+
+    /** Floor for a near-miss candidate that still needs lyric-overlap verification. */
+    const val NEAR_MISS_MIN_SCORE = 50
+
+    /** Duration drift under which a candidate is treated as strong identity. */
+    const val STRONG_DURATION_TOLERANCE_MS = 1_500L
+
+    /**
+     * The duration channel's strong-identity credit. It is also the neutral
+     * value used when either side exposes no length, so an unavailable duration
+     * can never by itself deny a title/artist identity.
+     */
+    const val STRONG_DURATION_SCORE = 15
+
+    /** Selects a candidate for [mode]; the ordered mode is the one wired today. */
+    fun select(
+        candidates: List<ScoredSong>,
+        mode: LyricSelectionMode = LyricSelectionMode.FIRST_PASSING,
+    ): SongSearchResult? = when (mode) {
+        LyricSelectionMode.FIRST_PASSING -> selectFirstPassing(candidates)
+        LyricSelectionMode.GLOBAL_BEST -> selectGlobalBest(candidates)
+    }
+
+    /** First candidate in the configured source order whose score passes. */
+    fun selectFirstPassing(candidates: List<ScoredSong>): SongSearchResult? =
+        candidates.firstOrNull { it.score >= PASS_SCORE }?.song
+
+    /** Highest-scoring passing candidate; the seam for the later opt-in mode. */
+    fun selectGlobalBest(candidates: List<ScoredSong>): SongSearchResult? =
+        selectGlobalBestScored(candidates, ScoredSong::score)?.song
+
+    /**
+     * Highest-scoring passing entry of [entries], keeping the caller's own
+     * wrapper type. The cross-source chain uses this to remember which provider
+     * produced the winner without the policy depending on the provider.
+     */
+    fun <T> selectGlobalBestScored(entries: List<T>, score: (T) -> Int): T? =
+        entries.filter { score(it) >= PASS_SCORE }.maxByOrNull(score)
+
+    fun calculateScore(
+        song: SongSearchResult,
+        cleanLocalTitle: String,
+        localArtists: List<String>,
+        localFeatures: List<String>,
+        localDurationMs: Long,
+        cleanLocalAlbum: String,
+        toSimplified: (String) -> String = { it },
+    ): Int = scoreBreakdown(
+        song = song,
+        cleanLocalTitle = cleanLocalTitle,
+        localArtists = localArtists,
+        localFeatures = localFeatures,
+        localDurationMs = localDurationMs,
+        cleanLocalAlbum = cleanLocalAlbum,
+        toSimplified = toSimplified,
+    ).total
+
+    /**
+     * The same score as [calculateScore], split into the component that earned
+     * each point. The duration channel is scored from the real lengths when both
+     * sides expose one; when either side is missing a length the channel stays
+     * neutral and credits the strong-identity score, because an unavailable
+     * length is a metadata gap on one side, not evidence against the candidate.
+     * A candidate that *does* report a length far from the local one is still
+     * penalised by [durationScore]. The component weights themselves are
+     * unchanged.
+     */
+    fun scoreBreakdown(
+        song: SongSearchResult,
+        cleanLocalTitle: String,
+        localArtists: List<String>,
+        localFeatures: List<String>,
+        localDurationMs: Long,
+        cleanLocalAlbum: String,
+        toSimplified: (String) -> String = { it },
+    ): ScoreBreakdown {
+        val duration = when {
+            localDurationMs <= 0L -> STRONG_DURATION_SCORE
+            song.duration <= 0L -> STRONG_DURATION_SCORE
+            else -> durationScore(localDurationMs, song.duration)
+        }
+
+        val cleanSongTitle = cleanString(song.title, toSimplified)
+
+        val title = if (cleanLocalTitle == cleanSongTitle ||
+            cleanSongTitle.contains(cleanLocalTitle) ||
+            cleanLocalTitle.contains(cleanSongTitle)
+        ) {
+            50
+        } else {
+            0
+        }
+
+        val songArtists = splitArtists(song.artist).map { cleanString(it, toSimplified) }
+
+        val hasCommonArtist = localArtists.any { localArtist ->
+            songArtists.any { songArtist ->
+                localArtist == songArtist ||
+                    songArtist.contains(localArtist) ||
+                    localArtist.contains(songArtist)
+            }
+        }
+        val artist = if (hasCommonArtist) 30 else 0
+
+        val remoteAlbum = normalizeAlbumForComparison(song.album, toSimplified)
+
+        val songFeatures = featuresOf(song.title)
+
+        val features = if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty() &&
+            localFeatures.intersect(songFeatures.toSet()).isNotEmpty()
+        ) {
+            20
+        } else {
+            0
+        }
+
+        return ScoreBreakdown(
+            title = title,
+            artist = artist,
+            album = albumScore(cleanLocalAlbum, remoteAlbum),
+            duration = duration,
+            features = features,
+        )
+    }
+
+    /** Recording/version markers that are compared on top of the title match. */
+    val FEATURE_MARKERS = listOf("live", "remastered", "翻唱", "cover")
+
+    /** Markers present in [title]; the same list is applied to local and remote. */
+    fun featuresOf(title: String): List<String> =
+        FEATURE_MARKERS.filter { title.lowercase().contains(it) }
+
+    /**
+     * Album scoring. Whitespace is compacted while word boundaries still exist;
+     * only equality ignores whitespace entirely. A version/recording suffix that
+     * differs is worth a partial score.
+     */
+    fun albumScore(cleanLocalAlbum: String, cleanRemoteAlbum: String): Int {
+        val localExact = compactWhitespace(cleanLocalAlbum)
+        val remoteExact = compactWhitespace(cleanRemoteAlbum)
+        val localBase = compactWhitespace(stripAlbumVersionSuffixes(cleanLocalAlbum))
+        val remoteBase = compactWhitespace(stripAlbumVersionSuffixes(cleanRemoteAlbum))
+        return when {
+            localExact.isEmpty() || remoteExact.isEmpty() -> 0
+            localExact == remoteExact -> 10
+            localBase.isNotEmpty() && localBase == remoteBase -> 5
+            else -> 0
+        }
+    }
+
+    /** NFKC normalization stays shared; album word boundaries survive until scoring. */
+    fun normalizeAlbumCharacters(input: String): String =
+        stripInvisible(Normalizer.normalize(input, Normalizer.Form.NFKC))
+
+    /** Same pipeline for local and remote albums; the only platform step is simplification. */
+    fun normalizeAlbumForComparison(
+        input: String,
+        toSimplified: (String) -> String = { it },
+    ): String {
+        val cleaned = normalizeAlbumCharacters(input)
+            .replace(BRACKETED_SEGMENT, "")
+            .trim().lowercase()
+        return toSimplified(cleaned).replace(WHITESPACE, " ").trim()
+    }
+
+    /**
+     * Strips trailing version/recording markers from the end only, so that
+     * "原曲 / 现场 / 不插电 / 翻唱 / 豪华版" variants of one album are not treated
+     * as different albums, while ordinary names ("Greatest Hits") stay intact.
+     */
+    fun stripAlbumVersionSuffixes(value: String): String {
+        var result = value.trim()
+        var changed: Boolean
+        do {
+            changed = false
+            for (suffix in ALBUM_VERSION_SUFFIXES.sortedByDescending { it.length }) {
+                val stripped = stripTrailingVersionSuffix(result, suffix)
+                if (stripped != result) {
+                    result = stripped
+                    changed = true
+                    break
+                }
+            }
+        } while (changed)
+        return result
+    }
+
+    fun stripTrailingVersionSuffix(value: String, suffix: String): String {
+        if (suffix.isEmpty() || !value.endsWith(suffix, ignoreCase = true)) return value
+        if (value.length == suffix.length) return ""
+
+        val boundary = value.length - suffix.length
+        val preceding = value[boundary - 1]
+        // CJK suffixes (e.g. 豪华版) attach directly to an English album name;
+        // English suffixes need a separator so "Alive" is not read as "live".
+        val suffixIsCjk = suffix.any { it.isCjkUnifiedIdeograph() }
+        if (!suffixIsCjk && preceding.isLetterOrDigit()) return value
+
+        return value.substring(0, boundary).trimEnd { it in ALBUM_SUFFIX_SEPARATOR_CHARS }
+    }
+
+    fun Char.isCjkUnifiedIdeograph(): Boolean = code in 0x4E00..0x9FFF
+
+    /**
+     * The invisible code points Apple metadata carries in the wild but no
+     * provider indexes: the zero-width/joiner block plus the soft hyphen, word
+     * joiner and byte-order mark. They are dropped before a query is built and
+     * before any identity comparison, so a local title is never sent or scored
+     * under a different effective spelling (a ZWSP between two glyphs makes the
+     * provider see a different word). Ordinary U+0020 spaces are kept: only the
+     * zero-width/space-separator block is removed, never a real word boundary.
+     */
+    private val INVISIBLE_CHARACTERS = Regex("[\\u00AD\\u2000-\\u200F\\u2060\\uFEFF]")
+
+    /** Drops every [INVISIBLE_CHARACTERS] code point; ordinary spaces survive. */
+    fun stripInvisible(value: String): String = value.replace(INVISIBLE_CHARACTERS, "")
+
+    /**
+     * Normalizes a title/artist token: drops invisible characters and bracketed
+     * segments, lowercases, optionally simplifies, then removes all internal
+     * whitespace.
+     */
+    fun cleanString(input: String, toSimplified: (String) -> String = { it }): String {
+        val cleaned = stripInvisible(input).replace(BRACKETED_SEGMENT, "").trim().lowercase()
+        return compactWhitespace(toSimplified(cleaned))
+    }
+
+    fun durationScore(localDurationMs: Long, remoteDurationMs: Long): Int {
+        val diffMs = abs(localDurationMs - remoteDurationMs)
+        return when {
+            diffMs > 5_000L -> -30
+            diffMs < STRONG_DURATION_TOLERANCE_MS -> STRONG_DURATION_SCORE
+            else -> 10
+        }
+    }
+
+    fun compactWhitespace(value: String): String = value.replace(WHITESPACE, "")
+
+    fun splitArtists(value: String): List<String> =
+        value.split("&", ",", "，", "、", "/", "／")
+
+    /**
+     * Introduces a featured performer who is not the primary artist. Ported from
+     * HyperLyricsEnhanced's query surface: the credit list itself is still split
+     * by [splitArtists] for identity comparison, but the search keyword must not
+     * carry a featured name ahead of the performer the provider indexes.
+     */
+    private val FEATURED_CREDIT = Regex(
+        "\\s+(?:feat\\.?|ft\\.?|featuring)\\s+",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * The primary credited artist: the first name before any multi-credit
+     * separator or featured-credit marker. `"ナナツカゼ, PIKASONIC, なこたんまる"`
+     * queries as `"ナナツカゼ"` so the whole credit list cannot bury the performer,
+     * while [splitArtists] still sees every name for the artist score. An empty
+     * or marker-only artist yields the empty string.
+     */
+    fun primaryArtist(artist: String): String {
+        val beforeFeature = FEATURED_CREDIT.split(artist).firstOrNull().orEmpty()
+        return splitArtists(beforeFeature).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    }
+
+    /** The feature marker itself, word-bounded so "Defeat" is not a credit. */
+    private val FEATURE_CREDIT_MARKER = Regex(
+        "\\b(?:feat\\.?|ft\\.?|featuring)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** A parenthesized/bracketed segment at the very end of a title, ASCII or full width. */
+    private val TRAILING_PARENTHETICAL = Regex(
+        "\\s*[\\(（\\[【][^)\\uFF09\\]】]*[\\)）\\]】]\\s*$",
+    )
+
+    /** An unparenthesized credit that runs to the end of the title. */
+    private val TRAILING_FEATURE_CREDIT = Regex(
+        "\\s+(?:feat\\.?|ft\\.?|featuring)\\s+.*$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Openers whose group the bare-credit rule must not cut through. */
+    private val BRACKET_OPENERS = setOf('(', '（', '[', '【', '{', '｛')
+
+    /**
+     * A title with a trailing feature credit removed, or null when it carries
+     * none. `"Fake Bones (feat. 中村さんそ)"` becomes `"Fake Bones"`, while a
+     * trailing parenthetical that is not a credit (`"Song (Live)"`) is kept, so
+     * a version marker is not silently dropped from the query. Only a credit at
+     * the very end counts: a credit in the middle of the title
+     * (`"… (feat. X) アオワイファイ"`) stays, because the tail is part of the
+     * real title. The caller uses the result for the one bounded retry search.
+     */
+    fun stripTrailingFeatureCredit(title: String): String? {
+        val cleaned = stripInvisible(title).trim()
+        if (cleaned.isEmpty()) return null
+
+        TRAILING_PARENTHETICAL.find(cleaned)
+            ?.takeIf { FEATURE_CREDIT_MARKER.containsMatchIn(it.value) }
+            ?.let { match ->
+                val prefix = cleaned.substring(0, match.range.first).trim()
+                if (prefix.isNotEmpty()) return prefix
+            }
+
+        val bare = TRAILING_FEATURE_CREDIT.find(cleaned)
+        if (bare != null && cleaned.getOrNull(bare.range.first - 1) !in BRACKET_OPENERS) {
+            val prefix = cleaned.substring(0, bare.range.first).trim()
+            if (prefix.isNotEmpty()) return prefix
+        }
+        return null
+    }
+
+    fun isStrongTitleMatch(localTitle: String, remoteTitle: String): Boolean =
+        localTitle.isNotEmpty() && (
+            localTitle == remoteTitle ||
+                remoteTitle.contains(localTitle) ||
+                localTitle.contains(remoteTitle)
+            )
+
+    fun isStrongDurationMatch(localDurationMs: Long, remoteDurationMs: Long): Boolean =
+        localDurationMs <= 0L ||
+            abs(localDurationMs - remoteDurationMs) < STRONG_DURATION_TOLERANCE_MS
+
+    fun isNearMissEligible(
+        score: Int,
+        titleMatched: Boolean,
+        durationClose: Boolean,
+    ): Boolean = score >= NEAR_MISS_MIN_SCORE && titleMatched && durationClose
+
+    fun isMultiCreditArtist(artists: List<String>): Boolean =
+        artists.count(String::isNotBlank) >= 2
+
+    fun hasCommonArtist(
+        localArtists: List<String>,
+        remoteArtists: List<String>,
+    ): Boolean = localArtists.any { local ->
+        local.isNotBlank() && remoteArtists.any { remote ->
+            remote.isNotBlank() &&
+                (local == remote || remote.contains(local) || local.contains(remote))
+        }
+    }
+
+    /**
+     * A candidate whose duration did not line up falls back to line-level lyric
+     * pairing. [multiCredit] is the existing multi-artist channel; [artistMatched]
+     * only applies to callers that opt in, who must then verify identity by lyric
+     * overlap.
+     */
+    fun isLyricFallbackEligible(
+        titleMatched: Boolean,
+        multiCredit: Boolean,
+        durationClose: Boolean,
+        artistMatched: Boolean = false,
+    ): Boolean = titleMatched && !durationClose && (multiCredit || artistMatched)
+
+    private val WHITESPACE = Regex("\\s+")
+    private val BRACKETED_SEGMENT = Regex("\\(.*?\\)|\\[.*?]|\\{.*?\\}")
+
+    private val ALBUM_SUFFIX_SEPARATOR_CHARS = setOf(' ', '-', '_', '~', '·', '|', '/')
+
+    private val ALBUM_VERSION_SUFFIXES = listOf(
+        // English version / recording markers, longest first.
+        "live version", "acoustic version", "piano version", "studio version",
+        "radio version", "deluxe edition", "full version", "clean version",
+        "radio edit", "tv size", "hi-res", "320k",
+        "live", "acoustic", "unplugged", "cover", "remastered", "remaster",
+        "remix", "remixes", "deluxe", "explicit", "clean", "edited",
+        "instrumental", "piano", "demo", "full", "studio", "radio", "edit",
+        "single", "ep", "flac", "lossless",
+        // Chinese version / recording markers.
+        "现场版", "演唱会版", "不插电版", "木吉他版", "翻唱版", "重制版",
+        "重置版", "混音版", "豪华版", "伴奏版", "纯音乐版", "钢琴版",
+        "试听版", "完整版", "录音室版", "电台版", "单曲版", "无损版",
+        "高音质版", "cover版", "remix版", "tv版", "短版", "剪辑版",
+        "现场", "演唱会", "不插电", "吉他版", "翻唱", "重制", "重置",
+        "混音", "豪华", "伴奏", "纯音乐", "试听", "录音室", "电台",
+        "单曲", "无损", "高音质", "版",
+    )
+}

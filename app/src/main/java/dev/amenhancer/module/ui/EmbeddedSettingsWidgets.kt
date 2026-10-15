@@ -23,7 +23,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import dev.amenhancer.module.ModuleConstants
-import dev.amenhancer.module.config.TitleCorrectionMode
+import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.ModuleSettings
 
@@ -554,17 +554,18 @@ internal fun EmbeddedSettingsHost.showEmbeddedDpiOverrideDialog(
     }
 
 
-internal fun EmbeddedSettingsHost.showEmbeddedTitleCorrectionModePicker(
+internal fun EmbeddedSettingsHost.showEmbeddedRegionSelectionPicker(
         activity: Activity,
-        onSelected: (TitleCorrectionMode) -> Unit,
+        onSelected: (RegionSelection) -> Unit,
     ) {
-        val modes = TitleCorrectionMode.values()
-        val current = controller.currentSettings().titleCorrectionMode
-        val labels = modes.map { localizedText(it.displayText) }.toTypedArray()
+        val regions = RegionSelection.values()
+        val current = controller.currentSettings().regionSelection
+        val labels = regions.map(RegionSelection::displayName).toTypedArray()
         embeddedDialogBuilder(activity)
-            .setTitle(localizedText(ModuleText.TITLE_CORRECTION_MODE))
-            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
-                modes.getOrNull(which)?.let(onSelected)
+            // HLE title_apple_music_content_ui_language
+            .setTitle(localizedText(ModuleText.REGION_SELECTION))
+            .setSingleChoiceItems(labels, regions.indexOf(current)) { dialog, which ->
+                regions.getOrNull(which)?.let(onSelected)
                 dialog.dismiss()
             }
             .setNegativeButton(localizedText(ModuleText.CANCEL), null)
@@ -581,6 +582,10 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
         iconDrawable: Drawable? = null,
         clickable: Boolean = true,
         inlineSummary: Boolean = false,
+        // Selected value rendered on the right while [summary] still shows below the
+        // title; used by the HLE region picker, whose title/summary come from HLE and
+        // whose current option must stay visible.
+        trailingValue: String? = null,
         compactWidePadding: Boolean = false,
         onClick: () -> Unit,
     ): View = LinearLayout(activity).apply {
@@ -632,9 +637,10 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
                 }, matchWidthWrapContent())
             }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (inlineSummary) {
+        val valueText = if (inlineSummary) summary else trailingValue
+        if (valueText != null) {
             addView(TextView(activity).apply {
-                text = summary
+                text = valueText
                 textSize = embeddedTextSize(activity, 13f, 12f)
                 setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END

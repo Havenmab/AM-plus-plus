@@ -143,7 +143,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 15`() {
+    fun `keeps the glass configuration keys under schema 22`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -159,7 +159,14 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 15 adds the independent cellular setting; glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 15"))
+        // Schema 20 split the retired single title-correction picker into the
+        // region_selection control plus the title-correction switch, on top of the
+        // region extras (16), online lyric supplement (17), source chain (18) and
+        // translation enrichment toggle (19).  Schema 21 retires the fork-only master
+        // switch and adds HLE's override_account_language; schema 22 adds the
+        // metadata_cache_clear_generation one-shot signal; schema 23 adds HLE's
+        // hide-Mandarin-pinyin switch and widens the translation toggle to both
+        // lanes.  Glass still reuses its keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 23"))
     }
 }

@@ -5,6 +5,7 @@ import android.os.Looper
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
+import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executor
@@ -17,6 +18,17 @@ internal class AppleMusicCustomLyricsTarget(
     private val symbols: TargetSymbolResolver,
     private val currentSong: CurrentSongIdentityCache,
     private val autoLyricsRuntime: AutoLyricsRuntime? = null,
+    /**
+     * Shared capture of the displayed Apple documents. The same instance is
+     * read by the online search chain (to refuse replacing a timed document),
+     * so it must be the one the parse seam below records into.
+     */
+    private val timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
+    /**
+     * Shared native lane target. It owns Apple model hooks; this target only
+     * forwards custom document and presentation events that it observes.
+     */
+    private val nativeLyricDelivery: NativeLyricsTarget? = null,
 ) : CustomLyricsTarget {
     private var installedResult: TargetCapabilityInstall? = null
     private val registration = HookRegistrationScope()
@@ -78,7 +90,6 @@ internal class AppleMusicCustomLyricsTarget(
                 ).joinToString("; "),
         )
         val parser = OpaqueTtmlParser(nativeParser)
-        val timingObservations = TtmlTimingObservationRegistry()
         val fileReader = CustomLyricsFileReader { fileId ->
             config.openFile(fileId)?.let { input ->
                 runCatching {
@@ -87,6 +98,59 @@ internal class AppleMusicCustomLyricsTarget(
             }
         }
         val mainHandler = Handler(Looper.getMainLooper())
+        val translationLog = TrackScopedDiagnostics(ModernXposedRuntime::log)
+        // The post-overlay presentation refresh the custom completion asks for:
+        // HLE's own supplement store refreshes on its content change
+        // (`AppleSupplementDataReceive` → `refreshAppleLyricsSupplementPresentation`),
+        // and the feed's overlay write is the fork's equivalent. Wired below to
+        // the native lyric delivery this target already owns — no new global — and
+        // left a no-op until then, so an early completion fails open.
+        var onCustomOverlayUpdated: (Long) -> Unit = {}
+        // The other half of a successful completion: the enricher's merged
+        // document (the user's body plus the injected lanes). The feed forwards
+        // it here and, once the custom session exists below, it is re-parsed as
+        // the track's preferred replacement pointer. That is what the automatic
+        // path already does with its merged candidate, and it is the re-parse
+        // that makes a late lane visible on a custom pointer instead of waiting
+        // for the page to be re-created. Left a no-op until wired, so an early
+        // completion fails open; the session re-checks the body invariant.
+        var publishMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> }
+        // The custom path's half of the runtime's translation/pronunciation
+        // completion. The automatic path stays closed for every manual/mapped
+        // id: when its enrichment returns null it falls through to
+        // `resolverFetch`, which would replace the user's body with a searched
+        // document. This feed therefore calls the same enricher directly, for
+        // the document the custom session is about to display. Its overlay side
+        // effect delivers the lanes and its merged document becomes the session's
+        // preferred pointer — but only after the session proves the body is
+        // unchanged, so the custom body still wins and no searched source can
+        // replace it.
+        val customCompletion = autoLyricsRuntime?.let { runtime ->
+            runtime.translationEnricher?.let { enrich ->
+                CustomLyricsCompletionFeed(
+                    enrich = enrich,
+                    executor = runtime.executor,
+                    log = { appleMusicId, line -> translationLog.log(appleMusicId, line) },
+                    onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },
+                    onMergedDocument = { appleMusicId, raw, merged ->
+                        publishMergedDocument(appleMusicId, raw, merged)
+                    },
+                    // The displayed document's own lanes are published before the
+                    // enricher: a custom document that already carries its
+                    // translation produces no merged document, so this is the only
+                    // write that carries its (Word-timed) romanization into the
+                    // model the native getters can serve.
+                    onDisplayedDocument = { appleMusicId, ttml ->
+                        runtime.nativeLyricOverlay.publishDisplayed(appleMusicId, ttml)
+                    },
+                )
+            }
+        }
+        val readCustomTtml: (CustomLyricsEntry) -> String? = { entry ->
+            fileReader.read(entry)?.also { ttml ->
+                customCompletion?.remember(entry.appleMusicId, entry.sha256, ttml)
+            }
+        }
         lateinit var readyReapply: CustomLyricsReadyReapply
         var refreshSession: AutoLyricsRefreshSession? = null
         val configuredManualIds = runCatching {
@@ -100,7 +164,7 @@ internal class AppleMusicCustomLyricsTarget(
                     CustomLyricsEntry::appleMusicId,
                 )
             },
-            readTtml = fileReader::read,
+            readTtml = readCustomTtml,
             parseTtml = parser::parse,
             isAlive = parser::isAlive,
             verifyPtr = parser::isValid,
@@ -127,6 +191,19 @@ internal class AppleMusicCustomLyricsTarget(
             ),
             logger = ModernXposedRuntime::log,
         )
+        // The custom session now exists: a completed enrichment publishes its
+        // merged document as the track's preferred replacement pointer, so the
+        // post-overlay refresh below installs a fresh model that carries the
+        // lanes. Idempotent per (track, merged content) and body-checked inside
+        // the session, so a repeated completion is a no-op and the user's body
+        // can never be replaced.
+        publishMergedDocument = { appleMusicId, rawTtml, mergedTtml ->
+            val published = session.publishMerged(appleMusicId, rawTtml, mergedTtml)
+            translationLog.log(
+                appleMusicId,
+                "online-translation merged-publish id=$appleMusicId published=$published",
+            )
+        }
         refreshSession = autoLyricsRuntime?.let { runtime ->
             val refreshSong = runtime.refreshSong ?: return@let null
             val refreshExecutor = runtime.refreshExecutor ?: return@let null
@@ -151,7 +228,37 @@ internal class AppleMusicCustomLyricsTarget(
         val autoSession = autoLyricsRuntime?.let { runtime ->
             AutoLyricsReplacementSession(
                 fetchCandidate = { appleMusicId ->
-                    runtime.resolver.fetch(appleMusicId)?.let { candidate ->
+                    val enrich = runtime.translationEnricher
+                    val observedMetadata = timingObservations.metadataOfAppleMusicId(appleMusicId)
+                    val displayedTtml = enrich?.let {
+                        runCatching {
+                            timingObservations.rawTtmlOfAppleMusicId(appleMusicId)
+                        }.getOrNull()
+                    }
+                    if (enrich != null) {
+                        translationLog.log(
+                            appleMusicId,
+                            "online-translation capture id=$appleMusicId " +
+                                "rawTtml=${if (displayedTtml != null) "present" else "absent"} " +
+                                "observed=${observedMetadata != null} " +
+                                "timing=${observedMetadata?.timingMode ?: "none"}",
+                        )
+                    }
+                    val fetched = selectAutoLyricsFetch(
+                        enrich = enrich,
+                        displayedTtml = displayedTtml,
+                        appleMusicId = appleMusicId,
+                        resolverFetch = runtime.resolver::fetch,
+                    )
+                    if (enrich != null) {
+                        translationLog.log(
+                            appleMusicId,
+                            "online-translation inject id=$appleMusicId " +
+                                "source=${fetched?.source ?: "none"} " +
+                                "published=${fetched != null}",
+                        )
+                    }
+                    fetched?.let { candidate ->
                         val details = currentSong.current()
                             ?.takeIf { it.details.appleMusicId == appleMusicId }
                             ?.details
@@ -197,6 +304,15 @@ internal class AppleMusicCustomLyricsTarget(
         val isTracking: (Long) -> Boolean = { appleMusicId ->
             session.isTracking(appleMusicId) || autoSession?.isTracking(appleMusicId) == true
         }
+        // The native lane hooks are installed by NativeLyricsFeature. This
+        // custom-lyrics capability only forwards its document/pointer events to
+        // that shared delivery instance.
+        nativeLyricDelivery?.setModuleSupplementSongResolver { appleMusicId ->
+            readyReplacementFor(appleMusicId) != null
+        }
+        onCustomOverlayUpdated = { appleMusicId ->
+            nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
+        }
         val fragmentUsable = fragmentIsAddedPredicate(installMethod.declaringClass)
         readyReapply = CustomLyricsReadyReapply(
             installMethod = installMethod,
@@ -213,10 +329,32 @@ internal class AppleMusicCustomLyricsTarget(
                 override fun afterHookedMethod(param: MethodHookParam) {
                     runCatching {
                         val ttml = param.args.getOrNull(0) as? String ?: return@runCatching
+                        // The module builds every replacement pointer through
+                        // this same native entry point. Capturing one would
+                        // record our generated document as Apple's, and the
+                        // translation pass would then enrich its own output.
+                        if (NativeTtmlParseOrigin.isModuleInitiated()) return@runCatching
                         val pointer = param.result
                         val metadata = TtmlTimingPolicy.metadataOf(ttml)
-                        val appleMusicId = pointer?.let(parser::adamIdOf)
-                        timingObservations.record(pointer, metadata, appleMusicId)
+                        val appleMusicId = pointer?.let(parser::adamIdOf)?.takeIf { it > 0L }
+                        // Record the displayed document even while the Adam ID
+                        // is still unbound: Apple parses first and identifies
+                        // the pointer later, so an id-gated capture drops every
+                        // ordinary document. The I2 seam binds it to the track.
+                        timingObservations.record(pointer, metadata, appleMusicId, rawTtml = ttml)
+                        if (autoSession != null) {
+                            val observedId = appleMusicId
+                                ?: currentSong.current()?.details?.appleMusicId
+                                ?: 0L
+                            translationLog.log(
+                                observedId,
+                                "online-translation ttml-observed id=${appleMusicId ?: "unbound"} " +
+                                    "current=${observedId.takeIf { it > 0L } ?: "unknown"} " +
+                                    "captured=${pointer != null} bytes=${ttml.length} " +
+                                    "timing=${metadata.timingMode} " +
+                                    "appleTranslation=${metadata.hasTranslation}",
+                            )
+                        }
                         if (
                             appleMusicId != null &&
                             currentSong.current()?.details?.appleMusicId == appleMusicId &&
@@ -248,6 +386,42 @@ internal class AppleMusicCustomLyricsTarget(
                             publishedAdamId = publishedAdamId,
                         )
                         adamId ?: return@runCatching
+                        // Ask the native-model delivery to install its per-line
+                        // and availability hooks for the pointer that is about
+                        // to be shown. HLE does this from the result
+                        // presentation as well as the view-model build, because
+                        // the build seam is not guaranteed to carry the pointer
+                        // on every build.
+                        nativeLyricDelivery?.onLyricsPointer(original)
+                        // Remember the fragment+pointer the app is presenting:
+                        // the build gate re-invokes this same presentation to
+                        // make a late lane visible. Our own refresh's invoke is
+                        // ignored inside (a re-entry guard), so the binding
+                        // always belongs to Apple's presentation.
+                        nativeLyricDelivery?.onLyricsPresentation(param.thisObject, original)
+                        // The displayed Apple document was captured at parse
+                        // time before its Adam ID was bound. This is the first
+                        // seam that knows the track identity, so bind the
+                        // capture here and start the translation lane once,
+                        // when its body first becomes available. A request that
+                        // already ran without a document (availability probe or
+                        // an earlier null-pointer install) is retried instead
+                        // of waiting out its retry cooldown.
+                        if (original != null && autoSession != null) {
+                            val capturedBefore = !timingObservations
+                                .rawTtmlOfAppleMusicId(adamId).isNullOrEmpty()
+                            if (timingObservations.associate(original, adamId)) {
+                                val captured = timingObservations.rawTtmlOfAppleMusicId(adamId)
+                                if (!captured.isNullOrEmpty() && !capturedBefore) {
+                                    translationLog.log(
+                                        adamId,
+                                        "online-translation ttml-associated id=$adamId " +
+                                            "bytes=${captured.length}",
+                                    )
+                                    autoSession.onDisplayedDocumentCaptured(adamId)
+                                }
+                            }
+                        }
                         val manualReplacement = session.replacementFor(adamId)
                         val timingMetadata = timingObservations.metadataOf(original)
                         val autoEligible = autoSession != null &&
@@ -302,6 +476,14 @@ internal class AppleMusicCustomLyricsTarget(
                             }
                             if (replacement !== original) {
                                 param.args[0] = parser.unwrap(replacement)
+                            }
+                            // The document about to be shown is the custom one.
+                            // Queue the same lane completion the automatic path
+                            // runs, off the hook thread; the feed dedupes per
+                            // track and document revision and only ever writes
+                            // the native overlay.
+                            if (manualReplacement != null) {
+                                customCompletion?.onDisplayed(adamId)
                             }
                         }
                     }.onFailure { error ->
@@ -445,6 +627,7 @@ internal class AppleMusicCustomLyricsTarget(
                     parserResolution.summary,
                     parseMethodResolution.summary,
                     "timingHooked=$parserHooked",
+                    "nativeLyricModel=${nativeLyricDelivery != null}",
                     seam.fieldSummary.orEmpty(),
                 ).joinToString("; "),
         )
@@ -495,6 +678,49 @@ internal fun shouldPrepareAutomaticLyrics(
     manualReplacement: Any?,
     autoEligible: Boolean,
 ): Boolean = manualReplacement == null && autoEligible
+
+/**
+ * Picks the candidate the automatic path should prepare.
+ *
+ * With the translation toggle on, [enrich] is non-null and a previously
+ * observed displayed document [displayedTtml] routes the lookup through it.
+ * When enrichment returns null — no translation needed, no source found, or any
+ * failure — the fixed resolver still runs, exactly as it did before the
+ * translation feature existed. Failing closed here would let enabling the
+ * translation toggle suppress a lyric supplement that otherwise worked.
+ * Only the merged document produced by a successful enrichment is attributed to
+ * [ONLINE_TRANSLATION_LYRIC_SOURCE].
+ */
+internal fun selectAutoLyricsFetch(
+    enrich: ((Long, String) -> String?)?,
+    displayedTtml: String?,
+    appleMusicId: Long,
+    resolverFetch: (Long) -> AutoLyricsCandidate?,
+): AutoLyricsCandidate? {
+    val enriched: () -> AutoLyricsCandidate? = {
+        if (enrich == null || displayedTtml == null) {
+            null
+        } else {
+            runCatching { enrich.invoke(appleMusicId, displayedTtml) }.getOrNull()
+                ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
+        }
+    }
+    // Apple has no lyrics, or only unsynchronised text that does not scroll with playback: a
+    // third-party document carrying a real timeline is a strict improvement (it can be followed
+    // and tapped), so the replacement path runs FIRST and enrichment is only the fallback.
+    // Previously enrichment was always tried first, which meant it always produced something for a
+    // document that merely lacked a translation -- so the replacement path never ran at all for an
+    // unsynchronised document, and that permission was empty.
+    val replacementFirst = displayedTtml == null || !TtmlTimingPolicy.hasTiming(displayedTtml)
+    return if (replacementFirst) {
+        resolverFetch(appleMusicId) ?: enriched()
+    } else {
+        // Apple already carries line or word timing: a search source must never replace it, so only
+        // the translation lane is added.  The resolver stays the fallback when enrichment yields
+        // nothing -- it may still reach the bundled providers, which are allowed to replace.
+        enriched() ?: resolverFetch(appleMusicId)
+    }
+}
 
 internal fun shouldExposeCustomLyrics(
     nativeLyricsAvailable: Boolean,

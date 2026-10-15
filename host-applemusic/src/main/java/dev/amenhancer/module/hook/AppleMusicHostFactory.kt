@@ -3,6 +3,9 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
+import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
 
 /** Apple Music composition; the application supplies configuration and automatic-lyric services. */
 object AppleMusicHostFactory {
@@ -52,6 +55,8 @@ object AppleMusicHostFactory {
         lyricsTypefaceSession: LyricsTypefaceResourceBinding,
         currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache(),
         autoLyricsRuntime: AutoLyricsRuntime? = null,
+        timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
+        nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
     ): TargetAdaptation {
         val build = targetBuild(application)
         val profile = checkNotNull(dev.amenhancer.host.applemusic.AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
@@ -63,6 +68,29 @@ object AppleMusicHostFactory {
             source = ApkTargetClassSource(application, classLoader),
         )
         val settings = config.settings()
+        // Exact-profile resolver for HLE's native lyric-model delivery. A plain
+        // class-loader lookup is enough here: 1606 is a strict profile, so the
+        // resolver never guesses by DexKit, and an unresolved target fails open.
+        val nativeLyricResolver = AppleMusicHookResolver(
+            version = AppleMusicVersion(build.versionName, build.versionCode),
+            classLoader = classLoader,
+        )
+        val nativePresentationMethod = runCatching {
+            resolver.resolve(AppleMusicSymbols.LyricsInstallMethod).valueOrNull()
+        }.getOrNull()
+        val nativeLyricsTarget = AppleMusicNativeLyricsTarget(
+            resolver = nativeLyricResolver,
+            overlay = nativeLyricOverlay,
+            currentSong = currentSong,
+            hideMandarinPinyin = settings.onlineLyricsHideMandarinPinyinEnabled,
+            genreFor = { appleMusicId ->
+                runCatching {
+                    io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
+                        .getMetadataById(appleMusicId.toString())?.genre
+                }.getOrNull()
+            },
+            presentationMethod = nativePresentationMethod,
+        )
         return TargetAdaptation(
             identity = build.displayName,
             build = build,
@@ -89,11 +117,14 @@ object AppleMusicHostFactory {
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,
             ),
+            nativeLyrics = nativeLyricsTarget,
             customLyrics = AppleMusicCustomLyricsTarget(
                 config = config,
                 symbols = resolver,
                 currentSong = currentSong,
                 autoLyricsRuntime = autoLyricsRuntime,
+                timingObservations = timingObservations,
+                nativeLyricDelivery = nativeLyricsTarget,
             ),
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,
@@ -101,7 +132,7 @@ object AppleMusicHostFactory {
             ),
             catalogLanguage = AppleMusicCatalogLanguageTarget(
                 symbols = resolver,
-                rawTargetLanguage = settings.titleCorrectionMode.catalogLanguage.orEmpty(),
+                rawTargetLanguage = settings.regionSelection.catalogLanguage.orEmpty(),
             ),
             hleMetadata = HleMetadataTarget {
                 val activeModule = ModernXposedRuntime.activeModule()
@@ -113,7 +144,13 @@ object AppleMusicHostFactory {
                         module = activeModule,
                         application = application,
                         classLoader = classLoader,
-                        mode = settings.titleCorrectionMode,
+                        region = settings.regionSelection,
+                        overrideAccountLanguage = settings.overrideAccountLanguage,
+                        restoreCjkOriginalMetadata = settings.restoreCjkOriginalMetadata,
+                        localizedMetadataCache = settings.localizedMetadataCache,
+                        // Live read: the settings page can clear the index at any
+                        // time, so the runtime must not snapshot the generation.
+                        metadataCacheClearSignal = { config.metadataCacheClearGeneration() },
                     ).install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)

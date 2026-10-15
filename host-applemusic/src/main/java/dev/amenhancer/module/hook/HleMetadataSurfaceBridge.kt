@@ -23,9 +23,22 @@ internal class HleMetadataSurfaceBridge(
     internal val queueMetadataHooks: AppleQueueMetadataHooks,
     internal val actionSheetMetadataHooks: AppleActionSheetMetadataHooks,
     internal val configuredContentUiLanguage: Int,
+    /**
+     * HLE's `AppleOrchestratorCatalogLanguageAssembly.shouldOverrideAccountLanguage`: true only
+     * when a region is selected **and** the 「歌曲信息替换至设定地区语言」 switch is on.  The
+     * fork's pure projection of that pair is `RegionTitleRequestPlan.overrideAccountLanguage`,
+     * which is what [HleMetadataRuntime] passes here.
+     */
+    internal val overrideAccountLanguage: Boolean,
     internal val restoreOriginalMetadata: Boolean,
     internal val profileId: String,
     private val installation: HleMetadataInstallation,
+    /**
+     * Runs once before every resolution seam so the one-shot 「清空检索库」 signal
+     * is handled before the request can answer from a cache.  Idempotent; the
+     * observer drops the signal after the first clear.
+     */
+    private val observeMetadataCacheClear: () -> Unit = {},
 ) {
     internal val traceSequence = AtomicLong(0L)
     internal val registry = AppleInAppMetadataRegistry()
@@ -213,13 +226,19 @@ internal class HleMetadataSurfaceBridge(
         preBind: Boolean = false,
         priority: AppleInternalCatalogResolver.RequestPriority =
             AppleInternalCatalogResolver.RequestPriority.VISIBLE,
-    ) = resolutionCoordinator.ensureOverride(mediaId, preBind, priority)
+    ) {
+        observeMetadataCacheClear()
+        resolutionCoordinator.ensureOverride(mediaId, preBind, priority)
+    }
 
     fun ensureOverrides(
         mediaIds: Collection<String>,
         preBind: Boolean = false,
         originalResolutionLimit: Int = mediaIds.size,
-    ) = resolutionCoordinator.ensureOverrides(mediaIds, preBind, originalResolutionLimit)
+    ) {
+        observeMetadataCacheClear()
+        resolutionCoordinator.ensureOverrides(mediaIds, preBind, originalResolutionLimit)
+    }
 
     fun registerMetadata(
         mediaId: String,
@@ -227,25 +246,31 @@ internal class HleMetadataSurfaceBridge(
         requestResolution: Boolean,
         preBind: Boolean,
         priority: AppleInternalCatalogResolver.RequestPriority,
-    ) = metadataRegistrationCoordinator.registerMetadata(
-        mediaId = mediaId,
-        metadata = metadata,
-        requestResolution = requestResolution,
-        preBind = preBind,
-        priority = priority,
-    )
+    ) {
+        observeMetadataCacheClear()
+        metadataRegistrationCoordinator.registerMetadata(
+            mediaId = mediaId,
+            metadata = metadata,
+            requestResolution = requestResolution,
+            preBind = preBind,
+            priority = priority,
+        )
+    }
 
     fun registerPlaybackItem(
         mediaId: String,
         playbackItem: Any,
         notifyChange: Boolean,
         analyzeMetadata: Boolean,
-    ) = metadataRegistrationCoordinator.registerPlaybackItem(
-        mediaId = mediaId,
-        playbackItem = playbackItem,
-        notifyChange = notifyChange,
-        analyzeMetadata = analyzeMetadata,
-    )
+    ) {
+        observeMetadataCacheClear()
+        metadataRegistrationCoordinator.registerPlaybackItem(
+            mediaId = mediaId,
+            playbackItem = playbackItem,
+            notifyChange = notifyChange,
+            analyzeMetadata = analyzeMetadata,
+        )
+    }
 
     fun media3MetadataId(
         metadata: Any,
@@ -344,6 +369,15 @@ internal class HleMetadataSurfaceBridge(
                 metadataStore.rememberConfiguredMetadata(mediaId, alias)
             }
             frameworkHooks.refreshMediaSessionMetadata(mediaId, alias)
+        }
+    }
+
+    internal fun publishCurrentPlaybackAliasFromHost(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+    ) {
+        if (::metadataOverrideApplicationCoordinator.isInitialized) {
+            metadataOverrideApplicationCoordinator.publishCurrentPlaybackAlias(mediaId, alias)
         }
     }
 

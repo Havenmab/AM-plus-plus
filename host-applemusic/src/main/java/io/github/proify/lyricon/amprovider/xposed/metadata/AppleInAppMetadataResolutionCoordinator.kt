@@ -31,6 +31,8 @@ internal interface AppleInAppMetadataResolutionHost {
         notifyModelChange: Boolean,
     )
 
+    fun publishCurrentPlaybackAlias(mediaId: String, alias: AppleInternalCatalogResolver.Alias)
+
     fun applyPlaybackMetadataOverride(
         mediaId: String,
         alias: AppleInternalCatalogResolver.Alias,
@@ -185,6 +187,13 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     forceRebind = true,
                     notifyModelChange = true,
                 )
+                if (shouldPublishAssociatedArtistAliasToCurrentPlayback(
+                        mediaId = mediaId,
+                        currentPlaybackMediaId = host.currentPlaybackMetadataId(),
+                    )
+                ) {
+                    host.publishCurrentPlaybackAlias(mediaId, updatedAlias)
+                }
             }
         }
     }
@@ -897,6 +906,12 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     return@resolveOriginalMetadata
                 }
                 mergePlaybackAssociatedArtistIds(mediaId, resolution.artistIds)
+                originalArtistLanguageFromSongResolution(
+                    resolution = resolution,
+                    localizedArtist = account.artist,
+                )?.let { language ->
+                    rememberOriginalLanguageForArtist(mediaId, language)
+                }
                 fun finishResolution(
                     alias: AppleInternalCatalogResolver.Alias?,
                 ) {
@@ -904,6 +919,19 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     if (!host.isRestoreOriginalEnabled()) return
                     metadataStore.markOriginalResolved(mediaId)
                     metadataStore.clearOriginalPending(mediaId)
+                    if (shouldRetryMissingOriginalSongIdentity(resolution)) {
+                        // The identity lookup timed out or came back empty, so no original-region
+                        // language could be derived and the probe never ran.  Record the miss so
+                        // the existing cache-miss policy lets a later visibility pass retry.
+                        metadataStore.recordOriginalCacheMiss(
+                            mediaId,
+                            SystemClock.uptimeMillis(),
+                        )
+                        ProviderLogger.info(
+                            "Apple App 原地区歌曲身份未就绪: id=$mediaId, reason=identity_missing, " +
+                                "retryable=true"
+                        )
+                    }
                     val safeAlias = validatedOriginalSongAlias(
                         alias = alias,
                         localizedTitle = account.title,
@@ -1042,6 +1070,12 @@ internal class AppleInAppMetadataResolutionCoordinator(
             metadataStore.originalLanguage(key) != canonicalLanguage
         }
         if (!changed) return
+        if (BuildConfig.DEBUG) {
+            host.logMetadataIdentity(
+                event = "original_artist_language_remembered",
+                details = "contentId=$mediaId, artistKeys=$regionKeys, language=$canonicalLanguage",
+            )
+        }
         regionKeys.forEach { key ->
             metadataStore.rememberOriginalLanguage(key, canonicalLanguage)
         }

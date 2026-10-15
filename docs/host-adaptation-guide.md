@@ -556,6 +556,26 @@ alias 到达或恢复原名时，按当前实体重建 title/header/shelves 并�
 
 旧 Activity Editorial 处理和 Fragment 原生视频策略分别保留。停用的全局目录语言功能及未启用的播放模式 UI 不因新增档案自动获得启用。
 
+### 7.5 地区替换
+
+地区替换在 HLE 本地化钩子里，共五层，均在“将Apple Music改成其他地区”选中了带 storefront 的地区档位时才改写普通目录流量（与 HLE 一致，没有额外总开关）：
+
+1. MediaApi storefront 字段（`applyRegionConfiguration`）；
+2. MediaApi 请求参数表（`MEDIA_API_LOCALIZATION`）；
+3. 内容 HTTP 拦截（`CONTENT_HTTP_LOCALIZATION`，URL 与 `Accept-Language` / `X-Apple-Store-Front` 头）；
+4. 目录直连请求执行器参数（`MEDIA_API_CATALOG_REQUEST_EXECUTOR`）；
+5. amp-api 内容请求拦截（`MEDIA_API_AMP_HTTP_INTERCEPTOR`）。
+
+第 4、5 层先取 `AppleMusicHookProfiles.exactTargets`，为空即“本版本无已验证目标”，不安装也不回退整包 DexKit 扫描；第 3 层不走这个门禁（6.5.2 靠兼容候选链命中 6.5.1 的 `u8.a#a`）。因此前三层在四个 profile 都有声明或兼容候选，第 4、5 层仅 `6.5.3/1599` 与 `7.0.0-beta/1606` 声明。6.5.1/6.5.2 缺第 4、5 层的覆盖缺口见 `docs/refactor-degradations.md` 的 D3，未取证前不得补猜测目标。
+
+电台/歌词/播放这类账号权益相关请求在改写前先命中 `isAccountScopedPlaybackPath` / `isAppleLyricsRequestPath`，强制回退到 `accountStorefrontForPlaybackRequest()` 捕获的账号 storefront。
+
+代码入口：地区档位与映射 `core/src/main/kotlin/dev/amenhancer/module/config/RegionSelection.kt`（storefront/语言/缓存命名空间；两款开关的请求侧投影见同目录 `RegionTitleRequestPolicy.kt`）；请求改写 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/hooks/AppleContentLocalizationHooks.kt`（五层安装与参数/URL 改写）；storefront 应用与账号回退 `host-applemusic/src/main/java/io/github/proify/lyricon/amprovider/xposed/CatalogRegionAccess.kt` 与 `AppleInternalCatalogResolver.kt`（`applyRegionConfiguration` / `accountStorefrontForPlaybackRequest`）。
+
+`7.0.0-beta/1606` 上第 3 层是内容 HTTP 的 OkHttp 拦截器（`rb.a#a`，HLE 的 cookie/主客户端拦截器），第 5 层是 amp-api 的拦截器（`y9.d#a`）。两层必须挂在**不同**客户端上：`y9.a#a` 是 amp-api 客户端上更靠后的 OkHttp 拦截器，若把它当作第 3 层，第 5 层剥掉 executor 标记后它会把已经按原地区改写的请求再次改回配置地区，使原地区原名查询永远拿到配置地区的行。目标描述符与 262 项/55 项原包校验见 `scripts/verify-host-profile.py`。
+
+新增 profile（`7.0.0-beta/1607`、`7.0.0-beta/1609`）尚未声明第 4、5 层目标，地区替换在这些版本上只覆盖前三层，需按各自 profile 单独取证。
+
 ## 8. 平板布局与视频尺寸
 
 ### 8.1 资格与基础布局
@@ -663,4 +683,4 @@ HLE 使用 `HleMetadataInstallation` 和 `AppleHookRegistrar.stageInstallation` 
 5. 构建、人工场景与旧版本回归分别完成到哪一步。
 6. 出现问题时能否停用该 tuple 或能力，并恢复原生行为。
 
-回退通过停用新版本登记及撤销对应接入实现完成。保持配置 schema、键、文件 ID、数据库/缓存 namespace 和 ZIP 格式时，无需反向数据迁移；涉及数据格式变化的工作必须另行定义迁移和回退，不能作为普通混淆适配附带处理。
+回退通过停用新版本登记及撤销对应接入实现完成。保持配置 schema、键、文件 ID、数据库/缓存 namespace 和 ZIP 格式时，无需反向数据迁移；涉及数据格式变化的工作必须另行定义迁移和回退，不能作为普通混淆适配附带处理。当前配置 schema 为 23。既有降级与地区覆盖缺口见 `docs/refactor-degradations.md`。

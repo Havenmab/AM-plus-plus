@@ -22,6 +22,7 @@ import dev.amenhancer.module.lyrics.source.FileLunabeatCatalogCache
 import dev.amenhancer.module.lyrics.source.LunabeatClient
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsBatchSaveResult
+import dev.amenhancer.module.lyrics.CustomLyricsClearResult
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsInspection
 import dev.amenhancer.module.lyrics.CustomLyricsOnlineImportResult
@@ -94,6 +95,14 @@ internal class EmbeddedRuntimeSettingsController(
     override fun deleteLyrics(appleMusicIds: List<Long>): EmbeddedActionResult =
         content.deleteLyrics(appleMusicIds).toActionResult(ModuleText.LYRICS_MAPPING_DELETED.text())
 
+    override fun clearLyrics(): EmbeddedActionResult =
+        when (val result = content.clearAllLyrics()) {
+            is CustomLyricsClearResult.Cleared -> EmbeddedActionResult.Done(
+                "已清空 ${result.removedEntries} 条自定义歌词，重开 Apple Music 生效",
+            )
+            is CustomLyricsClearResult.Failed -> EmbeddedActionResult.Failed(result.message)
+        }
+
     override fun importFont(uri: Uri): EmbeddedActionResult {
         val bytes = try {
             appContext.contentResolver.openInputStream(uri)?.use(FontFilePolicy::readBounded)
@@ -133,6 +142,9 @@ internal class EmbeddedRuntimeSettingsController(
                 displayName = displayName,
                 ttml = ttml,
                 source = CustomLyricsSources.MANUAL,
+                // A file the user picked is theirs; the automatic paths must not
+                // convert over it.
+                userEdited = true,
             ),
             replacingAppleMusicId,
         ).toActionResult()

@@ -42,6 +42,26 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         )
     }
 
+    fun publishCurrentPlaybackAlias(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+    ) {
+        if (playbackMetadataCoordinator.currentMetadataId() != mediaId) return
+        metadataStore.updateCurrentPlaybackOverride(alias)
+        val updated = MediaMetadataCache.updateDisplayMetadata(
+            mediaId = mediaId,
+            title = alias.title,
+            artist = alias.artist,
+        ) ?: return
+        if (BuildConfig.DEBUG) {
+            ProviderLogger.diagnostic(
+                "associated_artist_playback_publish: " +
+                    "id=$mediaId title=${updated.title} artist=${updated.artist}"
+            )
+        }
+        PlaybackManager.onCatalogMetadataResolved(mediaId)
+    }
+
     fun apply(
         mediaId: String,
         alias: AppleInternalCatalogResolver.Alias,

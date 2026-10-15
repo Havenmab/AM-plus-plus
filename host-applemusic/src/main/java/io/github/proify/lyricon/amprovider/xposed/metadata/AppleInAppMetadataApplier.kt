@@ -107,6 +107,10 @@ internal class AppleInAppMetadataApplier(
         }
         val libraryComposeStates =
             if (forceRebind) librarySurfaceHooks.refreshComposeStates(mediaId, alias) else 0
+        // Two distinct surfaces share this call site: the fork's album-detail Compose
+        // metadata refresh and upstream's artist Compose profile sessions. Keep both.
+        val albumComposeMetadata =
+            if (forceRebind) artistSurfaceHooks.refreshComposeMetadata(mediaId, alias) else 0
         val artistComposeProfiles =
             if (forceRebind) artistSurfaceHooks.refreshComposeProfiles(mediaId) else 0
         val dataBindingTargets =
@@ -120,7 +124,8 @@ internal class AppleInAppMetadataApplier(
         if (
             metadataApplied + playbackItemApplied + containerItemApplied +
             libraryEntitiesApplied + playlistRowsApplied + libraryControllers +
-            libraryComposeStates + artistComposeProfiles + dataBindingTargets + listenNowDataBindingTargets +
+            libraryComposeStates + albumComposeMetadata + artistComposeProfiles +
+            dataBindingTargets + listenNowDataBindingTargets +
             queueAdapterTargets + genericRecyclerTargets > 0
         ) {
             ProviderLogger.info(
@@ -130,6 +135,7 @@ internal class AppleInAppMetadataApplier(
                     "containers=$containerItemApplied, libraryEntities=$libraryEntitiesApplied, " +
                     "playlistRows=$playlistRowsApplied, libraryControllers=$libraryControllers, " +
                     "libraryComposeStates=$libraryComposeStates, " +
+                    "albumComposeMetadata=$albumComposeMetadata, " +
                     "artistComposeProfiles=$artistComposeProfiles, " +
                     "dataBindings=$dataBindingTargets, " +
                     "listenNowDataBindings=$listenNowDataBindingTargets, " +

@@ -593,6 +593,92 @@ class CustomLyricsReplacementSessionTest {
         assertEquals(1, parses)
     }
 
+    @Test
+    fun `publishing a head-only merged document prefers it over the raw pointer`() {
+        val queued = QueuedExecutor()
+        val raw = Pointer(42L)
+        val merged = Pointer(42L)
+        var parses = 0
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider {
+                manifest(entry(42L)).entries.associateBy(CustomLyricsEntry::appleMusicId)
+            },
+            readTtml = { TTML },
+            parseTtml = { parses += 1; if (parses == 1) raw else merged },
+            isAlive = { it is Pointer },
+            verifyPtr = { it is Pointer },
+            readAdamId = { (it as Pointer).adamId },
+            bindAdamId = { value, id -> (value as Pointer).adamId = id; true },
+            executor = queued,
+            logger = {},
+        )
+        session.start()
+        queued.runAll()
+        assertNull(session.replacementFor(42L))
+        queued.runAll()
+        assertSame(raw, session.readyReplacementFor(42L))
+
+        assertTrue(session.publishMerged(42L, TTML, headOnlyMerge(TTML)))
+        assertSame(merged, session.readyReplacementFor(42L))
+
+        // Idempotent per (track, merged content): a repeated completion neither
+        // re-parses nor republishes, so it cannot twitch the page.
+        assertFalse(session.publishMerged(42L, TTML, headOnlyMerge(TTML)))
+        assertEquals(2, parses)
+    }
+
+    @Test
+    fun `publishing refuses a merged document whose body changed`() {
+        val queued = QueuedExecutor()
+        val raw = Pointer(42L)
+        val session = CustomLyricsReplacementSession(
+            index = CustomLyricsIndexProvider {
+                manifest(entry(42L)).entries.associateBy(CustomLyricsEntry::appleMusicId)
+            },
+            readTtml = { TTML },
+            parseTtml = { raw },
+            isAlive = { it is Pointer },
+            verifyPtr = { it is Pointer },
+            readAdamId = { (it as Pointer).adamId },
+            bindAdamId = { value, id -> (value as Pointer).adamId = id; true },
+            executor = queued,
+            logger = {},
+        )
+        session.start()
+        queued.runAll()
+        assertNull(session.replacementFor(42L))
+        queued.runAll()
+        assertSame(raw, session.readyReplacementFor(42L))
+
+        // A searched document is a different body: it must never become the
+        // pointer, so the user's own lyrics stay displayed.
+        val searched = "<tt><body><p><span>another song</span></p></body></tt>"
+        assertFalse(session.publishMerged(42L, TTML, searched))
+        assertSame(raw, session.readyReplacementFor(42L))
+    }
+
+    @Test
+    fun `the body-preservation rule accepts head-only lane edits and rejects body edits`() {
+        val raw = "<tt><head></head><body><p><span>x</span></p></body></tt>"
+        assertTrue(
+            mergedCustomBodyPreserved(
+                raw,
+                "<tt><head><translations><text>y</text></translations></head>" +
+                    "<body><p><span>x</span></p></body></tt>",
+            ),
+        )
+        assertFalse(
+            mergedCustomBodyPreserved(
+                raw,
+                "<tt><head></head><body><p><span>y</span></p></body></tt>",
+            ),
+        )
+        assertFalse(mergedCustomBodyPreserved(raw, "<tt><head></head></tt>"))
+    }
+
+    private fun headOnlyMerge(ttml: String): String =
+        ttml.replace("<body>", "<head><translations></translations></head><body>")
+
     private fun session(
         manifest: CustomLyricsManifest,
         read: (CustomLyricsEntry) -> String?,

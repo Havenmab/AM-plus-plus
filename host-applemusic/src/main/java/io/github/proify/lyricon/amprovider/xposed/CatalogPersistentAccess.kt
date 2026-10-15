@@ -23,7 +23,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogEntitySnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogArtistSnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogIdentity
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.PreparedOriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogSong
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedRequest
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LockedIsrcFallbackTask
@@ -53,7 +52,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.QUERY_TIMEOUT_MS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ARTIST_ALIAS_CACHE_SCHEMA
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.CATALOG_REQUEST_TOKEN_PARAM
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ORIGINAL_LANGUAGE_PROBE_ORDER
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.COLLABORATION_ARTIST_PATTERNS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.collaborationArtistCache
 
@@ -86,9 +84,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactOriginalEntityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactIdentityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHanCharacters
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.hasCjkArtistScript
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsJapaneseKana
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHangul
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.storefrontForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagsForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagForContentUiLanguage

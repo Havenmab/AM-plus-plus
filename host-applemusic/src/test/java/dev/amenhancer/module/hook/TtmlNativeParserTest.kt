@@ -127,9 +127,40 @@ class TtmlNativeParserTest {
         assertNull(parser?.parse("<tt>x</tt>"))
     }
 
+    @Test
+    fun `a module parse is marked as module initiated for the capture hook`() {
+        ModuleOriginParser.seen = null
+        val parser = TtmlNativeParser.create(
+            parserClass = ModuleOriginParser::class.java,
+            parseMethod = ModuleOriginParser::class.java.getDeclaredMethod(
+                "songInfoFromTTML",
+                String::class.java,
+            ),
+            ptrClass = SongInfo.SongInfoPtr::class.java,
+            nativeClass = SongInfo.SongInfoNative::class.java,
+        )
+
+        assertNotNull(parser!!.parse("<tt/>"))
+
+        assertEquals(true, ModuleOriginParser.seen)
+        assertFalse(NativeTtmlParseOrigin.isModuleInitiated())
+    }
+
     private class TtmlParserFixture {
         @Suppress("UNUSED_PARAMETER")
         fun songInfoFromTTML(ttml: String): SongInfo.SongInfoPtr = SongInfo.SongInfoPtr()
+    }
+
+    private class ModuleOriginParser {
+        @Suppress("UNUSED_PARAMETER")
+        fun songInfoFromTTML(ttml: String): SongInfo.SongInfoPtr {
+            seen = NativeTtmlParseOrigin.isModuleInitiated()
+            return SongInfo.SongInfoPtr()
+        }
+
+        companion object {
+            var seen: Boolean? = null
+        }
     }
 
     private class ThrowingParserFixture {

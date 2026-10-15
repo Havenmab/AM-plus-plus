@@ -6,8 +6,10 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.os.Handler
+import com.juren233.hyperlyricsenhanced.BuildConfig
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /** Independent persistent cache for original-region song, album, and artist metadata. */
 internal class AppleOriginalMetadataCache(
@@ -43,11 +45,43 @@ internal class AppleOriginalMetadataCache(
     private var warmed = false
     private var warming = false
     private val warmCallbacks = mutableListOf<(Int?) -> Unit>()
+    /**
+     * Bumped by [resetForMaintenance]; an in-flight warm refuses to publish rows it
+     * read before a maintenance clear, so a concurrently deleted cache cannot leak
+     * back into memory.
+     */
+    private val maintenanceEpoch = AtomicLong(0L)
     @Volatile
     private var enabled = true
 
     fun setEnabled(value: Boolean) {
         enabled = value
+    }
+
+    /**
+     * Maintenance seam for the user-facing 清空检索库 action: drops the warmed
+     * in-memory rows, clears the artist-region preferences (in disk and in the
+     * live `SharedPreferences` instance) and closes the SQLite handle so the
+     * caller can delete the files without leaving a stale open connection.
+     */
+    fun resetForMaintenance(): Int {
+        val dropped = synchronized(memoryCache) {
+            val size = memoryCache.size
+            memoryCache.clear()
+            size
+        }
+        maintenanceEpoch.incrementAndGet()
+        synchronized(warmLock) {
+            warmed = false
+            warming = false
+        }
+        synchronized(artistRegionLock) {
+            runCatching { artistRegionPreferences.edit().clear().commit() }
+                .onFailure { ProviderLogger.error("Apple 原地区歌手地区偏好清理失败", it) }
+        }
+        runCatching { helper.close() }
+            .onFailure { ProviderLogger.error("Apple 原地区元数据缓存关闭失败", it) }
+        return dropped
     }
 
     fun get(
@@ -100,14 +134,13 @@ internal class AppleOriginalMetadataCache(
             return
         }
         synchronized(memoryCache) {
-            normalizedKeys.firstNotNullOfOrNull { key ->
-                memoryCache[key]
-                    ?.takeIf(accept)
-                    ?.let { alias -> CacheHit(key, alias) }
+            validateOriginalCacheEntries(normalizedKeys, memoryCache, accept)
+        }.let { cached ->
+            cached.rejected.forEach(::discardRejected)
+            cached.hit?.let { hit ->
+                onResult(hit)
+                return
             }
-        }?.let { hit ->
-            onResult(hit)
-            return
         }
         interactiveExecutor.execute {
             val hit = if (enabled) {
@@ -128,7 +161,11 @@ internal class AppleOriginalMetadataCache(
     fun cached(key: String): AppleInternalCatalogResolver.Alias? {
         val normalizedKey = key.trim()
         if (!enabled || normalizedKey.isEmpty()) return null
-        return synchronized(memoryCache) { memoryCache[normalizedKey] }
+        val result = synchronized(memoryCache) {
+            validateOriginalCacheEntries(listOf(normalizedKey), memoryCache) { true }
+        }
+        result.rejected.forEach(::discardRejected)
+        return result.hit?.alias
     }
 
     fun warmRecentAsync(onResult: (Int?) -> Unit) {
@@ -159,6 +196,7 @@ internal class AppleOriginalMetadataCache(
             }
         }
         if (!startWarm) return
+        val epoch = maintenanceEpoch.get()
         warmExecutor.execute {
             val aliases = if (enabled) {
                 runCatching { readRecent() }
@@ -167,7 +205,7 @@ internal class AppleOriginalMetadataCache(
             } else {
                 null
             }
-            if (aliases != null) {
+            if (aliases != null && maintenanceEpoch.get() == epoch) {
                 synchronized(memoryCache) { memoryCache.putAll(aliases) }
             }
             val callbacks = synchronized(warmLock) {
@@ -207,6 +245,31 @@ internal class AppleOriginalMetadataCache(
                     arrayOf(normalizedKey),
                 )
             }.onFailure { ProviderLogger.error("Apple 原地区元数据旧缓存清理失败", it) }
+        }
+    }
+
+    private fun discardRejected(rejected: CacheHit) {
+        synchronized(memoryCache) {
+            removeOriginalAliasIfUnchanged(memoryCache, rejected)
+        }
+        interactiveExecutor.execute {
+            runCatching {
+                val removed = helper.writableDatabase.delete(
+                    TABLE_NAME,
+                    "$COLUMN_KEY = ? AND $COLUMN_TITLE = ? AND $COLUMN_ARTIST = ? " +
+                        "AND $COLUMN_ALBUM = ? AND $COLUMN_LANGUAGE = ?",
+                    arrayOf(
+                        rejected.key, rejected.alias.title, rejected.alias.artist,
+                        rejected.alias.album, rejected.alias.language,
+                    ),
+                )
+                if (BuildConfig.DEBUG) {
+                    ProviderLogger.info(
+                        "Apple 原名缓存自愈: key=${rejected.key}, " +
+                            "rejectedLanguage=${rejected.alias.language}, removed=$removed"
+                    )
+                }
+            }.onFailure { ProviderLogger.error("Apple 原名缓存失效失败", it) }
         }
     }
 
@@ -281,8 +344,8 @@ internal class AppleOriginalMetadataCache(
         helper.readableDatabase.query(
             TABLE_NAME,
             WARM_COLUMNS,
-            null,
-            null,
+            "$COLUMN_KEY LIKE ?",
+            arrayOf("${AppleInternalCatalogResolver.ORIGINAL_METADATA_CACHE_SCHEMA}:%"),
             null,
             null,
             "$COLUMN_UPDATED_AT DESC",
@@ -343,15 +406,12 @@ internal class AppleOriginalMetadataCache(
             while (cursor.moveToNext()) {
                 val key = cursor.stringColumn(COLUMN_KEY)
                 val alias = cursor.toAlias()
-                AppleInternalCatalogResolver.canonicalCachedOriginalAlias(alias)
-                    ?.let { aliases[key] = it }
+                aliases[key] = alias
             }
         }
-        return keys.firstNotNullOfOrNull { key ->
-            aliases[key]
-                ?.takeIf(accept)
-                ?.let { alias -> CacheHit(key, alias) }
-        }
+        val result = validateOriginalCacheEntries(keys, aliases, accept)
+        result.rejected.forEach(::discardRejected)
+        return result.hit
     }
 
     private fun write(key: String, alias: AppleInternalCatalogResolver.Alias) {

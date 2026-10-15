@@ -5,64 +5,133 @@ import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.model.OnlineLyricSources
 
 object ModuleSettingsSchema {
-    /** Keys removed by the profile migration. */
-    val obsoleteKeys: Set<String> = setOf(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
-
-    fun decode(values: Map<String, *>): ModuleSettings = ModuleSettings(
-        dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
-        disableEditorialVideoOnTablet = values.boolean(
-            KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
-            default = true,
-        ),
-        phoneLiquidGlassEnabled = values.boolean(
-            KEY_PHONE_LIQUID_GLASS,
-            default = false,
-        ),
-        phoneLiquidGlassBottomGapDp = values.number(KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)
-            ?.coerceIn(
-                ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-                ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-            ) ?: EnhancementDefaults.GLASS_BOTTOM_DP,
-        phoneLiquidGlassPanelBlurDp = values.number(KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP)
-            ?.coerceIn(
-                ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-                ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-            ) ?: EnhancementDefaults.GLASS_PANEL_BLUR_DP.toInt(),
-        futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
-        cjkKaraokeAnimationEnabled = values.boolean(
-            KEY_CJK_KARAOKE_ANIMATION_ENABLED,
-            default = true,
-        ),
-        navigationCompensationEnabled = values.boolean(
-            KEY_NAVIGATION_COMPENSATION,
-            default = false,
-        ),
-        forceCellularDataEntryEnabled = values.boolean(KEY_FORCE_CELLULAR_DATA_ENTRY, default = false),
-        lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
-            ?.coerceIn(
-                ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
-                ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
-            ) ?: 0,
-        appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
-            values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
-        ),
-        titleCorrectionEnabled = values.boolean(
-            KEY_TITLE_CORRECTION_ENABLED,
-            default = false,
-        ),
-        titleCorrectionMode = values.titleCorrectionMode(),
-        customLyricsEnabled = values.boolean(
-            KEY_CUSTOM_LYRICS_ENABLED,
-            default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
-        ),
-        automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
-        fontManifest = values.fontManifest(),
-        customLyricsManifest = values.customLyricsManifest(),
-        schemaVersion = values.number(KEY_SCHEMA_VERSION)
-            ?: ModuleConstants.CONFIG_SCHEMA_VERSION,
+    /** Keys removed by the profile migrations. */
+    val obsoleteKeys: Set<String> = setOf(
+        KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
+        // v20: the retired single picker; its region half moves to KEY_REGION_SELECTION
+        // and its name half to KEY_RESTORE_CJK_ORIGINAL_METADATA.
+        KEY_TITLE_CORRECTION_MODE,
+        // v21: the fork-only master switch.  HLE's page has no master; the region
+        // picker plus KEY_OVERRIDE_ACCOUNT_LANGUAGE and
+        // KEY_RESTORE_CJK_ORIGINAL_METADATA fully express when the runtime acts.
+        // The retired value is carried over onto the new override switch below.
+        KEY_TITLE_CORRECTION_ENABLED,
     )
+
+    fun decode(values: Map<String, *>): ModuleSettings {
+        val regionSelection = values.regionSelection()
+        return ModuleSettings(
+            dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
+            disableEditorialVideoOnTablet = values.boolean(
+                KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
+                default = true,
+            ),
+            phoneLiquidGlassEnabled = values.boolean(
+                KEY_PHONE_LIQUID_GLASS,
+                default = false,
+            ),
+            phoneLiquidGlassBottomGapDp = values.number(KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)
+                ?.coerceIn(
+                    ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
+                    ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
+                ) ?: EnhancementDefaults.GLASS_BOTTOM_DP,
+            phoneLiquidGlassPanelBlurDp = values.number(KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP)
+                ?.coerceIn(
+                    ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+                    ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+                ) ?: EnhancementDefaults.GLASS_PANEL_BLUR_DP.toInt(),
+            futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
+            cjkKaraokeAnimationEnabled = values.boolean(
+                KEY_CJK_KARAOKE_ANIMATION_ENABLED,
+                default = true,
+            ),
+            navigationCompensationEnabled = values.boolean(
+                KEY_NAVIGATION_COMPENSATION,
+                default = false,
+            ),
+            forceCellularDataEntryEnabled = values.boolean(KEY_FORCE_CELLULAR_DATA_ENTRY, default = false),
+            lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
+                    ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
+                ) ?: 0,
+            appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
+                values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
+            ),
+            regionSelection = regionSelection,
+            // HLE's 「歌曲信息替换至设定地区语言」.  A store written by the retired
+            // master-switch model replaced account language whenever a region was
+            // selected and the master was on; carry that over so the upgrade keeps
+            // behaving the same.  A fresh store lands on HLE's default, false.
+            overrideAccountLanguage = values.boolean(
+                KEY_OVERRIDE_ACCOUNT_LANGUAGE,
+                default = values.legacyOverrideAccountLanguageDefault(),
+            ),
+            // Stores that predate the separate switch keep the behaviour of the retired
+            // picker: its no-region value restored names, every region value did not.
+            // Once the key exists it always wins, so the controls are independent.
+            restoreCjkOriginalMetadata = values.boolean(
+                KEY_RESTORE_CJK_ORIGINAL_METADATA,
+                default = values.legacyRestoreCjkOriginalMetadataDefault(),
+            ),
+            localizedMetadataCache = values.boolean(
+                KEY_LOCALIZED_METADATA_CACHE,
+                default = true,
+            ),
+            metadataCacheClearGeneration = metadataCacheClearGeneration(values),
+            customLyricsEnabled = values.boolean(
+                KEY_CUSTOM_LYRICS_ENABLED,
+                default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
+            ),
+            automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
+            onlineLyricsSupplementEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
+                default = false,
+            ),
+            onlineLyricsSourceNeteaseEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
+                default = true,
+            ),
+            onlineLyricsSourceQqEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
+                default = true,
+            ),
+            onlineLyricsSourceKuwoEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED,
+                default = true,
+            ),
+            onlineLyricsSourceKugouEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED,
+                default = true,
+            ),
+            onlineLyricsAutomaticOrderEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED,
+                default = true,
+            ),
+            onlineLyricsSourceOrder = OnlineLyricSources.normalizeOrder(
+                values.string(KEY_ONLINE_LYRICS_SOURCE_ORDER),
+            ).joinToString(","),
+            onlineLyricsGlobalBestEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
+                default = false,
+            ),
+            onlineLyricsTranslationEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
+                default = false,
+            ),
+            onlineLyricsHideMandarinPinyinEnabled = values.boolean(
+                KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN,
+                default = false,
+            ),
+            fontManifest = values.fontManifest(),
+            customLyricsManifest = values.customLyricsManifest(),
+            schemaVersion = values.number(KEY_SCHEMA_VERSION)
+                ?: ModuleConstants.CONFIG_SCHEMA_VERSION,
+        )
+    }
 
     fun encode(settings: ModuleSettings): Map<String, Any> =
         encodeOrdinarySettings(settings) +
@@ -99,10 +168,28 @@ object ModuleSettingsSchema {
             KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI to ModuleSettings.normalizeAppleMusicDpi(
                 settings.appleMusicDpiOverrideDpi,
             ),
-            KEY_TITLE_CORRECTION_ENABLED to settings.titleCorrectionEnabled,
-            KEY_TITLE_CORRECTION_MODE to settings.titleCorrectionMode.storageValue,
+            KEY_REGION_SELECTION to settings.regionSelection.storageValue,
+            KEY_OVERRIDE_ACCOUNT_LANGUAGE to settings.overrideAccountLanguage,
+            KEY_RESTORE_CJK_ORIGINAL_METADATA to settings.restoreCjkOriginalMetadata,
+            KEY_LOCALIZED_METADATA_CACHE to settings.localizedMetadataCache,
+            KEY_METADATA_CACHE_CLEAR_GENERATION to
+                settings.metadataCacheClearGeneration.coerceAtLeast(0L),
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
+            KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED to settings.onlineLyricsSourceNeteaseEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED to settings.onlineLyricsSourceQqEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED to settings.onlineLyricsSourceKuwoEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED to settings.onlineLyricsSourceKugouEnabled,
+            KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED to
+                settings.onlineLyricsAutomaticOrderEnabled,
+            KEY_ONLINE_LYRICS_SOURCE_ORDER to
+                OnlineLyricSources.normalizeOrder(settings.onlineLyricsSourceOrder)
+                    .joinToString(","),
+            KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED to settings.onlineLyricsGlobalBestEnabled,
+            KEY_ONLINE_LYRICS_TRANSLATION_ENABLED to settings.onlineLyricsTranslationEnabled,
+            KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN to
+                settings.onlineLyricsHideMandarinPinyinEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return values
@@ -162,6 +249,14 @@ object ModuleSettingsSchema {
     fun hasMigratableValues(values: Map<String, *>): Boolean =
         values.keys.any { it in settingKeys || it in obsoleteKeys || it in indexPointerKeys }
 
+    /**
+     * Cheap single-key read of the one-shot 「清空检索库」 signal.  The metadata
+     * runtime polls this on its request seams, so it must not decode every
+     * setting (and the map values are already loaded by the caller).
+     */
+    fun metadataCacheClearGeneration(values: Map<String, *>): Long =
+        values.long(KEY_METADATA_CACHE_CLEAR_GENERATION)?.coerceAtLeast(0L) ?: 0L
+
     /** Legacy v1 preference-string manifest, kept for pre-migration reads. */
     fun decodeLegacyCustomLyricsManifest(values: Map<String, *>): CustomLyricsManifest =
         CustomLyricsManifestCodec.decode(values.string(KEY_CUSTOM_LYRICS_MANIFEST))
@@ -183,33 +278,94 @@ object ModuleSettingsSchema {
     private fun Map<String, *>.customLyricsManifest(): CustomLyricsManifest =
         decodeLegacyCustomLyricsManifest(this)
 
-    private fun Map<String, *>.titleCorrectionMode(): TitleCorrectionMode {
-        val storedMode = string(KEY_TITLE_CORRECTION_MODE)
-        if (storedMode.isNotBlank()) return TitleCorrectionMode.decode(storedMode)
-        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) {
-            return TitleCorrectionMode.ORIGINAL_HYPER
+    /**
+     * Reads the region control.  The new key wins; a store written before the split
+     * still carries the retired picker value, and the v11 target language is the last
+     * fallback for a store that predates the picker entirely.
+     */
+    private fun Map<String, *>.regionSelection(): RegionSelection {
+        val storedRegion = string(KEY_REGION_SELECTION)
+        if (storedRegion.isNotBlank()) return RegionSelection.decode(storedRegion)
+        val storedLegacyMode = string(KEY_TITLE_CORRECTION_MODE)
+        if (storedLegacyMode.isNotBlank()) {
+            return RegionSelection.fromLegacyTitleCorrectionMode(storedLegacyMode)
         }
-        return TitleCorrectionMode.fromLegacyTargetLanguage(
+        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) {
+            return RegionSelection.NONE
+        }
+        return RegionSelection.fromLegacyTargetLanguage(
             string(KEY_TITLE_CORRECTION_TARGET_LANGUAGE),
         )
     }
 
     /**
-     * Returns the host-local values required before removing the v11 target
-     * language key.  This is intentionally independent of the schema version:
-     * an already-initialized embedded store skips remote migration, so it must
-     * still be able to upgrade its own legacy value in place.
+     * The original-name restore default for a store that predates the separate switch.
+     * It deliberately reads only the retired picker and its v11 predecessor, never
+     * [KEY_REGION_SELECTION], so the region control can never imply the switch.
+     *
+     * A store with no retired region profile at all is a fresh (or lyrics-only)
+     * installation: HLE's 「替换中日韩歌曲信息为原地区原名」 defaults off there.
+     */
+    private fun Map<String, *>.legacyRestoreCjkOriginalMetadataDefault(): Boolean {
+        val storedLegacyMode = string(KEY_TITLE_CORRECTION_MODE)
+        if (storedLegacyMode.isNotBlank()) {
+            return RegionSelection.fromLegacyTitleCorrectionMode(storedLegacyMode) ==
+                RegionSelection.NONE
+        }
+        if (!containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)) return false
+        if (!boolean(KEY_TITLE_CORRECTION_ENABLED, default = false)) return false
+        return RegionSelection.fromLegacyTargetLanguage(
+            string(KEY_TITLE_CORRECTION_TARGET_LANGUAGE),
+        ) == RegionSelection.NONE
+    }
+
+    /**
+     * HLE's 「歌曲信息替换至设定地区语言」 default for a store written by the retired
+     * master-switch model: the old runtime replaced account language whenever a region
+     * was selected and the master was on, so the upgrade keeps that behaviour.
+     *
+     * It reads the retired master rather than [KEY_REGION_SELECTION] alone, and a
+     * store with no retired master (a fresh store) keeps HLE's default, false.
+     */
+    private fun Map<String, *>.legacyOverrideAccountLanguageDefault(): Boolean =
+        boolean(KEY_TITLE_CORRECTION_ENABLED, default = false) &&
+            regionSelection().replacesRegion
+
+    /**
+     * Returns the host-local values required before removing the retired keys.  This
+     * is intentionally independent of the schema version: an already-initialized
+     * embedded store skips remote migration, so it must still be able to upgrade its
+     * own legacy values in place.
+     *
+     * It publishes the region selection and, when the store predates the separate
+     * switches, their derived values, because the legacy keys are deleted right after
+     * this call.  A v20 store already has [KEY_REGION_SELECTION], so only the
+     * `override_account_language` carry-over runs for it.
      */
     fun legacyTitleCorrectionMigrationValues(values: Map<String, *>): Map<String, Any> {
-        if (!values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE) ||
-            values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
-        ) {
-            return emptyMap()
+        val migration = linkedMapOf<String, Any>()
+        if (values.string(KEY_REGION_SELECTION).isBlank()) {
+            val hasLegacyMode = values.string(KEY_TITLE_CORRECTION_MODE).isNotBlank()
+            val hasLegacyTarget = values.containsKey(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
+            if (hasLegacyMode || hasLegacyTarget) {
+                migration[KEY_REGION_SELECTION] = values.regionSelection().storageValue
+                if (!values.containsKey(KEY_RESTORE_CJK_ORIGINAL_METADATA)) {
+                    migration[KEY_RESTORE_CJK_ORIGINAL_METADATA] =
+                        values.legacyRestoreCjkOriginalMetadataDefault()
+                }
+            }
         }
-        return linkedMapOf(
-            KEY_TITLE_CORRECTION_MODE to values.titleCorrectionMode().storageValue,
-            KEY_SCHEMA_VERSION to ModuleConstants.CONFIG_SCHEMA_VERSION,
-        )
+        // The retired master switch is deleted right after this call; record the
+        // account-language override it implied while it is still readable.
+        if (!values.containsKey(KEY_OVERRIDE_ACCOUNT_LANGUAGE) &&
+            values.containsKey(KEY_TITLE_CORRECTION_ENABLED)
+        ) {
+            migration[KEY_OVERRIDE_ACCOUNT_LANGUAGE] =
+                values.legacyOverrideAccountLanguageDefault()
+        }
+        if (migration.isEmpty()) return emptyMap()
+        migration[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
+        return migration
     }
 
     private fun Map<String, *>.string(key: String): String = this[key] as? String ?: ""
@@ -253,11 +409,28 @@ object ModuleSettingsSchema {
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
+        KEY_REGION_SELECTION,
+        KEY_OVERRIDE_ACCOUNT_LANGUAGE,
+        KEY_RESTORE_CJK_ORIGINAL_METADATA,
+        KEY_LOCALIZED_METADATA_CACHE,
+        KEY_METADATA_CACHE_CLEAR_GENERATION,
+        // Retired keys still count as settings so an old store migrates its own
+        // values instead of falling back to the legacy source.
         KEY_TITLE_CORRECTION_ENABLED,
         KEY_TITLE_CORRECTION_MODE,
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
+        KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED,
+        KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED,
+        KEY_ONLINE_LYRICS_SOURCE_ORDER,
+        KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
+        KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
+        KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
         KEY_FONT_FILE_ID,
@@ -274,6 +447,14 @@ object ModuleSettingsSchema {
         KEY_CUSTOM_LYRICS_INDEX_SIZE_BYTES,
     )
 
+    /**
+     * Every preference key that can point at a custom-lyrics index file: the
+     * published pointer plus the legacy v1 manifest string. The
+     * 「清空自定义歌词」 action removes them all, so a reset index can never be
+     * re-materialized from a stale pointer or a leftover legacy value.
+     */
+    val customLyricsIndexKeys: Set<String> = indexPointerKeys + KEY_CUSTOM_LYRICS_MANIFEST
+
     private const val KEY_DUAL_PANE = "dual_pane_enabled"
     private const val KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET =
         "disable_editorial_video_on_tablet"
@@ -286,11 +467,40 @@ object ModuleSettingsSchema {
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
+    /** Retired v21: the fork-only master switch for the whole HLE runtime. */
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"
+    private const val KEY_REGION_SELECTION = "region_selection"
+    /** HLE's 「歌曲信息替换至设定地区语言」 switch. */
+    private const val KEY_OVERRIDE_ACCOUNT_LANGUAGE = "override_account_language"
+    /** Retired v20: the single picker that carried both region and title correction. */
     private const val KEY_TITLE_CORRECTION_MODE = "title_correction_mode"
+    private const val KEY_RESTORE_CJK_ORIGINAL_METADATA = "restore_cjk_original_metadata"
+    private const val KEY_LOCALIZED_METADATA_CACHE = "localized_metadata_cache"
+    /** Monotonic one-shot signal written by the 「清空检索库」 action. */
+    private const val KEY_METADATA_CACHE_CLEAR_GENERATION = "metadata_cache_clear_generation"
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"
+    private const val KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED =
+        "online_lyrics_supplement_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED =
+        "online_lyrics_source_netease_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED =
+        "online_lyrics_source_qq_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED =
+        "online_lyrics_source_kuwo_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED =
+        "online_lyrics_source_kugou_enabled"
+    private const val KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED =
+        "online_lyrics_automatic_order_enabled"
+    private const val KEY_ONLINE_LYRICS_SOURCE_ORDER = "online_lyrics_source_order"
+    private const val KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED =
+        "online_lyrics_global_best_enabled"
+    private const val KEY_ONLINE_LYRICS_TRANSLATION_ENABLED =
+        "online_lyrics_translation_enabled"
+    /** HLE's 「不显示国语歌拼音」 switch. */
+    private const val KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN =
+        "online_lyrics_hide_mandarin_pinyin"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

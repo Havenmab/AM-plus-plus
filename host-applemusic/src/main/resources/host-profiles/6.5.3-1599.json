@@ -559,6 +559,184 @@
         "resolutionPolicy": "legacy-reviewed-candidates"
       }
     ],
+    "MEDIA_API_CATALOG_REQUEST_EXECUTOR": [
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "d",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "v8.D",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "b",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "v8.D",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "d",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "A5.l",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 6,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "c",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "A5.l",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "d",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "Ic.n",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      },
+      {
+        "parameterTypeNames": [
+          "java.lang.Long",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.lang.String",
+          "java.util.LinkedHashMap",
+          "Hg.c"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 7,
+        "returnTypeName": "java.lang.Object",
+        "allowFirstMatch": false,
+        "methodName": "e",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "Ic.n",
+        "runtimeMemberNames": {},
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_CATALOG_REQUEST_EXECUTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      }
+    ],
+    "MEDIA_API_AMP_HTTP_INTERCEPTOR": [
+      {
+        "parameterTypeNames": [
+          "Li.f"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "Gi.D",
+        "allowFirstMatch": false,
+        "methodName": "a",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "w8.d",
+        "runtimeMemberNames": {
+          "CONTENT_HTTP_RESPONSE_STATUS_FIELD": "d",
+          "CONTENT_HTTP_REQUEST_BUILDER_URL_METHOD": "h",
+          "CONTENT_HTTP_REQUEST_URL_FIELD": "a",
+          "CONTENT_HTTP_RESPONSE_REQUEST_FIELD": "a",
+          "CONTENT_HTTP_HEADERS_GET_METHOD": "e",
+          "CONTENT_HTTP_HEADERS_VALUES_FIELD": "a",
+          "CONTENT_HTTP_REQUEST_BUILDER_HEADER_METHOD": "d",
+          "CONTENT_HTTP_REQUEST_HEADERS_FIELD": "c",
+          "CONTENT_HTTP_REQUEST_NEW_BUILDER_METHOD": "b",
+          "CONTENT_HTTP_RESPONSE_HEADERS_FIELD": "f",
+          "CONTENT_HTTP_REQUEST_BUILDER_BUILD_METHOD": "b",
+          "CONTENT_HTTP_CHAIN_REQUEST_FIELD": "e"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "MEDIA_API_AMP_HTTP_INTERCEPTOR",
+        "resolutionPolicy": "legacy-reviewed-candidates"
+      }
+    ],
     "DEBUG_ATMOS_SV_AUDIO_PERIOD_ID": [
       {
         "parameterTypeNames": [
@@ -666,6 +844,21 @@
       "Lw8/a;": [
         "a(LLi/f;)LGi/D;"
       ],
+      "Lw8/d;": [
+        "a(LLi/f;)LGi/D;"
+      ],
+      "Lv8/D;": [
+        "b(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+        "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;"
+      ],
+      "LA5/l;": [
+        "c(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+        "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;"
+      ],
+      "LIc/n;": [
+        "d(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;",
+        "e(Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/LinkedHashMap;LHg/c;)Ljava/lang/Object;"
+      ],
       "Lu8/E;": [
         "c0(Ljava/util/Map;)Ljava/util/LinkedHashMap;",
         "v(Ljava/lang/String;Ljava/util/Map;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;"
@@ -711,6 +904,13 @@
       "LGi/A;": [
         "a",
         "c"
+      ],
+      "LGi/A$a;": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e"
       ],
       "LGi/D;": [
         "a",

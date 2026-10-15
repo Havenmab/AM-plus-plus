@@ -106,6 +106,36 @@ object MediaMetadataCache {
         return updated
     }
 
+    /**
+     * Drops the original-region resolution state of every cached entry for
+     * [profile] so the next read re-queries the catalog; the display
+     * title/artist stay intact.  Used by the user-facing 清空检索库 action.
+     */
+    @Synchronized
+    fun resetOriginalMetadataResolutions(profile: String = activeProfile): Int {
+        val prefix = normalizeProfile(profile) + ":"
+        var reset = 0
+        metadataCache.keys.toList().forEach { key ->
+            if (!key.startsWith(prefix)) return@forEach
+            val metadata = metadataCache[key] ?: return@forEach
+            if (
+                metadata.originalMetadataResolved ||
+                metadata.originalTitle != null ||
+                metadata.originalArtist != null ||
+                metadata.originalAlbum != null
+            ) {
+                metadataCache[key] = metadata.copy(
+                    originalTitle = null,
+                    originalArtist = null,
+                    originalAlbum = null,
+                    originalMetadataResolved = false,
+                )
+                reset++
+            }
+        }
+        return reset
+    }
+
     private fun mergeGenres(current: String?, genres: Collection<String>): String? =
         sequenceOf(current)
             .plus(genres.asSequence())

@@ -96,6 +96,23 @@ internal enum class AppleMusicHookPoint {
     DATA_BINDING_RUNTIME_CLASSES,
     COLLECTION_SURFACE_CLASSES,
     ARTIST_SURFACE_CLASSES,
+    // collection2 Compose album page (7.0.0-beta). The legacy Epoxy collection surface above is
+    // untouched; both are declared and each install path stays fail-open on builds that lack it.
+    ALBUM_COMPOSE_RESUME,
+    ALBUM_COMPOSE_CONTENT,
+    ALBUM_COMPOSE_VIEW_MODEL_GETTER,
+    ALBUM_COMPOSE_PAGE_ID,
+    ALBUM_COMPOSE_CURRENT_DATA,
+    ALBUM_COMPOSE_TRACK_MAPPER,
+    ALBUM_COMPOSE_TRACK_COMPARATOR,
+    ALBUM_COMPOSE_REFRESH,
+    ALBUM_COMPOSE_HEADER_REFRESH,
+    ALBUM_COMPOSE_ROW,
+    ALBUM_COMPOSE_ENTITY_ID,
+    ARTIST_COMPOSE_ENTITY_TYPE,
+    ARTIST_COMPOSE_ENTITY_RELATIONSHIPS,
+    ARTIST_COMPOSE_RELATIONSHIP_ENTITIES,
+    ARTIST_COMPOSE_FRAGMENT_RESUMED,
     LISTEN_NOW_MODEL_BUILDER,
     LISTEN_NOW_BOUND_LISTENER,
     LISTEN_NOW_MODEL,
@@ -104,6 +121,8 @@ internal enum class AppleMusicHookPoint {
     LISTEN_NOW_CUSTOM_IMAGE_VIEW,
     LISTEN_NOW_MEDIA_ENTITY,
     LISTEN_NOW_COLLECTION_ITEM_VIEW,
+    MEDIA_API_CATALOG_REQUEST_EXECUTOR,
+    MEDIA_API_AMP_HTTP_INTERCEPTOR,
 }
 
 internal enum class AppleMusicRuntimeMember {
@@ -211,6 +230,15 @@ internal enum class AppleMusicRuntimeMember {
     LYRICS_VIEW_MODEL_PRONUNCIATION_AVAILABLE_GETTER,
     LYRICS_VIEW_MODEL_TRANSLATION_SELECTED_GETTER,
     LYRICS_VIEW_MODEL_TRANSLATION_AVAILABLE_GETTER,
+    // HLE's `PreferencesMonitor` members: the 1606 `APPLE_SHARED_PREFERENCES_CLASS`
+    // override pins `ja.i0` with `g`/`s`/`k`/`h`/`d` (plus the two stable-profile
+    // getters), so a preference read is cache-first and never blocks on a lyric getter.
+    LYRICS_PREFERENCES_TRANSLATION_GETTER,
+    LYRICS_PREFERENCES_PRONUNCIATION_GETTER,
+    LYRICS_PREFERENCES_PRONUNCIATION_CACHE_FIELD,
+    LYRICS_PREFERENCES_PRONUNCIATION_KEY_FIELD,
+    LYRICS_PREFERENCES_STORE_GETTER,
+    LYRICS_PREFERENCES_STORE_READ_METHOD,
     PLAYER_LYRICS_ITEM_HAS_LYRICS_METHOD,
     PLAYER_LYRICS_ITEM_HAS_CUSTOM_LYRICS_METHOD,
     PLAYER_SONG_BINDING_PLAYBACK_ITEM_FIELD,
@@ -254,6 +282,8 @@ internal enum class AppleMusicRuntimeMember {
     COLLECTION_PLAYLIST_TITLE_FIELD,
     COLLECTION_PLAYLIST_SUBTITLE_FIELD,
     COLLECTION_ENTITY_EXPLICIT_METHOD,
+    ALBUM_COMPOSE_ROW_KEY_FIELD,
+    ALBUM_COMPOSE_KEY_ID_FIELD,
     APPLE_TEXT_STYLE_EXPLICIT_TITLE_METHOD,
     EPOXY_FINAL_HOLDER_MODEL_HOLDER_METHOD,
     ARTIST_RUNTIME_ROLE,
@@ -404,7 +434,10 @@ internal object AppleMusicHookProfiles {
         dev.amenhancer.host.applemusic.AppleMusicHostProfiles.all.map { profile ->
             val points = profile.document.getJSONObject("hookTargets")
             val targets = AppleMusicHookPoint.entries.associateWith { point ->
-                val entries = points.getJSONArray(point.name)
+                // A profile only declares the targets its build actually verifies, so a hook
+                // point may be absent from a given document (the region executors are declared
+                // for 6.5.3 only): decode it as "no target" instead of failing every profile.
+                val entries = points.optJSONArray(point.name) ?: return@associateWith emptyList()
                 List(entries.length()) { index -> decodeTarget(point, entries.getJSONObject(index)) }
             }
             AppleMusicHookProfile(profile.document.getString("hookProfileId"), profile.versionName,
@@ -858,7 +891,22 @@ internal class AppleMusicHookResolver(
             AppleMusicHookPoint.LIBRARY_ENTITY_CLASSES,
             AppleMusicHookPoint.DATA_BINDING_RUNTIME_CLASSES,
             AppleMusicHookPoint.COLLECTION_SURFACE_CLASSES,
-            AppleMusicHookPoint.ARTIST_SURFACE_CLASSES -> true
+            AppleMusicHookPoint.ARTIST_SURFACE_CLASSES,
+            AppleMusicHookPoint.ALBUM_COMPOSE_RESUME,
+            AppleMusicHookPoint.ALBUM_COMPOSE_CONTENT,
+            AppleMusicHookPoint.ALBUM_COMPOSE_VIEW_MODEL_GETTER,
+            AppleMusicHookPoint.ALBUM_COMPOSE_PAGE_ID,
+            AppleMusicHookPoint.ALBUM_COMPOSE_CURRENT_DATA,
+            AppleMusicHookPoint.ALBUM_COMPOSE_TRACK_MAPPER,
+            AppleMusicHookPoint.ALBUM_COMPOSE_TRACK_COMPARATOR,
+            AppleMusicHookPoint.ALBUM_COMPOSE_REFRESH,
+            AppleMusicHookPoint.ALBUM_COMPOSE_HEADER_REFRESH,
+            AppleMusicHookPoint.ALBUM_COMPOSE_ROW,
+            AppleMusicHookPoint.ALBUM_COMPOSE_ENTITY_ID,
+            AppleMusicHookPoint.ARTIST_COMPOSE_ENTITY_TYPE,
+            AppleMusicHookPoint.ARTIST_COMPOSE_ENTITY_RELATIONSHIPS,
+            AppleMusicHookPoint.ARTIST_COMPOSE_RELATIONSHIP_ENTITIES,
+            AppleMusicHookPoint.ARTIST_COMPOSE_FRAGMENT_RESUMED -> true
 
             AppleMusicHookPoint.CONTENT_ITEM_METADATA_CLASSES,
             AppleMusicHookPoint.RECENTLY_SEARCHED_MEDIA_ENTITY -> true
@@ -879,6 +927,15 @@ internal class AppleMusicHookResolver(
             AppleMusicHookPoint.PLAYER_LYRICS_VIEW_MODEL_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ARTIST_CLASS,
             AppleMusicHookPoint.IN_APP_CONTAINER_ALBUM_CLASS -> true
+
+            // Catalog executors are verified by full descriptor in the profile; the structural
+            // fallback only has to reject obviously wrong shapes so a renamed sibling cannot be
+            // hooked in their place.
+            AppleMusicHookPoint.MEDIA_API_CATALOG_REQUEST_EXECUTOR ->
+                method.parameterCount in 6..7 &&
+                    method.parameterTypes.any { Map::class.java.isAssignableFrom(it) }
+
+            AppleMusicHookPoint.MEDIA_API_AMP_HTTP_INTERCEPTOR -> method.parameterCount == 1
 
             AppleMusicHookPoint.MEDIA_API_REPOSITORY_HOLDER_CLASS -> true
 

@@ -23,7 +23,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogEntitySnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogArtistSnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogIdentity
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.PreparedOriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogSong
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedRequest
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LockedIsrcFallbackTask
@@ -53,7 +52,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.QUERY_TIMEOUT_MS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ARTIST_ALIAS_CACHE_SCHEMA
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.CATALOG_REQUEST_TOKEN_PARAM
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ORIGINAL_LANGUAGE_PROBE_ORDER
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.COLLABORATION_ARTIST_PATTERNS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.collaborationArtistCache
 
@@ -86,9 +84,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactOriginalEntityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactIdentityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHanCharacters
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.hasCjkArtistScript
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsJapaneseKana
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHangul
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.storefrontForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagsForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagForContentUiLanguage
@@ -209,7 +204,7 @@ internal fun AppleInternalCatalogResolver.resolveOriginalMetadataFromCatalog(
                             originKnown = true,
                             artistIds = (
                                 identity.artistIds + regionalArtistIds
-                            ).distinct(),
+                                ).distinct(),
                         )
                     } else {
                         if (resolvedAlias != null) {
@@ -381,47 +376,6 @@ internal fun AppleInternalCatalogResolver.finishResolve(
         originKnown: Boolean,
         artistIds: List<String>,
     ) {
-        // Canonical language filtering and alias confidence checks are pure operations over
-        // immutable DTOs.  Keep cache mutation and completion publication on the host main thread,
-        // but do not make the UI wait for this potentially multi-candidate selection pass.
-        catalogBackgroundExecutor.execute {
-            val prepared = runCatching {
-                prepareOriginalResolution(
-                    metadata = metadata,
-                    languages = languages,
-                    results = results,
-                    originKnown = originKnown,
-                    artistIds = artistIds,
-                )
-            }.onFailure { error ->
-                ProviderLogger.error(
-                    "Apple 内部原名候选后台匹配失败: id=${metadata.id}",
-                    error,
-                )
-            }.getOrElse {
-                PreparedOriginalResolution(
-                    canonicalLanguages = languages.map(String::trim).filter(String::isNotEmpty),
-                    sourceLanguage = languages.singleOrNull(),
-                    originalAlias = null,
-                    resolvedAlbum = null,
-                    originKnown = originKnown,
-                    artistIds = artistIds,
-                )
-            }
-            mainHandler.post {
-                publishOriginalResolution(metadata, prepared)
-            }
-        }
-    }
-
-
-internal fun AppleInternalCatalogResolver.prepareOriginalResolution(
-        metadata: MediaMetadataCache.Metadata,
-        languages: List<String>,
-        results: List<Alias>,
-        originKnown: Boolean,
-        artistIds: List<String>,
-    ): PreparedOriginalResolution {
         val canonicalLanguages = languages.map(::canonicalOriginalLanguage).distinct()
         val sourceLanguage = canonicalLanguages.singleOrNull()
         val acceptableResults = regionalOriginalAliases(results, canonicalLanguages)
@@ -443,44 +397,27 @@ internal fun AppleInternalCatalogResolver.prepareOriginalResolution(
             null
         }
         val originalAlias = selected ?: confirmedRegionalAlias
-        val resolvedAlbum = originalAlbumFromResolution(
-            alias = originalAlias,
-            acceptableResults = acceptableResults,
-        )
-        return PreparedOriginalResolution(
-            canonicalLanguages = canonicalLanguages,
-            sourceLanguage = sourceLanguage,
-            originalAlias = originalAlias,
-            resolvedAlbum = resolvedAlbum,
-            originKnown = originKnown,
-            artistIds = artistIds,
-        )
-    }
-
-
-internal fun AppleInternalCatalogResolver.publishOriginalResolution(
-        metadata: MediaMetadataCache.Metadata,
-        prepared: PreparedOriginalResolution,
-    ) {
-        val originalAlias = prepared.originalAlias
         if (originalAlias != null) {
             synchronized(cache) { cache[metadata.id] = originalAlias }
             persistentOriginalCache.put(originalSongCacheKey(metadata.id), originalAlias)
         }
+        val resolvedAlbum = originalAlbumFromResolution(
+            alias = originalAlias,
+            acceptableResults = acceptableResults,
+        )
         discardOriginalCandidates(metadata.id)
         val callbacks = synchronized(inFlight) { inFlight.remove(metadata.id).orEmpty() }
         ProviderLogger.info(
             "Apple 内部原名查询完成: id=${metadata.id}, genre=${metadata.genre}, " +
-                "languages=${prepared.canonicalLanguages}, " +
-                "selected=${originalAlias?.title}/${originalAlias?.artist}"
+                "languages=$canonicalLanguages, selected=${originalAlias?.title}/${originalAlias?.artist}"
         )
         val resolution = OriginalResolution(
             alias = originalAlias,
             language = originalAlias?.language?.takeIf(String::isNotBlank)
-                ?: prepared.sourceLanguage,
-            originKnown = prepared.originKnown,
-            artistIds = prepared.artistIds,
-            album = prepared.resolvedAlbum,
+                ?: sourceLanguage,
+            originKnown = originKnown,
+            artistIds = artistIds,
+            album = resolvedAlbum,
         )
         callbacks.forEach { callback -> callback(resolution) }
     }
@@ -681,4 +618,3 @@ internal fun AppleInternalCatalogResolver.finishCatalogIdentity(mediaId: String,
 
 internal fun AppleInternalCatalogResolver.isUsefulCatalogIdentity(identity: CatalogIdentity): Boolean =
         shouldCacheCatalogIdentity(identity.isrc, identity.genres)
-

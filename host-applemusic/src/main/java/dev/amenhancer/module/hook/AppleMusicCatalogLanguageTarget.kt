@@ -6,18 +6,21 @@ import java.util.LinkedHashMap
 import java.util.Locale
 
 /**
- * Compatibility adapter for the former process-wide Catalog request-language adaptation.
+ * Compatibility adapter for the former per-feature Catalog request-language target.
  *
- * The old target cannot safely distinguish all ordinary Apple Music requests from
- * metadata lookups.  HLE now carries its locale in a resolver-owned token instead,
- * so this adapter must never install global hooks.
+ * The region rewrite is not installed from here: it lives in the HLE localization hooks
+ * (`AppleContentLocalizationHooks`), which own the account-storefront capture, the
+ * entitlement-bound request fallback and the token discriminator.  Installing a second,
+ * independent set of process-wide hooks from this legacy slot would bypass all three, so the
+ * adapter stays inert and only [CatalogLanguageRewritePolicy] is still used by the metadata
+ * composition helpers.
  */
 internal class AppleMusicCatalogLanguageTarget(
     private val symbols: TargetSymbolResolver,
     private val rawTargetLanguage: String?,
 ) : CatalogLanguageTarget {
     override fun install(): TargetCapabilityInstall = TargetCapabilityInstall.Degraded(
-        "Global Catalog locale hooks disabled; locale is scoped to HLE metadata tokens",
+        "Legacy adapter is inert; the region rewrite is owned by the HLE localization hooks",
     )
 }
 
@@ -34,7 +37,8 @@ internal object CatalogLanguageRewritePolicy {
 
     fun withHeaderLanguageValue(original: Map<*, *>, targetLanguage: String): Map<Any?, Any?> {
         if (isHleResolverRequest(original)) return original as Map<Any?, Any?>
-        val header = CatalogLanguagePolicy.headerLanguage(targetLanguage)
+        // Same as the content-HTTP seam: the tag goes out as configured (HLE does not map it).
+        val header = CatalogLanguagePolicy.normalize(targetLanguage)
         val key = original.keys.firstOrNull {
             it?.toString()?.equals("Accept-Language", ignoreCase = true) == true
         } ?: return original as Map<Any?, Any?>

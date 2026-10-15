@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -129,15 +130,55 @@ internal class AppleInternalCatalogResolver(
         RootConstants.DEFAULT_HOOK_APPLE_MUSIC_CONTENT_UI_LANGUAGE
 
     /**
+     * Language tag for the current selection, derived once when the selection changes.
+     *
+     * [configuredLanguageOrNull] is read on every ordinary MediaApi request, and deriving the tag
+     * allocates a fresh list each time; caching it keeps the hot path allocation-free.
+     */
+    @Volatile
+    internal var configuredLanguageTag: String? = null
+
+    /**
+     * Account storefront read from MediaApi before any configured region is applied.
+     *
+     * Radio/station and lyrics requests are tied to the account's entitlements, so they are
+     * always rewritten back to this value; without that, changing the display region can make
+     * songs the account can actually play resolve to nothing.
+     */
+    @Volatile
+    internal var accountStorefront: String? = null
+
+    @Volatile
+    internal var accountStorefrontCaptured = false
+
+    /** Last value this resolver wrote into the MediaApi storefront field. */
+    @Volatile
+    internal var lastAppliedConfiguredStorefront: String? = null
+
+    /**
+     * Whether the configured profile may rewrite ordinary (non-module) Apple Music traffic.
+     *
+     * False keeps the historical AM++ behaviour: only token-scoped module lookups are
+     * localized and every ordinary request keeps the account region.
+     */
+    @Volatile
+    internal var globalRegionRewriteEnabled = false
+
+    // Apple Music 6.5.3 leaves applicationConnector uninitialized during Application.onCreate,
+    // so the storefront write has to be retried instead of failing the whole install.
+    internal val storefrontApplyRetryGate = AtomicBoolean()
+    internal val storefrontApplyRetryAttempts = AtomicInteger()
+
+    /**
      * Prepares the selected metadata profile without changing Apple Music's account storefront.
      *
      * Fixed-region requests are scoped by [CatalogRequestLocalization] inside [queryResponse]
-     * and are tagged with [CATALOG_REQUEST_TOKEN_PARAM].  Mutating MediaApi here would affect
-     * ordinary Apple Music catalog traffic, so this method intentionally only records the
-     * selection and warms the profile's display cache.
+     * and are tagged with [CATALOG_REQUEST_TOKEN_PARAM].  Ordinary traffic is only rewritten by
+     * [applyRegionConfiguration], which the user has to opt into.
      */
     fun applyContentUiLanguage(selection: Int) {
         contentUiLanguageSelection = selection
+        configuredLanguageTag = languageTagForContentUiLanguage(selection)
         warmPersistentLocalizedCache(selection)
     }
 
@@ -158,6 +199,29 @@ internal class AppleInternalCatalogResolver(
             }
             warmPersistentLocalizedCache(contentUiLanguageSelection)
         }
+    }
+
+    /**
+     * User-facing 清空检索库 maintenance seam: drops every memoized lookup in this
+     * resolver and closes both persistent SQLite handles so the caller can delete
+     * the database files without leaving a stale open connection behind.
+     *
+     * The callback maps that track in-flight requests are intentionally left
+     * alone so pending callers still receive their result; the request that
+     * follows a clear always misses and re-queries the catalog.
+     */
+    internal fun dropMetadataCachesForMaintenance(): Int {
+        val dropped = persistentLocalizedCache.closeForMaintenance() +
+            persistentOriginalCache.resetForMaintenance()
+        synchronized(cache) { cache.clear() }
+        synchronized(localizedCache) { localizedCache.clear() }
+        synchronized(localizedArtistAliasCache) { localizedArtistAliasCache.clear() }
+        synchronized(requestPriorityByMediaId) { requestPriorityByMediaId.clear() }
+        synchronized(warmedSelections) { warmedSelections.clear() }
+        synchronized(warmingSelections) { warmingSelections.clear() }
+        catalogIdentityCache.clear()
+        originalArtistLanguageCache.clear()
+        return dropped
     }
 
     fun cachedLocalizedArtist(selection: Int, artistKeys: Collection<String>): Alias? {
@@ -321,7 +385,10 @@ internal class AppleInternalCatalogResolver(
                     persistentOriginalCache.remove(originalSongCacheKey(metadata.id))
                 }
                 persistentOriginalCache.remove(legacyAmbiguousSongCacheKey(metadata.id))
-                resolveOriginalMetadataFromCatalog(metadata, priority = priority)
+                resolveOriginalMetadataFromCatalog(
+                    metadata = metadata,
+                    priority = priority,
+                )
             }
         }
     }
@@ -413,11 +480,16 @@ internal class AppleInternalCatalogResolver(
                 mediaId = normalizedId,
                 lookupIds = lookupIds,
             ),
+            accept = { alias -> isAcceptableOriginalAlias(alias, alias.language) },
             onResult = { hit ->
-                val validAlias = hit?.alias?.takeIf {
-                    isAcceptableOriginalAlias(it, canonicalOriginalLanguage(it.language))
+                val validAlias = hit?.alias
+                if (BuildConfig.DEBUG) {
+                    ProviderLogger.info(
+                        "Apple 原名实体缓存读取: id=$normalizedId, entityType=$entityType, " +
+                            "key=${hit?.key}, language=${validAlias?.language}, hit=${hit != null}"
+                    )
                 }
-                if (validAlias != null && hit.key != directKey) {
+                if (validAlias != null && hit?.key != directKey) {
                     // Promote compatibility/alternate-ID hits so subsequent home builders use the
                     // same fast direct path as the library page.
                     persistentOriginalCache.put(directKey, validAlias)
@@ -702,15 +774,6 @@ internal class AppleInternalCatalogResolver(
         val artistIds: List<String>,
     )
 
-    internal data class PreparedOriginalResolution(
-        val canonicalLanguages: List<String>,
-        val sourceLanguage: String?,
-        val originalAlias: Alias?,
-        val resolvedAlbum: String?,
-        val originKnown: Boolean,
-        val artistIds: List<String>,
-    )
-
     internal data class CatalogSong(
         val id: String?,
         val alias: Alias,
@@ -749,8 +812,19 @@ internal class AppleInternalCatalogResolver(
     )
 
     data class CatalogRequestLocalization(
-        val storefront: String,
-        val language: String,
+        /**
+         * Catalog storefront this module request targets, or null when the request has no
+         * target of its own (the untargeted identity/ISRC/genre probe).  A null storefront
+         * means every seam must leave the request's storefront to Apple's own client: writing
+         * one from outside bypasses the app's own resolution of the account-owned catalog ID.
+         */
+        val storefront: String?,
+        /**
+         * Catalog `l` language this module request targets, or null when the request
+         * deliberately keeps the host's own request language (the untargeted
+         * identity/ISRC/genre probe).
+         */
+        val language: String?,
     )
 
     data class Alias(
@@ -792,7 +866,7 @@ internal class AppleInternalCatalogResolver(
         internal const val LOCALIZED_CACHE_SIZE = 4_096
         internal const val LOCALIZED_ARTIST_ALIAS_CACHE_SIZE = 2_048
         internal const val REQUEST_PRIORITY_CACHE_SIZE = 2_048
-        internal const val ORIGINAL_METADATA_CACHE_SCHEMA = "V2"
+        internal const val ORIGINAL_METADATA_CACHE_SCHEMA = "V3"
 
         internal fun isCoroutineSuspended(value: Any?): Boolean =
             value is Enum<*> && value.name == "COROUTINE_SUSPENDED"
@@ -821,15 +895,15 @@ internal class AppleInternalCatalogResolver(
             "$ORIGINAL_METADATA_CACHE_SCHEMA:$entityType:${language.trim()}:${mediaId.trim()}"
 
         /**
-         * Direct keys are always tried first. The remaining keys cover aliases written before
-         * direct entity keys were introduced and equivalent catalog IDs collected from the same
-         * Media API object.
+         * Direct originals and equivalent catalog IDs are always tried first. A language-specific
+         * compatibility entry is eligible only when the caller already knows the original language;
+         * the existence of a translation in a storefront is not evidence of an artist's origin.
          */
         internal fun originalEntityCacheLookupKeys(
             entityType: LocalizedEntityType,
             mediaId: String,
             lookupIds: Collection<String> = emptyList(),
-            languages: Collection<String> = ORIGINAL_LANGUAGE_PROBE_ORDER,
+            languages: Collection<String> = emptyList(),
         ): List<String> {
             val ids = sequenceOf(mediaId)
                 .plus(lookupIds.asSequence())
@@ -885,19 +959,14 @@ internal class AppleInternalCatalogResolver(
         internal const val QUERY_TIMEOUT_MS = 30_000L
         internal const val ARTIST_ALIAS_CACHE_SCHEMA = "V2"
         internal const val CATALOG_REQUEST_TOKEN_PARAM = "hle_catalog_request"
-        internal val ORIGINAL_LANGUAGE_PROBE_ORDER = listOf(
-            "ja-JP",
-            "ko-KR",
-            "zh-Hans-CN",
-            "th-TH",
-            "ru-RU",
-            "uk-UA",
-            "ar-SA",
-            "he-IL",
-            "hi-IN",
-            "el-GR",
-            "bg-BG",
-        )
+
+        /**
+         * Marks a request the catalog-executor layer already localized by rewriting its
+         * storefront argument.  The HTTP layer skips these so it cannot re-apply the global
+         * region to a request that deliberately targeted a different one.
+         */
+        internal const val AMP_HTTP_MODULE_MARKER_PARAM = "hle_catalog_module"
+        internal const val AMP_HTTP_MODULE_MARKER_VALUE = "1"
 
         internal fun originalLanguageCacheKeyVariants(language: String): List<String> = when (
             canonicalOriginalLanguage(language)
@@ -1011,7 +1080,6 @@ internal class AppleInternalCatalogResolver(
             genre: String?,
             catalogGenres: Collection<String>,
             isrc: String?,
-            artistLanguages: Collection<String> = emptyList(),
         ): List<String> {
             val genreLanguages = sequenceOf(genre)
                 .plus(catalogGenres.asSequence())
@@ -1019,10 +1087,7 @@ internal class AppleInternalCatalogResolver(
                 .map(::knownLanguageTagsForGenre)
                 .firstOrNull(List<String>::isNotEmpty)
                 .orEmpty()
-            if (genreLanguages.isNotEmpty()) return genreLanguages
-            val isrcLanguages = languageTagsForIsrc(isrc)
-            if (isrcLanguages.isNotEmpty()) return isrcLanguages
-            return artistLanguages.mapNotNull(::supportedOriginalLanguageOrNull).distinct()
+            return genreLanguages.ifEmpty { languageTagsForIsrc(isrc) }
         }
 
         internal fun canonicalOriginalLanguage(language: String): String {
@@ -1088,8 +1153,14 @@ internal class AppleInternalCatalogResolver(
 
         internal fun isAcceptableOriginalAlias(alias: Alias, sourceLanguage: String): Boolean {
             if (alias.title.isBlank() && alias.artist.isBlank()) return false
+            if (!matchesOriginalLanguage(alias, sourceLanguage)) return false
             if (canonicalOriginalLanguage(sourceLanguage) != "zh-Hans-CN") return true
             return containsHanCharacters(alias.title) || containsHanCharacters(alias.artist)
+        }
+
+        internal fun matchesOriginalLanguage(alias: Alias, sourceLanguage: String): Boolean {
+            val expected = supportedOriginalLanguageOrNull(sourceLanguage) ?: return false
+            return supportedOriginalLanguageOrNull(alias.language) == expected
         }
 
         internal fun selectExactOriginalEntityAlias(
@@ -1099,7 +1170,8 @@ internal class AppleInternalCatalogResolver(
             sourceLanguage: String,
         ): Alias? {
             resolved[mediaId.trim()]?.takeIf { alias ->
-                alias.title.isNotBlank() || alias.artist.isNotBlank()
+                matchesOriginalLanguage(alias, sourceLanguage) &&
+                    (alias.title.isNotBlank() || alias.artist.isNotBlank())
             }?.let { return it }
             return lookupIds.asSequence()
                 .map(String::trim)
@@ -1132,28 +1204,6 @@ internal class AppleInternalCatalogResolver(
                 index += Character.charCount(codePoint)
             }
             return false
-        }
-
-        /** Script evidence used only for the artist-region probe. */
-        internal fun hasCjkArtistScript(value: String, language: String): Boolean {
-            val canonical = canonicalOriginalLanguage(language)
-            return when (canonical) {
-                "ja-JP" -> containsJapaneseKana(value)
-                "ko-KR" -> containsHangul(value)
-                "zh-Hans-CN" ->
-                    containsHanCharacters(value) &&
-                        !containsJapaneseKana(value) &&
-                        !containsHangul(value)
-                else -> false
-            }
-        }
-
-        internal fun containsJapaneseKana(value: String): Boolean = value.any { character ->
-            character.code in 0x3040..0x30ff
-        }
-
-        internal fun containsHangul(value: String): Boolean = value.any { character ->
-            character.code in 0xac00..0xd7af
         }
 
         internal fun storefrontForContentUiLanguage(selection: Int): String? = when (selection) {
@@ -1242,6 +1292,89 @@ internal class AppleInternalCatalogResolver(
                     segment.equals("station", ignoreCase = true) ||
                     segment.equals("stations", ignoreCase = true)
             }
+
+        /**
+         * The localization a module-owned direct query must carry.
+         *
+         * A query with both a storefront and a language keeps them (the original-region probe
+         * and the fixed-region batch lookups).  An untargeted query -- the identity/ISRC/genre
+         * probe -- carries none, exactly like HLE's `queryById(mediaId, null)`: every region
+         * seam then treats it like ordinary traffic instead of pinning it to the account
+         * storefront.
+         *
+         * The fork previously invented a target-less module localization for this probe and
+         * switched the shared MediaApi storefront field to the account storefront for the call.
+         * Device evidence showed every switched lookup coming back empty (`fieldStorefront=
+         * us->tr`/`cn->tr` -> `dataSize=0`) while the unswitched ones resolved; HLE never
+         * performs that switch.  See `RegionInternalCatalogLookupTest`.
+         */
+        internal fun moduleCatalogRequestLocalization(
+            storefront: String?,
+            language: String?,
+            @Suppress("UNUSED_PARAMETER") regionRewriteEnabled: Boolean,
+        ): CatalogRequestLocalization? = when {
+            storefront != null && language != null ->
+                CatalogRequestLocalization(storefront, language)
+            else -> null
+        }
+
+        /**
+         * Number of ids an executor query carries, for the module identity diagnostic.  The
+         * untargeted identity probe sends one `ids` value; a multi-id batch sends a comma list.
+         */
+        internal fun catalogLookupIdCount(queryParams: Map<String, String>): Int {
+            queryParams["ids"]?.let { ids ->
+                return if (ids.isBlank()) 0 else ids.count { character -> character == ',' } + 1
+            }
+            return if (queryParams.containsKey("filter[isrc]")) 1 else 0
+        }
+
+        /** The bounded decision line for one module-internal untargeted identity lookup. */
+        internal fun moduleIdentityLookupDetail(
+            fieldBefore: String?,
+            fieldUsed: String?,
+            idsCount: Int,
+            storefront: String?,
+            language: String?,
+            accountStorefront: String?,
+            accountStorefrontCaptured: Boolean,
+        ): String {
+            val account = if (accountStorefrontCaptured) {
+                accountStorefront ?: "unset"
+            } else {
+                "not-captured"
+            }
+            return "fieldStorefront=${fieldBefore ?: "unset"}->${fieldUsed ?: "unchanged"}, " +
+                "ids=$idsCount, " +
+                "localization=${storefront ?: "none"}/${language ?: "none"}, " +
+                "accountStorefront=$account"
+        }
+
+        /**
+         * The bounded decision line for one *targeted* module lookup.
+         *
+         * It states the storefront/language the request asked for, the shared MediaApi
+         * storefront field before, as written and as actually observed while the call ran, the
+         * attached request token, the ids it sent, and the path.  [fieldDuring] is the value read
+         * back immediately after the resolver's write and before the host invocation: a value
+         * that is not the requested storefront is the decisive proof that the request's own
+         * catalog target was lost before the wire.
+         */
+        internal fun targetedCatalogLookupDetail(
+            description: String,
+            path: String,
+            requestedStorefront: String?,
+            requestedLanguage: String?,
+            fieldBefore: String?,
+            fieldApplied: String?,
+            fieldDuring: String?,
+            token: String?,
+            idsCount: Int,
+        ): String = "requested=${requestedStorefront ?: "none"}/${requestedLanguage ?: "none"}, " +
+            "description=$description, path=$path, ids=$idsCount, " +
+            "fieldStorefront=${fieldBefore ?: "unset"}->${fieldApplied ?: "unchanged"}" +
+            "(during=${fieldDuring ?: "unset"}), " +
+            "token=${token ?: "none"}"
 
         internal fun selectLocalizedArtistName(
             attributeArtist: String,

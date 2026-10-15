@@ -23,12 +23,10 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogEntitySnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogArtistSnapshot
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogIdentity
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.PreparedOriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogSong
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedRequest
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LockedIsrcFallbackTask
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.OriginalEntityRequest
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.CatalogRequestLocalization
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Alias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.OriginalResolution
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.LocalizedLookup
@@ -53,7 +51,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.QUERY_TIMEOUT_MS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ARTIST_ALIAS_CACHE_SCHEMA
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.CATALOG_REQUEST_TOKEN_PARAM
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.ORIGINAL_LANGUAGE_PROBE_ORDER
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.COLLABORATION_ARTIST_PATTERNS
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.collaborationArtistCache
 
@@ -86,9 +83,6 @@ import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.C
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactOriginalEntityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.selectExactIdentityAlias
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHanCharacters
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.hasCjkArtistScript
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsJapaneseKana
-import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.containsHangul
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.storefrontForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagsForContentUiLanguage
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver.Companion.languageTagForContentUiLanguage
@@ -290,6 +284,26 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
             var timeout: Runnable? = null
 
             val responseDiagnostic = AtomicReference<String?>(null)
+            // Set only for the module-internal, untargeted identity probe.  It carries the one
+            // bounded decision line that says which storefront the lookup actually used; the
+            // outcome (response size or failure) is appended when this request terminates.
+            var moduleIdentityDetail: String? = null
+            fun logModuleIdentityOutcome(outcome: String) {
+                val detail = moduleIdentityDetail ?: return
+                moduleIdentityDetail = null
+                logModuleIdentityLookup(detail, outcome)
+            }
+            // Set only for a *targeted* module lookup (the original-region entity batch and the
+            // ISRC shape).  It carries the decisive line for those lookups: the requested
+            // storefront/language, the storefront the shared MediaApi field held before, was
+            // written with and actually held while the call ran, and whether a request token
+            // was attached; the outcome (data size or failure) is appended on termination.
+            var targetedLookupDetail: String? = null
+            fun logTargetedOutcome(outcome: String) {
+                val detail = targetedLookupDetail ?: return
+                targetedLookupDetail = null
+                logTargetedCatalogLookup(detail, outcome)
+            }
             val responseTask = catalogResponseDispatcher.newTask<Any, CatalogResponseSnapshot, Result>(
                 snapshotOnMain = { response ->
                     val snapshot = response?.let {
@@ -310,6 +324,8 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = responseDiagnostic.get(),
                     )
+                    logModuleIdentityOutcome(responseDiagnostic.get() ?: "response")
+                    logTargetedOutcome(responseDiagnostic.get() ?: "response")
                     onResult(result)
                 },
                 failOnMain = { error ->
@@ -327,6 +343,8 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = "error=${error.javaClass.name}:${error.message}",
                     )
+                    logModuleIdentityOutcome("transform_failed:${error.javaClass.simpleName}")
+                    logTargetedOutcome("transform_failed:${error.javaClass.simpleName}")
                     onResult(null)
                 },
             )
@@ -393,6 +411,8 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                     detail = "error=${error.javaClass.name}:${error.message}",
                 )
+                logModuleIdentityOutcome("$event:${error.javaClass.simpleName}")
+                logTargetedOutcome("$event:${error.javaClass.simpleName}")
                 // Continuations may resume from an Apple network thread.  Preserve the resolver
                 // callback contract by publishing failures on the host main executor as well.
                 mainHandler.post { onResult(null) }
@@ -400,12 +420,27 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
 
             runCatching {
                 val access = catalogAccess ?: createCatalogAccess().also { catalogAccess = it }
-                val localization = if (storefront != null && language != null) {
-                    CatalogRequestLocalization(storefront, language)
-                } else {
-                    null
-                }
+                // An untargeted module query is the identity/ISRC/genre probe.  HLE builds no
+                // localization for it (`queryById(mediaId, null)`), so every region seam treats
+                // it like ordinary traffic -- the HTTP seam localizes its URL storefront and `l`
+                // parameter -- and the shared MediaApi storefront field, which is what this
+                // direct query derives its catalog target from, is left exactly as it is.  The
+                // fork used to mark the probe module-owned and switch that field to the account
+                // storefront for the call; the device log showed every switched lookup coming
+                // back empty (`fieldStorefront=us->tr`/`cn->tr` -> `dataSize=0`).
+                val regionRewriteEnabled = isGlobalRegionRewriteEnabled()
+                val untargetedModuleLookup = storefront == null && language == null
+                val localization = AppleInternalCatalogResolver.moduleCatalogRequestLocalization(
+                    storefront = storefront,
+                    language = language,
+                    regionRewriteEnabled = regionRewriteEnabled,
+                )
                 if (localization != null) {
+                    if (localization.storefront != null) {
+                        // Capture before the field is temporarily switched below, otherwise the
+                        // module's own target storefront would be remembered as the account's.
+                        captureAccountStorefront(access)
+                    }
                     requestToken = catalogRequestSequence.incrementAndGet().toString(36)
                     pendingCatalogRequests[requestToken] = localization
                 }
@@ -440,6 +475,8 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                         elapsedMs = SystemClock.uptimeMillis() - queuedAtMs,
                         detail = "mode=direct-network, timeoutMs=$QUERY_TIMEOUT_MS",
                     )
+                    logModuleIdentityOutcome("timeout")
+                    logTargetedOutcome("timeout")
                     onResult(null)
                 }.also { mainHandler.postDelayed(it, QUERY_TIMEOUT_MS) }
 
@@ -449,10 +486,44 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     onFailure = { error -> fail("request_failed", error) },
                 )
                 val previousStorefront = access.storefrontField.get(access.mediaApi) as? String
+                // The request's own target.  An untargeted identity probe carries no
+                // localization (HLE parity), so its storefront argument stays exactly as
+                // Apple's client built it and the shared field is never switched for it.
+                val appliedStorefront = localization?.storefront
+                if (untargetedModuleLookup) {
+                    moduleIdentityDetail = AppleInternalCatalogResolver.moduleIdentityLookupDetail(
+                        fieldBefore = previousStorefront,
+                        fieldUsed = appliedStorefront,
+                        idsCount = AppleInternalCatalogResolver.catalogLookupIdCount(queryParams),
+                        storefront = localization?.storefront,
+                        language = localization?.language,
+                        accountStorefront = accountStorefront,
+                        accountStorefrontCaptured = accountStorefrontCaptured,
+                    )
+                }
                 val directResult = try {
                     activeCatalogRequest.set(localization)
-                    localization?.let {
-                        access.storefrontField.set(access.mediaApi, it.storefront)
+                    if (appliedStorefront != null) {
+                        access.storefrontField.set(access.mediaApi, appliedStorefront)
+                    }
+                    if (localization != null && !untargetedModuleLookup) {
+                        // The decisive line for a targeted lookup: the storefront/lang the
+                        // request asked for, the storefront the shared field held before, was
+                        // written with and actually holds now, the token state, and the path.
+                        targetedLookupDetail =
+                            AppleInternalCatalogResolver.targetedCatalogLookupDetail(
+                                description = description,
+                                path = path,
+                                requestedStorefront = storefront,
+                                requestedLanguage = language,
+                                fieldBefore = previousStorefront,
+                                fieldApplied = appliedStorefront,
+                                fieldDuring = access.storefrontField.get(access.mediaApi) as? String,
+                                token = requestToken,
+                                idsCount = AppleInternalCatalogResolver.catalogLookupIdCount(
+                                    queryParams
+                                ),
+                            )
                     }
                     access.directQueryMethod.invoke(
                         access.mediaApi,
@@ -462,7 +533,12 @@ internal fun <Result> AppleInternalCatalogResolver.queryResponse(
                     )
                 } finally {
                     activeCatalogRequest.remove()
-                    if (localization != null) {
+                    // Only a field still holding our own write is restored to the value observed
+                    // before the call.  The region apply/retry writes the same field from another
+                    // site; if it won the race, that newer value owns the field and restoring the
+                    // stale observation would silently undo the chosen region.
+                    val currentStorefront = access.storefrontField.get(access.mediaApi) as? String
+                    if (shouldRestoreModuleLookupStorefront(appliedStorefront, currentStorefront)) {
                         access.storefrontField.set(access.mediaApi, previousStorefront)
                     }
                 }
@@ -629,6 +705,42 @@ internal fun AppleInternalCatalogResolver.logCatalogRequestDiagnostic(
     }
 
 
+/**
+ * One bounded decision line per module-internal, untargeted identity lookup: which storefront
+ * the shared MediaApi field held, which one the call used, how many ids it sent, the chosen
+ * localization, the captured account storefront at that moment, and the response size or failure.
+ *
+ * Emitted through [ProviderLogger.info] -- the same channel as the neighbouring catalog traces
+ * (`Apple 内部原名候选`, `Apple 内部歌曲身份已就绪`) instead of the `[debug]`-prefixed diagnostic
+ * channel that the exported device log filters out.  Like those neighbours it is not gated on
+ * `BuildConfig.DEBUG`, so the line is present in the same log the identity/original-name traces
+ * appear in.
+ */
+internal fun logModuleIdentityLookup(detail: String, outcome: String) {
+    ProviderLogger.info("AppleCatalogModuleIdentity: $detail, outcome=$outcome")
+}
+
+/** Bounded trace budget for the targeted-lookup decision lines. */
+private const val TARGETED_LOOKUP_TRACE_LIMIT = 400
+private val targetedLookupTraceKeys = ConcurrentHashMap.newKeySet<String>()
+
+/**
+ * One bounded decision line per *targeted* module lookup (the original-region entity batch and
+ * the ISRC shape): the storefront/language the request asked for, the shared MediaApi storefront
+ * field before, after the resolver's write and while the call ran, the attached request token,
+ * the ids it sent, and the response size or failure.
+ *
+ * Same visible channel and shape as [logModuleIdentityLookup]; unlike the identity probe the
+ * targeted lookups are batched, so identical shapes are collapsed by a bounded trace set instead
+ * of repeating for every queued song.
+ */
+internal fun logTargetedCatalogLookup(detail: String, outcome: String) {
+    if (targetedLookupTraceKeys.size >= TARGETED_LOOKUP_TRACE_LIMIT) return
+    if (!targetedLookupTraceKeys.add("$detail|$outcome")) return
+    ProviderLogger.info("AppleCatalogTargetedLookup: $detail, outcome=$outcome")
+}
+
+
 internal fun AppleInternalCatalogResolver.catalogResponseDiagnostic(
         response: Any?,
         snapshot: CatalogResponseSnapshot?,
@@ -654,4 +766,3 @@ internal fun AppleInternalCatalogResolver.storefrontForLanguage(language: String
 
 internal fun AppleInternalCatalogResolver.catalogMember(member: AppleMusicRuntimeMember): String =
         resolvedCatalogHolder.target.runtimeMemberName(member)
-

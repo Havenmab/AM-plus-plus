@@ -26,6 +26,17 @@ internal class AppleLocalizedMetadataCache(
         enabled = value
     }
 
+    /**
+     * Maintenance seam for the user-facing 清空检索库 action: closes the SQLite
+     * handle so a maintenance delete cannot be answered by an open connection.
+     * This cache keeps no in-memory rows, so nothing else has to be dropped.
+     */
+    fun closeForMaintenance(): Int {
+        runCatching { helper.close() }
+            .onFailure { ProviderLogger.error("Apple 地区元数据缓存关闭失败", it) }
+        return 0
+    }
+
     fun warmRecentBlocking(
         prefix: String,
     ): Map<String, AppleInternalCatalogResolver.Alias>? {

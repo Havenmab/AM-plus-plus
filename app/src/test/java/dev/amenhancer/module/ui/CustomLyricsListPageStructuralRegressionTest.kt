@@ -100,4 +100,55 @@ class CustomLyricsListPageStructuralRegressionTest {
         assertFalse(embeddedHost.contains("syncEmbeddedGitHub"))
         assertFalse(embeddedHost.contains("syncFromGitHub"))
     }
+
+    @Test
+    fun `the custom lyrics page clears all mappings behind a count confirmation`() {
+        val host = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt",
+        )
+        val text = projectFile("core/src/main/kotlin/dev/amenhancer/module/i18n/ModuleText.kt")
+
+        // The clear-all row and its count-carrying confirmation now route their
+        // user-visible text through ModuleText, like every other settings string.
+        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS"))
+        assertTrue(text.contains("清空自定义歌词"))
+        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT"))
+        assertTrue(text.contains("删除全部 %1\\\$s 条自定义歌词"))
+        assertTrue(host.contains("confirmEmbeddedCustomLyricsClear(activity, entries.size)"))
+        assertTrue(
+            host.contains(
+                "internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(",
+            ),
+        )
+        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM"))
+        assertTrue(text.contains("将删除全部 %1\\\$s 条自定义歌词映射"))
+        assertTrue(host.contains("runAsync(activity) { controller.clearLyrics() }"))
+    }
+
+    @Test
+    fun `renders the online lyric chain toggles from plain source data only`() {
+        // The custom-lyrics page rows live in EmbeddedSettingsPages.kt (the
+        // settings host was split before this test was written); reading the host
+        // file pinned nothing and silently passed over an empty search.
+        val embeddedHost = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsPages.kt",
+        )
+
+        listOf(
+            "onlineLyricsSupplementEnabled",
+            "onlineLyricsTranslationEnabled",
+            "onlineLyricsHideMandarinPinyinEnabled",
+            "onlineLyricsAutomaticOrderEnabled",
+            "onlineLyricsGlobalBestEnabled",
+            "OnlineLyricSources.DEFAULT_ORDER.forEach",
+            "settings.onlineLyricsSourceEnabled(sourceId)",
+            "settings.withOnlineLyricsSourceEnabled(sourceId,",
+        ).forEach { fragment ->
+            assertTrue("missing chain row fragment: $fragment", embeddedHost.contains(fragment))
+        }
+        // The settings UI may read settings and plain model constants, but never
+        // the provider package or the host implementation.
+        assertFalse(embeddedHost.contains("import dev.amenhancer.module.lyrics.source."))
+        assertFalse(embeddedHost.contains("import dev.amenhancer.module.hook."))
+    }
 }

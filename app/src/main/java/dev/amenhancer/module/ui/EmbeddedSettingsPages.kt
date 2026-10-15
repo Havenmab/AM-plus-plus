@@ -30,6 +30,7 @@ import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.model.OnlineLyricSources
 import java.lang.ref.WeakReference
 
 internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
@@ -420,39 +421,114 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 ),
             ) { onSettingsChanged(settings.copy(cjkKaraokeAnimationEnabled = it)) })
             addView(embeddedDivider(activity))
-            addView(embeddedSettingRow(
-                activity,
-                localizedText(ModuleText.TITLE_CORRECTION),
-                if (settings.titleCorrectionEnabled) {
-                    localizedText(ModuleText.VALUE_RESTART_REQUIRED, localizedText(settings.titleCorrectionMode.displayText))
-                } else {
-                    localizedText(ModuleText.TITLE_CORRECTION_SUMMARY)
-                },
-                settings.titleCorrectionEnabled,
-                iconTint = EmbeddedSettingsPalette.Light.accent,
-                iconDrawable = EmbeddedGlyphDrawable(
-                    EmbeddedGlyphKind.Document,
-                    EmbeddedSettingsPalette.Light.accent,
-                ),
-            ) { onSettingsChanged(settings.copy(titleCorrectionEnabled = it)) })
-            addView(embeddedDivider(activity))
+            // HLE's page computes these two gates from its four controls; reproduce them
+            // verbatim so the region picker and the two switches keep HLE's visibility.
+            val regionReplacementEnabled =
+                settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
+            val metadataLookupEnabled =
+                regionReplacementEnabled || settings.restoreCjkOriginalMetadata
+            // 1. HLE 将Apple Music改成其他地区 (title/summary/options verbatim, text in ModuleText).
             addView(embeddedNavigationRow(
                 activity,
-                localizedText(ModuleText.TITLE_CORRECTION_MODE),
-                localizedText(settings.titleCorrectionMode.displayText),
+                localizedText(ModuleText.REGION_SELECTION),
+                localizedText(ModuleText.REGION_SELECTION_SUMMARY),
                 iconDrawable = EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.Translate,
                     EmbeddedSettingsPalette.Light.accent,
                 ),
-                inlineSummary = true,
+                trailingValue = settings.regionSelection.displayName,
             ) {
-                showEmbeddedTitleCorrectionModePicker(
+                showEmbeddedRegionSelectionPicker(
                     activity = activity,
-                ) { mode ->
-                    onSettingsChanged(settings.copy(titleCorrectionMode = mode))
+                ) { region ->
+                    onSettingsChanged(settings.copy(regionSelection = region))
                     pageRefresh?.invoke()
                 }
             })
+            // 2. HLE 歌曲信息替换至设定地区语言 — only shown once a region is selected.
+            if (settings.regionSelection.replacesRegion) {
+                addView(embeddedDivider(activity))
+                addView(embeddedSettingRow(
+                    activity,
+                    localizedText(ModuleText.REGION_METADATA_LANGUAGE),
+                    "",
+                    settings.overrideAccountLanguage,
+                    iconTint = EmbeddedSettingsPalette.Light.accent,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.Translate,
+                        EmbeddedSettingsPalette.Light.accent,
+                    ),
+                ) {
+                    onSettingsChanged(settings.copy(overrideAccountLanguage = it))
+                    pageRefresh?.invoke()
+                })
+            }
+            // 3. HLE 替换中日韩歌曲信息为原地区原名 — always shown.
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
+                localizedText(ModuleText.REGION_RESTORE_ORIGINAL),
+                "",
+                settings.restoreCjkOriginalMetadata,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.Translate,
+                    EmbeddedSettingsPalette.Light.accent,
+                ),
+            ) {
+                onSettingsChanged(settings.copy(restoreCjkOriginalMetadata = it))
+                pageRefresh?.invoke()
+            })
+            // 4. HLE 创建检索库以提升替换体验 — only shown while the metadata lookup runs.
+            if (metadataLookupEnabled) {
+                addView(embeddedDivider(activity))
+                addView(embeddedSettingRow(
+                    activity,
+                    localizedText(ModuleText.REGION_METADATA_CACHE),
+                    localizedText(ModuleText.REGION_METADATA_CACHE_SUMMARY),
+                    settings.localizedMetadataCache,
+                    iconTint = EmbeddedSettingsPalette.Light.accent,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.Document,
+                        EmbeddedSettingsPalette.Light.accent,
+                    ),
+                ) { onSettingsChanged(settings.copy(localizedMetadataCache = it)) })
+            }
+            // AM++: the 检索库 exists whenever the runtime can write it — a region
+            // replacement caches localized results even without the override switch —
+            // so the clear row follows HLE's four controls in every installable state.
+            if (settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata) {
+                addView(embeddedDivider(activity))
+                addView(embeddedNavigationRow(
+                    activity,
+                    localizedText(ModuleText.REGION_CACHE_CLEAR),
+                    localizedText(ModuleText.REGION_CACHE_CLEAR_SUMMARY),
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.DocumentSearch,
+                        EmbeddedSettingsPalette.Light.accent,
+                    ),
+                ) {
+                    confirmEmbeddedMetadataCacheClear(activity) {
+                        // Read the persisted draft so an earlier toggle that did not
+                        // re-render the page is not reverted by this action's copy.
+                        val current = runCatching { controller.currentSettings() }
+                            .getOrElse { settings }
+                        onSettingsChanged(
+                            current.copy(
+                                metadataCacheClearGeneration =
+                                    current.metadataCacheClearGeneration + 1L,
+                            ),
+                        )
+                        // Re-render so a second tap carries the incremented value.
+                        pageRefresh?.invoke()
+                        Toast.makeText(
+                            activity,
+                            localizedText(ModuleText.REGION_CACHE_CLEAR_REQUESTED),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                })
+            }
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,
@@ -539,6 +615,102 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             ),
             compactWidePadding = true,
         ) { onSettingsChanged(settings.copy(automaticLyricsEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT),
+            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT_SUMMARY),
+            settings.onlineLyricsSupplementEnabled,
+            enabled = settings.customLyricsEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+            compactWidePadding = true,
+        ) {
+            onSettingsChanged(settings.copy(onlineLyricsSupplementEnabled = it))
+            // Re-render so the source rows below enable/disable with the master.
+            pageRefresh?.invoke()
+        })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION),
+            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION_SUMMARY),
+            settings.onlineLyricsTranslationEnabled,
+            enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN),
+            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN_SUMMARY),
+            settings.onlineLyricsHideMandarinPinyinEnabled,
+            enabled = settings.customLyricsEnabled &&
+                settings.automaticLyricsEnabled &&
+                settings.onlineLyricsTranslationEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+            compactWidePadding = true,
+        ) {
+            onSettingsChanged(settings.copy(onlineLyricsHideMandarinPinyinEnabled = it))
+        })
+
+        // The translation/pronunciation pass borrows the same provider chain as
+        // the supplement, so the chain rows stay usable while either opt-in is on.
+        val chainEnabled = settings.customLyricsEnabled &&
+            (settings.onlineLyricsSupplementEnabled || settings.onlineLyricsTranslationEnabled)
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER),
+            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER_SUMMARY),
+            settings.onlineLyricsAutomaticOrderEnabled,
+            enabled = chainEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsAutomaticOrderEnabled = it)) })
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedSettingRow(
+            activity,
+            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST),
+            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST_SUMMARY),
+            settings.onlineLyricsGlobalBestEnabled,
+            enabled = chainEnabled,
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Exchange,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+            compactWidePadding = true,
+        ) { onSettingsChanged(settings.copy(onlineLyricsGlobalBestEnabled = it)) })
+
+        OnlineLyricSources.DEFAULT_ORDER.forEach { sourceId ->
+            parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+            parent.addView(embeddedSettingRow(
+                activity,
+                embeddedOnlineLyricsSourceLabel(sourceId),
+                localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY),
+                settings.onlineLyricsSourceEnabled(sourceId),
+                enabled = chainEnabled,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.DocumentSearch,
+                    EmbeddedSettingsPalette.Light.accent,
+                ),
+                compactWidePadding = true,
+            ) {
+                onSettingsChanged(settings.withOnlineLyricsSourceEnabled(sourceId, it))
+            })
+        }
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
 
         val lyricsContent = LinearLayout(activity).apply {
@@ -715,7 +887,44 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             renderEntries()
         }
         parent.addView(lyricsContent)
+
+        // The one-shot clear-all action, mirroring the 「清空检索库」 precedent: a
+        // navigation row, a count-carrying confirmation, then [runAsync]'s toast
+        // and page re-render.
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 12 else 16))
+        parent.addView(embeddedDivider(activity))
+        parent.addView(embeddedNavigationRow(
+            activity,
+            localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
+            if (entries.isEmpty()) {
+                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL)
+            } else {
+                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, entries.size)
+            },
+            iconDrawable = EmbeddedGlyphDrawable(
+                EmbeddedGlyphKind.Delete,
+                EmbeddedSettingsPalette.Light.accent,
+            ),
+        ) {
+            confirmEmbeddedCustomLyricsClear(activity, entries.size) {
+                runAsync(activity) { controller.clearLyrics() }
+            }
+        })
     }
+
+
+internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(
+    activity: Activity,
+    entryCount: Int,
+    onConfirmed: () -> Unit,
+) {
+    embeddedDialogBuilder(activity)
+        .setTitle(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS))
+        .setMessage(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM, entryCount))
+        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
+        .show()
+}
 
 
 internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
@@ -808,6 +1017,19 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
     }
 
 
+internal fun EmbeddedSettingsHost.confirmEmbeddedMetadataCacheClear(
+    activity: Activity,
+    onConfirmed: () -> Unit,
+) {
+    embeddedDialogBuilder(activity)
+        .setTitle(localizedText(ModuleText.REGION_CACHE_CLEAR))
+        .setMessage(localizedText(ModuleText.REGION_CACHE_CLEAR_CONFIRM))
+        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
+        .show()
+}
+
+
 internal fun EmbeddedSettingsHost.confirmEmbeddedLyricsDelete(activity: Activity, group: CustomLyricsUiGroup) {
         val entry = group.primary
         embeddedDialogBuilder(activity)
@@ -860,6 +1082,19 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsSourceName(source: String)
         CustomLyricsSources.AMLL -> "AMLL"
         CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.AM_LYRICS_REPOSITORY)
         CustomLyricsSources.LUNABEAT -> "Lunabeat"
+        CustomLyricsSources.KUWO -> "酷我"
+        CustomLyricsSources.NETEASE -> "网易云"
+        CustomLyricsSources.QQ -> "QQ 音乐"
+        CustomLyricsSources.KUGOU -> "酷狗"
         else -> localizedText(ModuleText.MANUAL_TTML)
     }
+
+/** Display name for one selectable online chain source id. */
+internal fun embeddedOnlineLyricsSourceLabel(sourceId: String): String = when (sourceId) {
+    CustomLyricsSources.NETEASE -> "网易云音乐"
+    CustomLyricsSources.QQ -> "QQ 音乐"
+    CustomLyricsSources.KUWO -> "酷我音乐"
+    CustomLyricsSources.KUGOU -> "酷狗音乐"
+    else -> sourceId
+}
 

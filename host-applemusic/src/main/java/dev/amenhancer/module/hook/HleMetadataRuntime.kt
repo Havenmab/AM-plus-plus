@@ -1,13 +1,15 @@
 package dev.amenhancer.module.hook
 
 import android.app.Application
-import dev.amenhancer.module.config.TitleCorrectionMode
+import dev.amenhancer.module.config.RegionSelection
+import dev.amenhancer.module.config.RegionTitleRequestPolicy
 import io.github.libxposed.api.XposedModule
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMetadataOverrideStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicProviderRuntime
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
+import io.github.proify.lyricon.amprovider.xposed.applyRegionConfiguration
 import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
 import io.github.proify.lyricon.amprovider.xposed.ProviderLogger
 import io.github.proify.lyricon.amprovider.xposed.hooks.AppleFrameworkMetadataHooks
@@ -39,8 +41,36 @@ internal class HleMetadataRuntime(
     private val module: XposedModule,
     private val application: Application,
     private val classLoader: ClassLoader,
-    private val mode: TitleCorrectionMode = TitleCorrectionMode.ORIGINAL_HYPER,
+    /** The 将Apple Music改成其他地区 picker only; it never gates or implies the switches. */
+    private val region: RegionSelection = RegionSelection.NONE,
+    /**
+     * HLE's 歌曲信息替换至设定地区语言 switch.  It only takes effect together with
+     * [region]; on its own it does nothing.
+     */
+    private val overrideAccountLanguage: Boolean = false,
+    /**
+     * HLE's 替换中日韩歌曲信息为原地区原名 switch: restores CJK songs to their
+     * original-region names.  Independent of [region]: the user may combine it with
+     * any region.
+     */
+    private val restoreCjkOriginalMetadata: Boolean = false,
+    /** Persist region/original metadata lookups in SQLite across cold starts. */
+    private val localizedMetadataCache: Boolean = true,
+    /**
+     * Cheap read of the one-shot 「清空检索库」 signal.  The runtime polls it on its
+     * metadata request seams and clears the persistent and in-memory caches once
+     * per generation.  Defaults to "no pending clear" so test/dynamic runtimes
+     * stay inert.
+     */
+    private val metadataCacheClearSignal: () -> Long = { 0L },
 ) {
+    /** The three controls projected onto the request seams; see [RegionTitleRequestPolicy]. */
+    private val requestPlan = RegionTitleRequestPolicy.plan(
+        region = region,
+        overrideAccountLanguage = overrideAccountLanguage,
+        restoreCjkOriginalMetadata = restoreCjkOriginalMetadata,
+    )
+
     private val version = runCatching {
         val info = application.packageManager.getPackageInfo(
             "com.apple.android.music",
@@ -79,7 +109,20 @@ internal class HleMetadataRuntime(
         classLoader = classLoader,
         hookResolver = hookResolver,
         mainHandler = runtime.mainHandler,
-        cacheNamespace = mode.cacheNamespace,
+        cacheNamespace = requestPlan.cacheNamespace,
+    )
+    /**
+     * Owns the user-facing 「清空检索库」 action: the settings page only bumps a
+     * persisted generation, and this observer deletes the caches the first time
+     * the runtime sees the new value on a request seam (or at install, if the
+     * clear was requested just before the previous process ended).
+     */
+    private val metadataCacheClearHandledStore = HleMetadataCacheClearHandledStore(application)
+    private val metadataCacheClearObserver = HleMetadataCacheClearObserver(
+        signal = metadataCacheClearSignal,
+        onClear = { HleMetadataCacheIndex.clear(application, catalogResolver, metadataStore) },
+        initialHandledGeneration = metadataCacheClearHandledStore.read(),
+        onHandled = metadataCacheClearHandledStore::write,
     )
     private lateinit var contentLocalizationHooks: AppleContentLocalizationHooks
     private lateinit var frameworkHooks: AppleFrameworkMetadataHooks
@@ -141,16 +184,30 @@ internal class HleMetadataRuntime(
 
     private fun installRuntime(): TargetCapabilityInstall {
         runtime.attach(application, hookResolver)
-        MediaMetadataCache.setProfile(mode.cacheNamespace)
-        catalogResolver.applyContentUiLanguage(mode.contentUiLanguageSelection)
-        catalogResolver.setPersistentLocalizedCacheEnabled(true)
+        MediaMetadataCache.setProfile(requestPlan.cacheNamespace)
+        catalogResolver.applyRegionConfiguration(
+            selection = requestPlan.contentUiLanguageSelection,
+            // Only a region that names a storefront redirects ordinary Apple Music traffic;
+            // 不开启 keeps the account storefront and only restores names.
+            regionReplacementRequested = requestPlan.rewritesCatalogRequests,
+            localizedMetadataCacheEnabled = localizedMetadataCache,
+        )
+        // A clear requested just before the previous process ended has no live
+        // request seam to ride on, so settle it as soon as the runtime is up.
+        metadataCacheClearObserver.observe()
 
         contentLocalizationHooks = AppleContentLocalizationHooks(
             runtime = runtime,
             catalogResolver = { catalogResolver },
         )
+        // Region replacement installs five layers; the catalog-executor and amp-api
+        // layers are the fork's additions and keep their own names so an
+        // undeclared profile target reports as a named degradation instead of a
+        // silent whole-runtime failure.
         installation.install("media-api-localization") { contentLocalizationHooks.installMediaApiLocalization() }
+        installation.install("catalog-request-localization") { contentLocalizationHooks.installCatalogRequestLocalization() }
         installation.install("content-http-localization") { contentLocalizationHooks.installContentHttpLocalization() }
+        installation.install("amp-api-http-localization") { contentLocalizationHooks.installAmpApiHttpLocalization() }
 
         frameworkHooks = AppleFrameworkMetadataHooks(
             runtime = runtime,
@@ -393,10 +450,12 @@ internal class HleMetadataRuntime(
             contentItemHooks = contentItemHooks,
             queueMetadataHooks = queueMetadataHooks,
             actionSheetMetadataHooks = actionSheetMetadataHooks,
-            configuredContentUiLanguage = mode.contentUiLanguageSelection,
-            restoreOriginalMetadata = mode == TitleCorrectionMode.ORIGINAL_HYPER,
-            profileId = mode.cacheNamespace,
+            configuredContentUiLanguage = requestPlan.contentUiLanguageSelection,
+            overrideAccountLanguage = requestPlan.overrideAccountLanguage,
+            restoreOriginalMetadata = requestPlan.probesOriginalMetadata,
+            profileId = requestPlan.cacheNamespace,
             installation = installation,
+            observeMetadataCacheClear = metadataCacheClearObserver::observe,
         )
         installedBridge.install()
         surfaceBridge = installedBridge
@@ -419,6 +478,8 @@ internal class HleMetadataRuntime(
 
         return installation.result(
             "HLE metadata runtime installed for ${version.displayName}; " +
+                "region=${region.catalogStorefront ?: "account"}, " +
+                "restoreOriginal=${requestPlan.probesOriginalMetadata}, " +
                 "original metadata + persistent SQLite cache enabled",
         )
     }
@@ -441,11 +502,13 @@ internal class HleMetadataRuntime(
 
     private fun playbackHost() = object : ApplePlaybackMetadataCoordinatorHost {
         override fun activePlayer(): Any? = playbackHooks.activePlayer()
-        override fun configuredContentUiLanguage(): Int = mode.contentUiLanguageSelection
+        override fun configuredContentUiLanguage(): Int =
+            requestPlan.contentUiLanguageSelection
         override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
-            mode.catalogLanguage != null
+            // HLE: region != NONE && overrideAccountLanguage, not merely a region selection.
+            requestPlan.overrideAccountLanguage
         override fun shouldRestoreCjkOriginalMetadata(metadata: MediaMetadataCache.Metadata): Boolean =
-            mode == TitleCorrectionMode.ORIGINAL_HYPER &&
+            requestPlan.probesOriginalMetadata &&
                 AppleOriginalMetadataPolicy.shouldProbeCjkOriginalMetadata(
                 mediaId = metadata.id,
                 title = metadata.title,
@@ -477,7 +540,7 @@ internal class HleMetadataRuntime(
                     originalMetadata = originalMetadata,
                     originalMetadataConfirmed = originalMetadataConfirmed,
                 )
-            } else if (originalMetadata && mode != TitleCorrectionMode.ORIGINAL_HYPER) {
+            } else if (originalMetadata && !requestPlan.probesOriginalMetadata) {
                 return
             } else if (originalMetadata) {
                 metadataStore.rememberOriginalMetadata(mediaId, alias, originalMetadataConfirmed)
@@ -519,7 +582,7 @@ internal class HleMetadataRuntime(
             }
         }
         override fun isRestoreOriginalMetadataEnabled(): Boolean =
-            mode == TitleCorrectionMode.ORIGINAL_HYPER
+            requestPlan.probesOriginalMetadata
     }
 
     private fun effectiveAlias(mediaId: String): AppleInternalCatalogResolver.Alias? =

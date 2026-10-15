@@ -216,12 +216,50 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
-    fun `non Word candidates fail open and never reach the native parser`() {
+    fun `line timed search candidates now reach the native parser`() {
+        val queued = QueuedExecutor()
+        val pointer = Pointer()
+        var parses = 0
+        val session = session(
+            queued = queued,
+            fetch = { AutoLyricsCandidate("kuwo", LINE_TTML) },
+            parse = { parses += 1; pointer },
+        )
+
+        assertNull(session.replacementFor(42L))
+        queued.runAll()
+
+        assertSame(pointer, session.readyReplacementFor(42L))
+        assertEquals(1, parses)
+    }
+
+    @Test
+    fun `a persisted line timed cache is prepared before any network source`() {
+        val queued = QueuedExecutor()
+        val cache = MemoryCache(mapOf(42L to LINE_TTML))
+        val pointer = Pointer()
+        var fetches = 0
+        val session = session(
+            queued = queued,
+            cache = cache,
+            fetch = { fetches += 1; AutoLyricsCandidate("network", WORD_TTML) },
+            parse = { pointer },
+        )
+
+        session.replacementFor(42L)
+        queued.runAll()
+
+        assertSame(pointer, session.readyReplacementFor(42L))
+        assertEquals(0, fetches)
+    }
+
+    @Test
+    fun `a structurally invalid candidate fails open and never reaches the native parser`() {
         val queued = QueuedExecutor()
         var parses = 0
         val session = session(
             queued = queued,
-            fetch = { AutoLyricsCandidate("line-source", LINE_TTML) },
+            fetch = { AutoLyricsCandidate("kuwo", MALFORMED_TTML) },
             parse = { parses += 1; Pointer() },
         )
 
@@ -234,13 +272,79 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
-    fun `file cache persists only Word TTML and reloads it by Adam ID`() {
+    fun `a newly captured displayed document retries an attempt that ran without one`() {
+        val queued = QueuedExecutor()
+        val pointer = Pointer()
+        var fetches = 0
+        var documentAvailable = false
+        val session = session(
+            queued = queued,
+            fetch = {
+                fetches += 1
+                if (documentAvailable) AutoLyricsCandidate("online-translation", WORD_TTML) else null
+            },
+            parse = { pointer },
+        )
+
+        session.onSongChanged(42L)
+        session.ensureRequested(42L)
+        queued.runAll()
+
+        assertEquals(1, fetches)
+        assertNull(session.readyReplacementFor(42L))
+
+        documentAvailable = true
+        session.onDisplayedDocumentCaptured(42L)
+        queued.runAll()
+
+        assertEquals(2, fetches)
+        assertSame(pointer, session.readyReplacementFor(42L))
+    }
+
+    @Test
+    fun `a captured document for a replaced track is ignored`() {
+        val queued = QueuedExecutor()
+        var allowed = true
+        var fetches = 0
+        val session = session(
+            queued = queued,
+            fetch = {
+                fetches += 1
+                AutoLyricsCandidate("online-translation", WORD_TTML)
+            },
+            parse = { Pointer() },
+            isAllowed = { allowed },
+        )
+
+        session.onSongChanged(42L)
+        allowed = false
+        session.onDisplayedDocumentCaptured(42L)
+        queued.runAll()
+
+        assertEquals(0, fetches)
+    }
+
+    @Test
+    fun `file cache persists word and line TTML and reloads it by Adam ID`() {
         val directory = Files.createTempDirectory("ampp-auto-lyrics-test").toFile()
         try {
             val cache = FileAutoLyricsCache(directory, maxEntries = 2)
             assertTrue(cache.write(42L, WORD_TTML))
             assertEquals(WORD_TTML, FileAutoLyricsCache(directory).read(42L))
-            assertTrue(!cache.write(43L, LINE_TTML))
+            assertTrue(cache.write(43L, LINE_TTML))
+            assertEquals(LINE_TTML, FileAutoLyricsCache(directory).read(43L))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `file cache still rejects structurally invalid TTML`() {
+        val directory = Files.createTempDirectory("ampp-auto-lyrics-test").toFile()
+        try {
+            val cache = FileAutoLyricsCache(directory, maxEntries = 2)
+            assertTrue(!cache.write(42L, MALFORMED_TTML))
+            assertEquals(null, cache.read(42L))
         } finally {
             directory.deleteRecursively()
         }
@@ -374,5 +478,6 @@ class AutoLyricsReplacementSessionTest {
         const val LINE_TTML =
             "<tt xmlns:itunes=\"urn\" itunes:timing=\"Line\"><body>" +
                 "<p>hello</p></body></tt>"
+        const val MALFORMED_TTML = "<tt><p>no body</p></tt>"
     }
 }

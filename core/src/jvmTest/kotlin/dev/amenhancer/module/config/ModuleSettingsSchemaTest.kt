@@ -6,6 +6,7 @@ import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModuleSettingsSchemaTest {
@@ -44,7 +45,6 @@ class ModuleSettingsSchemaTest {
                 cjkKaraokeAnimationEnabled = true,
                 navigationCompensationEnabled = false,
                 lyricBlurRadiusOffsetPx = 0,
-                titleCorrectionEnabled = false,
                 schemaVersion = ModuleConstants.CONFIG_SCHEMA_VERSION,
             ),
             ModuleSettingsSchema.decode(emptyMap<String, Any?>()),
@@ -77,10 +77,23 @@ class ModuleSettingsSchemaTest {
                 "force_cellular_data_entry_enabled" to false,
                 "lyric_blur_radius_offset_px" to 6,
                 "apple_music_dpi_override_dpi" to 0,
-                "title_correction_enabled" to false,
-                "title_correction_mode" to "original_hyper",
+                "region_selection" to "none",
+                "override_account_language" to false,
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to true,
+                "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
+                "online_lyrics_hide_mandarin_pinyin" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -116,10 +129,23 @@ class ModuleSettingsSchemaTest {
                 "force_cellular_data_entry_enabled" to false,
                 "lyric_blur_radius_offset_px" to 0,
                 "apple_music_dpi_override_dpi" to 0,
-                "title_correction_enabled" to false,
-                "title_correction_mode" to "original_hyper",
+                "region_selection" to "none",
+                "override_account_language" to false,
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to true,
+                "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to false,
+                "online_lyrics_source_netease_enabled" to true,
+                "online_lyrics_source_qq_enabled" to true,
+                "online_lyrics_source_kuwo_enabled" to true,
+                "online_lyrics_source_kugou_enabled" to true,
+                "online_lyrics_automatic_order_enabled" to true,
+                "online_lyrics_source_order" to "netease,qq,kuwo,kugou",
+                "online_lyrics_global_best_enabled" to false,
+                "online_lyrics_translation_enabled" to false,
+                "online_lyrics_hide_mandarin_pinyin" to false,
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
                 "lyrics_font_display_name" to "",
@@ -181,7 +207,6 @@ class ModuleSettingsSchemaTest {
                 cjkKaraokeAnimationEnabled = true,
                 navigationCompensationEnabled = false,
                 lyricBlurRadiusOffsetPx = 0,
-                titleCorrectionEnabled = false,
                 schemaVersion = ModuleConstants.CONFIG_SCHEMA_VERSION,
             ),
             decoded,
@@ -330,34 +355,315 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
-    fun `title correction defaults off and round trips`() {
+    fun `online lyrics supplement defaults off and round trips`() {
         assertEquals(
             false,
-            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).titleCorrectionEnabled,
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).onlineLyricsSupplementEnabled,
         )
-        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
-            ModuleSettings(titleCorrectionEnabled = true),
-        )
-        assertEquals(true, encoded["title_correction_enabled"])
-        assertEquals(true, ModuleSettingsSchema.decode(encoded).titleCorrectionEnabled)
-    }
-
-    @Test
-    fun `title correction mode defaults to original and round trips`() {
         assertEquals(
-            TitleCorrectionMode.ORIGINAL_HYPER,
-            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).titleCorrectionMode,
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_supplement_enabled" to "not-a-boolean"),
+            ).onlineLyricsSupplementEnabled,
         )
 
         val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
-            ModuleSettings(titleCorrectionMode = TitleCorrectionMode.JAPAN),
+            ModuleSettings(onlineLyricsSupplementEnabled = true),
         )
-        assertEquals("japan", encoded["title_correction_mode"])
-        assertEquals(TitleCorrectionMode.JAPAN, ModuleSettingsSchema.decode(encoded).titleCorrectionMode)
+        assertEquals(true, encoded["online_lyrics_supplement_enabled"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsSupplementEnabled,
+        )
     }
 
     @Test
-    fun `schema v11 target language migrates to the selected profile`() {
+    fun `a region-era schema upgrades with the online toggle absent and off`() {
+        // The region-only state: v16 carried the region extras but none of the
+        // online lyric keys.  Its stored region values must survive the jump to the
+        // current schema.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 16,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to false,
+                "custom_lyrics_enabled" to true,
+                "automatic_lyrics_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(false, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["custom_lyrics_enabled"])
+        // v16 -> current transition: the region extras are preserved, not re-derived, and
+        // the retired picker is rewritten onto the region key.  The retired master
+        // switch carried over onto HLE's account-language override.
+        assertEquals("japan", upgraded["region_selection"])
+        assertEquals(true, upgraded["override_account_language"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertEquals(false, upgraded["localized_metadata_cache"])
+        assertFalse(upgraded.containsKey("title_correction_enabled"))
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `the online lyric chain defaults on, uses the built-in order and round trips`() {
+        val decoded = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertTrue(decoded.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(decoded.onlineLyricsSourceQqEnabled)
+        assertTrue(decoded.onlineLyricsSourceKuwoEnabled)
+        assertTrue(decoded.onlineLyricsSourceKugouEnabled)
+        assertTrue(decoded.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(decoded.onlineLyricsGlobalBestEnabled)
+        assertEquals("netease,qq,kuwo,kugou", decoded.onlineLyricsSourceOrder)
+
+        // Malformed booleans fall back to the documented defaults; an unknown or
+        // partial order is normalized back to a permutation of the default order.
+        val malformed = ModuleSettingsSchema.decode(
+            mapOf(
+                "online_lyrics_source_netease_enabled" to "yes",
+                "online_lyrics_automatic_order_enabled" to 1,
+                "online_lyrics_global_best_enabled" to "on",
+                "online_lyrics_source_order" to "kugou,unknown",
+            ),
+        )
+        assertTrue(malformed.onlineLyricsSourceNeteaseEnabled)
+        assertTrue(malformed.onlineLyricsAutomaticOrderEnabled)
+        assertFalse(malformed.onlineLyricsGlobalBestEnabled)
+        assertEquals("kugou,netease,qq,kuwo", malformed.onlineLyricsSourceOrder)
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                onlineLyricsSourceNeteaseEnabled = false,
+                onlineLyricsSourceKugouEnabled = false,
+                onlineLyricsAutomaticOrderEnabled = false,
+                onlineLyricsSourceOrder = "kuwo,qq",
+                onlineLyricsGlobalBestEnabled = true,
+            ),
+        )
+        assertEquals(false, encoded["online_lyrics_source_netease_enabled"])
+        assertEquals(false, encoded["online_lyrics_source_kugou_enabled"])
+        assertEquals(false, encoded["online_lyrics_automatic_order_enabled"])
+        assertEquals("kuwo,qq,netease,kugou", encoded["online_lyrics_source_order"])
+        assertEquals(true, encoded["online_lyrics_global_best_enabled"])
+
+        val roundTripped = ModuleSettingsSchema.decode(encoded)
+        assertEquals(false, roundTripped.onlineLyricsSourceNeteaseEnabled)
+        assertEquals(false, roundTripped.onlineLyricsSourceKugouEnabled)
+        assertEquals(false, roundTripped.onlineLyricsAutomaticOrderEnabled)
+        assertEquals("kuwo,qq,netease,kugou", roundTripped.onlineLyricsSourceOrder)
+        assertEquals(true, roundTripped.onlineLyricsGlobalBestEnabled)
+    }
+
+    @Test
+    fun `a schema 17 store upgrades with the online lyric chain defaults`() {
+        // The previous integration state: v17 = region extras (16) + supplement.
+        // Its region values must survive while the newly added lyric chain takes
+        // its documented defaults.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 17,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+                "restore_cjk_original_metadata" to false,
+                "localized_metadata_cache" to false,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        // v17 -> current transition: region values preserved, the retired master carried
+        // over onto the override switch.
+        assertEquals("japan", upgraded["region_selection"])
+        assertEquals(true, upgraded["override_account_language"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertEquals(false, upgraded["localized_metadata_cache"])
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_netease_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_qq_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kuwo_enabled"])
+        assertEquals(true, upgraded["online_lyrics_source_kugou_enabled"])
+        assertEquals(true, upgraded["online_lyrics_automatic_order_enabled"])
+        assertEquals("netease,qq,kuwo,kugou", upgraded["online_lyrics_source_order"])
+        assertEquals(false, upgraded["online_lyrics_global_best_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `a schema 18 store upgrades with the translation enrichment toggle off`() {
+        // A store written by the lyrics-only branch: it has the lyric chain but
+        // no region keys.  The v18 -> v19 jump adds the translation toggle and
+        // derives the region extras from the stored profile.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 18,
+                "custom_lyrics_enabled" to true,
+                "online_lyrics_supplement_enabled" to true,
+                "online_lyrics_global_best_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_supplement_enabled"])
+        assertEquals(true, upgraded["online_lyrics_global_best_enabled"])
+        assertEquals(false, upgraded["online_lyrics_translation_enabled"])
+        // No stored region profile at all: HLE's region/override defaults are off and
+        // its 替换中日韩歌曲信息为原地区原名 switch lands off too.
+        assertEquals("none", upgraded["region_selection"])
+        assertEquals(false, upgraded["override_account_language"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertEquals(true, upgraded["localized_metadata_cache"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `a lyrics-only 19 store upgrades by splitting the retired picker`() {
+        // A lyrics-only store reached the same version number but still carries the
+        // retired picker and master switch.  v20/v21 rewrite them: the region half is
+        // preserved, the absent switch keeps the value the picker used to imply and
+        // the master carries over onto HLE's account-language override.
+        val stored = mapOf<String, Any?>(
+            "schema_version" to 19,
+            "custom_lyrics_enabled" to true,
+            "title_correction_enabled" to true,
+            "title_correction_mode" to "japan",
+        )
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = stored,
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals("japan", upgraded["region_selection"])
+        assertEquals(true, upgraded["override_account_language"])
+        assertEquals(false, upgraded["restore_cjk_original_metadata"])
+        assertFalse(upgraded.containsKey("title_correction_mode"))
+        assertFalse(upgraded.containsKey("title_correction_enabled"))
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+
+        val decoded = ModuleSettingsSchema.decode(upgraded)
+        assertEquals(RegionSelection.JAPAN, decoded.regionSelection)
+        assertEquals(true, decoded.overrideAccountLanguage)
+        assertEquals(false, decoded.restoreCjkOriginalMetadata)
+        assertEquals(true, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `translation enrichment defaults off rejects malformed values and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).onlineLyricsTranslationEnabled,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_translation_enabled" to "not-a-boolean"),
+            ).onlineLyricsTranslationEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsTranslationEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_translation_enabled"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsTranslationEnabled,
+        )
+    }
+
+    @Test
+    fun `hiding Mandarin pinyin defaults off rejects malformed values and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+                .onlineLyricsHideMandarinPinyinEnabled,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("online_lyrics_hide_mandarin_pinyin" to "not-a-boolean"),
+            ).onlineLyricsHideMandarinPinyinEnabled,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(onlineLyricsHideMandarinPinyinEnabled = true),
+        )
+        assertEquals(true, encoded["online_lyrics_hide_mandarin_pinyin"])
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(encoded).onlineLyricsHideMandarinPinyinEnabled,
+        )
+    }
+
+    @Test
+    fun `a v22 store upgrades with the pinyin switch off and the combined key carried over`() {
+        // The pre-pronunciation store: the single `online_lyrics_translation_enabled`
+        // key must keep its value (it now gates both lanes) and the new
+        // hide-Mandarin key lands on its documented off default.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 22,
+                "online_lyrics_translation_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+
+        assertEquals(true, upgraded["online_lyrics_translation_enabled"])
+        assertEquals(false, upgraded["online_lyrics_hide_mandarin_pinyin"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `the account-language override defaults off and round trips`() {
+        assertFalse(
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).overrideAccountLanguage,
+        )
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                regionSelection = RegionSelection.JAPAN,
+                overrideAccountLanguage = true,
+            ),
+        )
+        assertEquals(true, encoded["override_account_language"])
+        assertEquals(true, ModuleSettingsSchema.decode(encoded).overrideAccountLanguage)
+    }
+
+    @Test
+    fun `the retired master switch carries over onto the override only with a region`() {
+        // v20's master gated the runtime while a region selected meant "replace account
+        // language"; the v21 upgrade keeps that pair without turning the switch on for a
+        // store that had no region.
+        assertTrue(
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_enabled" to true, "region_selection" to "japan"),
+            ).overrideAccountLanguage,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_enabled" to true, "region_selection" to "none"),
+            ).overrideAccountLanguage,
+        )
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_enabled" to false, "region_selection" to "japan"),
+            ).overrideAccountLanguage,
+        )
+    }
+
+    @Test
+    fun `the region control defaults to no region and round trips`() {
+        assertEquals(
+            RegionSelection.NONE,
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).regionSelection,
+        )
+
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(regionSelection = RegionSelection.JAPAN),
+        )
+        assertEquals("japan", encoded["region_selection"])
+        assertEquals(RegionSelection.JAPAN, ModuleSettingsSchema.decode(encoded).regionSelection)
+    }
+
+    @Test
+    fun `schema v11 target language migrates to the selected region`() {
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 11,
@@ -367,13 +673,14 @@ class ModuleSettingsSchemaTest {
             legacyValues = emptyMap<String, Any?>(),
         )
 
-        assertEquals("japan", upgraded?.get("title_correction_mode"))
+        assertEquals("japan", upgraded?.get("region_selection"))
+        assertEquals(true, upgraded?.get("override_account_language"))
         assertFalse(upgraded?.containsKey("title_correction_target_language") == true)
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded?.get("schema_version"))
     }
 
     @Test
-    fun `legacy mainland target maps to mainland profile and unsupported target maps to original`() {
+    fun `legacy mainland target maps to mainland region and unsupported target maps to none`() {
         val mainland = ModuleSettingsSchema.decode(
             mapOf(
                 "title_correction_enabled" to true,
@@ -386,8 +693,177 @@ class ModuleSettingsSchemaTest {
                 "title_correction_target_language" to "ko-KR",
             ),
         )
-        assertEquals(TitleCorrectionMode.MAINLAND_CHINA, mainland.titleCorrectionMode)
-        assertEquals(TitleCorrectionMode.ORIGINAL_HYPER, unsupported.titleCorrectionMode)
+        assertEquals(RegionSelection.MAINLAND_CHINA, mainland.regionSelection)
+        assertEquals(RegionSelection.NONE, unsupported.regionSelection)
+    }
+
+    @Test
+    fun `the region and title controls default to HLE's off state`() {
+        val decoded = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertEquals(RegionSelection.NONE, decoded.regionSelection)
+        assertEquals(false, decoded.overrideAccountLanguage)
+        assertEquals(false, decoded.restoreCjkOriginalMetadata)
+        assertEquals(true, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `a legacy store without the switch keeps the retired picker's implied value`() {
+        // The pre-v16 picker did not separate "replace the region" from "restore
+        // original names": restoring was implied by the no-region value only.
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "original_hyper"),
+            ).restoreCjkOriginalMetadata,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "mainland_china"),
+            ).restoreCjkOriginalMetadata,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("title_correction_mode" to "japan"),
+            ).restoreCjkOriginalMetadata,
+        )
+    }
+
+    @Test
+    fun `an explicit title-correction value always wins and the region key never implies it`() {
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf(
+                    "title_correction_mode" to "original_hyper",
+                    "restore_cjk_original_metadata" to false,
+                ),
+            ).restoreCjkOriginalMetadata,
+        )
+        // Combining a region replacement with original-name restore is allowed.
+        assertEquals(
+            true,
+            ModuleSettingsSchema.decode(
+                mapOf(
+                    "title_correction_mode" to "japan",
+                    "restore_cjk_original_metadata" to true,
+                ),
+            ).restoreCjkOriginalMetadata,
+        )
+        // The region key alone never implies the restore switch: with no retired
+        // picker profile and no stored value it lands on HLE's off default.
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("region_selection" to "none"),
+            ).restoreCjkOriginalMetadata,
+        )
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(
+                mapOf("region_selection" to "japan"),
+            ).restoreCjkOriginalMetadata,
+        )
+    }
+
+    @Test
+    fun `region extras round trip and can be turned off`() {
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                restoreCjkOriginalMetadata = false,
+                localizedMetadataCache = false,
+            ),
+        )
+        assertEquals(false, encoded["restore_cjk_original_metadata"])
+        assertEquals(false, encoded["localized_metadata_cache"])
+        val decoded = ModuleSettingsSchema.decode(encoded)
+        assertEquals(false, decoded.restoreCjkOriginalMetadata)
+        assertEquals(false, decoded.localizedMetadataCache)
+    }
+
+    @Test
+    fun `metadata cache clear generation defaults to zero and survives a v21 upgrade`() {
+        assertEquals(
+            0L,
+            ModuleSettingsSchema.decode(emptyMap<String, Any>()).metadataCacheClearGeneration,
+        )
+        // A malformed value reads as "no pending clear" instead of throwing.
+        assertEquals(
+            0L,
+            ModuleSettingsSchema.metadataCacheClearGeneration(
+                mapOf("metadata_cache_clear_generation" to "not-a-number"),
+            ),
+        )
+        assertEquals(
+            3L,
+            ModuleSettingsSchema.metadataCacheClearGeneration(
+                mapOf("metadata_cache_clear_generation" to 3L),
+            ),
+        )
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(metadataCacheClearGeneration = 2L),
+        )
+        assertEquals(2L, encoded["metadata_cache_clear_generation"])
+        assertEquals(2L, ModuleSettingsSchema.decode(encoded).metadataCacheClearGeneration)
+
+        // A v21 store has no generation key: the upgrade adds the default and
+        // keeps every other value untouched.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 21,
+                "region_selection" to "japan",
+                "restore_cjk_original_metadata" to true,
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+        assertEquals(0L, upgraded["metadata_cache_clear_generation"])
+        assertEquals("japan", upgraded["region_selection"])
+        assertEquals(true, upgraded["restore_cjk_original_metadata"])
+    }
+
+    @Test
+    fun `every region selection survives a settings round trip`() {
+        RegionSelection.values().forEach { region ->
+            val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(
+                    regionSelection = region,
+                    restoreCjkOriginalMetadata = !region.replacesRegion,
+                ),
+            )
+            val decoded = ModuleSettingsSchema.decode(encoded)
+            assertEquals(region, decoded.regionSelection)
+            assertEquals(region.contentUiLanguageSelection, decoded.regionSelection.contentUiLanguageSelection)
+        }
+    }
+
+    @Test
+    fun `a v15 configuration upgrades to the current schema without losing its region behaviour`() {
+        val upgradedRegion = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 15,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "japan",
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgradedRegion?.get("schema_version"))
+        assertEquals(false, upgradedRegion?.get("restore_cjk_original_metadata"))
+        assertEquals(true, upgradedRegion?.get("override_account_language"))
+        assertEquals("japan", upgradedRegion?.get("region_selection"))
+
+        val upgradedOriginal = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 15,
+                "title_correction_enabled" to true,
+                "title_correction_mode" to "original_hyper",
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )
+        assertEquals(true, upgradedOriginal?.get("restore_cjk_original_metadata"))
+        assertEquals(false, upgradedOriginal?.get("override_account_language"))
+        assertEquals("none", upgradedOriginal?.get("region_selection"))
     }
 
     @Test
@@ -518,12 +994,12 @@ class ModuleSettingsSchemaTest {
                 "modify_locale_target_tag" to "zh-CN",
             ),
         )
-        assertFalse(decoded.titleCorrectionEnabled)
+        assertFalse(decoded.overrideAccountLanguage)
 
         val encoded = ModuleSettingsSchema.encodeOrdinarySettings(decoded)
         assertFalse(encoded.containsKey("modify_locale"))
         assertFalse(encoded.containsKey("modify_locale_target_tag"))
-        assertEquals("original_hyper", encoded["title_correction_mode"])
+        assertEquals("none", encoded["region_selection"])
 
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
@@ -534,6 +1010,6 @@ class ModuleSettingsSchemaTest {
         )
         assertFalse(upgraded!!.containsKey("modify_locale"))
         assertFalse(upgraded.containsKey("modify_locale_target_tag"))
-        assertEquals("original_hyper", upgraded["title_correction_mode"])
+        assertEquals("none", upgraded["region_selection"])
     }
 }

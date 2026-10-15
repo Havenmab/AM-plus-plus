@@ -1,0 +1,134 @@
+package dev.amenhancer.module.lyrics.online
+
+/**
+ * Pure models for the online translation layer, ported from
+ * HyperLyricsEnhanced's `lyric.model` / `lyric.LyricModels` and kept free of
+ * Android, `kotlinx.serialization` and host types.
+ *
+ * [NativeLyricLine] mirrors the subset of HLE's `RichLyricLine` the matcher
+ * touches; [NativeLyricDocument] mirrors its `Song`, and [OnlineTranslationLine]
+ * mirrors its `LrcLine`. Field names and their meanings are unchanged so the
+ * ported matcher/selector logic reads like the original.
+ */
+
+/** One line a source returned, carrying the lanes the providers already parsed. */
+data class OnlineTranslationLine(
+    val startTimeMs: Long,
+    val content: String,
+    val translation: String? = null,
+    val romanization: String? = null,
+)
+
+/**
+ * One online provider's lyric body, already flattened to the lanes the matcher
+ * consumes. The host chain collects these; the pure enrichment policy decides
+ * which one wins and merges it into the displayed document.
+ */
+data class OnlineTranslationCandidate(
+    val source: Source,
+    val lines: List<OnlineTranslationLine>,
+)
+
+/**
+ * Metadata attached to a native line or document. HLE's `LyricMetadata` is a
+ * `Map<String, String?>`; the delegate keeps `.entries`, iteration and lookup
+ * identical while adding the one accessor the translation code uses.
+ */
+class LyricMetadata(private val backing: Map<String, String?> = emptyMap()) :
+    Map<String, String?> by backing {
+
+    fun getString(key: String, default: String? = null): String? = backing[key] ?: default
+}
+
+fun lyricMetadataOf(vararg entries: Pair<String, String?>): LyricMetadata =
+    LyricMetadata(linkedMapOf(*entries))
+
+/**
+ * One timed romanization slice of a displayed document's transliteration lane:
+ * the text of a head `<transliteration>` entry's `<span begin end>` (an AMLL
+ * inline `x-roman` span the converter migrated verbatim). A Word-timed song's
+ * romanization lives here, one span per lyric word — never as one line string.
+ */
+data class NativePronunciationSpan(
+    val begin: Long,
+    val end: Long,
+    val text: String,
+)
+
+/** The song's own (Apple) line, before/after online enrichment. */
+data class NativeLyricLine(
+    val begin: Long = 0L,
+    val end: Long = 0L,
+    val text: String? = null,
+    val secondary: String? = null,
+    val translation: String? = null,
+    val translationWords: List<LyricsWord>? = null,
+    val roma: String? = null,
+    /**
+     * The line's own timed romanization slices, when the source document carries
+     * them. [roma] remains the line-level concatenation for the line-lane
+     * fallback; this is the per-word lane the word getter matches against.
+     */
+    val romaSpans: List<NativePronunciationSpan> = emptyList(),
+    /**
+     * The line's `ttm:role="x-bg"` background vocal. The native line carries it
+     * as its own word vector (`getBackgroundWords` /
+     * `getPronunciationBackgroundWords`), so its text, timing and romanization
+     * slices live here rather than in [text]/[romaSpans]; the background is never
+     * folded into the main lane.
+     */
+    val backgroundText: String? = null,
+    val backgroundRoma: String? = null,
+    val backgroundRomaSpans: List<NativePronunciationSpan> = emptyList(),
+    val backgroundBegin: Long = 0L,
+    val backgroundEnd: Long = 0L,
+    val isAlignedRight: Boolean = false,
+    val metadata: LyricMetadata? = null,
+)
+
+/** The song's own lyric document. */
+data class NativeLyricDocument(
+    val lyrics: List<NativeLyricLine>? = null,
+    val metadata: LyricMetadata? = null,
+)
+
+/** Keys HLE stores on lyric metadata; values are part of the published contract. */
+object LyricMetadataKeys {
+    /**
+     * HLE's `appleCatalogGenre` / `applePronunciationLanguages`: the context
+     * [ApplePronunciationVisibilityPolicy] needs to decide whether a Mandarin
+     * pinyin lane must be suppressed.
+     */
+    const val APPLE_CATALOG_GENRE = "appleCatalogGenre"
+    const val APPLE_PRONUNCIATION_LANGUAGES = "applePronunciationLanguages"
+    const val ONLINE_TRANSLATION_SOURCE = "onlineTranslationSource"
+    const val ONLINE_TRANSLATION_MATCH_STATS = "onlineTranslationMatchStats"
+    const val ONLINE_PRONUNCIATION_SOURCE = "onlinePronunciationSource"
+    const val ONLINE_PRONUNCIATION_MATCH_STATS = "onlinePronunciationMatchStats"
+    const val BACKGROUND_VOCALS_TRANSLATION = "backgroundVocalsTranslation"
+}
+
+/**
+ * Normalizes translation text returned by third-party online lyric sources.
+ *
+ * QQ Music and NetEase can use slash-only text such as `//` or `// //` as a
+ * missing-translation placeholder. It must never be treated as real content.
+ *
+ * Ported verbatim from HLE's `common.lyric.OnlineTranslationContentPolicy`.
+ */
+object OnlineTranslationContentPolicy {
+    fun sanitize(text: String?): String? {
+        val normalized = text
+            ?.trim { Character.isWhitespace(it) || Character.isSpaceChar(it) }
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        val compact = normalized.filterNot {
+            Character.isWhitespace(it) || Character.isSpaceChar(it)
+        }
+        return normalized.takeUnless {
+            compact.isNotEmpty() && compact.all { character -> character == '/' }
+        }
+    }
+
+    fun isMeaningful(text: String?): Boolean = sanitize(text) != null
+}

@@ -36,6 +36,24 @@ class CurrentSongIdentityTargetTest {
     }
 
     @Test
+    fun `seam reads the current item duration when the item exposes it`() {
+        val seam = CurrentItemIdentitySeam(resolver(SongFragment::class.java))
+        assertNull(seam.resolve(SongFragment.installMethod()))
+
+        assertEquals(
+            CurrentSongDetails(
+                appleMusicId = 67890L,
+                title = "No lyrics",
+                artist = "Artist",
+                durationMs = 215_000L,
+                durationRaw = 215_000L,
+                durationUnit = DURATION_UNIT_MILLISECONDS,
+            ),
+            seam.detailsOfItem(SongItem("67890", "No lyrics", "Artist", 215_000L)),
+        )
+    }
+
+    @Test
     fun `seam can rebind a stale lyrics fragment to the verified current item`() {
         val seam = CurrentItemIdentitySeam(resolver(SongFragment::class.java))
         assertNull(seam.resolve(SongFragment.installMethod()))
@@ -192,10 +210,12 @@ private class SongItem(
     private val id: String,
     private val title: String = "Song title",
     private val artistName: String = "Artist name",
+    private val duration: Long = 0L,
 ) {
     fun getId(): String = id
     fun getTitle(): String = title
     fun getArtistName(): String = artistName
+    fun getDuration(): Long = duration
 }
 
 private class SongFragment(item: SongItem?) {

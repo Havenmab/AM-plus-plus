@@ -1,10 +1,10 @@
 package dev.amenhancer.module.hook
 
 import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
+import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
-import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.model.CustomLyricsSources
 import java.io.File
 import java.io.FileInputStream
@@ -65,6 +65,25 @@ data class AutoLyricsRuntime(
     val executor: Executor,
     val publisher: AutoLyricsPublisher? = null,
     val suppressedIds: Set<Long> = emptySet(),
+    /**
+     * Fetches and merges a missing translation lane for the displayed document:
+     * `(appleMusicId, rawAppleTtml) -> merged ttml`. Null while the translation
+     * toggle is off, so the target's automatic path is exactly the existing
+     * resolver lookup.
+     */
+    val translationEnricher: ((Long, String) -> String?)? = null,
+    /**
+     * Timing-keyed online lanes for the native lyric-model delivery. The
+     * enricher writes the merged per-track lanes here and the host reads them
+     * back from Apple's own lyric-model getters, the way HLE writes through
+     * `AppleNativeOnlineTranslationStore` instead of relying on an injected
+     * TTML head track (which 1606 does not render).
+     */
+    val nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
+    /** HLE's 「不显示国语歌拼音」 switch, re-checked against the model's languages. */
+    val hideMandarinPinyin: Boolean = false,
+    /** Catalog genre for the Mandarin rule; null (unresolved) hides nothing. */
+    val genreFor: (Long) -> String? = { null },
     val refreshSong: ((Long, () -> Boolean) -> dev.amenhancer.module.model.CustomLyricsEntry?)? = null,
     val refreshExecutor: Executor? = null,
     val closeRefresh: () -> Unit = {},
@@ -167,7 +186,7 @@ class FileAutoLyricsCache(
 
     private fun validTtml(ttml: String): Boolean =
         ttml.toByteArray(Charsets.UTF_8).size <= MAX_TTML_BYTES &&
-            TtmlInputPolicy.isAcceptable(ttml) && TtmlTimingPolicy.isWord(ttml)
+            AutoLyricsTimingPolicy.isAcceptableAtSeam(ttml)
 
     private fun atomicWrite(destination: File, bytes: ByteArray) {
         val pending = File.createTempFile("pending_", ".tmp", directory)
@@ -275,6 +294,31 @@ class AutoLyricsReplacementSession(
         if (appleMusicId > 0L && isCurrentSong(appleMusicId) && isAllowed(appleMusicId)) {
             request(appleMusicId)
         }
+    }
+
+    /**
+     * The displayed Apple document just became available for the current track.
+     *
+     * The translation lane can only merge into Apple's own document, so an
+     * attempt that already ran without one (the lyrics-availability probe, a
+     * null-pointer install, or a request made before the parse) must be retried
+     * now instead of waiting out the retry cooldown. Clearing the cooldown and
+     * invalidating an in-flight generation is scoped to the active track, and a
+     * request that already produced a replacement pointer is left untouched.
+     */
+    fun onDisplayedDocumentCaptured(appleMusicId: Long) {
+        if (appleMusicId <= 0L) return
+        val retry = synchronized(lock) {
+            if (!isCurrentSongLocked(appleMusicId) || !isAllowed(appleMusicId)) return
+            val attempted = pending.containsKey(appleMusicId) ||
+                failedUntil.containsKey(appleMusicId)
+            failedUntil.remove(appleMusicId)
+            attempted
+        }
+        if (retry) {
+            synchronized(lock) { generation += 1L }
+        }
+        ensureRequested(appleMusicId)
     }
 
     fun isTracking(appleMusicId: Long): Boolean = synchronized(lock) {
@@ -439,8 +483,8 @@ class AutoLyricsReplacementSession(
         source: String,
         requestGeneration: Long,
     ): Any? {
-        if (!TtmlTimingPolicy.isWord(ttml)) {
-            logger("automatic lyrics candidate rejected as non-word source=$source id=$appleMusicId")
+        if (!AutoLyricsTimingPolicy.isAcceptableAtSeam(ttml)) {
+            logger("automatic lyrics candidate rejected by timing policy source=$source id=$appleMusicId")
             return null
         }
         val pointer = runCatching { parseTtml(ttml) }.getOrNull() ?: return null

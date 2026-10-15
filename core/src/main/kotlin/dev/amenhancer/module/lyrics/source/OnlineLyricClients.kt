@@ -3,7 +3,7 @@ package dev.amenhancer.module.lyrics.source
 import dev.amenhancer.module.i18n.ModuleText
 
 import dev.amenhancer.module.hook.AutoLyricsCandidate
-import dev.amenhancer.module.hook.TtmlTimingPolicy
+import dev.amenhancer.module.hook.AutoLyricsTimingPolicy
 
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
@@ -25,16 +25,26 @@ class AmllTtmlClient(private val transport: LyricHttpTransport) {
     }
 }
 
-/** One automatic source in the fixed playback lookup order. */
+/**
+ * One automatic source in the fixed playback lookup order.
+ *
+ * [acceptsLineTiming] is for search-based sources that may only carry whole-line
+ * timing; the fixed-URL providers keep their Word-only requirement.
+ */
 data class AutoLyricsSource(
     val name: String,
+    val acceptsLineTiming: Boolean = false,
     val fetch: (Long) -> String?,
 )
 
 /**
- * Fetches the first structurally valid Word-TTML candidate. Source-specific
+ * Fetches the first structurally valid TTML candidate. Source-specific
  * conversion stays here so the playback session only handles validation,
  * native parsing, caching, and publication.
+ *
+ * Word timing remains the default: only a source that opts in via
+ * [AutoLyricsSource.acceptsLineTiming] is accepted with Line timing, and only
+ * while [AutoLyricsTimingPolicy.SEARCH_ACCEPTS_LINE_TIMING] is on.
  */
 class AutoLyricsSourceResolver(
     private val sources: List<AutoLyricsSource>,
@@ -43,28 +53,38 @@ class AutoLyricsSourceResolver(
         if (appleMusicId <= 0L) return null
         sources.forEach { source ->
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
-            if (!TtmlInputPolicy.isAcceptable(ttml) || !TtmlTimingPolicy.isWord(ttml)) {
-                return@forEach
-            }
+            if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
             return AutoLyricsCandidate(source.name, ttml)
         }
         return null
     }
 
     companion object {
-        /** Wires the fixed AMLL → Lunabeat → user's repository priority. */
+        /**
+         * Wires the fixed AMLL → Lunabeat → user's repository priority.
+         *
+         * [leading] is prepended verbatim and [trailing] appended verbatim, both for opt-in search
+         * sources; callers pass empty lists when the owning setting is off, so the provider chain is
+         * exactly the fixed one and the search client is never even constructed.
+         *
+         * Search sources belong in [trailing], not [leading]: the fixed providers carry
+         * word-level, human-curated lyrics, and a search provider that merely returns line-level
+         * timing must not pre-empt them for a song they already have.
+         */
         fun fixed(
             amll: AmllTtmlClient,
             amLyrics: AmLyricsClient,
             lunabeat: LunabeatClient,
+            leading: List<AutoLyricsSource> = emptyList(),
+            trailing: List<AutoLyricsSource> = emptyList(),
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
-            listOf(
+            leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL) { raw ->
                     amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
                 },
-                AutoLyricsSource(CustomLyricsSources.LUNABEAT, lunabeat::fetch),
-                AutoLyricsSource(CustomLyricsSources.AM_LYRICS, amLyrics::fetch),
-            ),
+                AutoLyricsSource(CustomLyricsSources.LUNABEAT, fetch = lunabeat::fetch),
+                AutoLyricsSource(CustomLyricsSources.AM_LYRICS, fetch = amLyrics::fetch),
+            ) + trailing,
         )
     }
 }

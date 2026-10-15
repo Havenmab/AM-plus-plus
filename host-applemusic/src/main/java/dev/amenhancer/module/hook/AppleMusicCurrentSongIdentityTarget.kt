@@ -79,6 +79,7 @@ internal class AppleMusicCurrentSongIdentityTarget(
                     metadataPublishResolution.summary,
                     converterResolution.summary,
                     seam.fieldSummary.orEmpty(),
+                    seam.durationSummary.orEmpty(),
                     seam.metadataSummary,
                 ).joinToString("; "),
         )

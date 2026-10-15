@@ -706,8 +706,11 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                 override fun configuredContentUiLanguage(): Int =
                     this@createMetadataHostAdapters.configuredContentUiLanguage
 
+                // HLE's `shouldOverrideAccountLanguage(selection)`: the region selection alone is
+                // not enough, the 「歌曲信息替换至设定地区语言」 switch has to be on too.  The
+                // bridge carries that pair as `RegionTitleRequestPlan.overrideAccountLanguage`.
                 override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
-                    this@createMetadataHostAdapters.configuredContentUiLanguage != 0
+                    this@createMetadataHostAdapters.overrideAccountLanguage
 
                 override fun isRestoreOriginalEnabled(): Boolean = restoreOriginalMetadata
 
@@ -735,6 +738,13 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     )
                 }
 
+                override fun publishCurrentPlaybackAlias(
+                    mediaId: String,
+                    alias: AppleInternalCatalogResolver.Alias,
+                ) = bridge.hostCall("resolution.publishCurrentPlaybackAlias", Unit) {
+                    bridge.publishCurrentPlaybackAliasFromHost(mediaId, alias)
+                }
+
                 override fun applyPlaybackMetadataOverride(
                     mediaId: String,
                     alias: AppleInternalCatalogResolver.Alias,
@@ -744,8 +754,7 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     originalMetadataConfirmed: Boolean,
                     artistOnly: Boolean,
                     propagateArtistEntity: Boolean,
-                ) = bridge.hostCall("resolution.applyPlaybackMetadataOverride", Unit) {
-                    bridge.applyPlaybackMetadataOverrideFromHost(
+                ) = bridge.hostCall("resolution.applyPlaybackMetadataOverride", Unit) {                    bridge.applyPlaybackMetadataOverrideFromHost(
                         mediaId = mediaId,
                         alias = alias,
                         forceInAppRebind = forceInAppRebind,

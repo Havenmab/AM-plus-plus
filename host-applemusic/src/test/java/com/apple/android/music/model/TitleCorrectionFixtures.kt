@@ -11,8 +11,19 @@ open class Song : BaseContentItem() {
     fun setCollectionName(name: String) {}
     fun getCollectionName(): String = ""
 }
-/** JVM stand-ins for the native playback-item conversion contract. */
-open class BasePlaybackItem : BaseContentItem()
+/**
+ * JVM stand-ins for the native playback-item conversion contract. The concrete
+ * 7.0 hierarchy carries the track length as `getPlaybackDuration()J`, which the
+ * declared `BaseContentItem` field type cannot expose.
+ */
+open class BasePlaybackItem(
+    id: String = "0",
+    title: String = "",
+    artistName: String = "",
+    private val playbackDuration: Long = 0L,
+) : BaseContentItem(id, title, artistName) {
+    fun getPlaybackDuration(): Long = playbackDuration
+}
 
 /** JVM stand-in for the native entity album conversion return type. */
 open class Album : BaseContentItem()

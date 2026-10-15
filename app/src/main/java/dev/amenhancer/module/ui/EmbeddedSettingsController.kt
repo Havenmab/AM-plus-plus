@@ -38,8 +38,13 @@ internal interface EmbeddedSettingsController {
         EmbeddedActionResult.Failed(ModuleText.LYRICS_MANAGER_UNAVAILABLE.text())
     fun deleteLyrics(appleMusicIds: List<Long>): EmbeddedActionResult =
         EmbeddedActionResult.Failed(ModuleText.LYRICS_MANAGER_UNAVAILABLE.text())
-    fun importFont(uri: Uri): EmbeddedActionResult = EmbeddedActionResult.Failed(ModuleText.FONT_IMPORT_UNAVAILABLE.text())
-    fun clearFont(): EmbeddedActionResult = EmbeddedActionResult.Failed(ModuleText.FONT_MANAGER_UNAVAILABLE.text())
+    /** Deletes every custom-lyrics entry and its stored file. */
+    fun clearLyrics(): EmbeddedActionResult =
+        EmbeddedActionResult.Failed(ModuleText.LYRICS_MANAGER_UNAVAILABLE.text())
+    fun importFont(uri: Uri): EmbeddedActionResult =
+        EmbeddedActionResult.Failed(ModuleText.FONT_IMPORT_UNAVAILABLE.text())
+    fun clearFont(): EmbeddedActionResult =
+        EmbeddedActionResult.Failed(ModuleText.FONT_MANAGER_UNAVAILABLE.text())
     fun importTtml(
         uri: Uri,
         appleMusicId: Long,

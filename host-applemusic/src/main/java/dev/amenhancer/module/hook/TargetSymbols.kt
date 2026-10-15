@@ -278,6 +278,7 @@ internal enum class TargetSymbolId {
     TTML_PARSER_NATIVE,
     LYRICS_CURRENT_ITEM_FIELD,
     LYRICS_ITEM_UPDATE_METHOD,
+    CURRENT_ITEM_DURATION_OWNER,
     PLAYER_METADATA_HUB,
     METADATA_TO_ITEM_CONVERTER,
     LYRICS_AVAILABILITY_OWNER,
@@ -850,6 +851,23 @@ internal object AppleMusicSymbols {
             }
         },
         identity = ::fieldIdentity,
+    )
+
+    /**
+     * The current item's track length on 7.0. `BaseContentItem` no longer
+     * declares a duration at all; the concrete `BasePlaybackItem` hierarchy
+     * moved the accessor to `getPlaybackDuration()J`. The verified 1606
+     * identity is pinned as a method contract, and the reviewed fallback is the
+     * same no-argument long/int accessor name on the class the current-item
+     * hierarchy actually instantiates — so a build without the pin degrades to
+     * Missing instead of guessing a shape.
+     */
+    val CurrentItemDurationMethod = methodSymbol(
+        id = "current-item-duration-method",
+        profileOwner = TargetSymbolId.CURRENT_ITEM_DURATION_OWNER,
+        profilePolicy = ProfilePolicy.EXACT_PREFERRED,
+        fallbackOwner = { it == "com.apple.android.music.model.BasePlaybackItem" },
+        contract = ::isCurrentItemDurationMethod,
     )
 
     /** Stable public seam; the implementation class and its singleton remain obfuscated. */
@@ -2451,6 +2469,14 @@ private fun isLyricsCurrentItemField(field: Field): Boolean =
 private fun isStructurallyLyricsCurrentItemField(field: Field): Boolean =
     !Modifier.isStatic(field.modifiers) &&
         field.type.name == "com.apple.android.music.model.BaseContentItem"
+
+/** A reviewed no-argument millisecond accessor on the current-item hierarchy. */
+private fun isCurrentItemDurationMethod(method: Method): Boolean =
+    !Modifier.isStatic(method.modifiers) &&
+        method.parameterCount == 0 &&
+        method.name in CURRENT_ITEM_DURATION_GETTER_NAMES &&
+        (method.returnType == Long::class.javaPrimitiveType ||
+            method.returnType == Int::class.javaPrimitiveType)
 
 private fun TargetClassIndex.metadataConverterCandidates(): List<Method> =
     methods(::isShortPlayerClass, ::isStructurallyMetadataToPlaybackItemMethod)

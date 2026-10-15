@@ -27,6 +27,7 @@ object CustomLyricsManifestCodec {
                         put(KEY_SHA256, entry.sha256)
                         put(KEY_SOURCE, entry.source)
                         put(KEY_ENABLED, entry.enabled)
+                        put(KEY_USER_EDITED, entry.userEdited)
                     })
                 }
             })
@@ -101,6 +102,10 @@ object CustomLyricsManifestCodec {
         sha256 = entry.optString(KEY_SHA256),
         source = entry.optString(KEY_SOURCE),
         enabled = entry.optBoolean(KEY_ENABLED, false),
+        // Absent in payloads written before the ownership flag existed. Such an
+        // entry may only be auto-updated if its source is one of the automatic
+        // ones, which is exactly what the old behaviour did.
+        userEdited = entry.optBoolean(KEY_USER_EDITED, false),
     )
 
     private const val VERSION = 2
@@ -114,4 +119,5 @@ object CustomLyricsManifestCodec {
     private const val KEY_SHA256 = "sha256"
     private const val KEY_SOURCE = "source"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_USER_EDITED = "userEdited"
 }

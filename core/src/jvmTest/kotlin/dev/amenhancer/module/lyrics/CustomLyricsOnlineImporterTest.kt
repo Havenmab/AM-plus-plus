@@ -103,7 +103,8 @@ class CustomLyricsOnlineImporterTest {
         assertFalse(imported.ttml.contains("xmlns=\"\""))
         assertFalse(imported.ttml.substringAfter("<body").contains("ttm:role=\"x-translation\""))
         assertTrue(imported.ttml.substringBefore('>').contains("""itunes:timing="Word""""))
-        assertTrue(imported.ttml.substringBefore('>').contains("""xml:lang="ko""""))
+        // A Latin body with no declared language: the neutral root tag.
+        assertTrue(imported.ttml.substringBefore('>').contains("""xml:lang="und""""))
         assertTrue(
             imported.ttml.contains(
                 "<translation type=\"subtitle\" xml:lang=\"zh-Hans\"><text for=\"L1\">T1</text>",

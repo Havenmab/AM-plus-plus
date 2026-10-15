@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics.online
 
+import dev.amenhancer.module.lyrics.AppleRomanizationLanguage
+
 /**
  * Timing-keyed overlay of the online **translation** lane and the module's own
  * **displayed-document romanization** for the current track. This is the fork's
@@ -652,8 +654,12 @@ object NativeLyricModelPolicy {
      * only ever written into a document or printed in a diagnostic; it is never
      * handed to the app's native `setPronunciation` (see
      * [transliterationLanguageTag]).
+     *
+     * Alias of [AppleRomanizationLanguage.NEUTRAL_LATIN_TAG]: the AMLL converter
+     * owns the mapping and must stay free of any overlay dependency, so this
+     * policy is the one that delegates.
      */
-    const val FALLBACK_PRONUNCIATION_LANGUAGE = "und-Latn"
+    const val FALLBACK_PRONUNCIATION_LANGUAGE = AppleRomanizationLanguage.NEUTRAL_LATIN_TAG
 
     /**
      * The `<transliteration xml:lang>` tag for a song whose lyrics language is
@@ -675,11 +681,12 @@ object NativeLyricModelPolicy {
      * The lyrics language is read from the document's own `xml:lang` first; a
      * primary subtag outside HLE's set (an English song, or one that names its
      * language only as `und`) keeps [FALLBACK_PRONUNCIATION_LANGUAGE].
+     *
+     * Delegates to [AppleRomanizationLanguage] so the converter and the overlay
+     * share one mapping.
      */
     fun transliterationLanguageTag(lyricsLanguage: String?): String =
-        transliterationScriptLanguage(lyricsLanguage)
-            ?.let { "$it-Latn" }
-            ?: FALLBACK_PRONUNCIATION_LANGUAGE
+        AppleRomanizationLanguage.transliterationLanguageTag(lyricsLanguage)
 
     /**
      * The primary language a supported romanization tag can be built from, or
@@ -688,20 +695,8 @@ object NativeLyricModelPolicy {
      * inferred from the lyrics) can tell "unsupported" from "undetermined"
      * without comparing against [FALLBACK_PRONUNCIATION_LANGUAGE].
      */
-    fun transliterationScriptLanguage(lyricsLanguage: String?): String? {
-        val primary = lyricsLanguage
-            ?.trim()
-            ?.replace('_', '-')
-            ?.lowercase()
-            ?.substringBefore('-')
-            ?.takeIf(String::isNotEmpty)
-        return when (primary) {
-            "ja", "jpn" -> "ja"
-            "ko", "kor" -> "ko"
-            "zh", "zho", "chi", "cmn", "yue" -> "zh"
-            else -> null
-        }
-    }
+    fun transliterationScriptLanguage(lyricsLanguage: String?): String? =
+        AppleRomanizationLanguage.transliterationScriptLanguage(lyricsLanguage)
 
     /**
      * The lane-ready edge key: the (song, Apple lane, per-line probe) triple.

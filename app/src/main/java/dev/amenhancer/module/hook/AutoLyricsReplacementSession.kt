@@ -333,7 +333,13 @@ internal fun createAutoLyricsRuntime(
                 previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
             }
             val entry = previous ?: return@refresh null
-            if (!entry.enabled || entry.source == CustomLyricsSources.MANUAL || isCancelled()) return@refresh null
+            // A document the user wrote or edited is left exactly as they saved
+            // it: refreshing would re-convert the source over their edit.
+            if (!entry.enabled || entry.userEdited || entry.source == CustomLyricsSources.MANUAL ||
+                isCancelled()
+            ) {
+                return@refresh null
+            }
             val result = configuredContent.updateSong(appleMusicId, sources, isCancelled)
             val updated = result as? CustomLyricsUpdateResult.Updated ?: run {
                 if (result is CustomLyricsUpdateResult.Failed && !isCancelled()) {

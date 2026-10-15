@@ -19,9 +19,23 @@ data class TtmlFormatConversion(
  *
  * <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
  *   <translations><translation type="subtitle" xml:lang="zh-Hans"><text for="L1">…</text></translation></translations>
- *   <transliterations><transliteration xml:lang="und-Latn"><text for="L1">…</text></transliteration></transliterations>
+ *   <transliterations><transliteration xml:lang="ja-Latn"><text for="L1">…</text></transliteration></transliterations>
  * </iTunesMetadata>
  * ```
+ *
+ * The transliteration tag is **per song**, derived from the lyrics language
+ * ([AppleRomanizationLanguage.transliterationLanguageTag]): `ja-Latn`, `ko-Latn` or
+ * `zh-Latn` for a Japanese, Korean or Chinese document, else the neutral
+ * `und-Latn`. The tag is the lane's name inside the app's own lyric model — its
+ * native TTML parser keys each pronunciation by the element's language and
+ * `getPronunciationLanguages` reports those keys — so a neutral tag leaves the
+ * romanization parsed but unnamed, and nothing can then select it. The tag is
+ * therefore written twice over: on a track this converter builds, and on a head
+ * `<transliterations>` track the source already declared but left unnamed —
+ * which is the shape AMLL itself ships
+ * (`<transliterations><transliteration><text for="L1">…`), and the one whose
+ * romanization the app parses under no language. An entry that already names a
+ * language is never rewritten.
  *
  * A `<text>` carries whatever the source span held, so a line-by-line track
  * stays plain text and a word-by-word one keeps its timed `<span>`s. Spans
@@ -40,22 +54,47 @@ data class TtmlFormatConversion(
  * of what it holds, rather than opening a second one beside it. A file can also
  * arrive half in each format — an Apple transliteration in the head beside
  * translations still inline — so each kind is judged on its own: a kind the head
- * declares keeps its inline spans, because migrating it again would duplicate
- * the track.
+ * declares keeps its inline **translation** spans, because migrating it again
+ * would duplicate the track, while its inline `x-roman` spans are **dropped**.
+ *
+ * The app's native parser knows only `x-bg` and `translation` role values
+ * (`libandroidappmusic.so`'s only role literals), so an inline `x-roman` span is
+ * never read as a pronunciation lane. On a Word-timed body the app's
+ * `LyricsLineParser::processSpanElements` walks it as one more lyric span — with
+ * no timing — which corrupts the line's word vector, while the romanization the
+ * app does parse lives only in the head `<transliteration>` track. A declared
+ * head track is therefore authoritative and the redundant, harmful body copy is
+ * removed; an undeclared one is still migrated into the head as before.
  *
  * The background vocal left in the body loses its `begin` / `end`, because Apple
  * reads the vocal's extent from its own syllables, and moves to the front of the
  * line when it starts ahead of the first lyric syllable, because Apple places
  * the highlight in document order.
  *
- * The root is pinned rather than carried over. Android's TTML parser renders a
- * translation and a transliteration together only when the lyrics are Korean, so
- * the root is marked `ko`, translations `zh-Hans` and transliterations `und-Latn`;
- * because only one track of each kind survives that constraint, the first
- * translation and first romanization of each line win. The root also gets the
- * `itunes:timing` Apple expects — `Word` when the body carries timed syllables,
- * `Line` otherwise. AMLL's `xmlns=""` on `<metadata>` and `<div>` goes too: it
- * drops the lyric subtree out of the TTML namespace, leaving Apple no lines.
+ * Two shapes the AMLL database's axis tool left behind are normalized before
+ * anything reads the document: a `<p>` whose only word is bare text gets that
+ * word wrapped in a span carrying the line's own timing, and every `x-bg`
+ * wrapper is put in the canonical shape — role on the outer span with no timing
+ * there, the text and timing on an inner span. An already two-layer group loses
+ * the redundant timing on its wrapper, so the whole output is one shape. Both
+ * rewrites only touch a shape that is not yet canonical, so running the
+ * converter twice changes nothing the second time.
+ *
+ * The root language is resolved per song, not pinned. The document's own
+ * `xml:lang`, else the caller's explicit language, names the **lyrics** language;
+ * only a document that names none falls back to the script the body is written
+ * in (kana → `ja`, Hangul → `ko`, Han → `zh`), and a body with no decisive script
+ * keeps the neutral `und`. The old hardcoded `ko` named a language the song was
+ * not in, so a Japanese document could advertise a Korean root beside its own
+ * `ja-Latn` lane. Translations keep `zh-Hans`; because only one track of each
+ * kind survives that constraint, the first translation and first romanization of
+ * each line win — except inside a background group, where every `x-roman` span
+ * is kept and concatenated, so a reading split across words loses nothing. The
+ * transliterations tag follows the same lyrics language (see
+ * above). The root also gets the `itunes:timing` Apple expects — `Word` when the
+ * body carries timed syllables, `Line` otherwise. AMLL's `xmlns=""` on
+ * `<metadata>` and `<div>` goes too: it drops the lyric subtree out of the TTML
+ * namespace, leaving Apple no lines.
  *
  * Lines are then stably sorted by their numeric begin time, with head entries
  * following their keys. Same-start translations join with newlines in the
@@ -74,17 +113,20 @@ object AmllTtmlFormatConverter {
     private const val ROLE_ROMAN = "x-roman"
     private const val ROLE_BACKGROUND = "x-bg"
 
-    /** Pinned so Apple Music on Android renders both auxiliary tracks. */
-    private const val LYRIC_LANGUAGE = "ko"
     private const val TRANSLATION_LANGUAGE = "zh-Hans"
-    /** Neutral Latin-script tag: a language-specific tag can make Apple drop the track. */
-    private const val TRANSLITERATION_LANGUAGE = "und-Latn"
 
     /** How Apple labels a translation meant to be shown under the lyric. */
     private const val TRANSLATION_TYPE = "subtitle"
 
+    /** The head lane item element, used to locate the attribute insertion point. */
+    private const val TRANSLITERATION_ELEMENT = "transliteration"
+
     /** Stands in for a line the track has no text for, keeping the entry there. */
     private const val ABSENT_TEXT = " "
+
+    /** A CDATA section's delimiters, whose inner text is lyric text like any other. */
+    private const val CDATA_OPEN = "<![CDATA["
+    private const val CDATA_CLOSE = "]]>"
 
     private val EMPTY_DEFAULT_NAMESPACE = Regex("""\s+xmlns\s*=\s*(?:""|'')""")
     private val ROLE_ATTRIBUTE = attributePattern("ttm:role")
@@ -110,26 +152,312 @@ object AmllTtmlFormatConverter {
     private fun quoteRawAttributeValue(value: String): String =
         if ('"' in value) "'$value'" else "\"$value\""
 
-    fun toAppleFormat(ttml: String): TtmlFormatConversion {
+    fun toAppleFormat(ttml: String, lyricLanguage: String? = null): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
+        // The AMLL database still carries shapes an axis tool left behind: a
+        // `<p>` whose only word is bare text, and `x-bg` groups whose
+        // role-carrying wrapper also holds the timing. Neither is the canonical
+        // shape the app reads, so they are normalized before anything else. The
+        // pass is idempotent and is the only source of the indices the rest of
+        // the rewrite uses.
+        val normalized = normalizeLegacyShapes(ttml)
         // Judged per kind, so a head that already declares one track does not
         // hide the other kind still sitting inline. An `<iTunesMetadata>` on its
         // own is no such signal: AMLL writes one to carry `<songwriters>`.
-        val declared = declaredTracks(ttml)
+        val declared = declaredTracks(normalized)
+        // A declared `<transliterations>` block whose entries name no language is
+        // still a rewrite: the native parser registers a pronunciation lane only
+        // under the language its `<transliteration>` element carries, so an
+        // unnamed block parses the romanization yet advertises no lane to select.
+        val unnamed = unnamedTransliterations(normalized)
         // The head already speaks for every kind the body carries, so this is
-        // Apple's own document; only its timeline needs formatting.
-        if (declared.any && !hasUndeclaredInlineTrack(ttml, declared)) {
-            val formatted = formatTimeline(ttml)
+        // Apple's own document and nothing, the root included, is rewritten —
+        // but a legacy shape normalized above is still a conversion. Its
+        // timeline is still formatted: the sort is idempotent and Apple's own
+        // documents benefit from it too.
+        if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(normalized, declared)) {
+            val formatted = formatTimeline(normalized)
             return TtmlFormatConversion(formatted, formatted != ttml)
         }
-        val migrated = migrateAuxiliaryTracks(ttml, declared)
-        val body = nextElement(migrated, "body", 0)
-        val normalized = normalizeTags(
-            migrated,
-            wordTimed = body != null && hasTimedSpan(migrated, body),
+        // Read before `normalizeTags` pins the root: the source document's own
+        // language is the song's lyrics language. A document that names an
+        // unsupported (or no) language falls back to the script its lyrics are
+        // written in, and only an undeterminable one keeps the neutral tag.
+        val writtenLanguage = transliterationLanguage(normalized, lyricLanguage)
+        val rootLanguage = lyricsLanguage(normalized, lyricLanguage)
+        val migrated = migrateAuxiliaryTracks(normalized, declared, writtenLanguage, unnamed)
+        // Migrating a line's only auxiliary span away can leave its lyric bare
+        // where the source hid it beside that span, so the body's lines are
+        // wrapped once more. This pass is deliberately body-only: a head lane is
+        // a `<text for=…>` entry, not a body `<p>`, and must never be given a
+        // span — the app reads its translation text verbatim.
+        val canonical = wrapExposedBareLines(migrated)
+        val body = nextElement(canonical, "body", 0)
+        val normalizedRoot = normalizeTags(
+            canonical,
+            wordTimed = body != null && hasTimedSpan(canonical, body),
+            language = rootLanguage,
         )
-        val result = formatTimeline(normalized)
-        return TtmlFormatConversion(result, result != ttml)
+        // Lines and head entries are ordered by their start time last, once the
+        // document is in Apple's shape.
+        val result = formatTimeline(normalizedRoot)
+        return TtmlFormatConversion(
+            ttml = result,
+            converted = result != ttml,
+        )
+    }
+
+    /**
+     * Normalizes the shapes AMLL's axis tool left behind into the canonical ones
+     * the app reads:
+     *
+     *  - a `<p>` whose lyric is bare text (`<p …>Yeah</p>`) gets one inner
+     *    `<span>` carrying the line's own `begin` / `end`, so the single word the
+     *    line holds is timed. A `<p>` that already has child elements is
+     *    untouched.
+     *  - an `x-bg` wrapper is put in the canonical shape its corpus already
+     *    mostly uses: `ttm:role="x-bg"` on the outer span with **no timing
+     *    there**, and the text plus timing on an inner `<span>`. A single-layer
+     *    group (`<span ttm:role="x-bg" begin end>text</span>`) gets the inner
+     *    span it is missing, taking the outer's timing; an already two-layer
+     *    group keeps its inner spans and only loses the now-redundant `begin` /
+     *    `end` from the wrapper, so the whole output is one shape. Only the outer
+     *    `x-bg` wrapper is touched — a plain word or line span keeps its timing.
+     *
+     * The inner span deliberately takes the parent's `begin` / `end`: the
+     * per-word matching that consumes the converted document aligns a lane by
+     * span start and end, so the line's only word must carry the line's own
+     * extent — exactly the extent the two-layer groups give each of their words.
+     *
+     * Every rule fires only on a shape that is not yet canonical, so a second
+     * pass finds nothing to do and returns the document byte-for-byte. A
+     * background group with neither an inner element to lean on nor text and
+     * timing to move (blank text) is left as it is, so the wrapper's timing is
+     * never dropped on its own. The `x-bg` rule covers the whole document, so a
+     * legacy `x-bg` inside a declared translation or transliteration lane in the
+     * head is normalized by it; the line rule is confined to the body, and a
+     * `<text for=…>` head entry is never wrapped.
+     */
+    private fun normalizeLegacyShapes(ttml: String): String {
+        val edits = mutableListOf<Edit>()
+        wrapBareLines(ttml, edits)
+        normalizeBackgroundSpans(ttml, edits)
+        return applyEdits(ttml, edits)
+    }
+
+    /**
+     * Wraps the bare-text **body** lines migration exposed, and nothing else.
+     *
+     * Only the body is scanned: the head lanes this runs after are already
+     * canonical, and a `<translations>` / `<transliterations>` entry is a
+     * `<text for=…>`, not a body `<p>`. Wrapping one would hand the app a span
+     * where it expects the translation text itself, which is precisely the
+     * failure mode this pass must not have.
+     */
+    private fun wrapExposedBareLines(ttml: String): String {
+        val edits = mutableListOf<Edit>()
+        wrapBareLines(ttml, edits)
+        return applyEdits(ttml, edits)
+    }
+
+    /**
+     * Gives a bare-text `<p>` in the **body** the timed inner span it is missing.
+     * The head is out of scope: no head lane holds a `<p>`, and none may be
+     * wrapped even if a document carried one there.
+     */
+    private fun wrapBareLines(ttml: String, edits: MutableList<Edit>) {
+        val body = nextElement(ttml, "body", 0) ?: return
+        var cursor = body.contentStart
+        while (true) {
+            val line = nextElement(ttml, "p", cursor) ?: break
+            if (line.end > body.contentEnd) break
+            cursor = line.end
+            if (line.selfClosing) continue
+            if (childElements(ttml, line).isNotEmpty()) continue
+            val text = content(ttml, line)
+            if (text.isBlank()) continue
+            val begin = attribute(line.attributes, BEGIN_ATTRIBUTE_VALUE)
+            val end = attribute(line.attributes, END_ATTRIBUTE_VALUE)
+            if (begin == null && end == null) continue
+            edits += Edit(
+                line.contentStart,
+                line.contentEnd,
+                "<span${timingAttributes(begin, end)}>$text</span>",
+            )
+        }
+    }
+
+    /**
+     * Puts every `x-bg` wrapper into the canonical shape the app accepts: the
+     * role on the outer span and no timing there, the text and its timing on an
+     * inner span. A single-layer group gains the inner span it is missing; an
+     * already two-layer group only loses the redundant `begin` / `end` from its
+     * wrapper, because its inner spans already carry the timing the app reads.
+     * A plain word or line span is never touched.
+     */
+    private fun normalizeBackgroundSpans(ttml: String, edits: MutableList<Edit>) {
+        elementsNamed(ttml, "span").forEach { span ->
+            if (span.selfClosing) return@forEach
+            if (attribute(span.attributes, ROLE_ATTRIBUTE) != ROLE_BACKGROUND) return@forEach
+            val begin = attribute(span.attributes, BEGIN_ATTRIBUTE_VALUE)
+            val end = attribute(span.attributes, END_ATTRIBUTE_VALUE)
+            val openTag = ttml.substring(span.start, span.contentStart)
+            if (childElements(ttml, span).isNotEmpty()) {
+                // Inner spans already time the group, so the wrapper's own copy
+                // is redundant; drop only it and keep every other attribute.
+                if (begin == null && end == null) return@forEach
+                edits += Edit(span.start, span.contentStart, SPAN_TIMING.replace(openTag, ""))
+                return@forEach
+            }
+            // A wrapper with no inner span keeps its timing as the fallback when
+            // there is nothing to move into one.
+            val text = content(ttml, span)
+            if (text.isBlank()) return@forEach
+            if (begin == null && end == null) return@forEach
+            edits += Edit(
+                span.start,
+                span.end,
+                "${SPAN_TIMING.replace(openTag, "")}<span${timingAttributes(begin, end)}>$text</span></span>",
+            )
+        }
+    }
+
+    /** The `begin` / `end` attributes for a synthesized span, in that order. */
+    private fun timingAttributes(begin: String?, end: String?): String = buildString {
+        if (begin != null) append(" begin=\"").append(begin).append('"')
+        if (end != null) append(" end=\"").append(end).append('"')
+    }
+
+    /**
+     * Every [name] element in [text], in document order and including nested
+     * ones, so a legacy `x-bg` is found wherever it sits.
+     */
+    private fun elementsNamed(text: String, name: String): List<Element> {
+        val elements = mutableListOf<Element>()
+        var index = 0
+        while (true) {
+            val element = nextElement(text, name, index) ?: break
+            elements += element
+            index = if (element.selfClosing) element.end else element.contentStart
+        }
+        return elements
+    }
+
+    /**
+     * The `<transliteration xml:lang>` tag for [ttml]: the caller's explicit
+     * [declared] language when it names one of HLE's romanization languages, else
+     * the document's own root `xml:lang`, else the script the lyrics are actually
+     * written in (kana → Japanese, Hangul → Korean, Han → Chinese). A document
+     * that offers none of those — an English song, or a body the converter cannot
+     * read — keeps the neutral tag, because naming a language the song is not in
+     * would be worse than naming none.
+     */
+    private fun transliterationLanguage(ttml: String, declared: String?): String {
+        listOfNotNull(declared, documentLanguage(ttml))
+            .firstNotNullOfOrNull(AppleRomanizationLanguage::transliterationScriptLanguage)
+            ?.let { return "$it-Latn" }
+        return AppleRomanizationLanguage.transliterationLanguageTag(inferredLyricsLanguage(ttml))
+    }
+
+    /** The root `<tt>`'s own `xml:lang`, which AMLL uses for the lyric language. */
+    private fun documentLanguage(ttml: String): String? =
+        nextElement(ttml, "tt", 0)?.let { attribute(it.attributes, LANGUAGE_ATTRIBUTE) }
+
+    /**
+     * The language the root `<tt xml:lang>` is written with: the caller's
+     * explicit language, else the document's own declaration, else the script the
+     * body's **lyrics** are actually written in (kana → `ja`, Hangul → `ko`, Han
+     * → `zh`). The auxiliary lanes are not read, so the song's own language can
+     * never be taken from a translation or a romanization.
+     *
+     * The root names the **lyrics** language, not the transliteration tag, so a
+     * declared language is preserved even when it is outside HLE's romanization
+     * set (an English song still declares `en`). Only a document that names none
+     * and whose body has no decisive script falls back to the neutral `und` — the
+     * old hardcoded `ko` named a language the song was not in.
+     */
+    private fun lyricsLanguage(ttml: String, declared: String?): String {
+        val explicit = declared?.trim()?.takeIf(String::isNotEmpty)
+        val root = documentLanguage(ttml)?.trim()?.takeIf(String::isNotEmpty)
+        return explicit ?: root ?: inferredLyricsLanguage(ttml)
+    }
+
+    /**
+     * The language the **body's lyric text** is written in, from the first
+     * script-bearing code point that is not Latin: kana is decisive for Japanese
+     * even beside the Han it shares, Hangul for Korean, and bare Han for Chinese.
+     *
+     * Only the lyrics are read. The content of an `x-translation` span is the
+     * translation and of an `x-roman` span the romanization, and neither names
+     * the language the song is sung in. Reading them is what made an English
+     * song whose only Han sits in its Chinese translation declare `zh` — the
+     * same primary language as its own `zh-Hans` translation lane, which the app
+     * then declines to offer, because a Chinese song needs no Chinese
+     * translation. Disregarding the auxiliary lanes keeps the root on the
+     * language of the lyrics (here `und`, a Latin body), so the translation lane
+     * is never named by the song's own language. A body with no decisive script
+     * is `und`.
+     */
+    private fun inferredLyricsLanguage(ttml: String): String {
+        val body = nextElement(ttml, "body", 0) ?: return "und"
+        val lyrics = StringBuilder()
+        appendLyricText(ttml, body.contentStart, body.contentEnd, lyrics)
+        var hasHan = false
+        var index = 0
+        while (index < lyrics.length) {
+            val codePoint = lyrics.codePointAt(index)
+            when (Character.UnicodeScript.of(codePoint)) {
+                Character.UnicodeScript.HIRAGANA,
+                Character.UnicodeScript.KATAKANA,
+                -> return "ja"
+                Character.UnicodeScript.HANGUL -> return "ko"
+                Character.UnicodeScript.HAN -> hasHan = true
+                else -> Unit
+            }
+            index += Character.charCount(codePoint)
+        }
+        return if (hasHan) "zh" else "und"
+    }
+
+    /**
+     * Appends the lyric text of `[from, to)` to [out], leaving out the content of
+     * every translation and romanization span and every tag, comment and
+     * attribute value. A background vocal (`x-bg`) is a lyric and is read; an
+     * auxiliary span nested inside it is still skipped.
+     */
+    private fun appendLyricText(ttml: String, from: Int, to: Int, out: StringBuilder) {
+        var index = from
+        while (index < to) {
+            val open = ttml.indexOf('<', index)
+            if (open < 0 || open >= to) {
+                out.append(ttml, index, to)
+                return
+            }
+            out.append(ttml, index, open)
+            val literal = literalEnd(ttml, open)
+            if (literal > 0) {
+                if (ttml.startsWith(CDATA_OPEN, open) &&
+                    literal >= open + CDATA_OPEN.length + CDATA_CLOSE.length
+                ) {
+                    out.append(ttml, open + CDATA_OPEN.length, literal - CDATA_CLOSE.length)
+                }
+                index = literal
+                continue
+            }
+            val end = tagEnd(ttml, open)
+            if (end < 0) return
+            val name = elementName(ttml, open, end)
+            val child = name?.let { parseElement(ttml, it, open, end) }
+            if (child == null) {
+                index = end + 1
+                continue
+            }
+            val role = attribute(child.attributes, ROLE_ATTRIBUTE)
+            if (role != ROLE_TRANSLATION && role != ROLE_ROMAN) {
+                appendLyricText(ttml, child.contentStart, child.contentEnd, out)
+            }
+            index = child.end
+        }
     }
 
     /** Sort lines and head entries together, retaining simultaneous voices. */
@@ -334,6 +662,27 @@ object AmllTtmlFormatConverter {
         transliterations = nextElement(ttml, "transliterations", 0) != null,
     )
 
+    /**
+     * The `<transliteration>` elements of the head track that carry no
+     * `xml:lang`, in document order. AMLL's own documents declare the track that
+     * way (`<transliterations><transliteration><text for="L1">…`), so the lane is
+     * preserved by [migrateAuxiliaryTracks] yet never named — the exact shape the
+     * device log's `languages=` (empty) beside a parsed romanization came from.
+     * An entry that already names a language is left exactly as it was.
+     */
+    private fun unnamedTransliterations(ttml: String): List<Element> {
+        val block = nextElement(ttml, "transliterations", 0) ?: return emptyList()
+        val unnamed = mutableListOf<Element>()
+        var cursor = block.contentStart
+        while (true) {
+            val item = nextElement(ttml, "transliteration", cursor) ?: break
+            if (item.end > block.contentEnd) break
+            cursor = item.end
+            if (attribute(item.attributes, LANGUAGE_ATTRIBUTE).isNullOrBlank()) unnamed += item
+        }
+        return unnamed
+    }
+
     /** True when the body still carries a kind the head leaves undeclared. */
     private fun hasUndeclaredInlineTrack(ttml: String, declared: DeclaredTracks): Boolean {
         val body = nextElement(ttml, "body", 0) ?: return false
@@ -358,12 +707,25 @@ object AmllTtmlFormatConverter {
     }
 
     /** Moves inline `x-translation` / `x-roman` spans into a head `<iTunesMetadata>`. */
-    private fun migrateAuxiliaryTracks(ttml: String, declared: DeclaredTracks): String {
-        val metadata = nextElement(ttml, "metadata", 0) ?: return ttml
+    private fun migrateAuxiliaryTracks(
+        ttml: String,
+        declared: DeclaredTracks,
+        transliterationLanguage: String,
+        unnamedTransliterations: List<Element>,
+    ): String {
+        // A preserved head track that names no language still has to be named:
+        // the tag is the lane's key in the app's own lyric model, so without it
+        // the romanization is parsed but no language is ever advertised. An
+        // entry that already carries one is not touched.
+        val edits = mutableListOf<Edit>()
+        unnamedTransliterations.forEach { item ->
+            val insertAt = item.start + 1 + TRANSLITERATION_ELEMENT.length
+            edits += Edit(insertAt, insertAt, " xml:lang=\"$transliterationLanguage\"")
+        }
+        val metadata = nextElement(ttml, "metadata", 0) ?: return applyEdits(ttml, edits)
 
         val translations = mutableListOf<TrackEntry>()
         val transliterations = mutableListOf<TrackEntry>()
-        val edits = mutableListOf<Edit>()
 
         var cursor = metadata.end
         while (true) {
@@ -385,7 +747,7 @@ object AmllTtmlFormatConverter {
         edits += declareTracks(
             ttml,
             metadata,
-            buildTracks(translations, transliterations),
+            buildTracks(translations, transliterations, transliterationLanguage),
             declared,
         )
         return applyEdits(ttml, edits)
@@ -445,6 +807,9 @@ object AmllTtmlFormatConverter {
         // Only one track of each kind survives the parser constraint, so the
         // first translation and first romanization of the line are kept. An
         // empty span is no translation, so a later non-empty one still counts.
+        // A background romanization is the exception: a background group may
+        // split one reading across several `x-roman` spans, so every one of
+        // them is kept, concatenated in document order.
         var translation: String? = null
         var roman: String? = null
         var backgroundTranslation: String? = null
@@ -457,8 +822,18 @@ object AmllTtmlFormatConverter {
                     if (translation == null) translation = auxiliaryText(ttml, child)
                     edits += removal(ttml, child, line.contentStart)
                 }
-                ROLE_ROMAN -> if (!declared.transliterations) {
-                    if (roman == null) roman = auxiliaryText(ttml, child)
+                ROLE_ROMAN -> {
+                    // The app's native parser knows only `x-bg` and `translation`
+                    // role values, so an inline `x-roman` span is never read as a
+                    // pronunciation lane: on a Word-timed body
+                    // `LyricsLineParser::processSpanElements` treats it as one
+                    // more (untimed) lyric span and corrupts the line's word
+                    // vector. When the head already declares the track the body
+                    // copy is therefore dropped; otherwise it is migrated into
+                    // the head track as before.
+                    if (!declared.transliterations && roman == null) {
+                        roman = auxiliaryText(ttml, child)
+                    }
                     edits += removal(ttml, child, line.contentStart)
                 }
                 ROLE_BACKGROUND -> {
@@ -472,9 +847,17 @@ object AmllTtmlFormatConverter {
                                 }
                                 removals += removal(ttml, span, child.contentStart)
                             }
-                            ROLE_ROMAN -> if (!declared.transliterations) {
-                                if (backgroundRoman == null) {
-                                    backgroundRoman = auxiliaryText(ttml, span)
+                            ROLE_ROMAN -> {
+                                // Every `x-roman` span of the group is kept, in
+                                // document order, so a reading split across
+                                // several of them loses none of its words. A
+                                // blank span contributes nothing, exactly as
+                                // `auxiliaryText` treats every other extraction.
+                                if (!declared.transliterations) {
+                                    val text = auxiliaryText(ttml, span)
+                                    if (text != null) {
+                                        backgroundRoman = backgroundRoman.orEmpty() + text
+                                    }
                                 }
                                 removals += removal(ttml, span, child.contentStart)
                             }
@@ -561,9 +944,10 @@ object AmllTtmlFormatConverter {
     private fun buildTracks(
         translations: List<TrackEntry>,
         transliterations: List<TrackEntry>,
+        transliterationLanguage: String,
     ): String = buildString {
         appendTrack(translations, "translations", "translation", TRANSLATION_LANGUAGE, TRANSLATION_TYPE)
-        appendTrack(transliterations, "transliterations", "transliteration", TRANSLITERATION_LANGUAGE)
+        appendTrack(transliterations, "transliterations", "transliteration", transliterationLanguage)
     }
 
     private fun StringBuilder.appendTrack(
@@ -607,7 +991,7 @@ object AmllTtmlFormatConverter {
      * Declares the timing mode and lyric language on the root and drops the
      * empty default namespace override from every other element.
      */
-    private fun normalizeTags(ttml: String, wordTimed: Boolean): String {
+    private fun normalizeTags(ttml: String, wordTimed: Boolean, language: String): String {
         val output = StringBuilder(ttml.length)
         var index = 0
         var rootSeen = false
@@ -634,7 +1018,7 @@ object AmllTtmlFormatConverter {
                 when {
                     !rootSeen && isElement(ttml, open, "tt") -> {
                         rootSeen = true
-                        withRootAttributes(tag, wordTimed)
+                        withRootAttributes(tag, wordTimed, language)
                     }
                     tag.startsWith("</") -> tag
                     else -> EMPTY_DEFAULT_NAMESPACE.replace(tag, "")
@@ -645,10 +1029,10 @@ object AmllTtmlFormatConverter {
         return output.toString()
     }
 
-    private fun withRootAttributes(tag: String, wordTimed: Boolean): String {
+    private fun withRootAttributes(tag: String, wordTimed: Boolean, language: String): String {
         val insertAt = if (tag.endsWith("/>")) tag.length - 2 else tag.length - 1
         // Both attributes are authoritative here, so any inherited value is
-        // dropped before the pinned one is appended.
+        // dropped before the resolved one is appended.
         var head = tag.substring(0, insertAt)
         head = LANGUAGE_ATTRIBUTE.replace(head, "")
         head = TIMING_ATTRIBUTE_VALUE.replace(head, "")
@@ -657,7 +1041,7 @@ object AmllTtmlFormatConverter {
                 append(" xmlns:itunes=\"").append(ITUNES_NAMESPACE).append('"')
             }
             append(" itunes:timing=\"").append(if (wordTimed) "Word" else "Line").append('"')
-            append(" xml:lang=\"").append(LYRIC_LANGUAGE).append('"')
+            append(" xml:lang=\"").append(language).append('"')
         }
         return head.trimEnd() + additions + tag.substring(insertAt)
     }

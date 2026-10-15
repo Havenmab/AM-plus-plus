@@ -181,6 +181,16 @@ data class CustomLyricsEntry(
     val sha256: String,
     val source: String,
     val enabled: Boolean = true,
+    /**
+     * True once the user wrote or edited this document's TTML themselves, e.g.
+     * by changing the root `xml:lang` in the lyrics editor. [source] still
+     * records where the document came from, so the editor can keep showing
+     * "AMLL"; this flag records who last wrote it. The automatic paths never
+     * convert over a document the user owns — the user's edit (a corrected
+     * language, a fixed line) would be lost — while an entry the user left
+     * alone keeps updating when its source revision changes.
+     */
+    val userEdited: Boolean = false,
 )
 /** Small index shared through remote preferences; TTML bodies stay in remote files. */
 data class CustomLyricsManifest(

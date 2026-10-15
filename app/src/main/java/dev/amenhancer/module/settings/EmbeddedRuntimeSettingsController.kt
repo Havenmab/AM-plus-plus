@@ -142,6 +142,9 @@ internal class EmbeddedRuntimeSettingsController(
                 displayName = displayName,
                 ttml = ttml,
                 source = CustomLyricsSources.MANUAL,
+                // A file the user picked is theirs; the automatic paths must not
+                // convert over it.
+                userEdited = true,
             ),
             replacingAppleMusicId,
         ).toActionResult()

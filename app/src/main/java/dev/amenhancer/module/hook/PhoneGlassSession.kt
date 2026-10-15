@@ -125,6 +125,7 @@ internal open class PhoneGlassSession(
     private var underlap = false
     private var scanNeeded = true
     private var scrollTargets: List<View> = emptyList()
+    private var composeScrollTargets: List<View> = emptyList()
     private var hierarchyDirty = false
     // AM++ scroll collapse. `collapse.value` is snapshot state, so the navigation and mini
     // glass islands both read this one animation and can never drift apart.
@@ -146,6 +147,7 @@ internal open class PhoneGlassSession(
     private var collapseTouchInProgress = false
     private var collapseGestureDirection: Boolean? = null
     private var collapseScrollTarget: View? = null
+    private var collapseBoundaryTarget: View? = null
     /**
      * Second signal source: the gesture itself. Compose pages expose no native scroll container,
      * so their scrolling is invisible to [collapseScrollListener] and only the touch that drives
@@ -934,12 +936,15 @@ internal open class PhoneGlassSession(
                     entries.remove()
                 }
             }
-            val candidates = descendants(root).filter { view ->
+            val contentViews = descendants(root).toList()
+            val candidates = contentViews.filter { view ->
             view.isShown && view.height >= root.height / 2 && view.height > 0 && !isViewPagerPageHost(view) && hostBinding.isScrollContainer(view)
             }.toList()
             scrollTargets = candidates.filter { child ->
                 generateSequence(child.parent) { it.parent }.takeWhile { it !== root }.none { parent -> candidates.any { it === parent } }
             }
+            composeScrollTargets = contentViews.filter(hostBinding::isComposeScene)
+                .mapNotNull(hostBinding::verticalScrollTouchTarget).distinct()
             // Compose pages expose no scroll container at all, which is why the gesture path
             // exists; naming the classes that *were* found makes that distinction visible on a
             // device instead of inferred from the source.
@@ -1217,6 +1222,7 @@ internal open class PhoneGlassSession(
         collapseTouchInProgress = false
         collapseGestureDirection = null
         collapseScrollTarget = null
+        collapseBoundaryTarget = null
     }
 
     /**
@@ -1341,6 +1347,8 @@ internal open class PhoneGlassSession(
             collapseTouchInProgress = true
             collapseGestureDirection = null
             collapseScrollTarget = scrollTargets.firstOrNull { hitsView(it, event) }
+            collapseBoundaryTarget = collapseScrollTarget
+                ?: composeScrollTargets.firstOrNull { hitsView(it, event) }
             collapseScrollOffsets.clear()
             collapseAccumulator.reset()
         }
@@ -1363,6 +1371,19 @@ internal open class PhoneGlassSession(
         }
         if (event.actionMasked == MotionEvent.ACTION_UP) collapseTouchInProgress = false
         if (decision != null) {
+            val direction = if (decision) 1 else -1
+            // Finger displacement alone also exists while pulling against an edge or on a static
+            // page. Query the actual native/Compose scroll owner before changing the bar target.
+            // Compose has already seen DOWN by this MOVE/UP and knows the correct semantics node.
+            val canScroll = collapseBoundaryTarget?.takeIf { it.isShown }?.let {
+                hostBinding.canScrollVertically(it, direction)
+            } == true
+            if (!canScroll) {
+                collapseGestureDirection = null
+                collapseAccumulator.reset()
+                collapseScrollOffsets.clear()
+                return null
+            }
             collapseGestureDirection = decision
             if (decision != collapseTarget) {
                 GlassCollapseDiagnostics.event("touch source -> ${if (decision) "collapse" else "expand"}")

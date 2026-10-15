@@ -153,6 +153,8 @@ A third add-on, **Collapse on scroll**, is available only on profiled 7.0.0-beta
 
 The scroll signal has two sources: native containers expose their actual scroll offset, while Compose pages such as Library, New and parts of Search use gestures observed at the page root. A finger travelling up means the page is scrolling down. Both sources share gesture-origin ownership, with native fling observation continuing after a page gesture ends. Gestures starting in the navigation interaction band or mini player never drive collapse, even after the finger leaves that region. Observation never consumes or rewrites events, and predominantly horizontal page swipes do not trigger collapse.
 
+Pulling farther outward at the page's top or bottom does not collapse or expand the bar. The page must be able to scroll in the requested direction; moving back into its content still works. Empty pages and content shorter than the viewport do not change the bar from finger movement alone.
+
 ### Song title correction
 
 Enable song title correction, choose a mode, and reopen Apple Music. When disabled, metadata follows the Apple Music account region. When enabled, the module resolves metadata for the selected region and caches the results.

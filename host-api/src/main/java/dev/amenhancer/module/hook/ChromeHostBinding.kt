@@ -50,6 +50,10 @@ interface ChromeHostBinding : PlayerSurfacePort, AutoCloseable {
     fun isScrollContainer(view: View): Boolean
     /** Actual native content offset, or null when the adapter cannot observe this container. */
     fun verticalScrollOffset(view: View): Int? = null
+    /** Native container or the Compose semantics owner that can report directional boundaries. */
+    fun verticalScrollTouchTarget(view: View): View? = null
+    /** Android scroll direction: -1 toward the start, +1 toward the end; null if unavailable. */
+    fun canScrollVertically(view: View, direction: Int): Boolean? = null
     fun isComposeScene(view: View): Boolean
     fun isPagerPageHost(view: View): Boolean
 }

@@ -24,6 +24,7 @@ internal class FragmentPhoneChromeBinding(
     private val scrollTypes = types.getJSONArray("scrollTypes").let { a -> (0 until a.length()).map(a::getString).toSet() }
     private val scrollClasses = IdentityHashMap<Class<*>, Boolean>()
     private val scrollOffsets = HostVerticalScrollOffsets()
+    private val scrollBoundaries = HostScrollBoundaries()
     private val build = targetBuild(activity)
     private val collapsed = contract.collapsedSheetTop
     private val peek = contract.peek
@@ -129,6 +130,14 @@ internal class FragmentPhoneChromeBinding(
     }
     override fun verticalScrollOffset(view: View): Int? =
         if (!closed && isScrollContainer(view)) scrollOffsets.read(view) else null
+    override fun verticalScrollTouchTarget(view: View): View? = when {
+        closed -> null
+        isScrollContainer(view) -> view
+        isComposeScene(view) -> scrollBoundaries.composeOwner(view)
+        else -> null
+    }
+    override fun canScrollVertically(view: View, direction: Int): Boolean? =
+        if (closed || !view.isAttachedToWindow) null else scrollBoundaries.canScroll(view, direction)
     override fun isComposeScene(view: View) = view.javaClass.name == types.getString("composeType")
     override fun isPagerPageHost(view: View) = (view.parent as? View)?.javaClass?.name == types.getString("pagerType")
     override fun navigationFrameParams(height: Int) = ConstraintLayoutPane.newBottomNavigationFrameParams(nav.layoutParams, height)
@@ -196,6 +205,6 @@ internal class FragmentPhoneChromeBinding(
         if (closed) return
         closed = true; callbacks = null
         clearCollapseTarget()
-        restorePresentation(); views.clear(); scrollClasses.clear(); scrollOffsets.clear()
+        restorePresentation(); views.clear(); scrollClasses.clear(); scrollOffsets.clear(); scrollBoundaries.clear()
     }
 }

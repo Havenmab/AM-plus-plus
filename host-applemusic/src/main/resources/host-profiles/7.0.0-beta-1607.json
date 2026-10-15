@@ -3,6 +3,7 @@
   "hookProfileId": "am-7.0.0-beta-1607",
   "capabilities": {
     "glass": true,
+    "glassScrollCollapse": true,
     "cellular": true,
     "staticCollapsedIntercept": false,
     "playerRecovery": true

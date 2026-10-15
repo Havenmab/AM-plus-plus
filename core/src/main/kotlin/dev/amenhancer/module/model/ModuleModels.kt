@@ -18,14 +18,8 @@ data class ModuleSettings(
      */
     val phoneLiquidGlassCollapseEnabled: Boolean = true,
     /**
-     * Extends the scroll collapse to the **tablet** bottom bar.
-     *
-     * Off by default, and deliberately separate from [phoneLiquidGlassCollapseEnabled]: the tablet
-     * row is a different shape (the navigation capsule and the mini player already share one line,
-     * and the navigation sits at the top on the 7.0 Fragment path), so the collapsed three-control
-     * row the phone collapses into does not map onto it one-to-one.
-     *
-     * **UNTESTED.** No tablet has ever run this code path — see HANDOFF.md §8. Read live.
+     * Retained for configuration compatibility with earlier builds. Tablet forms do not use
+     * scroll collapse, regardless of this stored value, and expose no tablet collapse switch.
      */
     val phoneLiquidGlassTabletCollapseEnabled: Boolean = false,
     /**

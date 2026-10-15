@@ -147,10 +147,8 @@ class TabletLiquidGlassStructuralRegressionTest {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
-        // Exactly the glass keys. The tablet form reuses the phone toggle, gap and blur, and now
-        // has ONE tablet-specific key of its own: the scroll collapse is a different shape on the
-        // tablet row, so it is opted into separately rather than inherited from the phone switch.
-        // The collapse amplitudes remain extras of the phone toggle.
+        // Keep the serialized glass keys, including the inactive tablet-collapse compatibility key.
+        // Tablet forms use the glass toggle, gap and blur but never opt into scroll collapse.
         val glassKeys = Regex("\"(phone_liquid_glass[a-z_]*)\"").findAll(schema)
             .map { it.groupValues[1] }.toSet()
         assertEquals(

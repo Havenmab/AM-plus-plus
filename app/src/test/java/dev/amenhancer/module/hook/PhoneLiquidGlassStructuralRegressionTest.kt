@@ -260,7 +260,8 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // content-root seam uses it to EXCLUDE the gesture from the collapse signal instead of
         // claiming it. Returning null there is what keeps native dispatch untouched.
         assertTrue(session.contains("protected fun collapsedMiniTouch(event: MotionEvent): Boolean"))
-        assertTrue(session.contains("if (collapsedMiniTouch(event)) { collapseTouch.reset(); return null }"))
+        assertTrue(session.contains("val miniGesture = collapsedMiniTouch(event)"))
+        assertTrue(session.contains("if (navigationGesture || miniGesture) { resetCollapseInput(); return null }"))
         assertTrue(session.contains("open fun observeContentTouch(event: MotionEvent): Boolean?"))
         assertTrue(factory.contains("observer.onContentTouch(binding.viewSessionIdentity, event)"))
         assertTrue(runtime.contains("override fun onContentTouch(identity: Any, event: MotionEvent): Boolean?"))

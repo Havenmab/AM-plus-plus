@@ -55,8 +55,7 @@ internal class FragmentSurfaceBinding(
     private var writing = false
     private val tree = root.viewTreeObserver
     private val layout = ViewTreeObserver.OnGlobalLayoutListener { resolveMini() }
-    private val miniStartup = if (placement == NavigationPlacement.TOP && miniBlur != null)
-        FragmentTabletMiniStartup(owner, root, miniBlur, contract) else null
+    private val miniStartup = miniBlur?.let { FragmentMiniStartup(owner, root, it, contract) }
     override val tabletChrome: FragmentTabletChromeBinding? by lazy {
         if (placement != NavigationPlacement.TOP) null else FragmentTabletChromeBinding(root, { region ->
             when (region) {

@@ -23,6 +23,8 @@ internal class FragmentPhoneChromeBinding(
     private val types = names.getJSONObject("views")
     private val scrollTypes = types.getJSONArray("scrollTypes").let { a -> (0 until a.length()).map(a::getString).toSet() }
     private val scrollClasses = IdentityHashMap<Class<*>, Boolean>()
+    private val scrollOffsets = HostVerticalScrollOffsets()
+    private val build = targetBuild(activity)
     private val collapsed = contract.collapsedSheetTop
     private val peek = contract.peek
     private val autoPeek = contract.autoPeek
@@ -57,6 +59,9 @@ internal class FragmentPhoneChromeBinding(
         ?.let { activity.resources.getIdentifier(it, "id", activity.packageName) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
 
     override val pageFamily = HostPageFamily.FRAGMENT_VIEW
+    override val supportsScrollCollapse: Boolean
+        get() = !TabletModeQualifier.isOfficialTablet(activity) &&
+            dev.amenhancer.host.applemusic.AppleMusicHostProfiles.supportsGlassScrollCollapse(build.versionCode, build.versionName)
     override val viewSessionIdentity: Any get() = contentRoot
     override fun eligible(): Boolean {
         return FragmentPhoneGlassPolicy.eligible(android.os.Build.VERSION.SDK_INT,
@@ -120,7 +125,10 @@ internal class FragmentPhoneChromeBinding(
     override fun selectNavigation(view: View, id: Int) { select.invoke(view, id) }
     override fun isScrollContainer(view: View) = scrollClasses.getOrPut(view.javaClass) {
         generateSequence(view.javaClass as Class<*>?) { it.superclass }.any { it.name in scrollTypes }
+            .also { if (it) scrollOffsets.prepare(view.javaClass) }
     }
+    override fun verticalScrollOffset(view: View): Int? =
+        if (!closed && isScrollContainer(view)) scrollOffsets.read(view) else null
     override fun isComposeScene(view: View) = view.javaClass.name == types.getString("composeType")
     override fun isPagerPageHost(view: View) = (view.parent as? View)?.javaClass?.name == types.getString("pagerType")
     override fun navigationFrameParams(height: Int) = ConstraintLayoutPane.newBottomNavigationFrameParams(nav.layoutParams, height)
@@ -188,6 +196,6 @@ internal class FragmentPhoneChromeBinding(
         if (closed) return
         closed = true; callbacks = null
         clearCollapseTarget()
-        restorePresentation(); views.clear(); scrollClasses.clear()
+        restorePresentation(); views.clear(); scrollClasses.clear(); scrollOffsets.clear()
     }
 }

@@ -31,6 +31,9 @@ import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.EnhancementDefaults
 import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
+import dev.amenhancer.module.hook.TabletModeQualifier
+import dev.amenhancer.module.hook.targetBuild
 import java.lang.ref.WeakReference
 
 internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
@@ -318,6 +321,10 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         onChooseFont: () -> Unit,
         onClearFont: () -> Unit,
     ) {
+        val hostBuild = targetBuild(activity)
+        val collapseAvailable = android.os.Build.VERSION.SDK_INT >= 33 &&
+            !TabletModeQualifier.isOfficialTablet(activity) &&
+            AppleMusicHostProfiles.supportsGlassScrollCollapse(hostBuild.versionCode, hostBuild.versionName)
         parent.addView(embeddedCard(activity, localizedText(ModuleText.FEATURES), outlined = false) {
             addView(embeddedSettingRow(
                 activity,
@@ -395,43 +402,23 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     suffix = localizedText(ModuleText.BOTTOM_BAR_BLUR_SUMMARY),
                 ) { onSettingsChanged(settings.copy(phoneLiquidGlassPanelBlurDp = it)) })
-                addView(embeddedDivider(activity))
-                addView(embeddedSettingRow(
-                    activity,
-                    localizedText(ModuleText.BOTTOM_BAR_COLLAPSE),
-                    localizedText(ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY),
-                    settings.phoneLiquidGlassCollapseEnabled,
-                    iconTint = EmbeddedSettingsPalette.Light.accent,
-                    iconDrawable = EmbeddedGlyphDrawable(
-                        EmbeddedGlyphKind.BottomBar,
-                        EmbeddedSettingsPalette.Light.accent,
-                    ),
-                ) {
-                    onSettingsChanged(settings.copy(phoneLiquidGlassCollapseEnabled = it))
-                    // The tuning sliders live in the Advanced card further down this same page, and
-                    // they are gated on this switch. Without a refresh the user would have to leave
-                    // and re-enter the page to see them appear or disappear.
-                    pageRefresh?.invoke()
-                })
-                // Tablet-only extension of the same feature, and deliberately its own switch rather
-                // than folded into the phone one: the tablet row is a different shape, so a phone
-                // user should not be opted into an untested tablet path (or vice versa). The badge
-                // is the module's existing "this is not proven" marker and is the reason the row
-                // says so twice — in the summary and on the toggle.
-                addView(embeddedDivider(activity))
-                addView(embeddedSettingRow(
-                    activity,
-                    localizedText(ModuleText.BOTTOM_BAR_TABLET_COLLAPSE),
-                    localizedText(ModuleText.BOTTOM_BAR_TABLET_COLLAPSE_SUMMARY),
-                    settings.phoneLiquidGlassTabletCollapseEnabled,
-                    badge = localizedText(ModuleText.BADGE_UNTESTED),
-                    badgeAtToggle = true,
-                    iconTint = EmbeddedSettingsPalette.Light.accent,
-                    iconDrawable = EmbeddedGlyphDrawable(
-                        EmbeddedGlyphKind.BottomBar,
-                        EmbeddedSettingsPalette.Light.accent,
-                    ),
-                ) { onSettingsChanged(settings.copy(phoneLiquidGlassTabletCollapseEnabled = it)) })
+                if (collapseAvailable) {
+                    addView(embeddedDivider(activity))
+                    addView(embeddedSettingRow(
+                        activity,
+                        localizedText(ModuleText.BOTTOM_BAR_COLLAPSE),
+                        localizedText(ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY),
+                        settings.phoneLiquidGlassCollapseEnabled,
+                        iconTint = EmbeddedSettingsPalette.Light.accent,
+                        iconDrawable = EmbeddedGlyphDrawable(
+                            EmbeddedGlyphKind.BottomBar,
+                            EmbeddedSettingsPalette.Light.accent,
+                        ),
+                    ) {
+                        onSettingsChanged(settings.copy(phoneLiquidGlassCollapseEnabled = it))
+                        pageRefresh?.invoke()
+                    })
+                }
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
@@ -513,7 +500,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             //
             // Ordered collapse-first, expand-last: the first three all describe the collapse
             // direction, and grouping them keeps the one expand knob from splitting the set.
-            if (settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled) {
+            if (collapseAvailable && settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled) {
                 // One amplitude for BOTH side buttons. Two sliders would let the capsule and the
                 // search button drift apart, which is the exact complaint this setting exists to
                 // settle. 35% is the recommended, deliberately understated default.

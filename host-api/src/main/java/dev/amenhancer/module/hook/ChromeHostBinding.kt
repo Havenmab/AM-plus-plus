@@ -36,6 +36,8 @@ enum class ChromeResource {
 data class NativeSheetSnapshot(val state: Int, val collapsedTop: Int, val expandedTop: Int)
 data class NativeNavigationSnapshot(val menu: Menu, val selectedId: Int)
 interface ChromeHostBinding : PlayerSurfacePort, AutoCloseable {
+    /** Explicit opt-in from a profiled phone adapter; legacy and tablet forms stay expanded. */
+    val supportsScrollCollapse: Boolean get() = false
     fun resourceId(role: ChromeResource): Int
     fun find(role: ChromeResource): View?
     fun dimension(role: ChromeResource): Int
@@ -46,6 +48,8 @@ interface ChromeHostBinding : PlayerSurfacePort, AutoCloseable {
     fun navigation(view: View): NativeNavigationSnapshot
     fun selectNavigation(view: View, id: Int)
     fun isScrollContainer(view: View): Boolean
+    /** Actual native content offset, or null when the adapter cannot observe this container. */
+    fun verticalScrollOffset(view: View): Int? = null
     fun isComposeScene(view: View): Boolean
     fun isPagerPageHost(view: View): Boolean
 }

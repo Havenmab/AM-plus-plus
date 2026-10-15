@@ -141,6 +141,8 @@ internal open class PhoneGlassSession(
      * collapse tracker can stand down for it. Nothing is consumed; see [collapsedMiniTouch].
      */
     private val collapsedMiniGesture = GlassCollapsedMiniGesture()
+    private var navigationGestureDownTime: Long? = null
+    private var collapseScrollGestureAllowed = false
     /**
      * Second signal source: the gesture itself. Compose pages expose no native scroll container,
      * so their scrolling is invisible to [collapseScrollListener] and only the touch that drives
@@ -153,22 +155,9 @@ internal open class PhoneGlassSession(
             thresholdPx = COLLAPSE_SCROLL_THRESHOLD_DP * density,
         )
     }
-    /**
-     * The single gate for every collapse code path.
-     *
-     * It folds in three things: the user's phone switch, the **tablet** switch when the row is
-     * side-by-side, and the geometry. Starting it from `false` rather than a flat `true` matters
-     * because the settings tick only runs every 500ms — a flat `true` would leave a tablet briefly
-     * collapsing before the first tick could correct it, and the tablet's row has no collapsed
-     * geometry to move into. `attachAvailableViews` resolves it from the live settings before
-     * anything reads it, and `onPreDraw` keeps it current.
-     *
-     * It is **Compose state**, not a plain field, for the same reason the rebound amplitudes are:
-     * `GlassNavigation` reads it while composing to decide whether to receive a `collapseProgress`
-     * lambda at all, and a plain field would be captured once and never re-read — so toggling the
-     * tablet switch would leave the row wired the way it was at attach until the host restarted.
-     */
+    /** Shared snapshot gate for native signals and Compose. Only an opted-in phone adapter qualifies. */
     private var collapseEnabled by mutableStateOf(false)
+    private val collapseSupported: Boolean get() = !geometry.sideBySide && hostBinding.supportsScrollCollapse
     private var collapseTarget = false
     private var collapseFrames: kotlinx.coroutines.Job? = null
     private val collapseScrollListener = ViewTreeObserver.OnScrollChangedListener { onScrollChanged() }
@@ -364,8 +353,7 @@ internal open class PhoneGlassSession(
             // default would mean a phone whose user has the feature on would not collapse for the
             // first half-second, and a tablet could briefly collapse before the tick corrected it.
             val initialSettings = config.settings()
-            collapseEnabled = initialSettings.phoneLiquidGlassCollapseEnabled &&
-                (!geometry.sideBySide || initialSettings.phoneLiquidGlassTabletCollapseEnabled)
+            collapseEnabled = collapseSupported && initialSettings.phoneLiquidGlassCollapseEnabled
             val bg = ViewBackdrop(content, ::scheduleFailure).also { backdrop = it; it.start() }
             refreshMenu()
             // Bottom fade: blurred, washed-out strip under the tabs, matching the
@@ -380,12 +368,7 @@ internal open class PhoneGlassSession(
             val glass = GlassHostView(moduleContext()).also { navGlass = it }
             glass.alpha = 0f
             glass.content { HostConfiguration { GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab, panelBlur = navBlurDp.dp,
-                // `null` is `GlassNavigation`'s explicit "this host does not support the collapse"
-                // opt-in, and it is the only value that keeps the tablet's row intact: with a
-                // non-null lambda the capsule would shrink to a 43dp circle inside the tablet's
-                // 23%-wide slot and the detached search control would try to appear, even though
-                // that row has no collapsed geometry to move into. Gating on `collapseEnabled`
-                // means the tablet switch is what decides, not the geometry alone.
+                // A null progress keeps legacy and tablet navigation in its expanded layout.
                 collapseProgress = if (collapseEnabled) ::collapseProgress else null,
                 onExpandRequest = { requestCollapse(false) },
                 collapseReboundScale = collapseReboundPercent / 100f,
@@ -399,7 +382,7 @@ internal open class PhoneGlassSession(
                 it.addOnGlobalLayoutListener(layoutListener)
                 if (collapseEnabled) it.addOnScrollChangedListener(collapseScrollListener)
             }
-            driveCollapseFrames()
+            if (collapseEnabled) driveCollapseFrames()
         }
         val root = (find(ChromeResource.MINI_PLAYER) ?: find(ChromeResource.MINI_PLAYER_TOUCH_PANEL)) as? FrameLayout
         val content = root?.findViewById<View>(resourceId(ChromeResource.MINI_PLAYER_CONTENT))
@@ -479,8 +462,10 @@ internal open class PhoneGlassSession(
             // A new configuration re-measures every slot, so the collapsed geometry would be
             // computed against a stale width. Return to the expanded bar and start over.
             requestCollapse(false)
-            collapseAccumulator.reset()
-            collapseScrollOffsets.clear()
+            navigationGestureDownTime = null
+            collapseScrollGestureAllowed = false
+            collapsedMiniGesture.reset()
+            resetCollapseInput()
         }
         val nav = navigation ?: return
         val snapshot = hostBinding.navigation(nav)
@@ -526,20 +511,6 @@ internal open class PhoneGlassSession(
         get() = activated && collapseEnabled && !closed && slide <= 0.001f
 
     /**
-     * Vertical scroll displacement of [view].
-     *
-     * `View.getScrollY()` is the wrong reading for a `RecyclerView`: it recycles its children and
-     * so never scrolls its own canvas, keeping the real displacement in
-     * `computeVerticalScrollOffset()` instead. That method is `protected` on `View`, so it cannot
-     * be called through a `View` reference — only through the subclass that promotes it to
-     * public. Every other scroll container in this host (ScrollView, NestedScrollView, ListView)
-     * moves its own canvas, so `scrollY` is already the correct reading for them.
-     */
-    private fun scrollOffsetOf(view: View): Int =
-        if (view is androidx.recyclerview.widget.RecyclerView) view.computeVerticalScrollOffset()
-        else view.scrollY
-
-    /**
      * Scroll-driven collapse. The measured displacement is accumulated rather than the raw
      * offset, so a container that recycles or re-lays-out cannot move the bar on its own.
      *
@@ -549,11 +520,13 @@ internal open class PhoneGlassSession(
      * on every native page.
      */
     private fun onScrollChanged() {
-        if (!collapseActive) { collapseScrollOffsets.clear(); collapseAccumulator.reset(); return }
+        if (!collapseActive || !collapseScrollGestureAllowed || navigationGestureDownTime != null || collapsedMiniGesture.owning) {
+            collapseScrollOffsets.clear(); collapseAccumulator.reset(); return
+        }
         runCatching {
             for (target in scrollTargets) {
                 if (!target.isShown) continue
-                val offset = scrollOffsetOf(target)
+                val offset = hostBinding.verticalScrollOffset(target) ?: continue
                 val previous = collapseScrollOffsets.put(target, offset) ?: offset
                 val decision = collapseAccumulator.accumulate(previous - offset) ?: continue
                 GlassCollapseDiagnostics.event("scroll source -> ${if (decision) "collapse" else "expand"}")
@@ -633,19 +606,16 @@ internal open class PhoneGlassSession(
                     activity.window.decorView.post { close() }
                     return true
                 }
-                // The collapse toggle is read live: turning it off must expand a collapsed bar
-                // rather than leaving it stuck in a state the user just disabled.
-                //
-                // The tablet row needs BOTH switches. Its shape is different enough that the phone
-                // default must not silently opt a tablet in — and, symmetrically, the tablet switch
-                // alone must not enable the collapse on a phone. Requiring both keeps each switch
-                // honest about what it turns on.
+                // The profiled phone capability and the live switch must agree on every signal path.
                 val liveSettings = config.settings()
-                val collapseWanted = liveSettings.phoneLiquidGlassCollapseEnabled &&
-                    (!geometry.sideBySide || liveSettings.phoneLiquidGlassTabletCollapseEnabled)
+                val collapseWanted = collapseSupported && liveSettings.phoneLiquidGlassCollapseEnabled
                 if (collapseWanted != collapseEnabled) {
                     collapseEnabled = collapseWanted
                     observeScrollCollapse(collapseWanted)
+                    navigationGestureDownTime = null
+                    collapseScrollGestureAllowed = false
+                    collapsedMiniGesture.reset()
+                    resetCollapseInput()
                     if (!collapseWanted) requestCollapse(false)
                 }
                 if (!collapseEnabled && collapse.value != 0f) requestCollapse(false)
@@ -1186,13 +1156,55 @@ internal open class PhoneGlassSession(
         } else {
             listOfNotNull(miniGlass, miniContent)
         }
-        val location = IntArray(2)
-        return targets.any { view ->
-            if (!view.isShown || view.width <= 0 || view.height <= 0) return@any false
-            view.getLocationOnScreen(location)
-            event.rawX >= location[0] && event.rawX < location[0] + view.width &&
-                event.rawY >= location[1] && event.rawY < location[1] + view.height
+        return targets.any { hitsView(it, event) }
+    }
+
+    private fun hitsView(view: View, event: MotionEvent): Boolean {
+        if (!view.isShown || view.width <= 0 || view.height <= 0) return false
+        val location = IntArray(2).also(view::getLocationOnScreen)
+        return event.rawX >= location[0] && event.rawX < location[0] + view.width &&
+            event.rawY >= location[1] && event.rawY < location[1] + view.height
+    }
+
+    private fun hitsNavigationChrome(event: MotionEvent): Boolean {
+        val glass = navGlass ?: return false
+        if (!glass.isShown || glass.alpha <= 0.001f || glass.width <= 0 || glass.height <= 0) return false
+        val policy = dev.amenhancer.glass.GlassBarCollapsePolicy
+        val p = collapse.value
+        // The expanded drag node spans the row. Once removed, only the two visible controls
+        // own chrome input; the empty middle must remain available to the page when mini is absent.
+        if (policy.dragEnabled(p)) return hitsView(glass, event)
+        val location = IntArray(2).also(glass::getLocationOnScreen)
+        val x = event.rawX - location[0]
+        val y = event.rawY - location[1]
+        val rowWidth = glass.width.toFloat()
+        val control = policy.CONTROL_DP * density
+        val height = policy.capsuleHeight(GlassPolicy.NAV_HEIGHT_DP * density, control, p)
+        val top = (GlassPolicy.NAV_HEIGHT_DP * density - height) / 2f +
+            policy.collapseDrop(GlassPolicy.NAV_HEIGHT_DP * density, control, p)
+        val room = policy.GAP_DP * density
+        val rtl = hostConfiguration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        fun hitsControl(left: Float, width: Float): Boolean {
+            // Match Compose's default minimum touch target, including the 43dp compact controls.
+            val extraX = (48f * density - width).coerceAtLeast(0f) / 2f
+            val extraY = (48f * density - height).coerceAtLeast(0f) / 2f
+            return x >= left - extraX && x < left + width + extraX &&
+                y >= top - extraY && y < top + height + extraY
         }
+        val capsuleWidth = policy.capsuleWidth(rowWidth, control, p,
+            collapseReboundPercent / 100f, expandReboundPercent / 100f, room)
+        if (hitsControl(if (rtl) rowWidth - capsuleWidth else 0f, capsuleWidth)) return true
+        if (!hasDetachedSearch || !policy.searchInteractive(p)) return false
+        val cell = dev.amenhancer.glass.GlassTabGeometry(rowWidth, 4f * density, 0f, tabs.size).tabWidth
+        val searchWidth = policy.searchWidth(cell, control, rowWidth, p,
+            collapseReboundPercent / 100f, expandReboundPercent / 100f, room)
+        return hitsControl(if (rtl) 0f else rowWidth - searchWidth, searchWidth)
+    }
+
+    private fun resetCollapseInput() {
+        collapseTouch.reset()
+        collapseAccumulator.reset()
+        collapseScrollOffsets.clear()
     }
 
     /**
@@ -1303,20 +1315,33 @@ internal open class PhoneGlassSession(
      */
     open fun observeContentTouch(event: MotionEvent): Boolean? {
         if (!activated || closed) return null
-        // `collapseEnabled` is the single gate, and it already folds in the tablet decision: it is
-        // only true on a side-by-side row when the user has turned the **tablet** switch on. Gating
-        // on the raw geometry instead would make that switch dead code — the collapse would be
-        // forbidden on a tablet no matter what the user chose.
         if (!collapseEnabled) return null
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // Keep origin ownership even if the finger later leaves the controls or they move.
+            navigationGestureDownTime = event.downTime.takeIf { hitsNavigationChrome(event) }
+        }
+        val navigationGesture = navigationGestureDownTime == event.downTime
+        val miniGesture = collapsedMiniTouch(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // Keep the same ownership through native fling events after UP. A bar tap can also
+            // restore a page's list position, which must not be mistaken for a new page scroll.
+            collapseScrollGestureAllowed = !navigationGesture && !miniGesture
+        }
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.pointerCount > 1) {
+            collapseScrollGestureAllowed = false
+        }
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            navigationGestureDownTime = null
+        }
         // Excluded, not claimed: the return value stays null so the host still receives the event.
-        if (collapsedMiniTouch(event)) { collapseTouch.reset(); return null }
+        if (navigationGesture || miniGesture) { resetCollapseInput(); return null }
         if (event.pointerCount > 1) { collapseTouch.reset(); return null }
-        if (!collapseActive) { collapseTouch.reset(); return null }
+        if (!collapseActive) { collapseScrollGestureAllowed = false; collapseTouch.reset(); return null }
         val decision = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> { collapseTouch.down(event.rawX, event.rawY, event.eventTime); null }
             MotionEvent.ACTION_MOVE -> collapseTouch.move(event.rawX, event.rawY, event.eventTime)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                collapseTouch.up(event.rawX, event.rawY, event.eventTime)
+            MotionEvent.ACTION_UP -> collapseTouch.up(event.rawX, event.rawY, event.eventTime)
+            MotionEvent.ACTION_CANCEL -> { collapseTouch.reset(); null }
             else -> null
         }
         if (decision != null) {
@@ -1341,7 +1366,13 @@ internal open class PhoneGlassSession(
     }
 
     override fun foreground(active: Boolean) {
-        if (!active) captureWait.timedOut(0L, false)
+        if (!active) {
+            captureWait.timedOut(0L, false)
+            navigationGestureDownTime = null
+            collapseScrollGestureAllowed = false
+            collapsedMiniGesture.reset()
+            resetCollapseInput()
+        }
         navGlass?.foreground(active); navScrim?.foreground(active); miniGlass?.foreground(active)
     }
 

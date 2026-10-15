@@ -143,6 +143,9 @@ internal open class PhoneGlassSession(
     private val collapsedMiniGesture = GlassCollapsedMiniGesture()
     private var navigationGestureDownTime: Long? = null
     private var collapseScrollGestureAllowed = false
+    private var collapseTouchInProgress = false
+    private var collapseGestureDirection: Boolean? = null
+    private var collapseScrollTarget: View? = null
     /**
      * Second signal source: the gesture itself. Compose pages expose no native scroll container,
      * so their scrolling is invisible to [collapseScrollListener] and only the touch that drives
@@ -510,25 +513,26 @@ internal open class PhoneGlassSession(
     private val collapseActive: Boolean
         get() = activated && collapseEnabled && !closed && slide <= 0.001f
 
-    /**
-     * Scroll-driven collapse. The measured displacement is accumulated rather than the raw
-     * offset, so a container that recycles or re-lays-out cannot move the bar on its own.
-     *
-     * The accumulator is fed the *negation* of the offset delta: a scrolling page increases its
-     * own offset while the content moves up, and the accumulator reads a negative delta as
-     * "content moved up, collapse". Feeding the delta unchanged would invert the bar's direction
-     * on every native page.
-     */
+    /** Native fling continuation for the container hit by the current page gesture. */
     private fun onScrollChanged() {
         if (!collapseActive || !collapseScrollGestureAllowed || navigationGestureDownTime != null || collapsedMiniGesture.owning) {
             collapseScrollOffsets.clear(); collapseAccumulator.reset(); return
         }
         runCatching {
-            for (target in scrollTargets) {
-                if (!target.isShown) continue
-                val offset = hostBinding.verticalScrollOffset(target) ?: continue
-                val previous = collapseScrollOffsets.put(target, offset) ?: offset
-                val decision = collapseAccumulator.accumulate(previous - offset) ?: continue
+            val target = collapseScrollTarget?.takeIf { it.isShown } ?: return
+            val offset = hostBinding.verticalScrollOffset(target) ?: return
+            val previous = collapseScrollOffsets.put(target, offset) ?: offset
+            // Updating peek and padding during collapse can change this offset in either direction.
+            // While a finger is down it alone owns the direction; keep native baselines current.
+            if (collapseTouchInProgress || collapse.isRunning) {
+                collapseAccumulator.reset()
+                return
+            }
+            val direction = collapseGestureDirection ?: return
+            val decision = collapseAccumulator.accumulate(previous - offset) ?: return
+            // A fling continues the last deliberate finger direction. Layout correction, changing
+            // row-height estimates and edge rebound must not reverse a settled bar on their own.
+            if (decision == direction && decision != collapseTarget) {
                 GlassCollapseDiagnostics.event("scroll source -> ${if (decision) "collapse" else "expand"}")
                 requestCollapse(decision)
             }
@@ -544,13 +548,17 @@ internal open class PhoneGlassSession(
      * itself keeps its current value and velocity, so a mid-flight reversal stays continuous.
      */
     fun requestCollapse(collapsed: Boolean) {
-        if (!collapsed && !collapseTarget && collapse.value == 0f) return
+        // Repeated scroll events requesting the same endpoint must not restart its spring.
+        if (collapseTarget == collapsed) return
         collapseTarget = collapsed
         val target = if (collapsed) 1f else 0f
-        if (collapse.value == target) return
         val spec = if (collapsed) dev.amenhancer.glass.GlassBarCollapseSpec
         else dev.amenhancer.glass.GlassBarExpandSpec
-        collapseScope.launch { collapse.animateTo(target, spec) }
+        // Begin retargeting now, including a reversal before the previous job's first frame.
+        // Animatable keeps the current velocity and cancels the previous spring internally.
+        collapseScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            collapse.animateTo(target, spec)
+        }
         driveCollapseFrames()
     }
 
@@ -1205,6 +1213,10 @@ internal open class PhoneGlassSession(
         collapseTouch.reset()
         collapseAccumulator.reset()
         collapseScrollOffsets.clear()
+        collapseScrollGestureAllowed = false
+        collapseTouchInProgress = false
+        collapseGestureDirection = null
+        collapseScrollTarget = null
     }
 
     /**
@@ -1326,9 +1338,14 @@ internal open class PhoneGlassSession(
             // Keep the same ownership through native fling events after UP. A bar tap can also
             // restore a page's list position, which must not be mistaken for a new page scroll.
             collapseScrollGestureAllowed = !navigationGesture && !miniGesture
+            collapseTouchInProgress = true
+            collapseGestureDirection = null
+            collapseScrollTarget = scrollTargets.firstOrNull { hitsView(it, event) }
+            collapseScrollOffsets.clear()
+            collapseAccumulator.reset()
         }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.pointerCount > 1) {
-            collapseScrollGestureAllowed = false
+            resetCollapseInput()
         }
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
             navigationGestureDownTime = null
@@ -1336,7 +1353,7 @@ internal open class PhoneGlassSession(
         // Excluded, not claimed: the return value stays null so the host still receives the event.
         if (navigationGesture || miniGesture) { resetCollapseInput(); return null }
         if (event.pointerCount > 1) { collapseTouch.reset(); return null }
-        if (!collapseActive) { collapseScrollGestureAllowed = false; collapseTouch.reset(); return null }
+        if (!collapseActive) { resetCollapseInput(); return null }
         val decision = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> { collapseTouch.down(event.rawX, event.rawY, event.eventTime); null }
             MotionEvent.ACTION_MOVE -> collapseTouch.move(event.rawX, event.rawY, event.eventTime)
@@ -1344,9 +1361,13 @@ internal open class PhoneGlassSession(
             MotionEvent.ACTION_CANCEL -> { collapseTouch.reset(); null }
             else -> null
         }
+        if (event.actionMasked == MotionEvent.ACTION_UP) collapseTouchInProgress = false
         if (decision != null) {
-            GlassCollapseDiagnostics.event("touch source -> ${if (decision) "collapse" else "expand"}")
-            requestCollapse(decision)
+            collapseGestureDirection = decision
+            if (decision != collapseTarget) {
+                GlassCollapseDiagnostics.event("touch source -> ${if (decision) "collapse" else "expand"}")
+                requestCollapse(decision)
+            }
         }
         return null
     }

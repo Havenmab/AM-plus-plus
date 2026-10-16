@@ -64,6 +64,7 @@ internal class FragmentStartupPagePrewarmTarget(
                 val owner = param.thisObject ?: return
                 val root = param.args[0] as? ViewGroup ?: return
                 runCatching {
+                    ModernXposedRuntime.log("Startup page prewarm: content view created")
                     if (!enabled()) return
                     val activity = native.activity.invoke(owner) as? Activity ?: return
                     if (!supports(activity)) return

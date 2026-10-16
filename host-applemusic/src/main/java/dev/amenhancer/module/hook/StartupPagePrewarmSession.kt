@@ -7,6 +7,8 @@ import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
 import java.io.Serializable
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /** A bounded startup task; no retained global page cache, native tab changes or back-stack writes. */
 internal class StartupPagePrewarmSession(
@@ -29,6 +31,9 @@ internal class StartupPagePrewarmSession(
     private var tabNames: List<String>? = null
     private var waitingForCommit = false
     private var measureNext: Any? = null
+    private var waitReason = "first callback"
+    private var preparedCount = 0
+    private val laidOut = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
     private val step = Runnable {
         if (!closed) runCatching(::advance).onFailure { close(); onFailure(it) }
     }
@@ -36,26 +41,34 @@ internal class StartupPagePrewarmSession(
     fun start() {
         check(hostId != 0 && navigationId != 0) { "Native tab host resources are missing" }
         root.addOnAttachStateChangeListener(this)
+        ModernXposedRuntime.log("Startup page prewarm: session scheduled")
         root.post(step)
     }
 
     private fun resource(name: String) = root.resources.getIdentifier(name, "id", activity.packageName)
     private fun schedule(delay: Long = 0L) { if (!closed) root.postDelayed(step, delay) }
+    private fun waitFor(reason: String) { waitReason = reason; schedule(50L) }
 
     private fun advance() {
         if (closed || waitingForCommit) return
-        if (!enabled() || SystemClock.uptimeMillis() >= deadline || activity.isFinishing || activity.isDestroyed ||
-            native.view.invoke(owner) !== root || native.stateSaved.invoke(manager) == true
-        ) { close(); return }
+        if (!enabled()) { finish("setting disabled"); return }
+        if (SystemClock.uptimeMillis() >= deadline) { finish("timeout waiting for $waitReason"); return }
+        if (activity.isFinishing || activity.isDestroyed || native.view.invoke(owner) !== root ||
+            native.stateSaved.invoke(manager) == true
+        ) { finish("content unavailable or state saved"); return }
         if (!root.isAttachedToWindow || !root.isShown || native.resumed.invoke(owner) != true) {
-            if (tabNames != null) close() else schedule(50L)
+            if (tabNames != null) finish("content hidden or paused") else waitFor("visible resumed content")
             return
         }
         val host = root.findViewById<ViewGroup>(hostId)
         val navigation = root.findViewById<View>(navigationId)
         val primary = native.primary.get(manager)
         if (host == null || host.width <= 0 || host.height <= 0 || navigation == null || primary == null) {
-            schedule(50L); return
+            waitFor(when {
+                navigation == null -> "navigation view ${native.names.getString("navigationResource")}"
+                host == null || host.width <= 0 || host.height <= 0 -> "measured tab host"
+                else -> "primary navigation"
+            }); return
         }
         val model = native.viewModel.invoke(owner)
         val selected = native.selectedTab.invoke(model) as? Enum<*>
@@ -69,24 +82,35 @@ internal class StartupPagePrewarmSession(
         if (tabs.isNullOrEmpty() || tabs.none { it.kind == selected } ||
             native.tag.invoke(primary) != selected?.name ||
             native.selectedId.invoke(navigation) != native.kindId.invoke(selected)
-        ) { schedule(50L); return }
+        ) { waitFor("consistent native tab selection"); return }
         val names = tabs.map { it.kind.name }
         if (tabNames == null) { tabNames = names; originalPrimary = primary }
-        if (tabNames != names || originalPrimary !== primary) { close(); return }
+        if (tabNames != names || originalPrimary !== primary) { finish("tab list or selection changed"); return }
 
         measureNext?.let { fragment ->
-            measureNext = null
             if (native.hidden.invoke(fragment) == true) {
-                (native.view.invoke(fragment) as? View)?.let { view ->
-                    view.measure(View.MeasureSpec.makeMeasureSpec(host.width, View.MeasureSpec.EXACTLY),
-                        View.MeasureSpec.makeMeasureSpec(host.height, View.MeasureSpec.EXACTLY))
-                    view.layout(0, 0, host.width, host.height)
-                }
+                val view = native.view.invoke(fragment) as? View
+                if (view == null) { waitFor("hidden page view ${native.tag.invoke(fragment)}"); return }
+                view.measure(View.MeasureSpec.makeMeasureSpec(host.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(host.height, View.MeasureSpec.EXACTLY))
+                view.layout(0, 0, host.width, host.height)
+                laidOut.add(fragment)
+                ModernXposedRuntime.log("Startup page laid out: ${native.tag.invoke(fragment)}")
             }
+            measureNext = null
         }
         val next = tabs.sortedBy { if (it.kind.name == native.names.getString("priorityTab")) 0 else 1 }
-            .firstOrNull { native.find.invoke(manager, it.kind.name) == null }
-        if (next == null) { close(); return }
+            .firstOrNull {
+                val existing = native.find.invoke(manager, it.kind.name)
+                existing == null || (existing !in laidOut && native.hidden.invoke(existing) == true)
+            }
+        if (next == null) { finish("complete; available tab roots retained and laid out"); return }
+        native.find.invoke(manager, next.kind.name)?.let { existing ->
+            // Restored hidden roots also need a first layout; keep their actual instance and state.
+            measureNext = existing
+            schedule()
+            return
+        }
         val fragment = native.container.newInstance()
         native.arguments.invoke(fragment, Bundle().apply {
             putSerializable(native.names.getString("tabArgumentKey"), next.kind as Serializable)
@@ -100,8 +124,9 @@ internal class StartupPagePrewarmSession(
         native.onCommit.invoke(transaction, Runnable {
             waitingForCommit = false
             if (!closed) {
+                preparedCount++
                 measureNext = fragment
-                ModernXposedRuntime.log("Startup page prewarmed: ${next.kind.name}")
+                ModernXposedRuntime.log("Startup page created: ${next.kind.name}")
                 schedule()
             }
         })
@@ -110,13 +135,16 @@ internal class StartupPagePrewarmSession(
     }
 
     override fun onViewAttachedToWindow(view: View) = Unit
-    override fun onViewDetachedFromWindow(view: View) = close()
-    override fun close() {
+    override fun onViewDetachedFromWindow(view: View) = finish("content detached")
+    override fun close() = finish("cancelled by interaction or lifecycle")
+    private fun finish(reason: String) {
         if (closed) return
         closed = true
         root.removeCallbacks(step)
         root.removeOnAttachStateChangeListener(this)
         measureNext = null
+        ModernXposedRuntime.log("Startup page prewarm: stopped; prepared=$preparedCount; laidOut=${laidOut.size}; $reason")
+        laidOut.clear()
         onFinished()
     }
 }

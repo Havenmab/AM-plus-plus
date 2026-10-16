@@ -5320,7 +5320,7 @@
   "startupPagePrewarm": {
     "schemaVersion": 1,
     "hostResource": "tab_navigation_host",
-    "navigationResource": "bottom_navigation",
+    "navigationResource": "bottom_nav_view",
     "tabArgumentKey": "O4.S.ARG_KEY_BOTTOM_TAB",
     "titleArgumentKey": "O4.S.ARG_KEY_DOCUMENT_TITLE",
     "priorityTab": "LIBRARY",

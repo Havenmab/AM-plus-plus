@@ -28,6 +28,8 @@ internal class StartupPagePrewarmContract(loader: ClassLoader, val names: JSONOb
     val kindId = members.method("kindId")
     val menu = members.method("menu")
     val selectedId = members.method("selectedId")
+    val tabletMenu = if (names.optString("tabletNavigationResource").isNotBlank())
+        members.method("tabletMenu") else null
     val find = members.method("find")
     val stateSaved = members.method("stateSaved")
     val arguments = members.method("arguments")

@@ -16,6 +16,7 @@ internal class StartupPagePrewarmSession(
     val activity: Activity,
     private val root: ViewGroup,
     private val native: StartupPagePrewarmContract,
+    private val navigationResource: String,
     private val enabled: () -> Boolean,
     private val onPrepared: (Any) -> Unit,
     private val onFinished: () -> Unit,
@@ -23,7 +24,9 @@ internal class StartupPagePrewarmSession(
 ) : AutoCloseable, View.OnAttachStateChangeListener {
     private data class Tab(val kind: Enum<*>, val title: String)
     private val hostId = resource(native.names.getString("hostResource"))
-    private val navigationId = resource(native.names.getString("navigationResource"))
+    private val navigationId = resource(navigationResource)
+    private val tabletNavigation = TabletModeQualifier.isOfficialTablet(activity)
+    private val menuMethod = if (tabletNavigation) checkNotNull(native.tabletMenu) else native.menu
     private val manager = checkNotNull(native.childManager.invoke(owner))
     private val deadline = SystemClock.uptimeMillis() + 10_000L
     private var closed = false
@@ -42,7 +45,7 @@ internal class StartupPagePrewarmSession(
     fun start() {
         check(hostId != 0 && navigationId != 0) { "Native tab host resources are missing" }
         root.addOnAttachStateChangeListener(this)
-        ModernXposedRuntime.log("Startup page prewarm: session scheduled")
+        ModernXposedRuntime.log("Startup page prewarm: session scheduled; navigation=$navigationResource")
         root.postDelayed(timeout, (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0L))
         root.post(step)
     }
@@ -63,27 +66,33 @@ internal class StartupPagePrewarmSession(
             return
         }
         val host = root.findViewById<ViewGroup>(hostId)
-        val navigation = root.findViewById<View>(navigationId)
+        // Tablet tabs are Compose; their native menu lives in the Activity's drawer.
+        val navigation = if (tabletNavigation) activity.findViewById<View>(navigationId)
+            else root.findViewById<View>(navigationId)
         val primary = native.primary.get(manager)
         if (host == null || host.width <= 0 || host.height <= 0 || navigation == null || primary == null) {
             waitFor(when {
-                navigation == null -> "navigation view ${native.names.getString("navigationResource")}"
+                navigation == null -> "navigation view $navigationResource"
                 host == null || host.width <= 0 || host.height <= 0 -> "measured tab host"
                 else -> "primary navigation"
             }); return
         }
         val model = native.viewModel.invoke(owner)
         val selected = native.selectedTab.invoke(model) as? Enum<*>
-        val menu = native.menu.invoke(navigation) as Menu
+        val selectedId = selected?.let { native.kindId.invoke(it) as Int }
+        val menu = menuMethod.invoke(navigation) as Menu
         val tabs = (native.value.invoke(native.tabs.invoke(model)) as? List<*>)?.mapNotNull { item ->
             val kind = item?.let { native.modelKind.get(it) } as? Enum<*> ?: return@mapNotNull null
             val menuItem = menu.findItem(native.kindId.invoke(kind) as Int)
             if (menuItem?.isEnabled != true || !menuItem.isVisible) null
             else Tab(kind, native.kindLabel.invoke(kind) as String)
         }?.distinctBy { it.kind.name }
+        val selectionMatches = if (tabletNavigation)
+            menu.findItem(selectedId ?: View.NO_ID)?.isChecked == true
+        else native.selectedId.invoke(navigation) == selectedId
         if (tabs.isNullOrEmpty() || tabs.none { it.kind == selected } ||
             native.tag.invoke(primary) != selected?.name ||
-            native.selectedId.invoke(navigation) != native.kindId.invoke(selected)
+            !selectionMatches
         ) { waitFor("consistent native tab selection"); return }
         val names = tabs.map { it.kind.name }
         if (tabNames == null) tabNames = names

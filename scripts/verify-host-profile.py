@@ -170,7 +170,7 @@ def verify_fragment_contracts(document, classes, failures):
                 for role in sorted(roles - wrap.get(group, {}).keys()):
                     failures.append(f'lyricWrapSweep.{group}.{role}: missing required role')
             sections['lyricWrapSweep'] = wrap
-    # Optional bottom-tab startup prewarm. A declared capability cannot pass without its contract.
+    # Optional navigation startup prewarm. A declared capability needs its exact contract.
     prewarm = document.get('startupPagePrewarm')
     capability = (document.get('capabilities') or {}).get('startupPagePrewarm') is True
     if prewarm is None and capability:
@@ -190,6 +190,8 @@ def verify_fragment_contracts(document, classes, failures):
                 'fields': {'modelKind', 'primary', 'reordering'},
                 'constructors': {'container', 'transaction'},
             }
+            if prewarm.get('tabletNavigationResource'):
+                required['methods'].add('tabletMenu')
             valid_groups = True
             for group, roles in required.items():
                 entries = members.get(group, {})

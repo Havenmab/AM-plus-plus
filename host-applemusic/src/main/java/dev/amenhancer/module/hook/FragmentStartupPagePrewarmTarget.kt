@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.view.ViewGroup
 import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
+import org.json.JSONObject
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.WeakHashMap
@@ -26,7 +27,7 @@ internal class FragmentStartupPagePrewarmTarget(
     override fun install(): TargetCapabilityInstall {
         result?.let { return it }
         val installed = if (!supports(context)) {
-            TargetCapabilityInstall.Unsupported("Startup page prewarming requires an exact profiled phone host")
+            TargetCapabilityInstall.Unsupported("Startup page prewarming requires an exact profiled navigation layout")
         } else runCatching { installHooks() }.getOrElse { error ->
             scope.close()
             TargetCapabilityInstall.Degraded("Startup page prewarming unavailable: ${error.message}")
@@ -68,7 +69,8 @@ internal class FragmentStartupPagePrewarmTarget(
                     val activity = native.activity.invoke(owner) as? Activity ?: return
                     if (!supports(activity)) return
                     sessions.remove(owner)?.close()
-                    sessions[owner] = StartupPagePrewarmSession(owner, activity, root, native, enabled,
+                    sessions[owner] = StartupPagePrewarmSession(owner, activity, root, native,
+                        navigationResource(activity, native.names), enabled,
                         onPrepared = { warmed.add(it) },
                         onFinished = { sessions.remove(owner) },
                         onFailure = { error ->
@@ -124,7 +126,7 @@ internal class FragmentStartupPagePrewarmTarget(
             }
         })
         scope.activate()
-        return TargetCapabilityInstall.Active("Native bottom-tab startup prewarming installed; original selection and history retained")
+        return TargetCapabilityInstall.Active("Native navigation startup prewarming installed; original selection and history retained")
     }
 
     companion object {
@@ -132,10 +134,14 @@ internal class FragmentStartupPagePrewarmTarget(
             val build = targetBuild(context)
             val profile = AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode)
                 ?: return false
+            val names = profile.document.optJSONObject("startupPagePrewarm") ?: return false
             return profile.productionEnabled && profile.family == "fragment-content" &&
                 profile.capability("startupPagePrewarm") &&
-                profile.document.optJSONObject("startupPagePrewarm")?.optInt("schemaVersion") == 1 &&
-                !TabletModeQualifier.isOfficialTablet(context)
+                names.optInt("schemaVersion") == 1 && navigationResource(context, names).isNotBlank()
         }
+
+        private fun navigationResource(context: Context, names: JSONObject): String =
+            names.optString(if (TabletModeQualifier.isOfficialTablet(context))
+                "tabletNavigationResource" else "navigationResource")
     }
 }

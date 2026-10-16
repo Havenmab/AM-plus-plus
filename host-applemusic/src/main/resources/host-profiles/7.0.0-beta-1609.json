@@ -5321,6 +5321,7 @@
     "schemaVersion": 1,
     "hostResource": "tab_navigation_host",
     "navigationResource": "bottom_nav_view",
+    "tabletNavigationResource": "drawer_nav_view",
     "tabArgumentKey": "O4.S.ARG_KEY_BOTTOM_TAB",
     "titleArgumentKey": "O4.S.ARG_KEY_DOCUMENT_TITLE",
     "priorityTab": "LIBRARY",
@@ -5426,6 +5427,13 @@
           "name": "getSelectedItemId",
           "parameters": [],
           "returns": "int",
+          "static": false
+        },
+        "tabletMenu": {
+          "owner": "com.google.android.material.navigation.NavigationView",
+          "name": "getMenu",
+          "parameters": [],
+          "returns": "android.view.Menu",
           "static": false
         },
         "find": {

@@ -38,6 +38,8 @@ internal object FragmentSettingsNativeFactory {
         runtime(loader, names).onOpen = onOpen
         return object : SettingsViewBridge {
             override val supportsViewFallback = false
+            override fun supportsStartupPagePrewarm(activity: Activity): Boolean =
+                FragmentStartupPagePrewarmTarget.supports(activity)
             override fun supportsGlassScrollCollapse(activity: Activity): Boolean {
                 val build = targetBuild(activity)
                 return android.os.Build.VERSION.SDK_INT >= 33 &&

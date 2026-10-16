@@ -68,6 +68,7 @@ object ModuleSettingsSchema {
             default = false,
         ),
         forceCellularDataEntryEnabled = values.boolean(KEY_FORCE_CELLULAR_DATA_ENTRY, default = false),
+        startupPagePrewarmEnabled = values.boolean(KEY_STARTUP_PAGE_PREWARM, default = false),
         lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
             ?.coerceIn(
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
@@ -138,6 +139,7 @@ object ModuleSettingsSchema {
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
+            KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
             KEY_LYRIC_BLUR_RADIUS_OFFSET to settings.lyricBlurRadiusOffsetPx.coerceIn(
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
                 ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
@@ -303,6 +305,7 @@ object ModuleSettingsSchema {
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
+        KEY_STARTUP_PAGE_PREWARM,
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_TITLE_CORRECTION_ENABLED,
@@ -343,6 +346,7 @@ object ModuleSettingsSchema {
     private const val KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP =
         "phone_liquid_glass_mini_sink_bounce_dp"
     private const val KEY_FUTURE_BLUR = "future_blur_enabled"
+    private const val KEY_STARTUP_PAGE_PREWARM = "startup_page_prewarm_enabled"
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"

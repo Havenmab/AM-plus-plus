@@ -173,6 +173,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     CUSTOM_LYRICS_SUMMARY("Add and manage lyrics by Apple Music ID", "添加和管理 Apple Music ID 歌词映射"),
     CONFIGURED_LYRICS_COUNT("Configured lyrics: %1\$s", "已配置 %1\$s 首歌词"),
     ADVANCED_SETTINGS("Advanced settings", "高级设置"),
+    STARTUP_PAGE_PREWARM("Prewarm bottom-bar pages on startup", "启动时预热底栏页面"),
+    STARTUP_PAGE_PREWARM_SUMMARY("Prepare other tabs before first use · More startup work and memory · Restart to apply", "提前准备其他底栏页面，减少首次切换开销 · 增加启动负载和内存占用 · 重启生效"),
     APPLICATION("Application", "应用"),
     PLUGINS_SUMMARY("Import ZIPs and manage enabled state and conflicts", "导入 ZIP、管理启用状态与冲突"),
     PRIVATE_STORAGE_NOTICE("Settings are stored in Apple Music's private directory", "配置保存在 Apple Music 私有目录中"),

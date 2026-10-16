@@ -486,6 +486,20 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         })
         parent.addView(embeddedSpacer(activity, 12))
         parent.addView(embeddedCard(activity, localizedText(ModuleText.ADVANCED_SETTINGS)) {
+            if (nativeBridge.supportsStartupPagePrewarm(activity)) {
+                addView(embeddedSettingRow(
+                    activity,
+                    localizedText(ModuleText.STARTUP_PAGE_PREWARM),
+                    localizedText(ModuleText.STARTUP_PAGE_PREWARM_SUMMARY),
+                    settings.startupPagePrewarmEnabled,
+                    iconTint = EmbeddedSettingsPalette.Light.primary,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.BottomBar,
+                        EmbeddedSettingsPalette.Light.primary,
+                    ),
+                ) { onSettingsChanged(settings.copy(startupPagePrewarmEnabled = it)) })
+                addView(embeddedDivider(activity))
+            }
             // The bottom-bar collapse amplitudes live here rather than beside the collapse toggle.
             // They are tuning knobs for an animation that already has a sensible default, so the
             // main glass card stays about *what the bar does* and this card stays about *how it

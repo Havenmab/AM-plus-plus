@@ -18,6 +18,8 @@ import android.view.WindowInsets
 import android.widget.FrameLayout
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +29,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.ViewBackdrop
@@ -138,6 +141,7 @@ internal open class PhoneGlassSession(
     // height consumer (frame, content padding, peek) agrees within a frame.
     protected var bottomGapDp = GlassPolicy.BOTTOM_DP
     private var navBlurDp = GlassPolicy.PANEL_BLUR_DP.toInt()
+    private var miniBackdropSize by mutableStateOf(IntSize.Zero)
     /** Capsule geometry shared by every occupied-height consumer; a diverging form overrides this. */
     protected open val geometry: GlassGeometry get() = GlassGeometry.Phone
 
@@ -333,8 +337,11 @@ internal open class PhoneGlassSession(
             glass.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             glass.content {
                 HostConfiguration {
-                    NativeLiquidButton(bg, input, glassExpansion, panelBlur = navBlurDp.dp, autoClip = geometry.sideBySide,
-                        miniHeightDp = geometry.miniHeightDp) { sx, sy, x, y ->
+                    val reserveBackdrop by remember { derivedStateOf { barCollapse.isRunning } }
+                    NativeLiquidButton(bg, input, glassExpansion, panelBlur = navBlurDp.dp,
+                        autoClip = geometry.sideBySide || (barCollapse.hasPresentation && glassExpansion == 0f),
+                        miniHeightDp = geometry.miniHeightDp,
+                        minLayerSize = if (reserveBackdrop && glassExpansion == 0f) miniBackdropSize else IntSize.Zero) { sx, sy, x, y ->
                         miniContent?.let { v -> writeOwnedTransform(v, "scaleX", sx); writeOwnedTransform(v, "scaleY", sy); writeOwnedTransform(v, "translationX", x); writeOwnedTransform(v, "translationY", y) }
                     }
                 }
@@ -579,7 +586,14 @@ internal open class PhoneGlassSession(
             // The capsule slots may follow the host width (see the tablet row);
             // resync every surface whenever a resolved slot edge changes.
             val navSlot = capsuleMarginsPx(frame.width, mini = false)
-            val miniSlot = barCollapse.miniMargins(capsuleMarginsPx(frame.width, mini = true), hasDetachedSearch,
+            val expandedMiniSlot = capsuleMarginsPx(frame.width, mini = true)
+            // Mini margins never become negative: the parent's width bounds even its rebound.
+            // Reserve only during animation and recompute after width/configuration changes.
+            val expandedMiniWidth = frame.width - expandedMiniSlot[0] - expandedMiniSlot[1]
+            miniBackdropSize = if (barCollapse.hasPresentation && expandedMiniWidth > 0) {
+                IntSize(frame.width, dp(geometry.miniHeightDp))
+            } else IntSize.Zero
+            val miniSlot = barCollapse.miniMargins(expandedMiniSlot, hasDetachedSearch,
                 hostConfiguration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
             fun applySlot(view: View?, slot: IntArray) {
                 val surface = view ?: return

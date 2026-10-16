@@ -4,11 +4,13 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.IntSize
 import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.BackdropEffectScopeImpl
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.effect
 import com.kyant.backdrop.effects.vibrancy
+import kotlin.math.ceil
 import kotlin.math.max
 
 /**
@@ -43,6 +45,13 @@ class VibrantBlur(val radiusPx: Float) {
         val effect = cachedEffect ?: return
         scope.effect(effect)
         scope.padding = max(scope.padding, cachedPadding)
+    }
+
+    /** Reserve pre-lens padding too: lens() may reduce it as the surface changes shape. */
+    fun paddedSize(contentSize: IntSize): IntSize {
+        if (contentSize == IntSize.Zero) return IntSize.Zero
+        val outset = ceil(cachedPadding).toInt() * 2
+        return IntSize(contentSize.width + outset, contentSize.height + outset)
     }
 }
 

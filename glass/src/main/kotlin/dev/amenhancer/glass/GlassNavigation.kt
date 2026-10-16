@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -44,6 +45,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
@@ -245,22 +247,16 @@ private fun BoxScope.DetachedSearchControl(
     val interactive by remember {
         derivedStateOf { GlassBarCollapsePolicy.searchInteractive(liveProgress.value()) }
     }
+    val reserveLayer by remember {
+        derivedStateOf {
+            val progress = liveProgress.value()
+            progress != 0f && progress != 1f
+        }
+    }
     val radiusPx = with(density) { panelBlur.toPx() }
     val material = remember(radiusPx) { VibrantBlur(radiusPx) }
     val containerColor = if (isSystemInDarkTheme()) Color(0xFF121212).copy(alpha = 0.4f)
         else Color(0xFFFAFAFA).copy(alpha = 0.4f)
-    val materialModifier = remember(backdrop, material, containerColor) {
-        Modifier.drawBackdrop(
-            backdrop = backdrop,
-            shape = { Capsule() },
-            effects = {
-                material.applyTo(this)
-                val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
-                lens(edge, edge)
-            },
-            onDrawSurface = { drawRect(containerColor) },
-        )
-    }
     val selected = tab.id == selectedId
     BoxWithConstraints(
         Modifier.align(Alignment.BottomEnd).fillMaxWidth().height(rowHeight),
@@ -269,6 +265,26 @@ private fun BoxScope.DetachedSearchControl(
         val rowWidthPx = with(density) { maxWidth.toPx() }
         val rowHeightPx = with(density) { rowHeight.toPx() }
         val leadingPx = with(density) { leadingWidth.toPx() }
+        val expandedCell = GlassTabGeometry(rowWidthPx, 4f * density.density, leadingPx, tabsCount).tabWidth
+        val minLayerSize = if (reserveLayer) IntSize(
+            (maxOf(expandedCell, GlassBarCollapsePolicy.CONTROL_DP * density.density) +
+                GlassBarCollapsePolicy.GAP_DP * density.density).roundToInt(),
+            rowHeightPx.roundToInt(),
+        ) else IntSize.Zero
+        val materialModifier = remember(backdrop, material, containerColor, minLayerSize) {
+            Modifier.drawBackdrop(
+                backdrop = backdrop,
+                minLayerSize = material.paddedSize(minLayerSize),
+                clipCompositingStrategy = CompositingStrategy.Auto,
+                shape = { Capsule() },
+                effects = {
+                    material.applyTo(this)
+                    val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
+                    lens(edge, edge)
+                },
+                onDrawSurface = { drawRect(containerColor) },
+            )
+        }
         val controls = remember(rowWidthPx, rowHeightPx, density, tabsCount, leadingPx,
             collapseReboundScale, expandReboundScale) {
             derivedStateOf {

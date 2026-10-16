@@ -7,7 +7,8 @@
  * the same light a row inset to the left), and a scroll-collapse progress that animates the
  * panel's width/height and swaps the tab row for a compact face. Every collapse parameter
  * defaults to the expanded bar. Collapse hosts retain material modifiers and fixed effects,
- * and suspend the refraction source layout while its selection droplet is absent.
+ * reserve expanded effect-layer bounds, avoid redundant offscreen clipping, and suspend
+ * the refraction source layout while its selection droplet is absent.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -50,6 +51,7 @@ import dev.amenhancer.backdrop.VibrantBlur
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
@@ -238,6 +240,23 @@ fun LiquidBottomTabs(
         // highlight and the drag hit regions do not ride the backplate's overshoot.
         val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
         val tabWidth = geometry.tabWidth
+        // Reserve the expanded material bounds, including the policy's maximum rebound room.
+        // Stable endpoints return to their actual allocation; only the transition reserves space.
+        // Layout, lens uniforms and hit regions always use the current geometry.
+        val reserveLayer = optimizeCollapseRendering && collapseRaw != 0f && collapseRaw != 1f
+        val panelLayerSize = if (reserveLayer) IntSize(
+            (expandedWidthPx + dev.amenhancer.glass.GlassBarCollapsePolicy.GAP_DP * density.density).fastRoundToInt(),
+            expandedPanelHeightPx.fastRoundToInt(),
+        ) else IntSize.Zero
+        val refractionLayerSize = if (reserveLayer) IntSize(
+            panelLayerSize.width,
+            (expandedPanelHeightPx - 8f * density.density).fastRoundToInt().coerceAtLeast(0),
+        ) else IntSize.Zero
+        val selectionLayerSize = if (reserveLayer) IntSize(
+            dev.amenhancer.glass.GlassTabGeometry(expandedWidthPx, panelInset, leadingPx, tabsCount)
+                .tabWidth.fastRoundToInt().coerceAtLeast(1),
+            refractionLayerSize.height,
+        ) else IntSize.Zero
 
         val panelOffset by if (optimizeCollapseRendering) {
             val liveWidth = rememberUpdatedState(restingWidthPx)
@@ -338,13 +357,13 @@ fun LiquidBottomTabs(
         }
 
         val panelMaterial = if (optimizeCollapseRendering) {
-            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material) {
-                glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material)
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize) {
+                glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize)
             }
         } else glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
         val refractionMaterial = if (optimizeCollapseRendering) {
-            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material) {
-                glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material)
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize) {
+                glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize)
             }
         } else glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
         // Keep the source nodes/layers alive, but do not measure or place their subtree when
@@ -438,8 +457,8 @@ fun LiquidBottomTabs(
         if (expandedContentAlpha > 0.001f) {
             val selectionBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
             val thumbMaterial = if (optimizeCollapseRendering) {
-                remember(selectionBackdrop, dampedDragAnimation, isLightTheme) {
-                    glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
+                remember(selectionBackdrop, dampedDragAnimation, isLightTheme, selectionLayerSize) {
+                    glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme, selectionLayerSize)
                 }
             } else glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
             Box(
@@ -520,8 +539,11 @@ fun LiquidBottomTabs(
 private fun glassPanelMaterial(
     backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
     dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
+    minLayerSize: IntSize = IntSize.Zero,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
+    minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
+    clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { Capsule() },
     effects = {
         if (material == null) {
@@ -542,8 +564,11 @@ private fun glassPanelMaterial(
 private fun glassRefractionMaterial(
     backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
     dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
+    minLayerSize: IntSize = IntSize.Zero,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
+    minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
+    clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { Capsule() },
     effects = {
         val progress = dampedDragAnimation.pressProgress
@@ -565,8 +590,11 @@ private fun glassRefractionMaterial(
 
 private fun glassSelectionMaterial(
     backdrop: Backdrop, dampedDragAnimation: DampedDragAnimation, isLightTheme: Boolean,
+    minLayerSize: IntSize = IntSize.Zero,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
+    minLayerSize = minLayerSize,
+    clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { Capsule() },
     effects = {
         val progress = dampedDragAnimation.pressProgress

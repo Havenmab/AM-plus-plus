@@ -68,6 +68,15 @@ object AppleMusicHostFactory {
             build = build,
             currentSong = currentSong,
             playerRecovery = FragmentPlayerRecoveryTarget(resolver, build),
+            startupPagePrewarm = FragmentStartupPagePrewarmTarget(
+                application, classLoader, { config.settings().startupPagePrewarmEnabled },
+                onFailure = { error -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(
+                    dev.amenhancer.module.ModuleConstants.FEATURE_STARTUP_PAGE_PREWARM,
+                    dev.amenhancer.module.model.FeatureState.DEGRADED,
+                    "Startup page prewarming stopped: ${error.cause?.message ?: error.message ?: error.javaClass.simpleName}",
+                    build.displayName,
+                )) },
+            ),
             dualPane = if (profile.family == "fragment-content") FragmentDualPaneTarget(resolver, build)
                 else AppleMusicDualPaneTarget(resolver, build),
             editorialVideo = editorialVideoTargetForFamily(profile.family) {

@@ -217,14 +217,19 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             ))
 
             val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
-            pageTitle.text = if (customLyricsPage) localizedText(ModuleText.CUSTOM_LYRICS) else "AM++"
+            val childPage = page != EmbeddedSettingsPage.MAIN
+            pageTitle.text = when (page) {
+                EmbeddedSettingsPage.MAIN -> "AM++"
+                EmbeddedSettingsPage.CUSTOM_LYRICS -> localizedText(ModuleText.CUSTOM_LYRICS)
+                EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS)
+            }
             (pageTitle.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
                 params.marginStart = dp(activity, if (customLyricsPage && !isEmbeddedPhone(activity)) 20 else 0)
                 pageTitle.layoutParams = params
             }
-            backButton.visibility = if (customLyricsPage) View.VISIBLE else View.GONE
-            moduleIcon.visibility = if (customLyricsPage) View.GONE else View.VISIBLE
-            headerDivider.visibility = if (customLyricsPage) View.VISIBLE else View.GONE
+            backButton.visibility = if (childPage) View.VISIBLE else View.GONE
+            moduleIcon.visibility = if (childPage) View.GONE else View.VISIBLE
+            headerDivider.visibility = if (childPage) View.VISIBLE else View.GONE
             if (customLyricsPage) {
                 renderEmbeddedCustomLyricsPage(
                     activity = activity,
@@ -233,11 +238,18 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     song = controller.currentSongDetails(),
                     onSettingsChanged = ::updateDraft,
                 )
+            } else if (page == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION) {
+                renderEmbeddedAnimationSettingsPage(
+                    activity = activity,
+                    parent = content,
+                    currentSettings = { draft.settings },
+                    onSettingsChanged = ::updateDraft,
+                )
             } else {
                 renderEmbeddedMainPage(
                     activity = activity,
                     parent = content,
-                    settings = draft.settings,
+                    currentSettings = { draft.settings },
                     lyricsCount = runCatching { controller.lyricsEntries().size }.getOrDefault(0),
                     onSettingsChanged = ::updateDraft,
                     onCellularDataEntryChanged = { enabled ->
@@ -247,6 +259,10 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     },
                     onOpenCustomLyrics = {
                         page = EmbeddedSettingsPage.CUSTOM_LYRICS
+                        renderPage()
+                    },
+                    onOpenAnimationSettings = {
+                        page = EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION
                         renderPage()
                     },
                     onChooseFont = {
@@ -265,18 +281,29 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             refreshEmbeddedTheme(activity)
         }
 
-        backButton.setOnClickListener {
-            if (page == EmbeddedSettingsPage.CUSTOM_LYRICS) {
+        fun navigateBack() {
+            if (page != EmbeddedSettingsPage.MAIN) {
                 page = EmbeddedSettingsPage.MAIN
                 renderPage()
             } else {
                 dialog.dismiss()
             }
         }
+        backButton.setOnClickListener { navigateBack() }
+        val backCallback = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            android.window.OnBackInvokedCallback { navigateBack() }
+        } else null
         saveButton.setOnClickListener { saveDraft(close = true) }
         dialog = embeddedDialogBuilder(activity, customPanel = true)
             .setView(root)
             .create()
+        dialog.setOnKeyListener { _, keyCode, event ->
+            if (keyCode != android.view.KeyEvent.KEYCODE_BACK || page == EmbeddedSettingsPage.MAIN) false
+            else {
+                if (event.action == android.view.KeyEvent.ACTION_UP && !event.isCanceled) navigateBack()
+                true
+            }
+        }
         dialog.setOnShowListener {
             dialogReady = true
             dialog.window?.let { window ->
@@ -291,9 +318,16 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             }
             syncBottomCloseButton()
             syncDialogLayout()
+            if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+                dialog.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback)
+            }
         }
         val weakDialog = WeakReference<Dialog>(dialog)
         dialog.setOnDismissListener {
+            if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+                dialog.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
+            }
             if (dialogReference?.get() === weakDialog.get()) {
                 dialogReference = null
                 pageRefresh = null
@@ -309,14 +343,17 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
 internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         activity: Activity,
         parent: LinearLayout,
-        settings: ModuleSettings,
+        currentSettings: () -> ModuleSettings,
         lyricsCount: Int,
         onSettingsChanged: (ModuleSettings) -> Unit,
         onCellularDataEntryChanged: (Boolean) -> Unit,
         onOpenCustomLyrics: () -> Unit,
+        onOpenAnimationSettings: () -> Unit,
         onChooseFont: () -> Unit,
         onClearFont: () -> Unit,
     ) {
+        val settings = currentSettings()
+        val collapseAvailable = nativeBridge.supportsGlassScrollCollapse(activity)
         parent.addView(embeddedCard(activity, localizedText(ModuleText.FEATURES), outlined = false) {
             addView(embeddedSettingRow(
                 activity,
@@ -328,7 +365,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     EmbeddedGlyphKind.TabletDualPane,
                     EmbeddedSettingsPalette.Light.primary,
                 ),
-            ) { onSettingsChanged(settings.copy(dualPaneEnabled = it)) })
+            ) { onSettingsChanged(currentSettings().copy(dualPaneEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
@@ -359,7 +396,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                         EmbeddedGlyphKind.BottomBar,
                         EmbeddedSettingsPalette.Light.primary,
                     ),
-                ) { onSettingsChanged(settings.copy(navigationCompensationEnabled = it)) })
+                ) { onSettingsChanged(currentSettings().copy(navigationCompensationEnabled = it)) })
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
@@ -372,7 +409,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     EmbeddedGlyphKind.Glass,
                     EmbeddedSettingsPalette.Light.accent,
                 ),
-            ) { onSettingsChanged(settings.copy(phoneLiquidGlassEnabled = it)); pageRefresh?.invoke() })
+            ) { onSettingsChanged(currentSettings().copy(phoneLiquidGlassEnabled = it)); pageRefresh?.invoke() })
             if (settings.phoneLiquidGlassEnabled) {
                 addView(embeddedDivider(activity))
                 addView(embeddedGlassRangeRow(
@@ -383,7 +420,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
                     suffix = localizedText(ModuleText.BOTTOM_BAR_HEIGHT_SUMMARY),
-                ) { onSettingsChanged(settings.copy(phoneLiquidGlassBottomGapDp = it)) })
+                ) { onSettingsChanged(currentSettings().copy(phoneLiquidGlassBottomGapDp = it)) })
                 addView(embeddedDivider(activity))
                 addView(embeddedGlassRangeRow(
                     activity = activity,
@@ -393,7 +430,24 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                     suffix = localizedText(ModuleText.BOTTOM_BAR_BLUR_SUMMARY),
-                ) { onSettingsChanged(settings.copy(phoneLiquidGlassPanelBlurDp = it)) })
+                ) { onSettingsChanged(currentSettings().copy(phoneLiquidGlassPanelBlurDp = it)) })
+                if (collapseAvailable) {
+                    addView(embeddedDivider(activity))
+                    addView(embeddedSettingRow(
+                        activity,
+                        localizedText(ModuleText.BOTTOM_BAR_COLLAPSE),
+                        localizedText(ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY),
+                        settings.phoneLiquidGlassCollapseEnabled,
+                        iconTint = EmbeddedSettingsPalette.Light.accent,
+                        iconDrawable = EmbeddedGlyphDrawable(
+                            EmbeddedGlyphKind.BottomBar,
+                            EmbeddedSettingsPalette.Light.accent,
+                        ),
+                    ) {
+                        onSettingsChanged(currentSettings().copy(phoneLiquidGlassCollapseEnabled = it))
+                        pageRefresh?.invoke()
+                    })
+                }
             }
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
@@ -406,7 +460,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     EmbeddedGlyphKind.LyricsBlur,
                     EmbeddedSettingsPalette.Light.primary,
                 ),
-            ) { onSettingsChanged(settings.copy(futureBlurEnabled = it)) })
+            ) { onSettingsChanged(currentSettings().copy(futureBlurEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
@@ -418,7 +472,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     EmbeddedGlyphKind.Music,
                     EmbeddedSettingsPalette.Light.accent,
                 ),
-            ) { onSettingsChanged(settings.copy(cjkKaraokeAnimationEnabled = it)) })
+            ) { onSettingsChanged(currentSettings().copy(cjkKaraokeAnimationEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
@@ -434,7 +488,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                     EmbeddedGlyphKind.Document,
                     EmbeddedSettingsPalette.Light.accent,
                 ),
-            ) { onSettingsChanged(settings.copy(titleCorrectionEnabled = it)) })
+            ) { onSettingsChanged(currentSettings().copy(titleCorrectionEnabled = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedNavigationRow(
                 activity,
@@ -449,7 +503,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 showEmbeddedTitleCorrectionModePicker(
                     activity = activity,
                 ) { mode ->
-                    onSettingsChanged(settings.copy(titleCorrectionMode = mode))
+                    onSettingsChanged(currentSettings().copy(titleCorrectionMode = mode))
                     pageRefresh?.invoke()
                 }
             })
@@ -467,12 +521,36 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
         })
         parent.addView(embeddedSpacer(activity, 12))
         parent.addView(embeddedCard(activity, localizedText(ModuleText.ADVANCED_SETTINGS)) {
+            if (nativeBridge.supportsStartupPagePrewarm(activity)) {
+                addView(embeddedSettingRow(
+                    activity,
+                    localizedText(ModuleText.STARTUP_PAGE_PREWARM),
+                    localizedText(ModuleText.STARTUP_PAGE_PREWARM_SUMMARY),
+                    settings.startupPagePrewarmEnabled,
+                    iconTint = EmbeddedSettingsPalette.Light.primary,
+                    iconDrawable = EmbeddedGlyphDrawable(
+                        EmbeddedGlyphKind.BottomBar,
+                        EmbeddedSettingsPalette.Light.primary,
+                    ),
+                ) { onSettingsChanged(currentSettings().copy(startupPagePrewarmEnabled = it)) })
+                addView(embeddedDivider(activity))
+            }
+            if (collapseAvailable && settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled) {
+                addView(embeddedNavigationRow(
+                    activity,
+                    localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS),
+                    localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY),
+                    iconDrawable = EmbeddedGlyphDrawable(EmbeddedGlyphKind.BottomBar, EmbeddedSettingsPalette.Light.accent),
+                    onClick = onOpenAnimationSettings,
+                ))
+                addView(embeddedDivider(activity))
+            }
             addView(embeddedBlurRadiusRow(activity, settings.lyricBlurRadiusOffsetPx) {
-                onSettingsChanged(settings.copy(lyricBlurRadiusOffsetPx = it))
+                onSettingsChanged(currentSettings().copy(lyricBlurRadiusOffsetPx = it))
             })
             addView(embeddedDivider(activity))
             addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
-                onSettingsChanged(settings.copy(appleMusicDpiOverrideDpi = it))
+                onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))
                 pageRefresh?.invoke()
             })
         })

@@ -30,6 +30,34 @@ object ModuleSettingsSchema {
                 ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
                 ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
             ) ?: EnhancementDefaults.GLASS_PANEL_BLUR_DP.toInt(),
+        phoneLiquidGlassCollapseEnabled = values.boolean(
+            KEY_PHONE_LIQUID_GLASS_COLLAPSE,
+            default = true,
+        ),
+        phoneLiquidGlassTabletCollapseEnabled = values.boolean(
+            KEY_PHONE_LIQUID_GLASS_TABLET_COLLAPSE,
+            default = false,
+        ),
+        phoneLiquidGlassCollapseReboundPercent = values.number(KEY_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT)
+            ?.coerceIn(
+                ModuleSettings.MIN_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT,
+                ModuleSettings.MAX_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT,
+            ) ?: EnhancementDefaults.GLASS_COLLAPSE_REBOUND_PERCENT,
+        phoneLiquidGlassExpandReboundPercent = values.number(KEY_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT)
+            ?.coerceIn(
+                ModuleSettings.MIN_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT,
+                ModuleSettings.MAX_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT,
+            ) ?: EnhancementDefaults.GLASS_EXPAND_REBOUND_PERCENT,
+        phoneLiquidGlassMiniReboundPercent = values.number(KEY_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT)
+            ?.coerceIn(
+                ModuleSettings.MIN_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT,
+                ModuleSettings.MAX_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT,
+            ) ?: EnhancementDefaults.GLASS_MINI_REBOUND_PERCENT,
+        phoneLiquidGlassMiniSinkBounceDp = values.number(KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP)
+            ?.coerceIn(
+                ModuleSettings.MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
+                ModuleSettings.MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
+            ) ?: EnhancementDefaults.GLASS_MINI_SINK_BOUNCE_DP,
         futureBlurEnabled = values.boolean(KEY_FUTURE_BLUR, default = true),
         cjkKaraokeAnimationEnabled = values.boolean(
             KEY_CJK_KARAOKE_ANIMATION_ENABLED,
@@ -40,6 +68,8 @@ object ModuleSettingsSchema {
             default = false,
         ),
         forceCellularDataEntryEnabled = values.boolean(KEY_FORCE_CELLULAR_DATA_ENTRY, default = false),
+        startupPagePrewarmEnabled = values.boolean(KEY_STARTUP_PAGE_PREWARM,
+            default = EnhancementDefaults.STARTUP_PAGE_PREWARM_ENABLED),
         lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
             ?.coerceIn(
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
@@ -88,10 +118,29 @@ object ModuleSettingsSchema {
                 ModuleSettings.normalizePhoneLiquidGlassPanelBlurDp(
                     settings.phoneLiquidGlassPanelBlurDp,
                 ),
+            KEY_PHONE_LIQUID_GLASS_COLLAPSE to settings.phoneLiquidGlassCollapseEnabled,
+            KEY_PHONE_LIQUID_GLASS_TABLET_COLLAPSE to settings.phoneLiquidGlassTabletCollapseEnabled,
+            KEY_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT to
+                ModuleSettings.normalizePhoneLiquidGlassCollapseReboundPercent(
+                    settings.phoneLiquidGlassCollapseReboundPercent,
+                ),
+            KEY_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT to
+                ModuleSettings.normalizePhoneLiquidGlassExpandReboundPercent(
+                    settings.phoneLiquidGlassExpandReboundPercent,
+                ),
+            KEY_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT to
+                ModuleSettings.normalizePhoneLiquidGlassMiniReboundPercent(
+                    settings.phoneLiquidGlassMiniReboundPercent,
+                ),
+            KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP to
+                ModuleSettings.normalizePhoneLiquidGlassMiniSinkBounceDp(
+                    settings.phoneLiquidGlassMiniSinkBounceDp,
+                ),
             KEY_FUTURE_BLUR to settings.futureBlurEnabled,
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
+            KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
             KEY_LYRIC_BLUR_RADIUS_OFFSET to settings.lyricBlurRadiusOffsetPx.coerceIn(
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
                 ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
@@ -247,10 +296,17 @@ object ModuleSettingsSchema {
         KEY_PHONE_LIQUID_GLASS,
         KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
         KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+        KEY_PHONE_LIQUID_GLASS_COLLAPSE,
+        KEY_PHONE_LIQUID_GLASS_TABLET_COLLAPSE,
+        KEY_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT,
+        KEY_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT,
+        KEY_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT,
+        KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
         KEY_FUTURE_BLUR,
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
+        KEY_STARTUP_PAGE_PREWARM,
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_TITLE_CORRECTION_ENABLED,
@@ -280,7 +336,18 @@ object ModuleSettingsSchema {
     private const val KEY_PHONE_LIQUID_GLASS = "phone_liquid_glass_enabled"
     private const val KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP = "phone_liquid_glass_bottom_gap_dp"
     private const val KEY_PHONE_LIQUID_GLASS_PANEL_BLUR_DP = "phone_liquid_glass_panel_blur_dp"
+    private const val KEY_PHONE_LIQUID_GLASS_COLLAPSE = "phone_liquid_glass_collapse_enabled"
+    private const val KEY_PHONE_LIQUID_GLASS_TABLET_COLLAPSE = "phone_liquid_glass_tablet_collapse_enabled"
+    private const val KEY_PHONE_LIQUID_GLASS_COLLAPSE_REBOUND_PERCENT =
+        "phone_liquid_glass_collapse_rebound_percent"
+    private const val KEY_PHONE_LIQUID_GLASS_EXPAND_REBOUND_PERCENT =
+        "phone_liquid_glass_expand_rebound_percent"
+    private const val KEY_PHONE_LIQUID_GLASS_MINI_REBOUND_PERCENT =
+        "phone_liquid_glass_mini_rebound_percent"
+    private const val KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP =
+        "phone_liquid_glass_mini_sink_bounce_dp"
     private const val KEY_FUTURE_BLUR = "future_blur_enabled"
+    private const val KEY_STARTUP_PAGE_PREWARM = "startup_page_prewarm_enabled"
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"

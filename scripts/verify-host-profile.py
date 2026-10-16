@@ -170,6 +170,39 @@ def verify_fragment_contracts(document, classes, failures):
                 for role in sorted(roles - wrap.get(group, {}).keys()):
                     failures.append(f'lyricWrapSweep.{group}.{role}: missing required role')
             sections['lyricWrapSweep'] = wrap
+    # Optional navigation startup prewarm. A declared capability needs its exact contract.
+    prewarm = document.get('startupPagePrewarm')
+    capability = (document.get('capabilities') or {}).get('startupPagePrewarm') is True
+    if prewarm is None and capability:
+        failures.append('startupPagePrewarm: capability declared without a contract section')
+    if prewarm is not None:
+        if not isinstance(prewarm, dict) or prewarm.get('schemaVersion') != 1:
+            failures.append('startupPagePrewarm: missing versioned contract')
+        elif not isinstance(prewarm.get('members'), dict):
+            failures.append('startupPagePrewarm.members: missing complete member inventory')
+        else:
+            members = prewarm['members']
+            required = {
+                'methods': {'viewCreated', 'destroyView', 'activity', 'view', 'childManager', 'resumed',
+                            'viewModel', 'tabs', 'value', 'selectedTab', 'kindLabel', 'kindId', 'menu', 'selectedId',
+                            'find', 'stateSaved', 'arguments', 'add', 'hide', 'onCommit', 'commit', 'tag', 'hidden',
+                            'observePlayContext', 'containerView', 'parent', 'libraryViewCreated', 'notifyEvent'},
+                'fields': {'modelKind', 'primary', 'reordering'},
+                'constructors': {'container', 'transaction'},
+            }
+            if prewarm.get('tabletNavigationResource'):
+                required['methods'].add('tabletMenu')
+            valid_groups = True
+            for group, roles in required.items():
+                entries = members.get(group, {})
+                if not isinstance(entries, dict):
+                    failures.append(f'startupPagePrewarm.members.{group}: invalid inventory')
+                    valid_groups = False
+                    continue
+                for role in sorted(roles - entries.keys()):
+                    failures.append(f'startupPagePrewarm.members.{group}.{role}: missing required role')
+            if valid_groups:
+                sections['startupPagePrewarm.members'] = members
     main = sections.get('fragmentDualPane') or {}
     policy = main.get('songLayoutPolicy')
     if policy == '1606-column':

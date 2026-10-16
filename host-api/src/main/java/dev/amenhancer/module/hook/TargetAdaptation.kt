@@ -41,6 +41,9 @@ data class TargetAdaptation(
     val lyricWrapSweep: LyricWrapSweepTarget = LyricWrapSweepTarget {
         TargetCapabilityInstall.Unsupported("Wrapped lyric sweep has no exact host contract")
     },
+    val startupPagePrewarm: StartupPagePrewarmTarget = StartupPagePrewarmTarget {
+        TargetCapabilityInstall.Unsupported("Startup page prewarming has no exact host contract")
+    },
 ) {
 }
 
@@ -85,6 +88,10 @@ fun interface CellularDataEntryTarget {
 }
 
 fun interface PlayerRecoveryTarget {
+    fun install(): TargetCapabilityInstall
+}
+
+fun interface StartupPagePrewarmTarget {
     fun install(): TargetCapabilityInstall
 }
 

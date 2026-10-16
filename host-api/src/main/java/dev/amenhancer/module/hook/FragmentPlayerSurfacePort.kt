@@ -47,21 +47,18 @@ interface FragmentPlayerSurfaceObserver {
     /**
      * The mini panel's touches.
      *
-     * Normally observation only: native dispatch, every mini control, and player drag continue
-     * unchanged. Returning non-null **consumes** the event, so the mini's own controls never see
-     * it — which is what lets a collapsed row turn the whole mini into one tap target. Returning
-     * null is the default and leaves dispatch completely untouched.
+     * The current phone session observes only and returns null, preserving native mini controls
+     * and player drag. The phone dispatch hook claims an event only for an explicit true result;
+     * null or false leaves native dispatch untouched. Tablet activity touches are observation only.
      */
     fun onMiniTouch(identity: Any, event: MotionEvent): Boolean? = null
     /**
      * The page's gestures, from the content root rather than the mini panel.
      *
-     * Compose pages scroll entirely inside Compose and expose no native scroll container, so this
-     * gesture is the only signal the scroll collapse can observe. Returning non-null **consumes**
-     * the event at the root, which is how a tap on the collapsed row is claimed: the root is an
-     * ancestor of the mini panel, so it is reached whatever the host's internal view chain looks
-     * like, unlike a match on one specific panel view. Null is the default and leaves the event
-     * entirely alone, so the expanded bar and every page gesture are untouched.
+     * Observed once before native child dispatch, including gestures handled internally by Compose
+     * without native scroll events. Current scroll-collapse sessions return null: page gestures
+     * and native mini controls retain their own dispatch. The root dispatch hook claims an event
+     * only for an explicit true result; null or false leaves native dispatch untouched.
      */
     fun onContentTouch(identity: Any, event: MotionEvent): Boolean? = null
     fun onFailure(identity: Any?, error: Throwable)

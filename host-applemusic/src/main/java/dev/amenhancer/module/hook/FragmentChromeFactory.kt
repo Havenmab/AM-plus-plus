@@ -157,21 +157,18 @@ object FragmentChromeFactory {
                         // Root dispatch observes one event before native child controls consume it.
                         bindings.values.forEach { binding ->
                             if (binding.tabletChrome == null && binding.isMiniTouchPanel(view)) {
-                                // A non-null result means the session took the gesture for itself
-                                // (the collapsed mini is one tap target), so the native mini's own
-                                // controls and its player-open drag must not also see it.
+                                // The current phone session observes presses and returns null,
+                                // preserving native mini controls and player drag. Only an
+                                // explicit true result claims the event at this dispatch entry.
                                 val claimed = runCatching {
                                     observer.onMiniTouch(binding.viewSessionIdentity, event)
                                 }.onFailure { fail(null, it) }.getOrNull()
                                 if (claimed == true) param.result = true
                             }
-                            // The content root is the page's ancestor: its dispatch sees every
-                            // gesture in the page once. Compose pages expose no scroll container,
-                            // so this is the only place their scrolling can be observed — and
-                            // because the root is also an ancestor of the mini panel, it is the
-                            // reliable seam for claiming a tap on the collapsed row. Consuming
-                            // here stops the event before the panel's own children, whatever the
-                            // host's internal view chain happens to be.
+                            // Observe each page event once at the content root, including gestures
+                            // handled internally by Compose. Current sessions return null so page
+                            // scrolling and native child controls retain their own dispatch.
+                            // Only an explicit true result claims the event at this seam.
                             if (binding.isContentRoot(view)) {
                                 val claimed = runCatching {
                                     observer.onContentTouch(binding.viewSessionIdentity, event)

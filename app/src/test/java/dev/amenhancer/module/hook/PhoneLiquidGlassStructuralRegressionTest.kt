@@ -46,6 +46,7 @@ class PhoneLiquidGlassStructuralRegressionTest {
         val client = source("dev/amenhancer/module/config/TargetConfigClient.kt")
         val storage = source("dev/amenhancer/module/config/HostPrivateEmbeddedStorage.kt")
         val settings = source("dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
+        val animationSettings = source("dev/amenhancer/module/ui/EmbeddedAnimationSettingsPage.kt")
 
         assertTrue(models.contains("val phoneLiquidGlassEnabled: Boolean = false"))
         assertTrue(session.contains("ModuleSettingsSchema.encodeOrdinarySettings(settings)"))
@@ -77,26 +78,27 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(settings.contains("ModuleText.BOTTOM_BAR_COLLAPSE"))
         assertTrue(settings.contains("phoneLiquidGlassCollapseEnabled = it"))
         // The collapse-animation amplitudes are tuning knobs for an animation that already has a
-        // sensible default, so they live in **Advanced settings** rather than beside the feature
-        // toggle — the main glass card stays about what the bar does, the advanced card about how it
-        // moves. They are still gated on the feature so a disabled collapse shows no dead sliders.
+        // sensible default, so Advanced settings links to their child page. The entry remains
+        // gated on the feature, and the child page shares the dialog's latest settings draft.
         assertTrue(models.contains("val phoneLiquidGlassCollapseReboundPercent: Int"))
         assertTrue(models.contains("val phoneLiquidGlassExpandReboundPercent: Int"))
         assertTrue(models.contains("val phoneLiquidGlassMiniReboundPercent: Int"))
         assertTrue(models.contains("val phoneLiquidGlassMiniSinkBounceDp: Int"))
         assertTrue(settings.contains("if (collapseAvailable && settings.phoneLiquidGlassEnabled && settings.phoneLiquidGlassCollapseEnabled)"))
-        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND"))
-        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_EXPAND_REBOUND"))
-        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_MINI_REBOUND"))
-        assertTrue(settings.contains("ModuleText.BOTTOM_BAR_MINI_SINK_BOUNCE"))
-        assertTrue(settings.contains("phoneLiquidGlassCollapseReboundPercent = it"))
-        assertTrue(settings.contains("phoneLiquidGlassExpandReboundPercent = it"))
-        assertTrue(settings.contains("phoneLiquidGlassMiniReboundPercent = it"))
-        assertTrue(settings.contains("phoneLiquidGlassMiniSinkBounceDp = it"))
-        // The amplitudes must sit INSIDE the advanced card, not the main glass card.
+        assertTrue(settings.contains("renderEmbeddedAnimationSettingsPage("))
+        assertTrue(settings.contains("currentSettings = { draft.settings }"))
+        assertTrue(animationSettings.contains("ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND"))
+        assertTrue(animationSettings.contains("ModuleText.BOTTOM_BAR_EXPAND_REBOUND"))
+        assertTrue(animationSettings.contains("ModuleText.BOTTOM_BAR_MINI_REBOUND"))
+        assertTrue(animationSettings.contains("ModuleText.BOTTOM_BAR_MINI_SINK_BOUNCE"))
+        assertTrue(animationSettings.contains("currentSettings().copy(phoneLiquidGlassCollapseReboundPercent = it)"))
+        assertTrue(animationSettings.contains("currentSettings().copy(phoneLiquidGlassExpandReboundPercent = it)"))
+        assertTrue(animationSettings.contains("currentSettings().copy(phoneLiquidGlassMiniReboundPercent = it)"))
+        assertTrue(animationSettings.contains("currentSettings().copy(phoneLiquidGlassMiniSinkBounceDp = it)"))
+        // The child-page entry belongs to Advanced settings, rather than the main glass card.
         val advancedAt = settings.indexOf("localizedText(ModuleText.ADVANCED_SETTINGS)")
-        val reboundAt = settings.indexOf("ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND")
-        assertTrue("the collapse rebound row must be inside the Advanced card", advancedAt in 1 until reboundAt)
+        val animationEntryAt = settings.indexOf("localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS)", advancedAt)
+        assertTrue("the animation page entry must be inside the Advanced card", advancedAt in 1 until animationEntryAt)
         // ...and in this order: the three collapse-direction knobs first, the single expand-direction
         // knob last. Grouping them keeps the one expand slider from splitting the collapse set.
         val order = listOf(
@@ -104,11 +106,11 @@ class PhoneLiquidGlassStructuralRegressionTest {
             "ModuleText.BOTTOM_BAR_MINI_REBOUND",
             "ModuleText.BOTTOM_BAR_MINI_SINK_BOUNCE",
             "ModuleText.BOTTOM_BAR_EXPAND_REBOUND",
-        ).map { settings.indexOf(it) }
+        ).map { animationSettings.indexOf(it) }
         assertTrue("every amplitude row must be present", order.all { it > 0 })
         assertEquals("collapse knobs first, expand knob last", order.sorted(), order)
         // The percentages must not be labelled in dp like the distances.
-        assertTrue(settings.contains("unit = \"%\""))
+        assertTrue(animationSettings.contains("unit = \"%\""))
         assertTrue(schema.contains("\"phone_liquid_glass_collapse_rebound_percent\""))
         assertTrue(schema.contains("\"phone_liquid_glass_expand_rebound_percent\""))
         assertTrue(schema.contains("\"phone_liquid_glass_mini_rebound_percent\""))

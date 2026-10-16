@@ -99,8 +99,9 @@ class TabletLiquidGlassStructuralRegressionTest {
         assertTrue(session.contains("frameWidth * 2 / 5"))
         // The native mini content and the morphing glass share the mini slot, and
         // the expand morph interpolates each edge from its own slot edge to zero.
-        // The collapsed row narrows that same form-owned slot rather than a phone-style one.
-        assertTrue(base.contains("barCollapse.miniMargins(capsuleMarginsPx(frame.width, mini = true)"))
+        // Shared layout starts from the form-owned slot before applying any supported collapse.
+        assertTrue(base.contains("val expandedMiniSlot = capsuleMarginsPx(frame.width, mini = true)"))
+        assertTrue(base.contains("barCollapse.miniMargins(expandedMiniSlot,"))
         assertTrue(base.contains("applySlot(miniContent, miniSlot)"))
     }
 

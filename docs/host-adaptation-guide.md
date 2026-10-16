@@ -559,6 +559,7 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 | 隐藏节点生命周期 | 选择水珠不可见时，折射源仍保持附着并保留已有层与资源，但不测量、放置其子级，也不进入内部背景录制；分离搜索控件同样保留材质与绘制节点并跳过子级测量与放置。挂起与恢复之间保留上述节点的资源，可见性门禁翻转后在下一帧绘制前恢复测量与放置 |
 | 进度读取位置 | 收缩路径的胶囊、标签行、选择水珠与 compact 面共用按当前原始进度派生的不可变几何快照；连续尺寸在测量中、位移与透明度在 `graphicsLayer` 中读取。组合只读取显隐、交互和承载预留门禁；材质 modifier 独立复用，分离搜索沿用同样的阶段读取原则 |
 | 动态尺寸语义 | `GlassCollapseModifiers` 在启用路径按当前像素几何测量，每个轴分别调用并保留原 modifier 顺序和中间约束收敛，不能随意合并宽高 coordinator。背板与折射源保留 required 尺寸，其余尺寸按传入约束收敛。未启用路径仍调用原有 width/height/requiredWidth/requiredHeight 和 alpha；透明度的裁切规则与原有 alpha 一致 |
+| 轮廓裁切诊断 | `diagnostics.CollapseOutlineProbe` 仅供独立诊断构建比较连续曲线的 Generic 路径与 Circular 的 Rounded 轮廓。只在已有收缩手机路径选用标准圆角；背板、折射源、选择水珠、标签裁切、compact、搜索和 mini 保持同一轮廓选择。其他调用方默认仍为原轮廓，完整播放器沿原有圆角过渡；不得把圆角曲线的差别或 GPU 收益当成已验收结果 |
 | 交互几何时效 | 拖拽命中、索引换算、按压高亮与位移补偿读取当前几何提供者；配置或行宽变化时替换提供者，不能沿用首次组合或上次显隐门禁时的宽度。标签单元格及水珠沿 clamped resting width 布局，仅背板继承回弹 |
 | 共同边界 | 不改变收缩弹簧及其参数、共享控制几何与命中（`GlassBarCollapseLayout.controls(...)`）、原生列表位移、peek、内容留白、mini 的原生输入，也不改变通用渲染器（`DrawBackdropModifier`、效果作用域及效果源）的默认行为 |
 

@@ -12,6 +12,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.util.fastCoerceAtMost
 import androidx.compose.ui.util.lerp
@@ -49,6 +50,7 @@ fun NativeLiquidButton(
     miniHeightDp: Int = GlassPolicy.MINI_HEIGHT_DP,
     /** Expanded material bounds for a size-animating host; native content keeps its own size. */
     minLayerSize: IntSize = IntSize.Zero,
+    capsuleShape: Shape = Capsule(),
     transformContent: (Float, Float, Float, Float) -> Unit,
 ) {
     val containerColor = if (isSystemInDarkTheme()) Color(0xFF121212).copy(alpha = 0.4f)
@@ -75,7 +77,7 @@ fun NativeLiquidButton(
             minLayerSize = material?.paddedSize(minLayerSize) ?: IntSize.Zero,
             clipCompositingStrategy = if (autoClip) androidx.compose.ui.graphics.CompositingStrategy.Auto
                 else androidx.compose.ui.graphics.CompositingStrategy.Offscreen,
-            shape = { if (expansion == 0f) Capsule() else RoundedCornerShape(lerp(miniHeightDp / 2f, 24f, expansion).dp) },
+            shape = { if (expansion == 0f) capsuleShape else RoundedCornerShape(lerp(miniHeightDp / 2f, 24f, expansion).dp) },
             effects = {
                 if (material == null) {
                     vibrancy()

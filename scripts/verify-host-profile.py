@@ -378,6 +378,53 @@ def verify_lyric_blur_contract(document, classes, failures):
     return checks
 
 
+def verify_lyric_result_submission(document, classes, failures):
+    """Check the explicitly declared result channel, without inferring missing roles."""
+    data = document.get('lyricResultSubmission')
+    if data is None:
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricResultSubmission: invalid versioned contract')
+        return 0
+    script = data.get('methods', {}).get('pointerScript', {})
+    if script.get('returns') != 'boolean':
+        failures.append('lyricResultSubmission.pointerScript: setScript returns boolean')
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'boolean': 'Z'}
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+    checks = 0
+    required = {
+        'methods': {'resultSet', 'resultPost', 'resultValue', 'fragmentResume', 'buildIndex', 'loadLyrics', 'systemLyricsLanguage',
+                    'pointerGet', 'pointerAdamId', 'pointerScript', 'clear'},
+        'fields': {'fragmentViewModel', 'lyricsResult'},
+    }
+    for group in ('methods', 'fields'):
+        entries = data.get(group)
+        if not isinstance(entries, dict) or not entries:
+            failures.append(f'lyricResultSubmission.{group}: missing inventory')
+            continue
+        for role in sorted(required[group] - entries.keys()):
+            failures.append(f'lyricResultSubmission.{group}.{role}: missing required role')
+        for role, member in entries.items():
+            checks += 1
+            try:
+                native = classes.get(descriptor(member['owner']), {})
+                if group == 'fields':
+                    valid = (native.get('fields', {}).get(member['name']) == descriptor(member['type'])
+                             and not native.get('field_access', {}).get(member['name'], 8) & 8)
+                else:
+                    signature = member['name'] + '(' + ''.join(map(descriptor, member['parameters'])) + ')' + descriptor(member['returns'])
+                    flags = native.get('method_access', {}).get(signature)
+                    valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                             and bool(flags & 8) == member.get('static', False))
+                if not valid:
+                    failures.append(f'lyricResultSubmission.{group}.{role}: invalid exact descriptor')
+            except (KeyError, TypeError, AttributeError) as error:
+                failures.append(f'lyricResultSubmission.{group}.{role}: incomplete descriptor ({error})')
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path, help="APK, XAPK or APKS (all DEX splits are checked)")
@@ -459,6 +506,7 @@ def main():
             checks += verify_fragment_contracts(document, classes, failures)
             checks += verify_artist_compose_contract(document, classes, failures)
             checks += verify_lyric_blur_contract(document, classes, failures)
+            checks += verify_lyric_result_submission(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',
                              'double':'D','byte':'B','short':'S','char':'C'}

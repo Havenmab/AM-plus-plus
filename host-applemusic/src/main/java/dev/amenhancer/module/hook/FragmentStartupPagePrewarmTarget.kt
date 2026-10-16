@@ -2,7 +2,6 @@ package dev.amenhancer.module.hook
 
 import android.app.Activity
 import android.content.Context
-import android.view.MotionEvent
 import android.view.ViewGroup
 import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
 import java.util.Collections
@@ -85,13 +84,6 @@ internal class FragmentStartupPagePrewarmTarget(
         hook(native.destroyView, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 sessions.remove(param.thisObject)?.close()
-            }
-        })
-        hook(native.activityTouch, object : ModernMethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (sessions.isEmpty()) return
-                if ((param.args[0] as? MotionEvent)?.actionMasked != MotionEvent.ACTION_DOWN) return
-                sessions.values.toList().filter { it.activity === param.thisObject }.forEach(AutoCloseable::close)
             }
         })
         // Android may recreate already-visited hidden containers before the content callback.

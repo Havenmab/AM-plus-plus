@@ -10,7 +10,7 @@ internal class StartupPagePrewarmContract(loader: ClassLoader, val names: JSONOb
             methods = setOf("viewCreated", "destroyView", "activity", "view", "childManager", "resumed",
                 "viewModel", "tabs", "value", "selectedTab", "kindLabel", "kindId", "menu", "selectedId",
                 "find", "stateSaved", "arguments", "add", "hide", "onCommit", "commit", "tag", "hidden",
-                "observePlayContext", "containerView", "parent", "libraryViewCreated", "notifyEvent", "activityTouch"),
+                "observePlayContext", "containerView", "parent", "libraryViewCreated", "notifyEvent"),
             fields = setOf("modelKind", "primary", "reordering"),
             constructors = setOf("container", "transaction"),
         ))
@@ -42,7 +42,6 @@ internal class StartupPagePrewarmContract(loader: ClassLoader, val names: JSONOb
     val containerView = members.method("containerView")
     val libraryViewCreated = members.method("libraryViewCreated")
     val notifyEvent = members.method("notifyEvent")
-    val activityTouch = members.method("activityTouch")
     val modelKind = members.field("modelKind")
     val primary = members.field("primary")
     val reordering = members.field("reordering")

@@ -5553,15 +5553,6 @@
           ],
           "returns": "void",
           "static": false
-        },
-        "activityTouch": {
-          "owner": "android.app.Activity",
-          "name": "dispatchTouchEvent",
-          "parameters": [
-            "android.view.MotionEvent"
-          ],
-          "returns": "boolean",
-          "static": false
         }
       },
       "fields": {

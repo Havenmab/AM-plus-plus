@@ -27,7 +27,6 @@ internal class StartupPagePrewarmSession(
     private val manager = checkNotNull(native.childManager.invoke(owner))
     private val deadline = SystemClock.uptimeMillis() + 10_000L
     private var closed = false
-    private var originalPrimary: Any? = null
     private var tabNames: List<String>? = null
     private var waitingForCommit = false
     private var measureNext: Any? = null
@@ -84,8 +83,10 @@ internal class StartupPagePrewarmSession(
             native.selectedId.invoke(navigation) != native.kindId.invoke(selected)
         ) { waitFor("consistent native tab selection"); return }
         val names = tabs.map { it.kind.name }
-        if (tabNames == null) { tabNames = names; originalPrimary = primary }
-        if (tabNames != names || originalPrimary !== primary) { finish("tab list or selection changed"); return }
+        if (tabNames == null) tabNames = names
+        // Native navigation may change the selected tab while this one-shot queue runs.
+        // Read the current selection above and reuse its actual retained containers below.
+        if (tabNames != names) { finish("tab list changed"); return }
 
         measureNext?.let { fragment ->
             if (native.hidden.invoke(fragment) == true) {
@@ -136,7 +137,7 @@ internal class StartupPagePrewarmSession(
 
     override fun onViewAttachedToWindow(view: View) = Unit
     override fun onViewDetachedFromWindow(view: View) = finish("content detached")
-    override fun close() = finish("cancelled by interaction or lifecycle")
+    override fun close() = finish("cancelled by lifecycle")
     private fun finish(reason: String) {
         if (closed) return
         closed = true

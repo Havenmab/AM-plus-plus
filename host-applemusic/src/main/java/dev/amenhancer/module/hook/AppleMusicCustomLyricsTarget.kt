@@ -11,7 +11,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-/** Apple Music 6.5.0 adapter for user-managed, offline ID -> TTML mappings. */
+/** Submits prepared user and automatic lyrics through the exact host result contract. */
 internal class AppleMusicCustomLyricsTarget(
     private val config: TargetConfigClient,
     private val symbols: TargetSymbolResolver,
@@ -25,7 +25,7 @@ internal class AppleMusicCustomLyricsTarget(
         return try {
             installOnce().also { result ->
                 if (result is TargetCapabilityInstall.Active) registration.activate()
-                else if (result.message.startsWith("Custom lyric I2 replacement installed")) registration.activate()
+                else if (result.message.startsWith("Custom lyric ViewModel submission installed")) registration.activate()
                 else registration.close()
                 installedResult = result
             }
@@ -87,7 +87,7 @@ internal class AppleMusicCustomLyricsTarget(
             }
         }
         val mainHandler = Handler(Looper.getMainLooper())
-        lateinit var readyReapply: CustomLyricsReadyReapply
+        lateinit var resultBridge: LyricsResultSubmissionBridge
         var refreshSession: AutoLyricsRefreshSession? = null
         val configuredManualIds = runCatching {
             config.customLyricsManifest().entries
@@ -109,7 +109,7 @@ internal class AppleMusicCustomLyricsTarget(
             onReplacementPublished = { appleMusicId ->
                 mainHandler.post {
                     if (registration.isActive) {
-                        readyReapply.onReplacementPublished(appleMusicId)
+                        resultBridge.onReplacementPublished(appleMusicId)
                         if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
                             refreshSession?.onSongChanged(appleMusicId)
                         }
@@ -138,7 +138,7 @@ internal class AppleMusicCustomLyricsTarget(
                     // This callback already runs on the independent refresh worker.
                     session.refreshEntry(entry, isCancelled, Executor { it.run() }) { id ->
                         mainHandler.post {
-                            if (registration.isActive && !isCancelled()) readyReapply.onReplacementPublished(id)
+                            if (registration.isActive && !isCancelled()) resultBridge.onReplacementPublished(id)
                         }
                     }
                 },
@@ -171,7 +171,7 @@ internal class AppleMusicCustomLyricsTarget(
                 onReplacementPublished = { appleMusicId ->
                     mainHandler.post {
                         if (registration.isActive) {
-                            readyReapply.onReplacementPublished(appleMusicId)
+                            resultBridge.onReplacementPublished(appleMusicId)
                             if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
                                 refreshSession?.onSongChanged(appleMusicId)
                             }
@@ -190,23 +190,29 @@ internal class AppleMusicCustomLyricsTarget(
                 onFreshCandidate = { refreshSession?.markDownloaded(it) },
             )
         }
-        val readyReplacementFor: (Long) -> Any? = { appleMusicId ->
-            parser.unwrap(session.readyReplacementFor(appleMusicId)
-                ?: autoSession?.readyReplacementFor(appleMusicId))
+        // All sources share the host result channel; no Fragment re-entry ledger.
+        val selectReplacement: (Long, Any?) -> Any? = { id, original ->
+            val manual = session.replacementFor(id)
+            val metadata = timingObservations.metadataOf(original)
+            val eligible = shouldTryAutoLyrics(original, metadata)
+            val automatic = if (manual == null) {
+                if (eligible) autoSession?.replacementFor(id)
+                else autoSession?.takeoverReplacementFor(id, parser.wrap(original), metadata)
+            } else null
+            if (manual == null && automatic != null) autoSession?.markTakeoverApplied(id)
+            parser.unwrap(manual ?: automatic)
         }
-        val isTracking: (Long) -> Boolean = { appleMusicId ->
-            session.isTracking(appleMusicId) || autoSession?.isTracking(appleMusicId) == true
-        }
-        val fragmentUsable = fragmentIsAddedPredicate(installMethod.declaringClass)
-        readyReapply = CustomLyricsReadyReapply(
-            installMethod = installMethod,
-            seam = seam,
-            readyReplacementFor = readyReplacementFor,
-            isFragmentUsable = fragmentUsable,
+        resultBridge = LyricsResultSubmissionBridge.create(
+            symbols = symbols,
+            registration = registration,
             currentSong = currentSong,
+            fragmentSongId = seam::currentItemAdamIdOf,
+            selectReplacement = selectReplacement,
+            isAlive = parser::isAlive,
+            documentOf = parser::documentOf,
             logger = ModernXposedRuntime::log,
-        )
-        registration.onClose(readyReapply::clear)
+        ) ?: return TargetCapabilityInstall.Degraded("Lyric ViewModel result contract unavailable")
+        registration.onClose(resultBridge::close)
         val parserHooked = runCatching {
             parseMethod.isAccessible = true
             hook(parseMethod, object : ModernMethodHook() {
@@ -230,155 +236,15 @@ internal class AppleMusicCustomLyricsTarget(
                     }
                 }
             })
-        }.isSuccess
-        val itemUpdateContext = LyricsItemUpdateContext()
-        val hooked = runCatching {
-            hook(installMethod, object : ModernMethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    itemUpdateContext.markAppleInvokedI2()
-                    runCatching {
-                        if (!acceptsLyricsInstallArguments(param.args, ptrClass)) return@runCatching
-                        val original = param.args[0]
-                        val fragmentAdamId = seam.currentItemAdamIdOf(param.thisObject)
-                        val publishedCurrent = currentSong.current()
-                        val publishedAdamId = publishedCurrent?.details?.appleMusicId
-                        val adamId = selectLyricsInjectionAdamId(
-                            original = original,
-                            fragmentAdamId = fragmentAdamId,
-                            publishedAdamId = publishedAdamId,
-                        )
-                        adamId ?: return@runCatching
-                        val manualReplacement = session.replacementFor(adamId)
-                        val timingMetadata = timingObservations.metadataOf(original)
-                        val autoEligible = autoSession != null &&
-                            shouldTryAutoLyrics(
-                                original = original,
-                                metadata = timingMetadata,
-                            )
-                        val autoReplacement = when {
-                            shouldPrepareAutomaticLyrics(manualReplacement, autoEligible) -> {
-                                autoSession?.replacementFor(adamId)
-                            }
-                            manualReplacement == null -> {
-                                autoSession?.takeoverReplacementFor(
-                                    appleMusicId = adamId,
-                                    original = parser.wrap(original),
-                                    metadata = timingMetadata,
-                                )
-                            }
-                            else -> null
-                        }
-                        // User-managed mappings always win; automatic sources are
-                        // only a fallback for a missing/non-Word pointer or an
-                        // explicitly foreign Word document without translation.
-                        val replacement = manualReplacement ?: autoReplacement
-                        val tracking = session.isTracking(adamId) ||
-                            (autoEligible && autoSession?.isTracking(adamId) == true)
-                        val needsRebind = original == null &&
-                            publishedCurrent != null &&
-                            publishedAdamId != null &&
-                            publishedAdamId != fragmentAdamId
-                        val canRebind = currentSong.canRebind(fragmentAdamId, publishedAdamId)
-                        if (
-                            needsRebind && tracking && canRebind &&
-                            (fragmentAdamId == null || session.isMapped(adamId))
-                        ) {
-                            val rebound = param.thisObject?.let { fragment ->
-                                seam.bindCurrentItemOf(fragment, publishedCurrent.item)
-                            } == true
-                            if (!rebound) return@runCatching
-                        }
-                        if (replacement == null) {
-                            if (shouldRecordReadyLateMiss(original, replacement) && tracking) {
-                                param.thisObject?.let { readyReapply.recordMiss(it, adamId) }
-                            }
-                        } else {
-                            if (manualReplacement == null && autoReplacement != null) {
-                                autoSession?.markTakeoverApplied(adamId)
-                            }
-                            param.thisObject?.let { readyReapply.dismiss(it) }
-                            parser.unwrap(replacement)?.let { nativeReplacement ->
-                                param.extras["ampp-installed-lyrics"] = adamId to nativeReplacement
-                            }
-                            if (replacement !== original) {
-                                param.args[0] = parser.unwrap(replacement)
-                            }
-                        }
-                    }.onFailure { error ->
-                        ModernXposedRuntime.log("custom lyrics I2 replacement hook failed: $error")
-                    }
-                }
-
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    if (param.throwable != null) return
-                    @Suppress("UNCHECKED_CAST")
-                    val installed = param.extras["ampp-installed-lyrics"] as? Pair<Long, Any> ?: return
-                    if (param.args.firstOrNull() !== installed.second) return
-                    param.thisObject?.let { readyReapply.recordInstalled(it, installed.first, installed.second) }
-                }
-            })
-        }.isSuccess
-        if (!hooked) {
-            return TargetCapabilityInstall.Degraded(
-                "PlayerLyricsViewFragment.I2 could not be hooked; ${installMethodResolution.summary}",
-            )
-        }
-        val itemUpdateResolution = symbols.resolve(AppleMusicSymbols.LyricsItemUpdateMethod)
-        val itemUpdateMethod = itemUpdateResolution.valueOrNull()
-        if (itemUpdateMethod != null) {
-            val coordinator = runCatching {
-                LyricsItemUpdateCoordinator(
-                    installMethod = installMethod,
-                    flags = ItemUpdateFlags(itemUpdateMethod.parameterTypes[2]),
-                    seam = seam,
-                    readyReplacementFor = readyReplacementFor,
-                    isTracking = isTracking,
-                    isFragmentUsable = fragmentUsable,
-                    readyReapply = readyReapply,
-                    logger = ModernXposedRuntime::log,
-                )
-            }.getOrNull()
-            if (coordinator != null) {
-                val itemUpdateHooked = runCatching {
-                    hook(itemUpdateMethod, object : ModernMethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            itemUpdateContext.enterO2()
-                        }
-
-                        override fun afterHookedMethod(param: MethodHookParam) {
-                            try {
-                                val fragment = param.thisObject
-                                val appleInvokedI2 = itemUpdateContext.appleInvokedI2DuringO2()
-                                val flagsHolder = param.args.getOrNull(2)
-                                itemUpdateContext.reentering {
-                                    runCatching {
-                                        fragment?.let { currentFragment ->
-                                            coordinator.onItemUpdate(
-                                                fragment = currentFragment,
-                                                flagsHolder = flagsHolder,
-                                                appleInvokedI2 = appleInvokedI2,
-                                            )
-                                        }
-                                    }.onFailure { error ->
-                                        ModernXposedRuntime.log(
-                                            "custom lyrics item update hook failed: $error",
-                                        )
-                                    }
-                                }
-                            } finally {
-                                itemUpdateContext.exitO2()
-                            }
-                        }
-                    })
-                }.isSuccess
-                if (!itemUpdateHooked) {
-                    ModernXposedRuntime.log(
-                        "PlayerLyricsViewFragment.o2 could not be hooked; " +
-                            itemUpdateResolution.summary,
-                    )
-                }
+        }.getOrDefault(false)
+        // Observe installation solely to attach the exact host ViewModel. Selection
+        // and publication happen upstream, before the native observer enters here.
+        val hooked = hook(installMethod, object : ModernMethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                param.thisObject?.let(resultBridge::attach)
             }
-        }
+        })
+        if (!hooked) return TargetCapabilityInstall.Degraded("Lyric ViewModel owner hook unavailable")
         val availabilityResolution = symbols.resolve(AppleMusicSymbols.LyricsAvailabilityPredicate)
         val availabilityMethod = availabilityResolution.valueOrNull()
         val availabilityHooked = availabilityMethod != null && runCatching {
@@ -410,13 +276,13 @@ internal class AppleMusicCustomLyricsTarget(
                     }
                 }
             })
-        }.isSuccess
+        }.getOrDefault(false)
         session.start()
         val identitySubscription = currentSong.addListener { current ->
             val appleMusicId = current?.details?.appleMusicId
             appleMusicId?.let(session::ensureRequested)
             autoSession?.onSongChanged(appleMusicId)
-            readyReapply.onSongChanged(appleMusicId)
+            resultBridge.onSongChanged(appleMusicId)
             refreshSession?.onSongChanged(appleMusicId,
                 cacheReady = appleMusicId != null && session.readyReplacementFor(appleMusicId) != null)
             appleMusicId?.let { id ->
@@ -429,17 +295,17 @@ internal class AppleMusicCustomLyricsTarget(
         registration.onClose(identitySubscription::close)
         if (!availabilityHooked) {
             return TargetCapabilityInstall.Degraded(
-                "Custom lyric I2 replacement installed, but unavailable-lyrics entry could not be enabled; " +
+                "Custom lyric ViewModel submission installed, but unavailable-lyrics entry could not be enabled; " +
                     availabilityResolution.summary,
             )
         }
         return TargetCapabilityInstall.Active(
-            "Custom lyric ID mappings installed" +
+            "Custom lyric ViewModel submission installed" +
                 (if (autoSession != null) " with automatic Word-TTML fallback" else "") + "; " +
                 listOf(
                     installMethodResolution.summary,
                     availabilityResolution.summary,
-                    itemUpdateResolution.summary,
+                    "delivery=ViewModel-result",
                     ptrResolution.summary,
                     nativeResolution.summary,
                     parserResolution.summary,

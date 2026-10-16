@@ -41,7 +41,7 @@ import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.glass.GlassTab
 import dev.amenhancer.glass.NativeButtonInput
 import dev.amenhancer.glass.NativeLiquidButton
-import dev.amenhancer.glass.diagnostics.CollapseOutlineProbe
+import dev.amenhancer.glass.GlassCollapseShapes
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.FeatureHealth
@@ -343,7 +343,7 @@ internal open class PhoneGlassSession(
                         autoClip = geometry.sideBySide || (barCollapse.hasPresentation && glassExpansion == 0f),
                         miniHeightDp = geometry.miniHeightDp,
                         minLayerSize = if (reserveBackdrop && glassExpansion == 0f) miniBackdropSize else IntSize.Zero,
-                        capsuleShape = CollapseOutlineProbe.capsule(barCollapse.hasPresentation)) { sx, sy, x, y ->
+                        capsuleShape = GlassCollapseShapes.capsule(barCollapse.hasPresentation)) { sx, sy, x, y ->
                         miniContent?.let { v -> writeOwnedTransform(v, "scaleX", sx); writeOwnedTransform(v, "scaleY", sy); writeOwnedTransform(v, "translationX", x); writeOwnedTransform(v, "translationY", y) }
                     }
                 }

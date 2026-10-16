@@ -36,11 +36,14 @@ internal class StartupPagePrewarmSession(
     private val step = Runnable {
         if (!closed) runCatching(::advance).onFailure { close(); onFailure(it) }
     }
+    // The deadline must still fire if the native transaction never invokes its callback.
+    private val timeout = Runnable { finish("timeout waiting for $waitReason") }
 
     fun start() {
         check(hostId != 0 && navigationId != 0) { "Native tab host resources are missing" }
         root.addOnAttachStateChangeListener(this)
         ModernXposedRuntime.log("Startup page prewarm: session scheduled")
+        root.postDelayed(timeout, (deadline - SystemClock.uptimeMillis()).coerceAtLeast(0L))
         root.post(step)
     }
 
@@ -132,6 +135,7 @@ internal class StartupPagePrewarmSession(
             }
         })
         waitingForCommit = true
+        waitReason = "native page transaction ${next.kind.name}"
         native.commit.invoke(transaction, false)
     }
 
@@ -142,6 +146,7 @@ internal class StartupPagePrewarmSession(
         if (closed) return
         closed = true
         root.removeCallbacks(step)
+        root.removeCallbacks(timeout)
         root.removeOnAttachStateChangeListener(this)
         measureNext = null
         ModernXposedRuntime.log("Startup page prewarm: stopped; prepared=$preparedCount; laidOut=${laidOut.size}; $reason")

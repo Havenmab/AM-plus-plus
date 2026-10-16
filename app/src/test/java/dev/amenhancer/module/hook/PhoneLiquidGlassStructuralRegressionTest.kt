@@ -450,14 +450,14 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // drew a square highlight over a round button — and because the box is dropped by
         // `collapseDropPx` while the ripple is inset from its own bounds, the square also read as
         // offset from the circle. `clip` must sit before `clickable` so it bounds the indication.
-        assertTrue(tabs.contains(".clip(CollapseOutlineProbe.capsule(optimizeCollapseRendering))"))
+        assertTrue(tabs.contains(".clip(GlassCollapseShapes.capsule(optimizeCollapseRendering))"))
         // `clip` must come after the drop and before `clickable`, so it bounds the indication.
-        val clipAt = tabs.indexOf(".clip(CollapseOutlineProbe.capsule(optimizeCollapseRendering))")
+        val clipAt = tabs.indexOf(".clip(GlassCollapseShapes.capsule(optimizeCollapseRendering))")
         val clickableAt = tabs.indexOf("if (interactive) Modifier.clickable(onClick = onExpandRequest!!)")
         assertTrue("the clip must precede the clickable it clips", clipAt in 1 until clickableAt)
         // The highlight primitive must be clipped to the same shape on the wide bar too, so the two
         // buttons cannot diverge.
-        assertTrue(tabs.contains("shape = CollapseOutlineProbe.capsule(optimizeCollapseRendering),"))
+        assertTrue(tabs.contains("shape = GlassCollapseShapes.capsule(optimizeCollapseRendering),"))
         val highlight = projectFile("glass/src/main/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt")
         assertTrue(highlight.contains("val shape: Shape? = null"))
         assertTrue(highlight.contains("clipPath(Path().apply { addOutline(outline) }) { drawHighlight(progress) }"))

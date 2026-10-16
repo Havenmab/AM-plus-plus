@@ -80,7 +80,7 @@ import com.kyant.backdrop.effects.blur
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.glass.collapseSize
 import dev.amenhancer.glass.collapseAlpha
-import dev.amenhancer.glass.diagnostics.CollapseOutlineProbe
+import dev.amenhancer.glass.GlassCollapseShapes
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
@@ -168,7 +168,7 @@ fun LiquidBottomTabs(
             position = { size, _ -> Offset(highlightAnchor.x(), size.height / 2f) },
             // Clipped to the capsule the glass draws, so the press glow stays round on the
             // withdrawn 43dp circle.
-            shape = CollapseOutlineProbe.capsule(optimizeCollapseRendering),
+            shape = GlassCollapseShapes.capsule(optimizeCollapseRendering),
         )
     }
 
@@ -473,7 +473,7 @@ fun LiquidBottomTabs(
             val thumbMaterial = if (optimizeCollapseRendering) {
                 remember(selectionBackdrop, dampedDragAnimation, isLightTheme, selectionLayerSize) {
                     glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme, selectionLayerSize,
-                        probeOutline = true)
+                        collapseOutline = true)
                 }
             } else glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
             Box(
@@ -522,7 +522,7 @@ fun LiquidBottomTabs(
                     // the shrink and the rebound.
                     .graphicsLayer { translationY = readFrame().drop }
                     // Clip before clickable so the indication shares the material's capsule.
-                    .clip(CollapseOutlineProbe.capsule(optimizeCollapseRendering))
+                    .clip(GlassCollapseShapes.capsule(optimizeCollapseRendering))
                     .then(
                         if (interactive) Modifier.clickable(onClick = onExpandRequest!!) else Modifier
                     ),
@@ -542,7 +542,7 @@ private fun glassPanelMaterial(
     backdrop = backdrop,
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
-    shape = { CollapseOutlineProbe.capsule(material != null) },
+    shape = { GlassCollapseShapes.capsule(material != null) },
     effects = {
         if (material == null) {
             vibrancy()
@@ -567,7 +567,7 @@ private fun glassRefractionMaterial(
     backdrop = backdrop,
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
-    shape = { CollapseOutlineProbe.capsule(material != null) },
+    shape = { GlassCollapseShapes.capsule(material != null) },
     effects = {
         val progress = dampedDragAnimation.pressProgress
         if (material == null) {
@@ -589,12 +589,12 @@ private fun glassRefractionMaterial(
 private fun glassSelectionMaterial(
     backdrop: Backdrop, dampedDragAnimation: DampedDragAnimation, isLightTheme: Boolean,
     minLayerSize: IntSize = IntSize.Zero,
-    probeOutline: Boolean = false,
+    collapseOutline: Boolean = false,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
     minLayerSize = minLayerSize,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
-    shape = { CollapseOutlineProbe.capsule(probeOutline) },
+    shape = { GlassCollapseShapes.capsule(collapseOutline) },
     effects = {
         val progress = dampedDragAnimation.pressProgress
         lens(

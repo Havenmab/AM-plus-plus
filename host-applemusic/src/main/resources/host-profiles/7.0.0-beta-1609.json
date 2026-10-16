@@ -17,7 +17,7 @@
     "dexCount": 4,
     "splitCount": 11,
     "sourceIdentity": "com.apple.android.music / 7.0.0-beta / 1609 (binary base Manifest)",
-    "analysis": "docs/applemusic-1609-adaptation.md",
+    "analysis": "docs/host-adaptation-guide.md",
     "composeArtistContract": "Complete instance methods, six distinct Success fields and constructor are recorded in artistComposeProfile v1. 1609 DEX confirms MediaEntity.getViews returns Map<String, Relationship> and Relationship.getEntities returns MediaEntity[]. No getData fallback; runtime acceptance remains pending."
   },
   "indexed": {

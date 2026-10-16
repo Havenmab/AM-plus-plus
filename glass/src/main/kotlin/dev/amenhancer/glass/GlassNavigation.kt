@@ -55,7 +55,6 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
 import com.kyant.shapes.Capsule
 import dev.amenhancer.backdrop.VibrantBlur
-import dev.amenhancer.glass.diagnostics.CollapseOutlineProbe
 import kotlin.math.roundToInt
 
 data class GlassTab(
@@ -168,7 +167,7 @@ fun GlassNavigation(
                 ) {
                     inCapsule.forEach { tab ->
                         LiquidBottomTab(
-                            shape = CollapseOutlineProbe.capsule(collapseProgress != null),
+                            shape = GlassCollapseShapes.capsule(collapseProgress != null),
                             // A faded tab row must stop navigating: `alpha(0f)` hides a subtree
                             // without disabling it, so an invisible cell could absorb a tap.
                             onClick = { if (expandedInteractive) request(tab) },
@@ -278,7 +277,7 @@ private fun BoxScope.DetachedSearchControl(
                 backdrop = backdrop,
                 minLayerSize = material.paddedSize(minLayerSize),
                 clipCompositingStrategy = CompositingStrategy.Auto,
-                shape = { CollapseOutlineProbe.capsule(true) },
+                shape = { GlassCollapseShapes.capsule(true) },
                 effects = {
                     material.applyTo(this)
                     val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
@@ -325,7 +324,7 @@ private fun BoxScope.DetachedSearchControl(
                 .then(materialModifier)
                 // Clipped to the capsule the glass draws: the layout node is square, so an
                 // unclipped indication would show a square behind a round button.
-                .clip(CollapseOutlineProbe.capsule(true))
+                .clip(GlassCollapseShapes.capsule(true))
                 // Interactive only once it is on screen; below that the expanded tab strip holds
                 // the same destination.
                 .then(

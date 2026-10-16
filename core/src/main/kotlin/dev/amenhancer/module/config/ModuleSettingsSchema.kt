@@ -68,7 +68,8 @@ object ModuleSettingsSchema {
             default = false,
         ),
         forceCellularDataEntryEnabled = values.boolean(KEY_FORCE_CELLULAR_DATA_ENTRY, default = false),
-        startupPagePrewarmEnabled = values.boolean(KEY_STARTUP_PAGE_PREWARM, default = false),
+        startupPagePrewarmEnabled = values.boolean(KEY_STARTUP_PAGE_PREWARM,
+            default = EnhancementDefaults.STARTUP_PAGE_PREWARM_ENABLED),
         lyricBlurRadiusOffsetPx = values.number(KEY_LYRIC_BLUR_RADIUS_OFFSET)
             ?.coerceIn(
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,

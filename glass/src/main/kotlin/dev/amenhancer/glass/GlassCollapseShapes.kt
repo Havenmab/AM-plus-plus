@@ -1,10 +1,10 @@
-package dev.amenhancer.glass.diagnostics
+package dev.amenhancer.glass
 
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.RoundedCornerStyle
 
-/** Diagnostic A/B only: compare Rounded outlines against the original Generic curve. */
-object CollapseOutlineProbe {
+/** Rounded capsules for scroll-collapse surfaces; other surfaces retain their continuous curve. */
+object GlassCollapseShapes {
     private val original = Capsule()
     private val rounded = Capsule(RoundedCornerStyle.Circular)
 

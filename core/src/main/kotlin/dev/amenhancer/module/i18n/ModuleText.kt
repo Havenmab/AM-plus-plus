@@ -152,6 +152,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     BOTTOM_BAR_BLUR_SUMMARY("Applies to the bottom bar and mini player", "作用于底栏与迷你播放器"),
     BOTTOM_BAR_COLLAPSE("Collapse on scroll", "随滚动收缩"),
     BOTTOM_BAR_COLLAPSE_SUMMARY("Shrinks the bar while scrolling down; search detaches beside the mini player", "下滑页面时收起底栏，搜索键分离到迷你播放器右侧"),
+    BOTTOM_BAR_ANIMATION_SETTINGS("Bottom bar animation", "底栏动画设置"),
+    BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY("Adjust collapse, expand and mini-player rebound", "调整收缩、展开与迷你播放器的回弹效果"),
     BOTTOM_BAR_TABLET_COLLAPSE("Tablet collapse on scroll", "平板端随滚动收缩"),
     BOTTOM_BAR_TABLET_COLLAPSE_SUMMARY("Untested · Tablet bottom bar collapses the same way; may look wrong", "未测试 · 让平板底栏也随滚动收缩，效果可能不正确"),
     BOTTOM_BAR_COLLAPSE_REBOUND("Collapse rebound", "收缩回弹幅度"),

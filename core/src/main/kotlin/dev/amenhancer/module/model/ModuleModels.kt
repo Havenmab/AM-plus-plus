@@ -26,7 +26,7 @@ data class ModuleSettings(
      * Rebound amplitude while **collapsing**, as a percentage of the spring's own overshoot.
      *
      * Applies to **both** collapsed side controls — the capsule and the detached search button —
-     * which share this one value so they cannot animate differently. 100 is the tuned default;
+     * which share this one value so they cannot animate differently. 35 is the tuned default;
      * 0 removes the rebound and leaves the plain narrowing. Read live.
      */
     val phoneLiquidGlassCollapseReboundPercent: Int = EnhancementDefaults.GLASS_COLLAPSE_REBOUND_PERCENT,
@@ -59,7 +59,7 @@ data class ModuleSettings(
     /** Restores native Data settings and the app's cellular availability predicate. */
     val forceCellularDataEntryEnabled: Boolean = false,
     /** Prepare native bottom-tab roots on startup; restart required, exact host opt-in only. */
-    val startupPagePrewarmEnabled: Boolean = false,
+    val startupPagePrewarmEnabled: Boolean = EnhancementDefaults.STARTUP_PAGE_PREWARM_ENABLED,
     val lyricBlurRadiusOffsetPx: Int = 0,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,

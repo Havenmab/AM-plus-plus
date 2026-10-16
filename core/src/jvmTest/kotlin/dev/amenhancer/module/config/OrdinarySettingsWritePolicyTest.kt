@@ -116,6 +116,7 @@ class OrdinarySettingsWritePolicyTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
+                "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 6,
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,

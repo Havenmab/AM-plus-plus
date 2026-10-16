@@ -10,6 +10,19 @@ import org.junit.Test
 
 class ModuleSettingsSchemaTest {
     @Test
+    fun `startup prewarm defaults on and preserves an explicit opt out`() {
+        assertEquals(true, ModuleSettings().startupPagePrewarmEnabled)
+        assertEquals(true, ModuleSettingsSchema.decode(emptyMap<String, Any>()).startupPagePrewarmEnabled)
+        for (enabled in listOf(false, true)) {
+            val values = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(startupPagePrewarmEnabled = enabled),
+            )
+            assertEquals(enabled, values["startup_page_prewarm_enabled"])
+            assertEquals(enabled, ModuleSettingsSchema.decode(values).startupPagePrewarmEnabled)
+        }
+    }
+
+    @Test
     fun `cellular entry defaults off rejects malformed values and round trips`() {
         assertFalse(ModuleSettingsSchema.decode(emptyMap<String, Any>()).forceCellularDataEntryEnabled)
         assertFalse(ModuleSettingsSchema.decode(
@@ -81,6 +94,7 @@ class ModuleSettingsSchemaTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
+                "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 6,
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,
@@ -126,6 +140,7 @@ class ModuleSettingsSchemaTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
+                "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 0,
                 "apple_music_dpi_override_dpi" to 0,
                 "title_correction_enabled" to false,

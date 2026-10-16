@@ -2,7 +2,7 @@
  * Derived from AndroidLiquidGlass / Backdrop 2.0.1
  * (https://github.com/Kyant0/AndroidLiquidGlass), commit
  * 65ab177e90e5c1d8c62e70cf7755841982da65f6, Apache License 2.0.
- * Changed by AM++: optional clip compositing and minimum backdrop layer size.
+ * Changed by AM++: optional clip compositing, minimum layer size and CPU trace markers.
  * Existing callers keep offscreen clipping and layers sized to their current bounds.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
@@ -48,6 +48,7 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.InnerShadowElement
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.backdrop.shadow.ShadowElement
+import dev.amenhancer.backdrop.traceBackdrop
 
 private val DefaultHighlight = { Highlight.Default }
 private val DefaultShadow = { Shadow.Default }
@@ -329,14 +330,16 @@ private class DrawBackdropNode(
         if (layer != null) {
             val padding = padding
 
-            recordLayer(
-                layer,
-                size = IntSize(
-                    maxOf(size.width.toInt() + padding.toInt() * 2, minLayerSize.width),
-                    maxOf(size.height.toInt() + padding.toInt() * 2, minLayerSize.height)
-                ),
-                block = recordBackdropBlock
-            )
+            traceBackdrop("AM++/backdrop/record") {
+                recordLayer(
+                    layer,
+                    size = IntSize(
+                        maxOf(size.width.toInt() + padding.toInt() * 2, minLayerSize.width),
+                        maxOf(size.height.toInt() + padding.toInt() * 2, minLayerSize.height)
+                    ),
+                    block = recordBackdropBlock
+                )
+            }
 
             layer.topLeft =
                 if (padding != 0f) IntOffset(-padding.toInt(), -padding.toInt())
@@ -410,14 +413,16 @@ private class DrawBackdropNode(
     private fun updateEffects() {
         if (!isRenderEffectSupported()) return
 
-        effectScope.apply(effects)
-        graphicsLayer?.renderEffect = effectScope.renderEffect
-        padding = effectScope.padding
+        traceBackdrop("AM++/effects/update") {
+            effectScope.apply(effects)
+            graphicsLayer?.renderEffect = effectScope.renderEffect
+            padding = effectScope.padding
+        }
     }
 
     override fun onAttach() {
         val graphicsContext = requireGraphicsContext()
-        graphicsLayer = graphicsContext.createGraphicsLayer()
+        graphicsLayer = traceBackdrop("AM++/backdrop/createLayer") { graphicsContext.createGraphicsLayer() }
 
         observeEffects()
     }

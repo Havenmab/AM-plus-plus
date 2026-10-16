@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import android.app.Activity
+import android.os.Trace
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -133,6 +134,10 @@ internal class GlassBarCollapseController(
     }
 
     private fun invalidateFrame() {
+        if (Trace.isEnabled()) {
+            Trace.setCounter("AM++/collapse/progress", (progress * 10000f).toLong())
+            Trace.setCounter("AM++/collapse/running", if (isRunning) 1L else 0L)
+        }
         if (!closed) activity.window.decorView.postInvalidateOnAnimation()
     }
 

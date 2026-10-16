@@ -299,7 +299,7 @@ internal open class PhoneGlassSession(
                 scrim.content { HostConfiguration { BottomScrim(bg) } }
                 attachNavigationScrim(frame, scrim)
             }
-            val glass = GlassHostView(moduleContext()).also { navGlass = it }
+            val glass = GlassHostView(moduleContext(), traceName = "AM++/nav").also { navGlass = it }
             glass.alpha = 0f
             glass.content { HostConfiguration { GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab, panelBlur = navBlurDp.dp,
                 // A null progress keeps legacy and tablet navigation in its expanded layout.
@@ -332,7 +332,7 @@ internal open class PhoneGlassSession(
             miniRoot = root
             miniContent = content
             val bg = backdrop ?: return
-            val glass = GlassHostView(moduleContext()).also { miniGlass = it }
+            val glass = GlassHostView(moduleContext(), traceName = "AM++/mini").also { miniGlass = it }
             glass.alpha = 0f
             glass.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             glass.content {

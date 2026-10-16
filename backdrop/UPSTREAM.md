@@ -5,7 +5,7 @@ AndroidLiquidGlass / Backdrop 2.0.1, by Kyant.
 - Upstream: https://github.com/Kyant0/AndroidLiquidGlass
 - Pinned commit: `65ab177e90e5c1d8c62e70cf7755841982da65f6`
 - License: Apache-2.0; see LICENSE in this directory.
-- `src/commonMain` and the original `src/androidMain` files come from upstream. `DrawBackdropModifier.kt` has AM++ options for clip compositing and a minimum backdrop-layer size. Both retain the original defaults. `upstream-sha256.json` retains the original SHA256 values; `local-patches-sha256.json` pins the modified file. Both normalize CRLF to LF for cross-platform checkouts.
+- `src/commonMain` and the original `src/androidMain` files come from upstream. `DrawBackdropModifier.kt` has AM++ options for clip compositing and a minimum backdrop-layer size, plus scoped CPU trace markers. Rendering options retain the original defaults. `upstream-sha256.json` retains the original SHA256 values; `local-patches-sha256.json` pins the modified file. Both normalize CRLF to LF for cross-platform checkouts.
 - `src/androidMain/.../backdrops/ViewBackdrop.kt` is an AM++ addition for a hardware-recorded Android View source.
 - Build configuration targets Android only and uses the application's Java 17 baseline. Desktop, browser, Apple targets and publication tasks are not included.
 
@@ -24,3 +24,5 @@ The seven catalog component/helper files in `glass/src/main/kotlin/com/kyant/bac
 The optional `minLayerSize` in `DrawBackdropModifier` is an allocation floor in pixels, including effect padding, defaulting to zero. Recording callbacks keep their current logical padded size, effects keep the actual surface size, and output is restricted to the original padded bounds. Callers derive the floor from current expanded geometry and material padding; it is not a historical maximum and does not freeze the backdrop or scale content. Actual larger bounds still take precedence. The existing GraphicsLayer lifecycle owns release. The effect scope, lens/shader sources and the default Offscreen clip strategy are unchanged.
 
 Collapse consumers reserve the larger backing only during transitions, returning to actual dimensions at stable endpoints. Mini reservation uses the current parent width as the rebound bound because its native margins remain non-negative; its gate observes animation running state as a derived boolean. `VibrantBlur.paddedSize` preserves zero as the disabled allocation floor.
+
+`dev.amenhancer.backdrop.BackdropTracing` is an AM++ common/Android tracing bridge. Static `AM++/` CPU markers cover effect updates, effect-layer recording/creation and ViewBackdrop source recording only while system tracing is enabled. Sections close in `finally`; no rendering inputs or scheduling are changed. These markers measure CPU-side scopes, not GPU execution, and live outside the upstream namespace.

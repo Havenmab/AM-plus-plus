@@ -28,6 +28,7 @@ internal class LyricsResultSubmissionBridge private constructor(
 
     /** Guards against rewriting the container write this bridge itself issues. */
     private val publishing = ThreadLocal<Boolean>()
+    private val preparingIndex = ThreadLocal<Boolean>()
 
     @Volatile private var vm: Any? = null
     @Volatile private var container: Any? = null
@@ -41,6 +42,11 @@ internal class LyricsResultSubmissionBridge private constructor(
     private var selectedPointer: Any? = null
     private var selectedDocument: String? = null
     private var installationPending = false
+    private var indexKnown = false
+    private var indexedPointer: Any? = null
+    private var skipNativeIndex = false
+    private var indexRevision = 0L
+    private var indexBuildsInFlight = 0
     private val reportedFailures = mutableSetOf<String>()
 
     private fun report(reason: String, error: Throwable) {
@@ -110,7 +116,7 @@ internal class LyricsResultSubmissionBridge private constructor(
                 val instance = vmSnapshot() ?: return@runCatching
                 prepareContext(instance, effective)
                 publishing.set(true)
-                try { contract.buildIndexMethod.invoke(instance, effective) }
+                try { ensureIndex(instance, effective) }
                 finally { publishing.set(false) }
                 val pair = hostPair(effective, if (effective !== native) null else pairSecond(incoming)) ?: return@runCatching
                 rememberSelection(effective)
@@ -126,20 +132,61 @@ internal class LyricsResultSubmissionBridge private constructor(
     private val buildIndexHook = object : ModernMethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             val instance = param.thisObject ?: return
-            if (instance !== vmSnapshot() || publishing.get() == true || closed) return
+            if (instance !== vmSnapshot() || closed) return
             runCatching {
-                val original = param.args.firstOrNull()
-                if (!recoverRequestBinding(original)) return@runCatching
-                if (original == null) containerSnapshot()?.let(::hydrateStoredResult)
-                val selected = currentDocument()
-                if (original != null && !matchesRequest(original) && selected == null) {
-                    param.result = null
-                    return@runCatching
+                if (publishing.get() != true) {
+                    val original = param.args.firstOrNull()
+                    if (recoverRequestBinding(original)) {
+                        if (original == null) containerSnapshot()?.let(::hydrateStoredResult)
+                        val selected = currentDocument()
+                        if (original != null && !matchesRequest(original) && selected == null) {
+                            param.result = null
+                            return@runCatching
+                        }
+                        // A retained document must also survive the native failure
+                        // path's subsequent null-index call.
+                        if (nativeObserved) param.args[0] = selected
+                    }
                 }
-                // The native failure path also builds a null index after its
-                // publication; retaining only the LiveData value is insufficient.
-                if (nativeObserved) param.args[0] = selected
-            }.onFailure { report("lyric result index selection failed", it) }
+                synchronized(lock) {
+                    val pointer = param.args.firstOrNull()
+                    if (indexKnown && indexedPointer === pointer &&
+                        (preparingIndex.get() == true || skipNativeIndex)) {
+                        // Native follow-up reuse is one-shot. Other native calls
+                        // still rebuild, even for the same mutable host pointer.
+                        skipNativeIndex = false
+                        param.result = null
+                        return@runCatching
+                    }
+                    invalidateIndexLocked()
+                    param.extras["lyricResult.indexGeneration"] = generation
+                    param.extras["lyricResult.indexRevision"] = indexRevision
+                    indexBuildsInFlight++
+                }
+            }.onFailure {
+                synchronized(lock) { invalidateIndexLocked() }
+                report("lyric result index selection failed", it)
+            }
+        }
+
+        override fun afterHookedMethod(param: MethodHookParam) {
+            val stamp = param.extras["lyricResult.indexGeneration"] as? Long ?: return
+            val revision = param.extras["lyricResult.indexRevision"] as? Long ?: return
+            synchronized(lock) {
+                indexBuildsInFlight--
+                if (closed || param.thisObject !== vm) return
+                if (generation != stamp || indexRevision != revision || indexBuildsInFlight != 0) {
+                    // An overlapping native build can have touched the same map
+                    // after another build completed. Do not reuse either result.
+                    invalidateIndexLocked()
+                    return
+                }
+                if (param.throwable == null) {
+                    indexedPointer = param.args.firstOrNull()
+                    indexKnown = true
+                    skipNativeIndex = preparingIndex.get() == true
+                }
+            }
         }
     }
 
@@ -289,19 +336,27 @@ internal class LyricsResultSubmissionBridge private constructor(
         if (effective === selectionSnapshot() && !retryInstallation) return
         val target = containerSnapshot() ?: return
         val pair = hostPair(effective) ?: return
-        val previous = selectionSnapshot()
         if (!currentRequest() || instance !== vmSnapshot() ||
             synchronized(lock) { generation != stamp }) return
         publishing.set(true)
         try {
             prepareContext(instance, effective)
-            contract.buildIndexMethod.invoke(instance, effective)
+            ensureIndex(instance, effective)
+            if (closed || instance !== vmSnapshot() || target !== containerSnapshot() ||
+                synchronized(lock) { generation != stamp } || !currentRequest()) return
             rememberSelection(effective)
             contract.setValueMethod.invoke(target, pair)
             trace("published replacement")
         } catch (error: Throwable) {
-            rememberSelection(previous)
-            runCatching { contract.buildIndexMethod.invoke(instance, previous) }
+            // setValue stores before notifying observers. An observer failure
+            // cannot roll that write back, so reconcile with the actual value.
+            runCatching { reconcileStoredResult(instance, target, stamp) }
+                .onFailure {
+                    synchronized(lock) {
+                        if (!closed && vm === instance && container === target && generation == stamp) invalidateIndexLocked()
+                    }
+                    report("lyric result reconciliation failed", it)
+                }
             report("lyric result submission failed", error)
         } finally { publishing.set(false) }
     }
@@ -379,7 +434,40 @@ internal class LyricsResultSubmissionBridge private constructor(
     private fun prepareContext(instance: Any, pointer: Any?) {
         if (pointer == null || documentOf(pointer) == null) return
         val native = contract.pointerGetMethod.invoke(pointer) ?: return
+        synchronized(lock) { invalidateIndexLocked() }
         contract.pointerScriptMethod.invoke(native, contract.systemLyricsLanguageMethod.invoke(instance))
+    }
+
+    private fun ensureIndex(instance: Any, pointer: Any?) {
+        val previous = preparingIndex.get()
+        preparingIndex.set(true)
+        try { contract.buildIndexMethod.invoke(instance, pointer) }
+        finally { if (previous == null) preparingIndex.remove() else preparingIndex.set(previous) }
+    }
+
+    private fun reconcileStoredResult(instance: Any, target: Any, stamp: Long) {
+        fun ownsSession(): Boolean = synchronized(lock) {
+            !closed && vm === instance && container === target && generation == stamp
+        }
+        if (!ownsSession()) return
+        val value = contract.resultValueMethod.invoke(target)
+        // Recovery must distinguish a real empty result from a failed read.
+        val pointer = value?.javaClass?.getMethod("component1")?.invoke(value)
+        if (!ownsSession()) return
+        if (pointer != null && !isAlive(pointer)) {
+            synchronized(lock) { if (ownsSession()) invalidateIndexLocked() }
+            return
+        }
+        if (!ownsSession()) return
+        rememberSelection(pointer)
+        ensureIndex(instance, pointer)
+    }
+
+    private fun invalidateIndexLocked() {
+        indexKnown = false
+        indexedPointer = null
+        skipNativeIndex = false
+        indexRevision++
     }
 
     private fun isResultContainer(receiver: Any): Boolean = receiver === containerSnapshot()
@@ -425,6 +513,7 @@ internal class LyricsResultSubmissionBridge private constructor(
         selectedPointer = null
         selectedDocument = null
         installationPending = false
+        invalidateIndexLocked()
     }
 
     private fun vmSnapshot(): Any? = synchronized(lock) { vm }

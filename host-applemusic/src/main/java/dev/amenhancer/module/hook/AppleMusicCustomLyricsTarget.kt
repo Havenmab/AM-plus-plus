@@ -243,6 +243,11 @@ internal class AppleMusicCustomLyricsTarget(
             override fun beforeHookedMethod(param: MethodHookParam) {
                 param.thisObject?.let(resultBridge::attach)
             }
+            override fun afterHookedMethod(param: MethodHookParam) {
+                if (param.throwable == null) param.thisObject?.let { fragment ->
+                    resultBridge.onInstalled(fragment, param.args.getOrNull(0))
+                }
+            }
         })
         if (!hooked) return TargetCapabilityInstall.Degraded("Lyric ViewModel owner hook unavailable")
         val availabilityResolution = symbols.resolve(AppleMusicSymbols.LyricsAvailabilityPredicate)

@@ -13,7 +13,7 @@ import org.junit.Test
  * refresh) submits its replacement through the exact-profile
  * LyricsResultSubmissionBridge, which owns the host result/index contract.
  * Selection happens upstream of publication, and the Fragment install hook
- * only observes the owner fragment for that bridge, so no hook path mutates
+ * observes the owner and acknowledges installation, so no hook path mutates
  * installer arguments or performs IO, native parsing or lyric-state mutation.
  */
 class CustomLyricsItemUpdateStructuralRegressionTest {
@@ -44,7 +44,7 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
     }
 
     @Test
-    fun `install hook only attaches the owner fragment and never mutates installer arguments`() {
+    fun `install hook observes the owner and completed delivery without mutating installer arguments`() {
         val target = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
         )
@@ -53,7 +53,9 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
 
         assertTrue(installHook.contains("resultBridge::attach"))
         assertTrue(installHook.contains("param.thisObject"))
-        assertFalse(installHook.contains("param.args"))
+        assertTrue(installHook.contains("resultBridge.onInstalled(fragment, param.args.getOrNull(0))"))
+        assertTrue(installHook.contains("param.throwable == null"))
+        assertFalse(installHook.contains("param.args[0] ="))
         assertFalse(installHook.contains("param.extras"))
         assertFalse(installHook.contains("mLyricsResult"))
         assertFalse(installHook.contains("loadLyrics"))

@@ -32,12 +32,15 @@ internal class LyricsResultSubmissionBridge private constructor(
     @Volatile private var vm: Any? = null
     @Volatile private var container: Any? = null
     private var requestId: Long = 0L
+    private var requestCaptured = false
+    private var observedPlaybackId: Long? = currentSong.current()?.details?.appleMusicId
     private var generation = 0L
     @Volatile private var closed = false
     private var nativeObserved = false
     private var nativeOriginal: Any? = null
     private var selectedPointer: Any? = null
     private var selectedDocument: String? = null
+    private var installationPending = false
     private val reportedFailures = mutableSetOf<String>()
 
     private fun report(reason: String, error: Throwable) {
@@ -58,7 +61,7 @@ internal class LyricsResultSubmissionBridge private constructor(
             val item = param.args.getOrNull(0) ?: return
             val appleMusicId = readAppleMusicId(item)
             if (appleMusicId == null) {
-                synchronized(lock) { generation++; requestId = 0L; clearSelectionLocked() }
+                synchronized(lock) { generation++; requestId = 0L; requestCaptured = false; clearSelectionLocked() }
                 return
             }
             runCatching { onNewRequest(instance, appleMusicId) }.onFailure { report("lyric request capture failed", it) }
@@ -74,10 +77,10 @@ internal class LyricsResultSubmissionBridge private constructor(
             val incoming = param.args.getOrNull(0)
             if (currentRequest() && isOurs(incoming)) return
             runCatching {
-                // A missed/inlined load hook must not turn requestId=0 into a
-                // permanent rejection of the next valid native publication.
-                if (!recoverRequestBinding()) return@runCatching
+                // Recover only an unknown binding. A captured load can lead the
+                // metadata cache; disagreement must not relabel its native result.
                 val native = nativePointerOf(incoming)
+                if (!recoverRequestBinding(native)) return@runCatching
                 if (native != null && !matchesRequest(native)) {
                     param.result = null
                     return@runCatching
@@ -125,8 +128,8 @@ internal class LyricsResultSubmissionBridge private constructor(
             val instance = param.thisObject ?: return
             if (instance !== vmSnapshot() || publishing.get() == true || closed) return
             runCatching {
-                if (!recoverRequestBinding()) return@runCatching
                 val original = param.args.firstOrNull()
+                if (!recoverRequestBinding(original)) return@runCatching
                 if (original == null) containerSnapshot()?.let(::hydrateStoredResult)
                 val selected = currentDocument()
                 if (original != null && !matchesRequest(original) && selected == null) {
@@ -176,32 +179,56 @@ internal class LyricsResultSubmissionBridge private constructor(
             val instance = contract.fragmentViewModelField.get(fragment) ?: return
             val id = fragmentSongId(fragment) ?: return
             val publishedId = currentSong.current()?.details?.appleMusicId
-            if (publishedId != null && publishedId != id) return
             val result = contract.lyricsResultField.get(instance) ?: return
             synchronized(lock) {
+                // Keep the observed owner while its native item catches up, but
+                // do not adopt another VM through an unrelated stale Fragment.
+                if (publishedId != null && publishedId != id && vm !== instance) return
+                if (attachedFragment.get() !== fragment && selectedPointer != null) installationPending = true
                 attachedFragment = java.lang.ref.WeakReference(fragment)
-                if (vm !== instance || requestId != id) {
+                if (vm !== instance) {
                     generation++
                     vm = instance
                     container = result
-                    requestId = id
+                    requestId = 0L
+                    requestCaptured = false
                     clearSelectionLocked()
                 }
             }
+            if (publishedId != null && publishedId != id) return
+            if (!recoverRequestBinding()) return
             // An old stored document must not prevent attaching the new owner.
             // Only hydrate a live result belonging to the verified current item.
             hydrateStoredResult(result)
             trace("attached observed=$nativeObserved")
-            onReplacementPublished(id)
+            // A result write synchronously invokes the installer. Do not queue
+            // another replay from inside a bridge-owned write, even on failure.
+            if (publishing.get() != true) onReplacementPublished(id)
         }.onFailure { report("lyric result attachment failed", it) }
+    }
+
+    /** A completed native install acknowledges delivery, not merely selection. */
+    fun onInstalled(fragment: Any, pointer: Any?) {
+        if (closed || pointer == null || Looper.myLooper() != Looper.getMainLooper()) return
+        runCatching {
+            if (attachedFragment.get() !== fragment ||
+                contract.fragmentViewModelField.get(fragment) !== vmSnapshot() ||
+                fragmentSongId(fragment) != requestIdSnapshot() || !matchesRequest(pointer)) return
+            synchronized(lock) {
+                if (pointer === selectedPointer) installationPending = false
+            }
+        }.onFailure { report("lyric result installation acknowledgement failed", it) }
     }
 
     /** The current playback identity changed; a selection for the old request is dropped. */
     fun onSongChanged(appleMusicId: Long?) {
         synchronized(lock) {
-            if (appleMusicId != requestId) {
+            val changed = appleMusicId != observedPlaybackId
+            observedPlaybackId = appleMusicId
+            if (changed && appleMusicId != requestId) {
                 generation++
                 requestId = 0L
+                requestCaptured = false
                 clearSelectionLocked()
             }
         }
@@ -245,14 +272,21 @@ internal class LyricsResultSubmissionBridge private constructor(
         }
         val stamp = synchronized(lock) { generation }
         val instance = vmSnapshot() ?: return
+        val fragment = attachedFragment.get()
+        // The host installer checks its own item, independently of the VM.
+        // Wait for the native item-update callback rather than rewriting it.
+        if (fragment != null && (fragmentSongId(fragment) != appleMusicId ||
+                contract.fragmentViewModelField.get(fragment) !== instance)) return
         val original = synchronized(lock) { nativeOriginal }
-        val chosen = runCatching { selectReplacement(appleMusicId, original) }.getOrNull() ?: run {
+        val retryInstallation = fragment != null && synchronized(lock) { installationPending }
+        val chosen = runCatching { selectReplacement(appleMusicId, original) }.getOrNull()
+            ?: currentDocument()?.takeIf { retryInstallation } ?: run {
             trace("no prepared replacement")
             return
         }
         if (!isAlive(chosen) || pointerId(chosen) != appleMusicId) return
         val effective = canonical(chosen) ?: return
-        if (effective === selectionSnapshot()) return
+        if (effective === selectionSnapshot() && !retryInstallation) return
         val target = containerSnapshot() ?: return
         val pair = hostPair(effective) ?: return
         val previous = selectionSnapshot()
@@ -289,18 +323,32 @@ internal class LyricsResultSubmissionBridge private constructor(
         (currentSong.current()?.details?.appleMusicId ?: fragmentSongId(attachedFragment.get()))
             ?.takeIf { it > 0L }
 
-    /** Recover from an independently verified playback identity, never from a result's ID alone. */
-    private fun recoverRequestBinding(): Boolean {
-        val id = verifiedCurrentId() ?: return false
+    /** Fill a missed load binding; never overwrite an explicitly captured request. */
+    private fun recoverRequestBinding(pointer: Any? = null): Boolean {
+        val fragment = attachedFragment.get()
+        val fragmentId = fragmentSongId(fragment)
+        val publishedId = currentSong.current()?.details?.appleMusicId
+        // A pointer alone never identifies current playback. If load capture
+        // missed, the exact owner Fragment can independently corroborate it
+        // before metadata catches up. Never override an explicit load capture.
+        val corroboratedId = fragmentId?.takeIf {
+            pointer != null && isAlive(pointer) && pointerId(pointer) == it &&
+                contract.fragmentViewModelField.get(fragment) === vmSnapshot() &&
+                // A recently published old item can be a stale Fragment with a
+                // late result. It cannot overrule the newer playback identity.
+                (publishedId == null || publishedId == it || !currentSong.canRebind(it, publishedId))
+        }
         synchronized(lock) {
             if (closed || vm == null || container == null) return false
-            if (requestId != id) {
+            if (requestId <= 0L || (!requestCaptured && corroboratedId != null && requestId != corroboratedId)) {
+                val id = corroboratedId ?: verifiedCurrentId() ?: return false
                 generation++
                 requestId = id
+                requestCaptured = false
                 clearSelectionLocked()
             }
         }
-        return currentRequest()
+        return true
     }
 
     private fun matchesRequest(pointer: Any): Boolean =
@@ -347,11 +395,13 @@ internal class LyricsResultSubmissionBridge private constructor(
             if (vm !== instance) {
                 vm = instance
                 container = containerOf(instance)
+                attachedFragment.clear()
                 generation++
                 clearSelectionLocked()
             }
             generation++
             requestId = appleMusicId
+            requestCaptured = true
             clearSelectionLocked()
         }
     }
@@ -363,6 +413,7 @@ internal class LyricsResultSubmissionBridge private constructor(
     private fun rememberSelection(pointer: Any?) {
         val document = pointer?.let { runCatching { documentOf(it) }.getOrNull() }
         synchronized(lock) {
+            if (selectedPointer !== pointer) installationPending = pointer != null
             selectedPointer = pointer
             selectedDocument = document
         }
@@ -373,6 +424,7 @@ internal class LyricsResultSubmissionBridge private constructor(
         nativeObserved = false
         selectedPointer = null
         selectedDocument = null
+        installationPending = false
     }
 
     private fun vmSnapshot(): Any? = synchronized(lock) { vm }
@@ -399,8 +451,36 @@ internal class LyricsResultSubmissionBridge private constructor(
     private fun hostPair(pointer: Any?, error: Any? = null): Any? =
         pairConstructor?.let { runCatching { it.newInstance(pointer, error) }.getOrNull() }
 
-    private fun install(registration: HookRegistrationScope): Boolean {
+    private fun install(registration: HookRegistrationScope, itemUpdateMethod: Method): Boolean {
         val hooks = listOf(
+            itemUpdateMethod to object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.extras["lyricResult.previousItemId"] = fragmentSongId(param.thisObject)
+                }
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    if (param.throwable != null) return
+                    val fragment = param.thisObject ?: return
+                    runCatching {
+                        val previousId = param.extras["lyricResult.previousItemId"] as? Long
+                        val id = fragmentSongId(fragment)
+                        if (previousId != null && id != null && id != previousId &&
+                            contract.fragmentViewModelField.get(fragment) === vmSnapshot()) {
+                            synchronized(lock) {
+                                // Retire only the request for the item the host
+                                // replaced. A leading capture for the new (or a
+                                // later) item must survive this callback.
+                                if (requestId == previousId) {
+                                    generation++
+                                    requestId = 0L
+                                    requestCaptured = false
+                                    clearSelectionLocked()
+                                }
+                            }
+                        }
+                        attach(fragment)
+                    }.onFailure { report("lyric result item-update recovery failed", it) }
+                }
+            },
             contract.fragmentResumeMethod to object : ModernMethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (param.throwable == null) param.thisObject?.let(::attach)
@@ -416,6 +496,7 @@ internal class LyricsResultSubmissionBridge private constructor(
                     synchronized(lock) {
                         generation++
                         requestId = 0L
+                        requestCaptured = false
                         clearSelectionLocked()
                         vm = null
                         container = null
@@ -449,6 +530,12 @@ internal class LyricsResultSubmissionBridge private constructor(
             logger: (String) -> Unit,
         ): LyricsResultSubmissionBridge? {
             val contract = LyricsResultSubmissionContract.create(symbols, logger) ?: return null
+            val itemUpdate = symbols.resolve(AppleMusicSymbols.LyricsItemUpdateMethod)
+            if (itemUpdate !is TargetResolution.Found || itemUpdate.match != SymbolMatch.VERSION_PROFILE ||
+                itemUpdate.profileId != contract.profileId) {
+                logger("lyric result submission requires the exact item-update entry: ${itemUpdate.summary}")
+                return null
+            }
             val bridge = LyricsResultSubmissionBridge(
                 contract = contract,
                 currentSong = currentSong,
@@ -460,7 +547,7 @@ internal class LyricsResultSubmissionBridge private constructor(
                 mainHandler = Handler(Looper.getMainLooper()),
             )
             if (bridge.pairConstructor == null || bridge.itemIdMethod == null) return null
-            return bridge.takeIf { it.install(registration) }
+            return bridge.takeIf { it.install(registration, itemUpdate.value) }
         }
     }
 }

@@ -207,7 +207,7 @@ Fragment 设置使用原生 ViewModel 和设置行模型，保留分类、行去
 
 ## 7. 各功能的适配要点
 
-维护规则集中在本节：[歌词模糊](#lyrics-blur)、[CJK 辉光与末词扫光](#cjk-animation)、[跨行歌词扫光](#lyric-wrap-sweep)。成员核对与完整人工场景集中在 [适配清单](host-adaptation-checklist.md)。
+维护规则集中在本节：[歌词模糊](#lyrics-blur)、[CJK 辉光与末词扫光](#cjk-animation)、[跨行歌词扫光](#lyric-wrap-sweep)、[玻璃底栏收缩渲染](#glass-collapse-rendering)。成员核对与完整人工场景集中在 [适配清单](host-adaptation-checklist.md)。
 
 <a id="lyrics-blur"></a>
 
@@ -538,7 +538,24 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 
 逐项核对及人工场景见 [清单：跨行歌词扫光](host-adaptation-checklist.md#lyric-wrap-sweep-checks)。各版本的实际验收结果应记录于对应PR或独立验收记录，手册和清单保持通用维护规则与验收标准。
 
-### 7.4 其他功能与共同规则
+<a id="glass-collapse-rendering"></a>
+
+### 7.4 玻璃底栏收缩渲染契约
+
+底栏随滚动收缩会逐帧改变胶囊的实际宽高，玻璃渲染链在尺寸变化时需要重新处理。收缩渲染路径只对真正支持收缩的宿主启用，并把与尺寸无关的部分复用起来；材质配方、几何、弹簧曲线和输入归属都保持原样。
+
+| 项目 | 规则 |
+|---|---|
+| 启用边界 | 目录组件 `LiquidBottomTabs` 的 `optimizeCollapseRendering` 默认 `false`；`GlassNavigation` 仅在收到非空收缩进度（`collapseProgress != null`）时置为 `true`。不具备收缩的宿主继续走原始渲染路径 |
+| 效果前缀复用 | 与尺寸无关的 `vibrancy()` 与 `blur(radiusPx)` 前缀以物理像素半径为键复用；Dp 半径须按当前密度换算，像素半径变化时重建；`lens` 等依赖尺寸、按压或圆角的效果仍在每次应用效果块时重新求值。缓存类型放在上游命名空间之外，不改动 `com.kyant.backdrop` 的效果源 |
+| 材质 modifier 稳定 | 启用路径下，面板、折射源与选择水珠的材质 modifier 用 `remember` 按各自的 backdrop、半径和材质输入复用，不改变效果顺序与绘制内容 |
+| 隐藏节点生命周期 | 选择水珠不可见时，折射源仍保持附着并保留已有层与资源，但不测量、放置其子级，也不进入内部背景录制；分离搜索控件同样保留材质与绘制节点并跳过子级测量与放置。挂起与恢复之间保留上述节点的资源，可见性门禁翻转后在下一帧绘制前恢复测量与放置 |
+| 进度读取位置 | 分离搜索的连续尺寸、位移与透明度在测量和 `graphicsLayer` 中读取；胶囊仍以组合计算共用几何，材质 modifier 独立复用。导航与分离搜索的交互门禁使用派生布尔（如 `expandedInteractive`），只在门禁翻转时重组 |
+| 共同边界 | 不改变收缩弹簧及其参数、共享控制几何与命中（`GlassBarCollapseLayout.controls(...)`）、原生列表位移、peek、内容留白、mini 的原生输入，也不改变通用渲染器（`DrawBackdropModifier`、效果作用域及效果源）的默认行为 |
+
+适配新版本或新增收缩宿主时沿用这些边界：通过宿主资格检查后提供非空进度，渲染复用由目录组件与新增辅助类型承担；不要在宿主适配层复制效果缓存，也不要改动上游目录组件的默认值。逐项核对与人工场景见 [清单：底栏收缩渲染](host-adaptation-checklist.md#glass-collapse-rendering-checks)。
+
+### 7.5 其他功能与共同规则
 
 | 功能 | 必须保持的业务与接入规则 |
 |---|---|

@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -23,6 +24,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -45,10 +50,10 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidBottomTab
 import com.kyant.backdrop.catalog.components.LiquidBottomTabs
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
+import dev.amenhancer.backdrop.VibrantBlur
+import kotlin.math.roundToInt
 
 data class GlassTab(
     val id: Int,
@@ -112,8 +117,10 @@ fun GlassNavigation(
     // detach is the search square fading in at the row's end.
     val inCapsule = tabs
     val progress: () -> Float = collapseProgress ?: { 0f }
-    // Read once per composition so the gate below cannot disagree with the alpha it mirrors.
-    val expandedInteractive = GlassBarCollapsePolicy.expandedInteractive(progress())
+    val liveProgress = rememberUpdatedState(progress)
+    val expandedInteractive by remember {
+        derivedStateOf { GlassBarCollapsePolicy.expandedInteractive(liveProgress.value()) }
+    }
     // A menu replacement must discard gestures whose indices refer to the old menu.
     key(tabs.map { it.id }, rejectedSelection) {
         val selection = remember { { confirmedIndex.value } }
@@ -148,6 +155,7 @@ fun GlassNavigation(
                         }
                     } },
                     collapseProgress = progress,
+                    optimizeCollapseRendering = collapseProgress != null,
                     // Always present: the withdrawn capsule is the only way back, so it needs a
                     // face and a tap target whether or not search could be detached.
                     compactContent = { CompactSelectionGlyph(tabs, selectedId, accent, foreground) },
@@ -230,13 +238,29 @@ private fun BoxScope.DetachedSearchControl(
     expandReboundScale: Float = 1f,
 ) {
     val density = LocalDensity.current
-    // The raw spring, unclamped, so this control rides the same overshoot as the capsule and the
-    // mini player.
-    val raw = collapseProgress()
-    val alpha = GlassBarCollapsePolicy.searchAlpha(raw)
-    if (alpha <= 0.001f) return
+    val liveProgress = rememberUpdatedState(collapseProgress)
+    val searchAlpha = remember {
+        derivedStateOf { GlassBarCollapsePolicy.searchAlpha(liveProgress.value()) }
+    }
+    val interactive by remember {
+        derivedStateOf { GlassBarCollapsePolicy.searchInteractive(liveProgress.value()) }
+    }
+    val radiusPx = with(density) { panelBlur.toPx() }
+    val material = remember(radiusPx) { VibrantBlur(radiusPx) }
     val containerColor = if (isSystemInDarkTheme()) Color(0xFF121212).copy(alpha = 0.4f)
         else Color(0xFFFAFAFA).copy(alpha = 0.4f)
+    val materialModifier = remember(backdrop, material, containerColor) {
+        Modifier.drawBackdrop(
+            backdrop = backdrop,
+            shape = { Capsule() },
+            effects = {
+                material.applyTo(this)
+                val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
+                lens(edge, edge)
+            },
+            onDrawSurface = { drawRect(containerColor) },
+        )
+    }
     val selected = tab.id == selectedId
     BoxWithConstraints(
         Modifier.align(Alignment.BottomEnd).fillMaxWidth().height(rowHeight),
@@ -244,45 +268,50 @@ private fun BoxScope.DetachedSearchControl(
     ) {
         val rowWidthPx = with(density) { maxWidth.toPx() }
         val rowHeightPx = with(density) { rowHeight.toPx() }
-        // The shared entry point the host's own hit test calls: the width is this control's expanded
-        // tab cell narrowing with the capsule's rebound, and `top` is its bottom-anchored placement.
-        val controls = GlassBarCollapseLayout.controls(
-            rowWidthPx = rowWidthPx,
-            rowHeightPx = rowHeightPx,
-            density = density.density,
-            tabsCount = tabsCount,
-            progress = raw,
-            collapseReboundScale = collapseReboundScale,
-            expandReboundScale = expandReboundScale,
-            leadingWidthPx = with(density) { leadingWidth.toPx() },
-        )
+        val leadingPx = with(density) { leadingWidth.toPx() }
+        val controls = remember(rowWidthPx, rowHeightPx, density, tabsCount, leadingPx,
+            collapseReboundScale, expandReboundScale) {
+            derivedStateOf {
+                GlassBarCollapseLayout.controls(
+                    rowWidthPx = rowWidthPx,
+                    rowHeightPx = rowHeightPx,
+                    density = density.density,
+                    tabsCount = tabsCount,
+                    progress = liveProgress.value(),
+                    collapseReboundScale = collapseReboundScale,
+                    expandReboundScale = expandReboundScale,
+                    leadingWidthPx = leadingPx,
+                )
+            }
+        }
         Box(
             Modifier
-                // Top-end anchored and placed by the shared `top`: only the start edge travels, so
-                // the rebound lands on the side facing the mini player.
                 .align(Alignment.TopEnd)
-                .width(with(density) { controls.searchWidth.toDp() })
-                .height(with(density) { controls.height.toDp() })
-                .alpha(alpha)
-                .graphicsLayer { translationY = controls.top }
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        vibrancy()
-                        blur(panelBlur.toPx())
-                        val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
-                        lens(edge, edge)
-                    },
-                    onDrawSurface = { drawRect(containerColor) },
-                )
+                // The native hit test uses this same geometry. Read the spring in measurement,
+                // keeping the drawable/icon composition and its material stable between frames.
+                .layout { measurable, constraints ->
+                    if (searchAlpha.value <= 0.001f) {
+                        layout(0, 0) {}
+                    } else {
+                        val bounds = controls.value
+                        val width = constraints.constrainWidth(bounds.searchWidth.roundToInt())
+                        val height = constraints.constrainHeight(bounds.height.roundToInt())
+                        val child = measurable.measure(Constraints.fixed(width, height))
+                        layout(width, height) { child.placeRelative(0, 0) }
+                    }
+                }
+                .graphicsLayer {
+                    alpha = searchAlpha.value
+                    translationY = if (alpha > 0.001f) controls.value.top else 0f
+                }
+                .then(materialModifier)
                 // Clipped to the capsule the glass draws: the layout node is square, so an
                 // unclipped indication would show a square behind a round button.
                 .clip(Capsule())
                 // Interactive only once it is on screen; below that the expanded tab strip holds
                 // the same destination.
                 .then(
-                    if (GlassBarCollapsePolicy.searchInteractive(raw)) {
+                    if (interactive) {
                         Modifier
                             .clickable(role = Role.Button, onClick = onSelect)
                             .semantics { contentDescription = tab.title; this.selected = selected }

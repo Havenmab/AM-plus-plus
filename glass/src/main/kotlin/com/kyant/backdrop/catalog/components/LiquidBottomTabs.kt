@@ -6,7 +6,8 @@
  * multi-finger hand-over, a panel highlight pinned to the thumb's centre (the reference draws
  * the same light a row inset to the left), and a scroll-collapse progress that animates the
  * panel's width/height and swaps the tab row for a compact face. Every collapse parameter
- * defaults to the expanded bar, so the reference behaviour is unchanged when it is unused.
+ * defaults to the expanded bar. Collapse hosts retain material modifiers and fixed effects,
+ * and suspend the refraction source layout while its selection droplet is absent.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -44,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import dev.amenhancer.backdrop.VibrantBlur
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -113,6 +116,8 @@ fun LiquidBottomTabs(
      */
     collapseReboundScale: Float = 1f,
     expandReboundScale: Float = 1f,
+    /** Only collapse-capable hosts reuse fixed material effects and suspend the hidden source. */
+    optimizeCollapseRendering: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -129,6 +134,10 @@ fun LiquidBottomTabs(
     val tabsBackdrop = rememberLayerBackdrop()
 
     val density = LocalDensity.current
+    val material = if (optimizeCollapseRendering) {
+        val radiusPx = with(density) { panelBlur.toPx() }
+        remember(radiusPx) { VibrantBlur(radiusPx) }
+    } else null
     val animationScope = rememberCoroutineScope()
     val offsetAnimation = remember { Animatable(0f) }
     val squeeze = with(density) { 4f.dp.toPx() }
@@ -230,7 +239,10 @@ fun LiquidBottomTabs(
         val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
         val tabWidth = geometry.tabWidth
 
-        val panelOffset by remember(density, restingWidthPx) {
+        val panelOffset by if (optimizeCollapseRendering) {
+            val liveWidth = rememberUpdatedState(restingWidthPx)
+            remember(density) { derivedStateOf { squeezeOffset(liveWidth.value) } }
+        } else remember(density, restingWidthPx) {
             derivedStateOf { squeezeOffset(restingWidthPx) }
         }
 
@@ -325,6 +337,26 @@ fun LiquidBottomTabs(
             interactiveHighlight.releasePress()
         }
 
+        val panelMaterial = if (optimizeCollapseRendering) {
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material) {
+                glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material)
+            }
+        } else glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
+        val refractionMaterial = if (optimizeCollapseRendering) {
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material) {
+                glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material)
+            }
+        } else glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
+        // Keep the source nodes/layers alive, but do not measure or place their subtree when
+        // the selection droplet has no need for it. Expanding places it again before drawing.
+        val expandedVisible = expandedContentAlpha > 0.001f
+        val expandedLayout = if (optimizeCollapseRendering) Modifier.layout { measurable, constraints ->
+            if (expandedVisible) {
+                val child = measurable.measure(constraints)
+                layout(child.width, child.height) { child.placeRelative(0, 0) }
+            } else layout(0, 0) {}
+        } else Modifier
+
         Row(
             Modifier
                 .graphicsLayer {
@@ -333,22 +365,7 @@ fun LiquidBottomTabs(
                     translationX = panelOffset
                     translationY = collapseDropPx
                 }
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        vibrancy()
-                        blur(panelBlur.toPx())
-                        lens(24f.dp.toPx(), 24f.dp.toPx())
-                    },
-                    layerBlock = {
-                        val progress = dampedDragAnimation.pressProgress
-                        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 8f.dp.toPx(), progress)
-                        scaleX = scale
-                        scaleY = scale
-                    },
-                    onDrawSurface = { drawRect(containerColor) }
-                )
+                .then(panelMaterial)
                 .then(interactiveHighlight.modifier)
                 // `requiredWidth`/`requiredHeight`, NOT `width`/`height`: the expanded panel *is*
                 // the row's width, so the plain size modifiers would coerce the expand overshoot
@@ -372,7 +389,7 @@ fun LiquidBottomTabs(
             // is the only thing that visibly springs. `- 8.dp` is the node's own `padding(4.dp)` on
             // both sides, so at rest this is exactly the width `fillMaxSize()` used to produce.
             Row(
-                Modifier.width(restingWidthDp - 8f.dp).fillMaxHeight().alpha(expandedContentAlpha),
+                Modifier.then(expandedLayout).width(restingWidthDp - 8f.dp).fillMaxHeight().alpha(expandedContentAlpha),
                 verticalAlignment = Alignment.CenterVertically,
                 content = { leadingContent?.invoke(this); content() }
             )
@@ -385,6 +402,7 @@ fun LiquidBottomTabs(
         ) {
             Row(
                 Modifier
+                    .then(expandedLayout)
                     .clearAndSetSemantics {}
                     .alpha(0f)
                     .layerBackdrop(tabsBackdrop)
@@ -392,24 +410,7 @@ fun LiquidBottomTabs(
                         translationX = panelOffset
                         translationY = collapseDropPx
                     }
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { Capsule() },
-                        effects = {
-                            val progress = dampedDragAnimation.pressProgress
-                            vibrancy()
-                            blur(panelBlur.toPx())
-                            lens(
-                                24f.dp.toPx() * progress,
-                                24f.dp.toPx() * progress
-                            )
-                        },
-                        highlight = {
-                            val progress = dampedDragAnimation.pressProgress
-                            Highlight.Default.copy(alpha = progress)
-                        },
-                        onDrawSurface = { drawRect(containerColor) }
-                    )
+                    .then(refractionMaterial)
                     .then(interactiveHighlight.modifier)
                     // `required*` to match the backplate above: this layer is invisible but is what
                     // the droplet refracts, so a coerced size would refract a strip that no longer
@@ -435,6 +436,12 @@ fun LiquidBottomTabs(
         // layer here: the droplet's own surface, highlight and shadow are drawn by `drawBackdrop`
         // and would escape the alpha, leaving a sliver on the capsule.
         if (expandedContentAlpha > 0.001f) {
+            val selectionBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
+            val thumbMaterial = if (optimizeCollapseRendering) {
+                remember(selectionBackdrop, dampedDragAnimation, isLightTheme) {
+                    glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
+                }
+            } else glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
             Box(
                 Modifier
                     .padding(horizontal = 4f.dp)
@@ -446,49 +453,7 @@ fun LiquidBottomTabs(
                             } else geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
                         translationY = collapseDropPx
                     }
-                    .drawBackdrop(
-                        backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
-                        shape = { Capsule() },
-                        effects = {
-                            val progress = dampedDragAnimation.pressProgress
-                            lens(
-                                10f.dp.toPx() * progress,
-                                14f.dp.toPx() * progress,
-                                chromaticAberration = true
-                            )
-                        },
-                        highlight = {
-                            val progress = dampedDragAnimation.pressProgress
-                            Highlight.Default.copy(alpha = progress)
-                        },
-                        shadow = {
-                            val progress = dampedDragAnimation.pressProgress
-                            Shadow(alpha = progress)
-                        },
-                        innerShadow = {
-                            val progress = dampedDragAnimation.pressProgress
-                            InnerShadow(
-                                radius = 8f.dp * progress,
-                                alpha = progress
-                            )
-                        },
-                        layerBlock = {
-                            scaleX = dampedDragAnimation.scaleX
-                            scaleY = dampedDragAnimation.scaleY
-                            val velocity = dampedDragAnimation.velocity / 10f * dampedDragAnimation.pressProgress
-                            scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                            scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
-                        },
-                        onDrawSurface = {
-                            val progress = dampedDragAnimation.pressProgress
-                            drawRect(
-                                if (isLightTheme) Color.Black.copy(0.1f)
-                                else Color.White.copy(0.1f),
-                                alpha = 1f - progress
-                            )
-                            drawRect(Color.Black.copy(alpha = 0.03f * progress))
-                        }
-                    )
+                    .then(thumbMaterial)
                     .height(panelHeightDp - 8f.dp)
                     // The thumb's width must follow the animated panel: `fillMaxWidth(1f / tabsCount)`
                     // measures against the full box, so it would keep the droplet at its expanded
@@ -550,6 +515,99 @@ fun LiquidBottomTabs(
         }
     }
 }
+
+// Material modifiers are independent of animated geometry; only opted-in hosts retain them.
+private fun glassPanelMaterial(
+    backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
+    dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
+): Modifier = Modifier.drawBackdrop(
+    backdrop = backdrop,
+    shape = { Capsule() },
+    effects = {
+        if (material == null) {
+            vibrancy()
+            blur(panelBlur.toPx())
+        } else material.applyTo(this)
+        lens(24f.dp.toPx(), 24f.dp.toPx())
+    },
+    layerBlock = {
+        val progress = dampedDragAnimation.pressProgress
+        val scale = dev.amenhancer.glass.GlassPressGeometry.panelScale(size.width, 8f.dp.toPx(), progress)
+        scaleX = scale
+        scaleY = scale
+    },
+    onDrawSurface = { drawRect(containerColor) }
+)
+
+private fun glassRefractionMaterial(
+    backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
+    dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
+): Modifier = Modifier.drawBackdrop(
+    backdrop = backdrop,
+    shape = { Capsule() },
+    effects = {
+        val progress = dampedDragAnimation.pressProgress
+        if (material == null) {
+            vibrancy()
+            blur(panelBlur.toPx())
+        } else material.applyTo(this)
+        lens(
+            24f.dp.toPx() * progress,
+            24f.dp.toPx() * progress
+        )
+    },
+    highlight = {
+        val progress = dampedDragAnimation.pressProgress
+        Highlight.Default.copy(alpha = progress)
+    },
+    onDrawSurface = { drawRect(containerColor) }
+)
+
+private fun glassSelectionMaterial(
+    backdrop: Backdrop, dampedDragAnimation: DampedDragAnimation, isLightTheme: Boolean,
+): Modifier = Modifier.drawBackdrop(
+    backdrop = backdrop,
+    shape = { Capsule() },
+    effects = {
+        val progress = dampedDragAnimation.pressProgress
+        lens(
+            10f.dp.toPx() * progress,
+            14f.dp.toPx() * progress,
+            chromaticAberration = true
+        )
+    },
+    highlight = {
+        val progress = dampedDragAnimation.pressProgress
+        Highlight.Default.copy(alpha = progress)
+    },
+    shadow = {
+        val progress = dampedDragAnimation.pressProgress
+        Shadow(alpha = progress)
+    },
+    innerShadow = {
+        val progress = dampedDragAnimation.pressProgress
+        InnerShadow(
+            radius = 8f.dp * progress,
+            alpha = progress
+        )
+    },
+    layerBlock = {
+        scaleX = dampedDragAnimation.scaleX
+        scaleY = dampedDragAnimation.scaleY
+        val velocity = dampedDragAnimation.velocity / 10f * dampedDragAnimation.pressProgress
+        scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+        scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+    },
+    onDrawSurface = {
+        val progress = dampedDragAnimation.pressProgress
+        drawRect(
+            if (isLightTheme) Color.Black.copy(0.1f)
+            else Color.White.copy(0.1f),
+            alpha = 1f - progress
+        )
+        drawRect(Color.Black.copy(alpha = 0.03f * progress))
+    }
+)
 
 /**
  * AM++: where the light sits, in the panel's own drawing space — the glass thumb's centre.

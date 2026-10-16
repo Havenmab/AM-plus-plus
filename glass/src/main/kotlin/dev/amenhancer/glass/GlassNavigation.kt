@@ -160,7 +160,7 @@ fun GlassNavigation(
                     optimizeCollapseRendering = collapseProgress != null,
                     // Always present: the withdrawn capsule is the only way back, so it needs a
                     // face and a tap target whether or not search could be detached.
-                    compactContent = { CompactSelectionGlyph(tabs, selectedId, accent, foreground) },
+                    compactContent = { CompactSelectionGlyph(tabs, selectedId, searchTab, accent, foreground) },
                     onExpandRequest = onExpandRequest,
                     collapseReboundScale = collapseReboundScale,
                     expandReboundScale = expandReboundScale,
@@ -364,19 +364,20 @@ private fun BoxScope.DetachedSearchControl(
 
 /**
  * The withdrawn capsule's face: the selected tab's glyph, so the user can still tell where they
- * are. A selected search tab falls back to the first tab's glyph and drops the accent, because
- * search has left the capsule. The glyph is **copied** before it is tinted, since a `Drawable`'s
+ * are. Only when the selected tab is the detached search does it fall back to the first tab's glyph
+ * and drop the accent. The glyph is **copied** before it is tinted, since a `Drawable`'s
  * tint belongs to the drawable and would repaint the expanded tab row.
  */
 @Composable
 private fun CompactSelectionGlyph(
     tabs: List<GlassTab>,
     selectedId: Int,
+    detachedSearchTab: GlassTab?,
     accent: Color,
     foreground: Color,
 ) {
     val selected = tabs.firstOrNull { it.id == selectedId }
-    val searchLeft = selected?.isSearch == true
+    val searchLeft = detachedSearchTab?.id == selectedId
     val glyph = if (searchLeft) tabs.firstOrNull() else selected
     val tint = if (searchLeft) foreground else accent
     val resources = LocalContext.current.resources

@@ -156,6 +156,12 @@ object FragmentChromeFactory {
                         val event = param.args[0] as MotionEvent
                         // Root dispatch observes one event before native child controls consume it.
                         bindings.values.forEach { binding ->
+                            if (binding.blocksNavigationTouch(view)) {
+                                // Skip only the hidden native navigation subtree. Returning false
+                                // leaves the parent free to route empty glass space to native input.
+                                param.result = false
+                                return
+                            }
                             if (binding.tabletChrome == null && binding.isMiniTouchPanel(view)) {
                                 // The current phone session observes presses and returns null,
                                 // preserving native mini controls and player drag. Only an

@@ -2,6 +2,8 @@ package dev.amenhancer.module.hook
 
 import android.app.Activity
 import android.graphics.Rect
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -137,6 +139,11 @@ internal class FragmentSurfaceBinding(
         root.invalidate()
     }
     fun isMiniTouchPanel(view: View): Boolean = miniTouch === view
+    private val isolatesNavigationTouch: Boolean
+        get() = placement == NavigationPlacement.BOTTOM && phoneChrome?.supportsScrollCollapse == true
+    /** Hide native navigation input with its replacement; empty glass space remains page input. */
+    fun blocksNavigationTouch(view: View): Boolean =
+        view === nav && !closed && navReady && isolatesNavigationTouch
     /**
      * The content root is the page's ancestor, so its dispatch observes every gesture in the page
      * exactly once, before any child consumes it. That makes it the right place to watch a
@@ -152,7 +159,17 @@ internal class FragmentSurfaceBinding(
         return lease.hostWrite(alpha)
     }
 
-    override fun setNavigationGlassReady(ready: Boolean) { navReady = ready; applyOwnership() }
+    override fun setNavigationGlassReady(ready: Boolean) {
+        if (!closed && ready && !navReady && isolatesNavigationTouch) {
+            // Cancel any native press before the dispatch gate closes. Otherwise a release of
+            // glass ownership could deliver an UP to a tab whose DOWN preceded the takeover.
+            val now = SystemClock.uptimeMillis()
+            val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+            try { nav.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
+        }
+        navReady = ready
+        applyOwnership()
+    }
     override fun setMiniGlassReady(ready: Boolean) {
         miniReady = ready
         applyOwnership()

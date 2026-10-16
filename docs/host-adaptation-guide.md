@@ -557,7 +557,9 @@ Android 12 起在歌词视图创建前观察 SDK `View` 构造和 `setRenderEffe
 | 分段采样 | 系统 Trace 启用时，`AM++/collapse/progress`（进度乘10000）与 `running` 标记动画，`source/record`、`effects/update`、`backdrop/record`、`backdrop/createLayer` 分别标记背景源、效果更新、效果层录制与层创建；导航和 mini 的 `measure`、`layout`、`recordView` 区分 View 阶段。名称均带 `AM++/` 前缀，CPU 区段必须成对结束，不采样时不写标记；分段耗时不代表 GPU 执行时间 |
 | 尺寸与资源恢复 | 预留值由当前窗口宽度、密度、展开几何和材质输入计算，不保留历史最大尺寸；旋转、分屏、密度及参数变化后重新计算，节点移除时按现有生命周期释放层和效果 |
 | 隐藏节点生命周期 | 选择水珠不可见时，折射源仍保持附着并保留已有层与资源，但不测量、放置其子级，也不进入内部背景录制；分离搜索控件同样保留材质与绘制节点并跳过子级测量与放置。挂起与恢复之间保留上述节点的资源，可见性门禁翻转后在下一帧绘制前恢复测量与放置 |
-| 进度读取位置 | 分离搜索的连续尺寸、位移与透明度在测量和 `graphicsLayer` 中读取；胶囊仍以组合计算共用几何，材质 modifier 独立复用。导航与分离搜索的交互门禁使用派生布尔（如 `expandedInteractive`），只在门禁翻转时重组 |
+| 进度读取位置 | 收缩路径的胶囊、标签行、选择水珠与 compact 面共用按当前原始进度派生的不可变几何快照；连续尺寸在测量中、位移与透明度在 `graphicsLayer` 中读取。组合只读取显隐、交互和承载预留门禁；材质 modifier 独立复用，分离搜索沿用同样的阶段读取原则 |
+| 动态尺寸语义 | `GlassCollapseModifiers` 在启用路径按当前像素几何测量，每个轴分别调用并保留原 modifier 顺序和中间约束收敛，不能随意合并宽高 coordinator。背板与折射源保留 required 尺寸，其余尺寸按传入约束收敛。未启用路径仍调用原有 width/height/requiredWidth/requiredHeight 和 alpha；透明度的裁切规则与原有 alpha 一致 |
+| 交互几何时效 | 拖拽命中、索引换算、按压高亮与位移补偿读取当前几何提供者；配置或行宽变化时替换提供者，不能沿用首次组合或上次显隐门禁时的宽度。标签单元格及水珠沿 clamped resting width 布局，仅背板继承回弹 |
 | 共同边界 | 不改变收缩弹簧及其参数、共享控制几何与命中（`GlassBarCollapseLayout.controls(...)`）、原生列表位移、peek、内容留白、mini 的原生输入，也不改变通用渲染器（`DrawBackdropModifier`、效果作用域及效果源）的默认行为 |
 
 适配新版本或新增收缩宿主时沿用这些边界：通过宿主资格检查后提供非空进度；宿主只提供当前窗口的几何上界，材质前缀和 padding 预留由渲染层计算。不要在宿主适配层复制效果缓存，不要将文字／图标整体缩放或冻结背景作为承载层复用，也不要改动上游目录组件的默认值。修改已声明的上游本地补丁时同步维护来源说明及本地源码 pin。逐项核对与人工场景见 [清单：底栏收缩渲染](host-adaptation-checklist.md#glass-collapse-rendering-checks)。

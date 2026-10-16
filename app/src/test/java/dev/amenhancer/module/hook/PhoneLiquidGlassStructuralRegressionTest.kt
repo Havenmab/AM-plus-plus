@@ -413,7 +413,8 @@ class PhoneLiquidGlassStructuralRegressionTest {
         assertTrue(!session.contains("miniRoot?.translationY ="))
         // The selection droplet is omitted rather than faded: `Modifier.alpha` sits inside
         // `drawBackdrop`, so the droplet's own surface and shadow escaped it and left a sliver.
-        assertTrue(tabs.contains("if (expandedContentAlpha > 0.001f) {"))
+        assertTrue(tabs.contains("current.expandedAlpha > 0.001f"))
+        assertTrue(tabs.contains("if (gates.expandedVisible) {"))
     }
 
     @Test
@@ -483,13 +484,14 @@ class PhoneLiquidGlassStructuralRegressionTest {
         // into the incoming constraints — ~8.5dp of travel computed correctly and then silently
         // dropped at measurement. That is why the backplate appeared to have no rebound while the
         // smaller selector visibly did.
-        assertTrue(tabs.contains(".requiredWidth(panelWidthDp)"))
-        assertTrue(tabs.contains(".requiredHeight(panelHeightDp)"))
-        assertTrue(!tabs.contains(".width(panelWidthDp)\n                    .padding(4f.dp)"))
+        val sizing = projectFile("glass/src/main/kotlin/dev/amenhancer/glass/GlassCollapseModifiers.kt")
+        assertTrue(tabs.contains("collapseSize(optimizeCollapseRendering, density, required = true"))
+        assertTrue(sizing.contains("if (required) target else incoming.constrain(target)"))
+        assertTrue(sizing.contains("layout(child.width, child.height)"))
         // The tab row is pinned to the RESTING width instead, so the glyphs do not stretch with the
         // backplate's overshoot: only the backplate should visibly spring.
         assertTrue(tabs.contains("val restingWidthPx ="))
-        assertTrue(tabs.contains("Modifier.width(restingWidthDp - 8f.dp).fillMaxHeight()"))
+        assertTrue(tabs.contains("widthPx = { readFrame().restingWidth - 8f * density.density }"))
         // ...and the geometry the selector uses is the resting one.
         assertTrue(tabs.contains("GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)"))
         assertTrue(!tabs.contains("GlassTabGeometry(panelWidthPx, panelInset, leadingPx, tabsCount)"))

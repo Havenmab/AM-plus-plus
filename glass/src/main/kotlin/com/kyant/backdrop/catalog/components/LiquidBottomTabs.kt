@@ -7,8 +7,8 @@
  * the same light a row inset to the left), and a scroll-collapse progress that animates the
  * panel's width/height and swaps the tab row for a compact face. Every collapse parameter
  * defaults to the expanded bar. Collapse hosts retain material modifiers and fixed effects,
- * reserve expanded effect-layer bounds, avoid redundant offscreen clipping, and suspend
- * the refraction source layout while its selection droplet is absent.
+ * read continuous geometry during layout/drawing, reserve expanded effect-layer bounds,
+ * avoid redundant offscreen clipping, and suspend the unused refraction source layout.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -78,6 +78,8 @@ import com.kyant.backdrop.catalog.utils.InteractiveHighlight
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import dev.amenhancer.glass.GlassPolicy
+import dev.amenhancer.glass.collapseSize
+import dev.amenhancer.glass.collapseAlpha
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
@@ -200,50 +202,57 @@ fun LiquidBottomTabs(
         // AM++ scroll collapse. The unclamped value drives geometry so the expand spring's
         // overshoot stays visible; the clamped value drives alpha and input gating, where a
         // value outside [0, 1] would be invalid.
-        val collapseRaw = collapseProgress()
         val expandedWidthPx = constraints.maxWidth.toFloat()
         val expandedPanelHeightPx = with(density) { panelHeight.toPx() }
         val controlPx = with(density) { dev.amenhancer.glass.GlassBarCollapsePolicy.CONTROL_DP.dp.toPx() }
         // The panel's width, height and bottom-anchored placement come from the shared entry point,
         // the one the host's native touch hit test calls, so the drawn capsule and the region that
         // answers for it cannot drift apart.
-        val controls = dev.amenhancer.glass.GlassBarCollapseLayout.controls(
-            rowWidthPx = expandedWidthPx,
-            rowHeightPx = expandedPanelHeightPx,
-            density = density.density,
-            tabsCount = tabsCount,
-            progress = collapseRaw,
-            collapseReboundScale = collapseReboundScale,
-            expandReboundScale = expandReboundScale,
-            leadingWidthPx = leadingPx,
-        )
-        val panelWidthPx = controls.capsuleWidth
-        val panelHeightPx = controls.height
-        // The **clamped** width, i.e. the same travel without the rebound: the tab row's own
-        // geometry (cell width, the droplet's position, drag hit-testing) is derived from this
-        // rather than from the sprung width, so the SELECTOR does not rebound even though the
-        // BACKPLATE does. Inside the travel the two are equal.
-        val restingWidthPx = dev.amenhancer.glass.GlassBarCollapsePolicy.lerp(
-            expandedWidthPx,
-            controlPx,
-            dev.amenhancer.glass.GlassBarCollapsePolicy.progress(collapseRaw),
-        )
-        val panelWidthDp = with(density) { panelWidthPx.toDp() }
-        val panelHeightDp = with(density) { panelHeightPx.toDp() }
-        val restingWidthDp = with(density) { restingWidthPx.toDp() }
-        // The box centres its children on the row's own centre line, so the translation that lands
-        // the panel's top edge on the shared `top` is that value less the centring it applies.
-        val collapseDropPx = controls.top - (expandedPanelHeightPx - controls.height) / 2f
-        val expandedContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.expandedContentAlpha(collapseRaw)
-        val compactContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.compactContentAlpha(collapseRaw)
-        // Every horizontal base below is the **resting** panel, so the tab row, the droplet, the
-        // highlight and the drag hit regions do not ride the backplate's overshoot.
-        val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
-        val tabWidth = geometry.tabWidth
+        fun frame(progress: Float): CollapseFrame {
+            val controls = dev.amenhancer.glass.GlassBarCollapseLayout.controls(
+                rowWidthPx = expandedWidthPx,
+                rowHeightPx = expandedPanelHeightPx,
+                density = density.density,
+                tabsCount = tabsCount,
+                progress = progress,
+                collapseReboundScale = collapseReboundScale,
+                expandReboundScale = expandReboundScale,
+                leadingWidthPx = leadingPx,
+            )
+            // Cells follow clamped travel; the material alone carries the rebound.
+            val restingWidthPx = dev.amenhancer.glass.GlassBarCollapsePolicy.lerp(
+                expandedWidthPx, controlPx,
+                dev.amenhancer.glass.GlassBarCollapsePolicy.progress(progress),
+            )
+            val collapseDropPx = controls.top - (expandedPanelHeightPx - controls.height) / 2f
+            val expandedContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.expandedContentAlpha(progress)
+            val compactContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.compactContentAlpha(progress)
+            val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
+            return CollapseFrame(progress, controls, restingWidthPx, geometry, collapseDropPx,
+                expandedContentAlpha, compactContentAlpha)
+        }
+        val readFrame: () -> CollapseFrame = if (optimizeCollapseRendering) {
+            val state = remember(expandedWidthPx, expandedPanelHeightPx, density, tabsCount,
+                leadingPx, collapseReboundScale, expandReboundScale) {
+                derivedStateOf { frame(collapseProgressState.value()) }
+            }
+            remember(state) { { state.value } }
+        } else {
+            val current = frame(collapseProgress())
+            remember(current) { { current } }
+        }
+        val gates by remember(readFrame) {
+            derivedStateOf {
+                val current = readFrame()
+                CollapseGates(current.expandedAlpha > 0.001f, current.compactAlpha > 0.001f,
+                    dev.amenhancer.glass.GlassBarCollapsePolicy.compactInteractive(current.progress),
+                    current.progress != 0f && current.progress != 1f)
+            }
+        }
         // Reserve the expanded material bounds, including the policy's maximum rebound room.
         // Stable endpoints return to their actual allocation; only the transition reserves space.
         // Layout, lens uniforms and hit regions always use the current geometry.
-        val reserveLayer = optimizeCollapseRendering && collapseRaw != 0f && collapseRaw != 1f
+        val reserveLayer = optimizeCollapseRendering && gates.reserveLayer
         val panelLayerSize = if (reserveLayer) IntSize(
             (expandedWidthPx + dev.amenhancer.glass.GlassBarCollapsePolicy.GAP_DP * density.density).fastRoundToInt(),
             expandedPanelHeightPx.fastRoundToInt(),
@@ -258,17 +267,15 @@ fun LiquidBottomTabs(
             refractionLayerSize.height,
         ) else IntSize.Zero
 
-        val panelOffset by if (optimizeCollapseRendering) {
-            val liveWidth = rememberUpdatedState(restingWidthPx)
-            remember(density) { derivedStateOf { squeezeOffset(liveWidth.value) } }
-        } else remember(density, restingWidthPx) {
-            derivedStateOf { squeezeOffset(restingWidthPx) }
+        val panelOffsetState = remember(density, readFrame) {
+            derivedStateOf { squeezeOffset(readFrame().restingWidth) }
         }
+        val readPanelOffset = remember(panelOffsetState) { { panelOffsetState.value } }
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         // The first composition can be the 1px warm-up host. Gestures must use the current
         // measured slot, never the width captured when the animation object was constructed.
-        val liveGeometry = rememberUpdatedState(geometry)
+        val liveGeometry = rememberUpdatedState(readFrame)
         val liveIsLtr = rememberUpdatedState(isLtr)
         var currentIndex by remember(selectedTabIndex) {
             mutableIntStateOf(selectedTabIndex())
@@ -301,7 +308,7 @@ fun LiquidBottomTabs(
                     }
                 },
                 onDrag = { _, dragAmount ->
-                    updateValue(liveGeometry.value.draggedIndex(targetValue, dragAmount.x, liveIsLtr.value))
+                    updateValue(liveGeometry.value().geometry.draggedIndex(targetValue, dragAmount.x, liveIsLtr.value))
                     animationScope.launch {
                         offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x)
                     }
@@ -332,26 +339,36 @@ fun LiquidBottomTabs(
 
         // AM++: hand the thumb's live geometry to the highlight built above the box scope.
         highlightAnchor.pillValue = { dampedDragAnimation.value }
-        highlightAnchor.panelWidth = restingWidthPx
         highlightAnchor.panelInset = panelInset + leadingPx
-        highlightAnchor.tabWidth = tabWidth
         highlightAnchor.isLtr = isLtr
         // The light must migrate to the panel's own centre as the bar withdraws. Expanded it
         // belongs on the selected tab's cell, which is what `x()` computes; collapsed the panel is a
         // 43dp circle and that cell centre lands near the circle's *left edge*, so the press glow
         // appeared offset from the button. Interpolating on the same progress the geometry uses
         // keeps the light on the glass at every point of the travel.
-        highlightAnchor.collapse = collapseRaw
+        highlightAnchor.frame = if (optimizeCollapseRendering) readFrame else null
         freeDragBridge.animation = dampedDragAnimation
-        freeDragBridge.tabWidth = tabWidth
-        freeDragBridge.panelWidth = restingWidthPx
         freeDragBridge.panelInset = panelInset + leadingPx
-        freeDragBridge.panelOffset = panelOffset
+        freeDragBridge.frame = if (optimizeCollapseRendering) readFrame else null
+        freeDragBridge.offset = if (optimizeCollapseRendering) readPanelOffset else null
+        if (!optimizeCollapseRendering) {
+            val current = readFrame()
+            val collapseRaw = current.progress
+            val restingWidthPx = current.restingWidth
+            val tabWidth = current.geometry.tabWidth
+            val panelOffset = readPanelOffset()
+            highlightAnchor.panelWidth = restingWidthPx
+            highlightAnchor.tabWidth = tabWidth
+            highlightAnchor.collapse = collapseRaw
+            freeDragBridge.tabWidth = tabWidth
+            freeDragBridge.panelWidth = restingWidthPx
+            freeDragBridge.panelOffset = panelOffset
+        }
         freeDragBridge.tabsCount = tabsCount
         freeDragBridge.isLtr = isLtr
         freeDragBridge.isTabEnabled = isTabEnabled
         // A withdrawn capsule must not keep owning the row's touches.
-        freeDragBridge.enabled = dev.amenhancer.glass.GlassBarCollapsePolicy.dragEnabled(collapseRaw)
+        freeDragBridge.enabled = dragEnabled
         freeDragBridge.onCanceled = {
             interactiveHighlight.releasePress()
         }
@@ -368,7 +385,7 @@ fun LiquidBottomTabs(
         } else glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
         // Keep the source nodes/layers alive, but do not measure or place their subtree when
         // the selection droplet has no need for it. Expanding places it again before drawing.
-        val expandedVisible = expandedContentAlpha > 0.001f
+        val expandedVisible = gates.expandedVisible
         val expandedLayout = if (optimizeCollapseRendering) Modifier.layout { measurable, constraints ->
             if (expandedVisible) {
                 val child = measurable.measure(constraints)
@@ -381,34 +398,26 @@ fun LiquidBottomTabs(
                 .graphicsLayer {
                     // The capsule is anchored to the row's start edge and only its end edge travels,
                     // so the whole expand rebound shows up on the side facing the mini player.
-                    translationX = panelOffset
-                    translationY = collapseDropPx
+                    translationX = readPanelOffset()
+                    translationY = readFrame().drop
                 }
                 .then(panelMaterial)
                 .then(interactiveHighlight.modifier)
-                // `requiredWidth`/`requiredHeight`, NOT `width`/`height`: the expanded panel *is*
-                // the row's width, so the plain size modifiers would coerce the expand overshoot
-                // back into the incoming constraints and drop it at measurement. The box is
-                // `CenterStart`, so the extra width extends away from the anchored start edge,
-                // towards the mini player, and nothing clips it — the row does not clip its
-                // children and `GlassHostView` measures a 32dp bleed for the lens and shadow. The
-                // 8dp gap is the budget, clamped in `GlassBarCollapseLayout`.
-                .requiredHeight(panelHeightDp)
-                .requiredWidth(panelWidthDp)
+                // Required sizing preserves the outward rebound beyond incoming constraints.
+                // The shared policy bounds it to the gap; GlassHostView provides drawing bleed.
+                .collapseSize(optimizeCollapseRendering, density, required = true,
+                    heightPx = { readFrame().controls.height })
+                .collapseSize(optimizeCollapseRendering, density, required = true,
+                    widthPx = { readFrame().controls.capsuleWidth })
                 .padding(4f.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // AM++ scroll collapse: only the tab row fades. The glass panel above must stay
-            // for the whole travel, otherwise the capsule would blink out mid-collapse.
-            //
-            // The width is pinned to the **resting** panel rather than `fillMaxSize()`, because the
-            // node itself is now `requiredWidth(panelWidthDp)` and can be wider than the resting
-            // bar during the expand overshoot. Letting the tab row fill it would stretch every cell
-            // with the rebound; pinning it keeps the glyphs on their resting cells so the backplate
-            // is the only thing that visibly springs. `- 8.dp` is the node's own `padding(4.dp)` on
-            // both sides, so at rest this is exactly the width `fillMaxSize()` used to produce.
+            // Only the cells fade, on the clamped resting width minus the panel's 4dp insets.
+            // They must not stretch with the backplate's rebound.
             Row(
-                Modifier.then(expandedLayout).width(restingWidthDp - 8f.dp).fillMaxHeight().alpha(expandedContentAlpha),
+                Modifier.then(expandedLayout)
+                    .collapseSize(optimizeCollapseRendering, density, widthPx = { readFrame().restingWidth - 8f * density.density })
+                    .fillMaxHeight().collapseAlpha(optimizeCollapseRendering) { readFrame().expandedAlpha },
                 verticalAlignment = Alignment.CenterVertically,
                 content = { leadingContent?.invoke(this); content() }
             )
@@ -426,16 +435,18 @@ fun LiquidBottomTabs(
                     .alpha(0f)
                     .layerBackdrop(tabsBackdrop)
                     .graphicsLayer {
-                        translationX = panelOffset
-                        translationY = collapseDropPx
+                        translationX = readPanelOffset()
+                        translationY = readFrame().drop
                     }
                     .then(refractionMaterial)
                     .then(interactiveHighlight.modifier)
                     // `required*` to match the backplate above: this layer is invisible but is what
                     // the droplet refracts, so a coerced size would refract a strip that no longer
                     // lines up with the glass.
-                    .requiredHeight(panelHeightDp - 8f.dp)
-                    .requiredWidth(panelWidthDp)
+                    .collapseSize(optimizeCollapseRendering, density, required = true,
+                        heightPx = { readFrame().controls.height - 8f * density.density })
+                    .collapseSize(optimizeCollapseRendering, density, required = true,
+                        widthPx = { readFrame().controls.capsuleWidth })
                     .padding(horizontal = 4f.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
@@ -443,7 +454,9 @@ fun LiquidBottomTabs(
                 // The droplet refracts this layer, so its tabs narrow and fade with the visible row
                 // and stay pinned to the resting width.
                 Row(
-                    Modifier.width(restingWidthDp - 8f.dp).fillMaxHeight().alpha(expandedContentAlpha),
+                    Modifier.collapseSize(optimizeCollapseRendering, density,
+                        widthPx = { readFrame().restingWidth - 8f * density.density })
+                        .fillMaxHeight().collapseAlpha(optimizeCollapseRendering) { readFrame().expandedAlpha },
                     verticalAlignment = Alignment.CenterVertically,
                     content = { leadingContent?.invoke(this); content() }
                 )
@@ -454,7 +467,7 @@ fun LiquidBottomTabs(
         // with that row. It is **omitted** rather than faded because `Modifier.alpha` is an inner
         // layer here: the droplet's own surface, highlight and shadow are drawn by `drawBackdrop`
         // and would escape the alpha, leaving a sliver on the capsule.
-        if (expandedContentAlpha > 0.001f) {
+        if (gates.expandedVisible) {
             val selectionBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
             val thumbMaterial = if (optimizeCollapseRendering) {
                 remember(selectionBackdrop, dampedDragAnimation, isLightTheme, selectionLayerSize) {
@@ -465,65 +478,48 @@ fun LiquidBottomTabs(
                 Modifier
                     .padding(horizontal = 4f.dp)
                     .graphicsLayer {
+                        val current = readFrame()
+                        val tabWidth = current.geometry.tabWidth
+                        val panelOffset = readPanelOffset()
                         translationX =
                             if (leadingPx == 0f) {
                                 if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
                                 else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
-                            } else geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
-                        translationY = collapseDropPx
+                            } else current.geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
+                        translationY = current.drop
                     }
                     .then(thumbMaterial)
-                    .height(panelHeightDp - 8f.dp)
                     // The thumb's width must follow the animated panel: `fillMaxWidth(1f / tabsCount)`
                     // measures against the full box, so it would keep the droplet at its expanded
                     // width while the capsule narrowed. `tabWidth` is the same value whenever no
                     // leading action exists, because `tabWidth = (panelWidth - 2 * inset) / count`
                     // and the 4dp inset is applied on both sides here — exact at progress 0.
-                    .width(with(density) { tabWidth.toDp().coerceAtLeast(1.dp) })
+                    .collapseSize(optimizeCollapseRendering, density,
+                        heightPx = { readFrame().controls.height - 8f * density.density })
+                    .collapseSize(optimizeCollapseRendering, density,
+                        widthPx = { readFrame().geometry.tabWidth.coerceAtLeast(density.density) })
             )
         }
 
         // AM++ scroll collapse: the withdrawn capsule's replacement face. It carries the
         // selected tab's glyph and is the only way back to the expanded bar, so it owns the
         // tap once it is the visible affordance. Drawn above the fading tab row.
-        if (compactContent != null && compactContentAlpha > 0.001f) {
-            // The press feedback must be the same **capsule** the glass is, not the default
-            // rectangular ripple. This box is the panel's full bounding square, so the stock
-            // indication drew a square highlight over a round button — and because the box is
-            // dropped by `collapseDropPx` while the ripple is inset from its own bounds, the square
-            // also read as offset from the circle. Clipping to `Capsule()` makes the two coincide by
-            // construction, at every size, and the highlight is the same `Highlight.Default` the
-            // right-hand search button already gets so the two buttons match.
-            //
-            // `compactInteractive` gates it because a ripple on a control that is not yet live
-            // would promise a tap that does nothing.
+        if (compactContent != null && gates.compactVisible) {
+            // Keep the compact face concentric with the backplate and gate its capsule indication.
             val interactive = onExpandRequest != null &&
-                dev.amenhancer.glass.GlassBarCollapsePolicy.compactInteractive(collapseRaw)
+                gates.compactInteractive
             Box(
                 Modifier
-                    // Deliberately NOT `.align(BottomStart)`. The glass panel above takes the box's
-                    // own `CenterStart` alignment and is then dropped by `collapseDropPx`, which is
-                    // what bottom-anchors it. Bottom-aligning this box *and* dropping it applied the
-                    // anchoring twice, so the glyph sat 6.5dp below the circle's centre — invisible
-                    // when expanded (the drop is 0 and both alignments coincide) and only wrong once
-                    // collapsed, which is exactly how it was reported.
-                    //
-                    // Sharing the panel's alignment and its drop makes the two concentric at every
-                    // progress by construction, rather than by two offsets that have to agree.
-                    .width(panelWidthDp)
-                    .height(panelHeightDp)
-                    .alpha(compactContentAlpha)
+                    // Share the backplate's CenterStart alignment and bottom-anchoring translation.
+                    .collapseSize(optimizeCollapseRendering, density,
+                        widthPx = { readFrame().controls.capsuleWidth })
+                    .collapseSize(optimizeCollapseRendering, density,
+                        heightPx = { readFrame().controls.height })
+                    .collapseAlpha(optimizeCollapseRendering) { readFrame().compactAlpha }
                     // The same drop the glass circle gets, so the glyph stays locked to it through
                     // the shrink and the rebound.
-                    .graphicsLayer { translationY = collapseDropPx }
-                    // `clip` sits BEFORE `clickable`, so it bounds the press indication too —
-                    // that is the whole fix. This box is the panel's full bounding square, so the
-                    // stock rectangular ripple drew a **square** highlight over a round button, and
-                    // because the box is dropped by `collapseDropPx` while the ripple is inset from
-                    // its own bounds the square also read as **offset** from the circle. Clipping to
-                    // the same `Capsule()` the glass draws makes the two coincide by construction, at
-                    // every size, and is a no-op on the expanded bar where the box is the capsule's
-                    // own bounds anyway.
+                    .graphicsLayer { translationY = readFrame().drop }
+                    // Clip before clickable so the indication shares the material's capsule.
                     .clip(Capsule())
                     .then(
                         if (interactive) Modifier.clickable(onClick = onExpandRequest!!) else Modifier
@@ -637,15 +633,26 @@ private fun glassSelectionMaterial(
     }
 )
 
-/**
- * AM++: where the light sits, in the panel's own drawing space — the glass thumb's centre.
- *
- * The thumb's geometry only exists inside the box scope while the highlight is built above it,
- * so the two are wired together through this coupling. Only the thumb decides the position, so
- * the light cannot drift away from the control it belongs to. The squeeze cancels out on its
- * own: the panel and the thumb are nudged by the same amount.
- */
+private data class CollapseFrame(
+    val progress: Float,
+    val controls: dev.amenhancer.glass.GlassBarControls,
+    val restingWidth: Float,
+    val geometry: dev.amenhancer.glass.GlassTabGeometry,
+    val drop: Float,
+    val expandedAlpha: Float,
+    val compactAlpha: Float,
+)
+
+private data class CollapseGates(
+    val expandedVisible: Boolean,
+    val compactVisible: Boolean,
+    val compactInteractive: Boolean,
+    val reserveLayer: Boolean,
+)
+
+/** The pressed light reads the same current frame as the panel and its selected thumb. */
 private class PillCentre {
+    var frame: (() -> CollapseFrame)? = null
     var pillValue: () -> Float = { 0f }
     var panelWidth: Float = 0f
     var panelInset: Float = 0f
@@ -668,7 +675,10 @@ private class PillCentre {
      * light outside the glass it belongs to.
      */
     fun x(): Float {
-        val t = collapse.coerceIn(0f, 1f)
+        val current = frame?.invoke()
+        val panelWidth = current?.restingWidth ?: this.panelWidth
+        val tabWidth = current?.geometry?.tabWidth ?: this.tabWidth
+        val t = (current?.progress ?: collapse).coerceIn(0f, 1f)
         val onTab = panelInset + (pillValue() + 0.5f) * tabWidth
         val fromStart = if (isLtr) onTab else panelWidth - onTab
         val centred = panelWidth / 2f
@@ -684,6 +694,8 @@ private class PillCentre {
  * the drag when it is still held as the finger in charge lifts.
  */
 private class FreeDragBridge {
+    var frame: (() -> CollapseFrame)? = null
+    var offset: (() -> Float)? = null
     var animation: DampedDragAnimation? = null
     var tabWidth: Float = 0f
     var panelWidth: Float = 0f
@@ -815,6 +827,7 @@ private class FreeDragBridge {
     }
 
     private fun tabIndexAt(x: Float): Int? {
+        val tabWidth = frame?.invoke()?.geometry?.tabWidth ?: this.tabWidth
         if (tabWidth <= 0f) return null
         val contentX = logicalX(x)
         if (contentX < 0f || contentX >= tabWidth * tabsCount) return null
@@ -823,13 +836,16 @@ private class FreeDragBridge {
     }
 
     private fun valueAt(x: Float): Float =
-        ((logicalX(x) / tabWidth) - 0.5f)
+        ((logicalX(x) / (frame?.invoke()?.geometry?.tabWidth ?: tabWidth)) - 0.5f)
             .fastCoerceIn(0f, (tabsCount - 1).toFloat())
 
-    private fun logicalX(x: Float): Float =
-        if (isLtr) {
+    private fun logicalX(x: Float): Float {
+        val panelWidth = frame?.invoke()?.restingWidth ?: this.panelWidth
+        val panelOffset = offset?.invoke() ?: this.panelOffset
+        return if (isLtr) {
             x - panelOffset - panelInset
         } else {
             panelWidth - x + panelOffset - panelInset
         }
+    }
 }

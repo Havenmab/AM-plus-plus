@@ -9,8 +9,8 @@ import org.junit.Test
 /**
  * Mid-playback lyric delivery contract. The target no longer re-enters the
  * Fragment install path through an o2 item-update coordinator or a ready-late
- * ledger: every source (configured mappings, automatic fallback and cache
- * refresh) submits its replacement through the exact-profile
+ * ledger: every source (configured mappings, automatic fallback, cache
+ * refresh and LLM translation) submits its replacement through the exact-profile
  * LyricsResultSubmissionBridge, which owns the host result/index contract.
  * Selection happens upstream of publication, and the Fragment install hook
  * observes the owner and acknowledges installation, so no hook path mutates
@@ -77,12 +77,13 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
 
         assertTrue(target.contains("CustomLyricsReplacementSession("))
         assertTrue(target.contains("AutoLyricsReplacementSession("))
+        assertTrue(target.contains("LlmLyricsReplacementSession("))
         assertTrue(target.contains("Handler(Looper.getMainLooper())"))
         assertTrue(target.contains("mainHandler.post {"))
         assertTrue(target.contains("resultBridge.onReplacementPublished(appleMusicId)"))
         assertEquals(
-            // Configured lyrics, automatic fallback and cache refresh each publish.
-            3,
+            // Configured lyrics, automatic fallback, cache refresh and LLM each publish.
+            4,
             Regex("resultBridge\\.onReplacementPublished").findAll(target).count(),
         )
         assertTrue(
@@ -102,7 +103,7 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         assertTrue(target.contains("session.replacementFor(id)"))
         assertTrue(target.contains("autoSession?.takeoverReplacementFor("))
         assertTrue(target.contains("autoSession?.markTakeoverApplied(id)"))
-        assertTrue(target.contains("parser.unwrap(manual ?: automatic)"))
+        assertTrue(target.contains("parser.unwrap(manual ?: automatic ?: translated)"))
         assertTrue(
             target.indexOf("val selectReplacement:") <
                 target.indexOf("LyricsResultSubmissionBridge.create("),

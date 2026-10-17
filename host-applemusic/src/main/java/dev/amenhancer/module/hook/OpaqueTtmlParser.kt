@@ -4,9 +4,17 @@ package dev.amenhancer.module.hook
 internal class OpaqueTtmlParser(private val native: TtmlNativeParser) {
     private class Handle(val pointer: Any, var document: String? = null) : NativeLyricsHandle
     private val handles = mutableListOf<java.lang.ref.WeakReference<Handle>>()
+    private val moduleParse = ThreadLocal<Boolean>()
     // Preparation and independent refresh workers share one native parser.
-    @Synchronized fun parse(ttml: String): NativeLyricsHandle? =
-        (wrap(native.parse(ttml)) as? Handle)?.also { it.document = ttml }
+    @Synchronized fun parse(ttml: String): NativeLyricsHandle? {
+        moduleParse.set(true)
+        return try {
+            (wrap(native.parse(ttml)) as? Handle)?.also { it.document = ttml }
+        } finally { moduleParse.remove() }
+    }
+
+    /** The parser hook must not treat a module-produced replacement as native input. */
+    fun isModuleParse(): Boolean = moduleParse.get() == true
 
     /** Content identity for submission deduplication; never shares mutable pointers across IDs. */
     @Synchronized fun documentOf(payload: Any): String? =

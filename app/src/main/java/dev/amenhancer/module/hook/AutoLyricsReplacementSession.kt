@@ -19,6 +19,11 @@ import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateSources
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.lyrics.FileLlmLyricsCache
+import dev.amenhancer.module.lyrics.LlmLyricsClient
+import dev.amenhancer.module.lyrics.LlmLyricsConfig
+import dev.amenhancer.module.lyrics.LlmLyricsDocument
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -38,6 +43,7 @@ private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 internal fun createAutoLyricsRuntime(
     application: Application,
     suppressedIds: Set<Long> = emptySet(),
+    configuration: () -> ModuleSettings = { ModuleSettings() },
 ): AutoLyricsRuntime {
     val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
     val lyricTransport = HttpLyricTransport(
@@ -140,11 +146,63 @@ internal fun createAutoLyricsRuntime(
         fetchLunabeatTtml = lunabeat::fetch,
         fetchAutoCache = resolver::fetch,
     )
+    val llmExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        { task -> Thread(task, "ampp-llm-lyrics").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+    val llmCache = FileLlmLyricsCache(File(application.filesDir, "ampp-llm-lyrics"))
+    val llmClient = LlmLyricsClient()
+    val llm = LlmLyricsRuntime(
+        configuration = {
+            configuration().let { settings ->
+                if (settings.customLyricsEnabled && settings.automaticLyricsEnabled && settings.llmLyricsEnabled) {
+                    LlmLyricsConfig(
+                        baseUrl = settings.llmLyricsBaseUrl,
+                        apiKey = settings.llmLyricsApiKey,
+                        model = settings.llmLyricsModel,
+                        thinkingEnabled = settings.llmLyricsThinkingEnabled,
+                    )
+                } else null
+            }
+        },
+        translate = translate@{ request, isCancelled ->
+            if (isCancelled()) return@translate null
+            // Eligibility always precedes cache reads, including on later visits.
+            val document = LlmLyricsDocument.prepare(request.originalTtml) ?: return@translate null
+            if (isCancelled()) return@translate null
+            llmCache.read(request.appleMusicId, request.originalTtml, request.config)?.let { cached ->
+                return@translate cached.takeUnless { isCancelled() }
+            }
+            val translations = llmClient.translate(
+                config = request.config,
+                texts = document.texts,
+                title = request.title,
+                artist = request.artist,
+                sourceLanguage = document.sourceLanguage,
+                isCancelled = isCancelled,
+            ) ?: return@translate null
+            if (isCancelled()) return@translate null
+            val translated = document.withTranslations(translations) ?: return@translate null
+            if (isCancelled()) return@translate null
+            translated.takeUnless { isCancelled() }
+        },
+        executor = Executor { task ->
+            llmExecutor.queue.clear()
+            llmExecutor.execute(task)
+        },
+        close = { llmExecutor.shutdownNow() },
+        onPrepared = { request, translated ->
+            // Persist only a host-accepted result; never use the custom-lyrics publisher.
+            llmCache.write(request.appleMusicId, request.originalTtml, request.config, translated)
+        },
+    )
     return AutoLyricsRuntime(
         resolver = resolver,
         cache = cache,
         executor = executor,
         publisher = publisher,
+        llm = llm,
         suppressedIds = suppressedIds,
         refreshExecutor = Executor { task ->
             // Old waiting visits have already been cancelled by the session's generation.

@@ -68,6 +68,7 @@ data class AutoLyricsRuntime(
     val refreshSong: ((Long, () -> Boolean) -> dev.amenhancer.module.model.CustomLyricsEntry?)? = null,
     val refreshExecutor: Executor? = null,
     val closeRefresh: () -> Unit = {},
+    val llm: LlmLyricsRuntime? = null,
 )
 
 /**
@@ -229,6 +230,7 @@ class AutoLyricsReplacementSession(
     private val nowMs: () -> Long = { System.currentTimeMillis() },
     private val retryCooldownMs: Long = DEFAULT_RETRY_COOLDOWN_MS,
     private val onFreshCandidate: ((Long) -> Unit)? = null,
+    private val onLookupMiss: ((Long) -> Unit)? = null,
 ) {
     private val pointers = object : LinkedHashMap<Long, Any>(CACHE_CAPACITY, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Any>?): Boolean =
@@ -393,6 +395,9 @@ class AutoLyricsReplacementSession(
                 removePointerIf(appleMusicId, preparedPointer)
                 if (!published || preparedCandidate == null) {
                     markFailedIfCurrent(appleMusicId, requestGeneration)
+                    if (isCurrentRequest(appleMusicId, requestGeneration)) {
+                        runCatching { onLookupMiss?.invoke(appleMusicId) }
+                    }
                 }
                 return
             }

@@ -8,7 +8,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 
-/** User-supplied SVG glyphs rendered without module-resource lookups. */
+/** SVG glyphs rendered without module-resource lookups, including AM++-authored settings icons. */
 internal enum class EmbeddedSvgIcon {
     AddLyrics,
     ImportTtml,
@@ -16,6 +16,10 @@ internal enum class EmbeddedSvgIcon {
     BackupRestore,
     Back,
     RestoreDefault,
+    ApiEndpoint,
+    ApiKey,
+    Model,
+    Thinking,
 }
 
 /** Marks drawables that own their SVG fill rather than inheriting ImageView tint. */
@@ -24,6 +28,8 @@ internal interface EmbeddedOwnColorDrawable
 private data class EmbeddedSvgSpec(
     val pathData: String,
     val fillColor: Int,
+    val viewport: Float = 1254f,
+    val strokeWidth: Float = 0f,
 )
 
 internal object EmbeddedSettingsSvgAssets {
@@ -159,6 +165,33 @@ internal object EmbeddedSettingsSvgAssets {
         "L243 695 L238 661 L237 627 L238 593 L243 559 L250 526 L261 494 L274 462 L289 432 L308 403 L328 376 L351 351 L376 328 " +
         "L403 308 L432 289 Z"
 
+    /** AM++-authored 24x24 SVG outlines, with matching rounded 1.8-unit strokes. */
+    private const val API_ENDPOINT_PATH =
+        "M12 3 L14.33 3.31 L16.5 4.21 L18.36 5.64 L19.79 7.5 L20.69 9.67 " +
+        "L21 12 L20.69 14.33 L19.79 16.5 L18.36 18.36 L16.5 19.79 L14.33 20.69 " +
+        "L12 21 L9.67 20.69 L7.5 19.79 L5.64 18.36 L4.21 16.5 L3.31 14.33 " +
+        "L3 12 L3.31 9.67 L4.21 7.5 L5.64 5.64 L7.5 4.21 L9.67 3.31 Z " +
+        "M12 3 L10.45 4.2 L9.15 6.3 L8.3 9 L8 12 L8.3 15 L9.15 17.7 L10.45 19.8 " +
+        "L12 21 L13.55 19.8 L14.85 17.7 L15.7 15 L16 12 L15.7 9 L14.85 6.3 L13.55 4.2 Z " +
+        "M3 12 L21 12"
+
+    private const val API_KEY_PATH =
+        "M12.5 8 L12.16 9.72 L11.18 11.18 L9.72 12.16 L8 12.5 L6.28 12.16 " +
+        "L4.82 11.18 L3.84 9.72 L3.5 8 L3.84 6.28 L4.82 4.82 L6.28 3.84 " +
+        "L8 3.5 L9.72 3.84 L11.18 4.82 L12.16 6.28 Z " +
+        "M11.18 11.18 L20.5 20.5 L22 19 " +
+        "M16.5 16.5 L14 19 M19 19 L16.5 21.5"
+
+    private const val MODEL_PATH =
+        "M8 5 L16 5 L18 7 L18 17 L16 19 L8 19 L6 17 L6 7 Z " +
+        "M9 9 L15 9 L15 15 L9 15 Z " +
+        "M9 2 L9 5 M15 2 L15 5 M9 19 L9 22 M15 19 L15 22 " +
+        "M3 9 L6 9 M3 15 L6 15 M18 9 L21 9 M18 15 L21 15"
+
+    private const val THINKING_PATH =
+        "M7 4 L17 4 L20 7 L20 14 L17 17 L11 17 L6 21 L6 17 L4 15 L4 7 Z " +
+        "M8 10.5 L8.01 10.5 M12 10.5 L12.01 10.5 M16 10.5 L16.01 10.5"
+
     private val specs = mapOf(
         EmbeddedSvgIcon.AddLyrics to EmbeddedSvgSpec(ADD_LYRICS_PATH, Color.parseColor("#A94B76")),
         EmbeddedSvgIcon.ImportTtml to EmbeddedSvgSpec(IMPORT_TTML_PATH, Color.parseColor("#A94B73")),
@@ -166,6 +199,10 @@ internal object EmbeddedSettingsSvgAssets {
         EmbeddedSvgIcon.BackupRestore to EmbeddedSvgSpec(BACKUP_RESTORE_PATH, Color.parseColor("#A84C76")),
         EmbeddedSvgIcon.Back to EmbeddedSvgSpec(BACK_PATH, Color.parseColor("#F33343")),
         EmbeddedSvgIcon.RestoreDefault to EmbeddedSvgSpec(RESTORE_DEFAULT_PATH, Color.parseColor("#FA233B")),
+        EmbeddedSvgIcon.ApiEndpoint to EmbeddedSvgSpec(API_ENDPOINT_PATH, EmbeddedSettingsPalette.Light.accent, 24f, 1.8f),
+        EmbeddedSvgIcon.ApiKey to EmbeddedSvgSpec(API_KEY_PATH, EmbeddedSettingsPalette.Light.accent, 24f, 1.8f),
+        EmbeddedSvgIcon.Model to EmbeddedSvgSpec(MODEL_PATH, EmbeddedSettingsPalette.Light.accent, 24f, 1.8f),
+        EmbeddedSvgIcon.Thinking to EmbeddedSvgSpec(THINKING_PATH, EmbeddedSettingsPalette.Light.accent, 24f, 1.8f),
     )
 
     fun drawable(icon: EmbeddedSvgIcon, fillColor: Int? = null): Drawable? = runCatching {
@@ -186,7 +223,10 @@ private class EmbeddedSvgPathDrawable(
     }
     private val path = parsePath(spec.pathData)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+        style = if (spec.strokeWidth > 0f) Paint.Style.STROKE else Paint.Style.FILL
+        strokeWidth = spec.strokeWidth
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
     private var alphaValue = 255
     private var colorFilterValue: ColorFilter? = null
@@ -197,7 +237,7 @@ private class EmbeddedSvgPathDrawable(
         val size = minOf(box.width(), box.height()).toFloat()
         val left = box.left + (box.width() - size) / 2f
         val top = box.top + (box.height() - size) / 2f
-        val scale = size / SVG_VIEWPORT
+        val scale = size / spec.viewport
         paint.color = fillColor
         paint.alpha = alphaValue
         paint.colorFilter = colorFilterValue
@@ -222,7 +262,6 @@ private class EmbeddedSvgPathDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     private companion object {
-        const val SVG_VIEWPORT = 1254f
         val pathToken = Regex("""[MLZmlz]|[-+]?(?:\d+(?:\.\d+)?|\.\d+)""")
 
         fun parsePath(data: String): Path {

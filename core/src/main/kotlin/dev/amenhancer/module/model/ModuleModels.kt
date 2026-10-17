@@ -71,6 +71,20 @@ data class ModuleSettings(
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,
+    /**
+     * Last-resort tier of the automatic lyrics chain: translate the original lyrics through an
+     * OpenAI-compatible endpoint, but only when the native lyrics and every configured source
+     * missed. Per-song eligibility gates live in the LLM lyrics runtime.
+     */
+    val llmLyricsEnabled: Boolean = false,
+    /** OpenAI-compatible Chat Completions endpoint; blank disables the fallback. */
+    val llmLyricsBaseUrl: String = "",
+    /** Bearer token sent to [llmLyricsBaseUrl]. Never logged or echoed back to the host. */
+    val llmLyricsApiKey: String = "",
+    /** Model name requested from the OpenAI-compatible endpoint. */
+    val llmLyricsModel: String = "",
+    /** Send the user-selected thinking mode to the configured compatible endpoint. */
+    val llmLyricsThinkingEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,
@@ -94,11 +108,25 @@ data class ModuleSettings(
         const val MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP = 0
         const val MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP = 16
 
+        /** Bounds for the stored OpenAI-compatible lyrics-translation configuration. */
+        const val MAX_LLM_LYRICS_BASE_URL_LENGTH = 2048
+        const val MAX_LLM_LYRICS_API_KEY_LENGTH = 4096
+        const val MAX_LLM_LYRICS_MODEL_LENGTH = 256
+
         fun isValidAppleMusicDpi(value: Int): Boolean =
             value == FOLLOW_SYSTEM_APPLE_MUSIC_DPI || value in MIN_APPLE_MUSIC_DPI..MAX_APPLE_MUSIC_DPI
 
         fun normalizeAppleMusicDpi(value: Int): Int =
             value.takeIf(::isValidAppleMusicDpi) ?: FOLLOW_SYSTEM_APPLE_MUSIC_DPI
+
+        fun normalizeLlmLyricsBaseUrl(value: String): String =
+            value.trim().take(MAX_LLM_LYRICS_BASE_URL_LENGTH)
+
+        fun normalizeLlmLyricsApiKey(value: String): String =
+            value.trim().take(MAX_LLM_LYRICS_API_KEY_LENGTH)
+
+        fun normalizeLlmLyricsModel(value: String): String =
+            value.trim().take(MAX_LLM_LYRICS_MODEL_LENGTH)
 
         fun normalizePhoneLiquidGlassBottomGapDp(value: Int): Int =
             value.coerceIn(MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP, MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)

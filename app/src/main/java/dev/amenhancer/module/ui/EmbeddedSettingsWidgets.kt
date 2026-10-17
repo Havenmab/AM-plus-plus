@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -583,6 +584,8 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
         clickable: Boolean = true,
         inlineSummary: Boolean = false,
         compactWidePadding: Boolean = false,
+        chevronTint: Int = EmbeddedSettingsPalette.Light.onSurfaceVariant,
+        summaryMaxLines: Int = 2,
         onClick: () -> Unit,
     ): View = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -625,8 +628,8 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
                     textSize = embeddedTextSize(activity, 13f, 12f)
                     setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
                     setSingleLine(false)
-                    maxLines = if (isEmbeddedPhone(activity)) 2 else 2
-                    if (isEmbeddedPhone(activity)) {
+                    maxLines = summaryMaxLines
+                    if (isEmbeddedPhone(activity) || summaryMaxLines == 1) {
                         ellipsize = android.text.TextUtils.TruncateAt.END
                     }
                     setPadding(0, dp(activity, 2), 0, 0)
@@ -650,7 +653,7 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
             setEmbeddedImageDrawable(activity,
                 EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.ChevronRight,
-                    EmbeddedSettingsPalette.Light.onSurfaceVariant,
+                    chevronTint,
                 ),
             )
             scaleType = ImageView.ScaleType.CENTER
@@ -795,6 +798,8 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorInput(
         initial: String = "",
         numeric: Boolean = false,
         multiline: Boolean = false,
+        password: Boolean = false,
+        maxLength: Int = 0,
     ): EditText = EditText(activity).apply {
         bindEmbeddedInputTheme(activity)
         this.hint = hint
@@ -806,6 +811,9 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorInput(
 
         inputType = when {
             numeric -> InputType.TYPE_CLASS_NUMBER
+            password -> InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             multiline -> InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             else -> InputType.TYPE_CLASS_TEXT
@@ -825,6 +833,102 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorInput(
             minimumHeight = dp(activity, 56)
             setPadding(0, dp(activity, 4), 0, dp(activity, 2))
         }
+        if (maxLength > 0) {
+            filters = arrayOf(InputFilter.LengthFilter(maxLength))
+        }
+    }
+
+
+/**
+ * One editable text setting whose value opens a themed input dialog. Used by the
+ * OpenAI-compatible LLM lyrics fallback rows on the lyrics settings page.
+ */
+internal fun EmbeddedSettingsHost.embeddedTextValueRow(
+        activity: Activity,
+        title: String,
+        value: String,
+        emptySummary: String,
+        iconDrawable: Drawable?,
+        hint: String,
+        notice: String? = null,
+        password: Boolean = false,
+        masked: Boolean = false,
+        maxLength: Int = 0,
+        onChanged: (String) -> Unit,
+    ): View = embeddedNavigationRow(
+        activity = activity,
+        title = title,
+        summary = when {
+            value.isBlank() -> emptySummary
+            masked -> "••••••"
+            else -> value
+        },
+        iconDrawable = iconDrawable,
+        // Long endpoint/model values must not consume the title's weighted width.
+        inlineSummary = false,
+        summaryMaxLines = 1,
+        onClick = {
+            showEmbeddedTextValueDialog(
+                activity = activity,
+                title = title,
+                notice = notice,
+                hint = hint,
+                initial = value,
+                password = password,
+                maxLength = maxLength,
+                onSelected = onChanged,
+            )
+        },
+    )
+
+
+/**
+ * Text input dialog shared by the OpenAI-compatible configuration rows.
+ *
+ * A password field renders without echoing the value and stays out of the IME
+ * suggestion pipeline; the value is never written to a log.
+ */
+internal fun EmbeddedSettingsHost.showEmbeddedTextValueDialog(
+        activity: Activity,
+        title: String,
+        notice: String?,
+        hint: String,
+        initial: String,
+        password: Boolean,
+        maxLength: Int = 0,
+        onSelected: (String) -> Unit,
+    ) {
+        val input = embeddedLyricsEditorInput(
+            activity = activity,
+            hint = hint,
+            initial = initial,
+            password = password,
+            maxLength = maxLength,
+        )
+        val content = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(activity, if (isEmbeddedPhone(activity)) 4 else 8),
+                0,
+                dp(activity, if (isEmbeddedPhone(activity)) 4 else 8),
+                0,
+            )
+            addView(input, matchWidthWrapContent())
+        }
+        val builder = embeddedDialogBuilder(activity).setTitle(title)
+        if (notice != null) builder.setMessage(notice)
+        val dialog = builder
+            .setView(content)
+            .setNegativeButton(localizedText(ModuleText.CANCEL), null)
+            .setPositiveButton(localizedText(ModuleText.SAVE), null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                onSelected(input.text?.toString()?.trim().orEmpty())
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 
 
@@ -1315,7 +1419,10 @@ internal fun EmbeddedSettingsHost.embeddedDialogWidth(activity: Activity, page: 
         if (isEmbeddedPhone(activity)) return null
         // AlertDialog applies a 16dp inset on each side. These fractions target
         // the visible white panel after that inset, not the outer window.
-        val fraction = if (page == EmbeddedSettingsPage.CUSTOM_LYRICS) 0.418f else 0.514f
+        val fraction = when (page) {
+            EmbeddedSettingsPage.CUSTOM_LYRICS, EmbeddedSettingsPage.LLM_LYRICS -> 0.418f
+            else -> 0.514f
+        }
         return (activity.resources.displayMetrics.widthPixels * fraction).toInt()
     }
 
@@ -1323,7 +1430,10 @@ internal fun EmbeddedSettingsHost.embeddedDialogWidth(activity: Activity, page: 
 internal fun EmbeddedSettingsHost.embeddedDialogContentHeight(activity: Activity, page: EmbeddedSettingsPage): Int {
         val height = activity.resources.displayMetrics.heightPixels
         if (isEmbeddedPhone(activity)) return (height * 0.70f).toInt()
-        val fraction = if (page == EmbeddedSettingsPage.CUSTOM_LYRICS) 0.888f else 0.837f
+        val fraction = when (page) {
+            EmbeddedSettingsPage.CUSTOM_LYRICS, EmbeddedSettingsPage.LLM_LYRICS -> 0.888f
+            else -> 0.837f
+        }
         return (height * fraction).toInt()
     }
 

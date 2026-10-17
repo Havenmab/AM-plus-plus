@@ -140,6 +140,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     FEATURES("Features", "功能"),
     TABLET_DUAL_PANE("Tablet dual-pane player", "平板双栏播放器"),
     TABLET_DUAL_PANE_SUMMARY("Enable two panes on tablets in landscape", "平板横屏启用双栏"),
+    TABLET_DUAL_PANE_HIDE_STATUS_BAR("Hide status bar in dual-pane player", "双栏播放器隐藏状态栏"),
+    TABLET_DUAL_PANE_HIDE_STATUS_BAR_SUMMARY("Hide the status bar while the dual-pane player is expanded · Restart to apply", "双栏播放器展开时隐藏状态栏 · 重启应用后生效"),
     CELLULAR_SETTINGS("Show cellular data settings", "强制显示蜂窝数据入口"),
     CELLULAR_SETTINGS_SUMMARY("Restore native cellular data settings · Restart to apply", "恢复原生蜂窝数据设置 · 重开应用后显示"),
     TABLET_BOTTOM_BAR_FIX("Tablet bottom bar compensation", "平板底栏补偿"),

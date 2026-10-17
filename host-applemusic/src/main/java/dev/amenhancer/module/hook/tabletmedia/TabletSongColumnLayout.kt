@@ -25,6 +25,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.hook.ConstraintLayoutPane
 import dev.amenhancer.module.hook.TabletArtworkLayoutPolicy
 import dev.amenhancer.module.hook.AlphaGradientEdgeFieldProfiles
@@ -76,6 +77,8 @@ internal class TabletSongColumnLayout(
     private val playerLocation = IntArray(2)
     private val windowLocation = IntArray(2)
     private var closed = false
+    // Snapshot with the player session, rather than decoding settings on animation frames.
+    private val hideStatusBarEnabled = TargetConfigClient.currentSettings().dualPaneHideStatusBarEnabled
     private var fullscreenWindow: Window? = null
     private var restoreStatusBar = false
     private var statusBarBehavior: OwnedHostProperty<Int>? = null
@@ -204,7 +207,8 @@ internal class TabletSongColumnLayout(
     fun fullscreenForProgress(progress: Float) {
         // Keep the viewport stable throughout collapse. Restoring bars at its
         // first frame changes insets while native code is animating to the mini.
-        fullscreen(player.isShown && progress > .001f && (progress >= .999f || fullscreenWindow != null))
+        fullscreen(hideStatusBarEnabled && player.isShown && progress > .001f &&
+            (progress >= .999f || fullscreenWindow != null))
     }
     @Suppress("DEPRECATION")
     fun fullscreen(expanded: Boolean) {

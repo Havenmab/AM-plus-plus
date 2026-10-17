@@ -12,6 +12,7 @@ object ModuleSettingsSchema {
 
     fun decode(values: Map<String, *>): ModuleSettings = ModuleSettings(
         dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
+        dualPaneHideStatusBarEnabled = values.boolean(KEY_DUAL_PANE_HIDE_STATUS_BAR, default = false),
         disableEditorialVideoOnTablet = values.boolean(
             KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
             default = true,
@@ -108,6 +109,7 @@ object ModuleSettingsSchema {
     fun encodeOrdinarySettings(settings: ModuleSettings): Map<String, Any> {
         val values = linkedMapOf<String, Any>(
             KEY_DUAL_PANE to settings.dualPaneEnabled,
+            KEY_DUAL_PANE_HIDE_STATUS_BAR to settings.dualPaneHideStatusBarEnabled,
             KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET to settings.disableEditorialVideoOnTablet,
             KEY_PHONE_LIQUID_GLASS to settings.phoneLiquidGlassEnabled,
             KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP to
@@ -292,6 +294,7 @@ object ModuleSettingsSchema {
 
     private val settingKeys = setOf(
         KEY_DUAL_PANE,
+        KEY_DUAL_PANE_HIDE_STATUS_BAR,
         KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET,
         KEY_PHONE_LIQUID_GLASS,
         KEY_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
@@ -331,6 +334,7 @@ object ModuleSettingsSchema {
     )
 
     private const val KEY_DUAL_PANE = "dual_pane_enabled"
+    private const val KEY_DUAL_PANE_HIDE_STATUS_BAR = "dual_pane_hide_status_bar_enabled"
     private const val KEY_DISABLE_EDITORIAL_VIDEO_ON_TABLET =
         "disable_editorial_video_on_tablet"
     private const val KEY_PHONE_LIQUID_GLASS = "phone_liquid_glass_enabled"

@@ -127,7 +127,7 @@ Java 反编译用于理解调用链，成员声明与完整签名以 DEX/smali �
 | 接入域 | 每个构建应核对 |
 |---|---|
 | Activity 与播放器 | PlayerActivity 根视图、BottomSheet、控制器初始化/创建/选择 pane、原生枚举和状态访问器 |
-| 双栏资源 | 主播放器布局、左右 host、ConstraintLayout 字段、歌词 sheet、导航高度与收起边界 |
+| 双栏资源 | 主播放器布局、左右 host、ConstraintLayout 字段、歌词 sheet、导航高度、收起边界与共享左栏的角色载体 |
 | 歌词同步 | Fragment binding、RecyclerView、渐变、度量、行词回调及监听清理 |
 | 旧 chrome | 导航 holder、导航切页、mini、展开进度、拖动与采样区域 |
 | 设置 | PreferenceFragment、PreferenceScreen、设置行 key/标题/摘要、生命周期及 Activity 结果桥 |
@@ -755,35 +755,49 @@ alias 到达或恢复原名时，按当前实体重建 title/header/shelves 并�
 
 ## 8. 平板布局与视频尺寸
 
-### 8.1 资格与基础布局
+### 8.1 资格、参考视觉与尺度
 
-双栏使用既有门禁：精确版本、开关、横屏、宽度至少 600dp，以及原生 `useNavigationDrawer`。同时核对 DPI 覆盖和多窗口对有效宽度的影响。
+双栏使用既有门禁：精确版本、开关、横屏、宽度至少 600dp，以及原生 `useNavigationDrawer`。DPI 覆盖和多窗口会改变逻辑视口，应按实际窗口重新计算。
 
-当前共享呈现规则如下：
+双栏播放器完全展开时隐藏窗口状态栏，SONG/QUEUE 切换及收起动画过程中保持隐藏；收起停稳、退出双栏资格、视图分离或会话销毁时恢复进入前的可见性。不能在收起第一帧显示状态栏并改变窗口 inset，以免原生缩回 mini 的目标在动画中发生布局变化。Android 30 及以上只对 `WindowInsets.Type.statusBars()` 操作，允许边缘手势临时唤出；较低版本仅持有 `FLAG_FULLSCREEN` 对应位。导航栏、手势区域、decor fitting 与其他窗口标志保持宿主控制，不通过全量重写系统栏 flags 实现全屏。隐藏后使用新的实际视口重新计算几何，不保留旧状态栏高度作额外顶部留白。
 
-| 项目 | 布局要求 |
+左栏层级由真实原生组件构成：metadata、progress、transport、favorite、more、音质与封面保持原生，保留父链、数据绑定、动作绑定、icon selector 与字体样式。统一的 core grid/flex 响应式规则只负责布局：按参考比例摆放这些原生 View，计算位置、间距与容器尺寸，渲染尺寸以 native drawable 矩阵为准；模块不建立自绘左栏替代树。SONG 与 QUEUE 底部共用同一进度、播放及音量布局；QUEUE 顶部信息和列表保留原生。右栏歌词和右下代理保持既有路径。
+
+参考规则来源为 YouLyPlus 的 AMLL `horizontal.module.css`、PrebuiltLyricPlayer、MusicInfo、MenuButton、BouncingSlider 与 VolumeControlSlider。原生已有组件仅应用尺寸、位置、间距与排版比例，图标与文字沿用该构建的 native drawable / icon selector 与字体样式；原生字形轮廓随宿主实现。原生缺少的音量组件移植 VolumeControlSlider 的 SVG 路径、viewBox 和 BouncingSlider 绘制及交互规则，实际操作连接 Android 系统媒体音量；不以参考资产替换其他原生图标。
+
+CSS px 对应 Android 逻辑像素：以实际 player_root 宽高除以 displayMetrics.density 得到 W/H，解析 CSS 媒体与容器查询，再将结果乘同一 density。字号采用物理 px 写入，避免系统 fontScale 再缩放一次。不能固定画板高度，不能把聊天图片的压缩尺寸视为窗口尺寸。横向遮挡仅扣除尚未由父布局消化的部分；竖向 inset 用于父坐标映射，不重复改变百分比基准。
+
+| 项目 | 参考规则 |
 |---|---|
-| 分区 | 名义分隔位置为播放器宽度的 45%，歌词视口位于右侧 55% 分区 |
-| 左侧留白 | 标题/进度内容到屏幕左边缘 50dp |
-| 右侧留白 | 标题/进度内容右端到歌词正文起点 50dp |
-| 歌词留白 | 歌词自己的 margin、padding 和右侧边界沿用原生 |
-| 左栏对齐 | 标题、进度、音质标识、播放按钮和封面使用一致的水平中心 |
-| Fragment 控制区 | SONG / QUEUE 控制区为原生容器高度的 25% |
-| 音量 | Fragment 的整个控件含两端图标与进度内容等宽，轨道内部每侧保留40dp图标空间 |
-| Fragment footer | 被替代的原生动作保留布局但不可见且不接收输入，模块音量及右下代理使用当前有效位置 |
-| Fragment 代理 | 歌词/队列代理沿用原生 drawable、selector、tint及动作，44dp点击区域、8dp间隔、底部12dp |
-| 播放反馈 | 原生图标尺寸保持，Fragment水波纹为图标最大半径外加8dp、白色20%不透明度 |
-| 原生动作 | SONG / QUEUE、播放、搜索、抽屉和队列操作保留原生语义 |
+| 分区 | grid 列为 `.45fr .55fr 0fr`，扣除列间距后解析；内容在左列居中 |
+| 内容宽 | `min(60cqh,38cqw)`；H ≤ 1000 时为 `min(55cqh,38cqw)`，H ≤ 512 时为 `min(50cqh,38cqw)`；封面与控制组共宽 |
+| 纵向 grid | `minmax(30px,.45fr) auto auto 25% 0fr .3fr`；H ≤ 768 时末行 `.2fr`。保留小于 1 的 fr 总和、auto 行 stretch 与 min-content 的语义，不把剩余空间按 fr 比例强行分完 |
+| 横条 | 模块自补，参考 50×8px、圆角 4px、thumb wrapper margin 为 2vh；绘制锚点与命中区独立 |
+| 控制组 | 高 25%，`min-height:0`、column flex；顶部 padding 为 `1.75em−8px`，H ≤ 640 时为 0。media 区 `flex:1; min-height:0`，不人为预留 24px 或挤小封面 |
+| 间距与字体 | 默认 gap 8px、div em 16px；H ≤ 768 时 gap 2px、div em 12.8px。button 沿用 UA 13⅓px 字号，分别解析 em |
+| Metadata | 字号 `max(2vh,1em)`、行高 1.25em，标题 500、艺人 400、透明度 .9/.45、字距 .4px；H ≥ 1000 时 metadata 块上下 padding 为 2vh/1vh |
+| 更多 | 原生 more 按钮保留纵向省略号形态，favorite 保留原生星形；位置与尺寸按参考比例摆放。动作连接原生更多菜单 |
+| 进度 | 原生 SeekBar 与两端时间标签保留原生绘制；按 policy 布置轨道占位与标签 gap，清理负 margin 避免重叠；标签字体 `max(1.2vh,.8em)`、透明度 .5，上距 4px（H ≤ 768 时为 0） |
+| 播放区 | 五个等分分布槽位，按钮宽 `min(18%,100cqh)`；切歌图标按前/后一首路径占比（参考 80/134 与 native 39/40）保持比例；上一首、播放暂停、下一首、favorite 与 more 均保留原生，模式资源走 native drawable |
+| 音量 | 模块自补，使用参考 VolumeControlSlider 的扬声器路径、viewBox 与 BouncingSlider 轨道及拖动反馈；左右 margin 为 −12px/−8px，轨道占两侧 speaker 之间的 flex 空间；状态与操作连接系统 STREAM_MUSIC |
+| 底部预留 | 0fr 行保留原始辅助按钮的 min-content；尺寸按 button em 及 W/H 断点计算，右栏工具不迁入左侧 |
 
-50dp 的右侧测量终点是歌词正文，不是名义分隔线。对当前原生布局，歌词起点为分隔线加 48dp（host 16dp、行 margin 20dp、文字 padding 12dp）；原生播放器内部左右各 32dp，外层各 18dp。左 host 宽度为 `0.45 × 播放器宽度 + 48dp - 2 × 18dp`。这是可见内容间距，不能据此声称两个实际 View 宽度严格为 45% / 55%。
+参考音量条的源路径在绑定阶段解析。扬声器保留 32×40、43×40 的 viewBox，短窗口赋 24×24 外框时仍按 SVG 的居中等比规则绘制。轨道由 8px 展开至 20px：展开使用 280ms easeOut，收起使用质量 1、刚度 200、阻尼 12 的弹簧；越界位移为 `tanh(2×越界比例)×12px`，整组位移弹簧为刚度 300、阻尼 12。端点扬声器各路径按 1→1.2→.85→1 回弹，三段各 200ms、逐路径延迟 50ms。Android 绘制及帧调度移植这些参数，不宣称与浏览器 framer-motion 逐帧数值相同。拖动实时写入系统音量并回读实际值，取消不额外提交，隐藏时清理动画、手势及监听；鼠标悬停沿用展开反馈。
 
-计算时先将 dp 按当前宿主密度换算为像素，再计算容器和整像素边界；窗口宽度来自当前播放器区域。
+进度区域保持原生 SeekBar 与时间标签：轨道占位、标签 gap 与负 margin 清理按 policy 完成，不引入触摸代理，拖动、监听与无障碍始终走原生实例。播放暂停保留原生绑定的 drawable、描述与监听器；上一首、播放暂停、下一首、favorite、more 仍由原生 View 处理动作，不改写绑定或动作 selector。模式状态和操作只走精确档案声明的 `tablet-playback-*` 契约；缺失时不猜测宿主成员。
 
-新宿主需重新核对这些内部尺寸及资源限定符，再由共享布局策略计算容器。普通/逐字、静态、翻译、背景、间奏和 credits 行应分别检查；字体、高亮比例和字形边界会影响可见像素。
+原生左栏各组件完整保留原有视觉、触摸与无障碍暴露，模块不写入自绘替代视觉，也不整体清零 `player_controls` 父 alpha。保留 `player_controls` 父容器及其原生测量，供数据绑定和右栏代理读取。会话销毁、视图替换、资格变化及失败时回退模块布局写入，并释放音量监听与叠加层。几何输入无效时恢复原生布局。绑定更换时清理上一会话的布局写入，避免旧状态落到上一首的视图。
 
-Fragment 媒体组件位于 `hook/tabletmedia/`。旧 Activity 路径共用列宽和封面策略，并保留自己的原生控制组件；不能把 Fragment 的附加音量、代理按钮或动画接入直接视为 Activity 页面族功能。
+横条命中使用独立的触摸目标，绘制仍遵循参考尺寸。收起交给 framework `ACTION_COLLAPSE` 与 Activity 返回链；不新增私有收起契约，不扩成整屏点击层。保留 sheet 与封面手势。
 
-Fragment 音量行中心比原生 footer 中心高6dp，与播放/进度区域保留4dp净间距；短窗口优先调整行位置或压缩触摸空白，24dp图标保持。原生被替代动作使用 INVISIBLE 保留约束，并关闭点击、取消待处理输入及按压反馈；原本 GONE 的装饰保持 GONE。关闭会话恢复仍由模块拥有的属性。歌词渐变视口不额外预留底部代理高度。
+封面几何是单独的原生桥接边界。约束字段必须按当前构建恢复；混淆 `$b` 的物理 leftToLeft/leftToRight/rightToLeft/rightToRight 为 e/f/g/h，相对 startToStart/endToEnd 为 t/v。不能将这组宿主字段用于模块视觉树，也不能用左右反向的映射依靠相对锚掩盖错误。
+
+适配时以逻辑视口、播放状态及源 CSS 断点对照，检查 512/640/768/1000/1080 高度边界和宽度查询两侧。物理分辨率相同而逻辑密度不同，可能进入不同断点；由使用者在目标设备手动确认观感、操作、旋转与多窗口，不以构建成功代替视觉验收。
+
+
+封面缩放完全由原生处理：模块不持有强制 scaleX/scaleY=1，也不写入或覆盖原生的暂停缩放、sheet、队列与共享过渡动画。nativeCover 的 card、parent 归属与原生 Animator 保持宿主行为；模块对封面的写入仅限 8.1 内容宽规则下的位置与尺寸。
+
+封面圆角、阴影与裁切由原生 image / video 处理，模块不接入 ViewOutlineProvider、clipToOutline 或自算圆角；与参考组件圆角风格的差异随原生实现走，不再标注为模块复刻项。
 
 ### 8.2 完整布局和数据绑定
 
@@ -796,12 +810,28 @@ Fragment 音量行中心比原生 footer 中心高6dp，与播放/进度区域�
 - 进度和直播进度的容器 padding、音质标识、播放按钮及 footer 约束。
 - generated binding 是否在换歌、播放状态变化或异步加载后重写 padding、尺寸和可见性。
 - adapter 首次绑定是否早于右栏测量，以及逐字有效宽度是否从正确视口初始化。
+- 左栏各角色的真实载体：封面容器、metadata、progress、transport、volume 与收起横条宿主各自的 View、父链、同名 include 与限定符差异；角色是否与右栏或 QUEUE 共用同一布局。
+- 左栏 binding 覆盖：换歌、播放状态、歌词可用性与异步加载后是否重写左栏的尺寸、padding、字号和可见性；横条宿主是否被原生重新测量或替换。
 
-反射与资源在安装或视图绑定阶段解析。Fragment 的原生 binding 完成接入只处理当前播放器子树，在测量前准备控制区和 footer。尺寸修改后应完成新布局再绘制；普通重新布局期间，已经放置的模块控件保留有效状态。
+音量与横条为模块组件，不依赖宿主同名控件。反射与资源在安装或视图绑定阶段解析。Fragment 的原生 binding 完成接入只处理当前播放器子树，在测量前准备控制区和 footer。尺寸修改后应完成新布局再绘制；普通重新布局期间，已经放置的模块控件保留有效状态。
+
+SONG 的 `player_controls` 直接位于封面与标题所在的 ConstraintLayout；QUEUE 的同名 include 位于 `controls` FrameLayout。必须分别识别两种父链，再交由同一底部控制区布局函数处理。QUEUE 控制区从共享进度起点延伸到原生父容器底端，进度与播放按钮仍按共享几何定位，内层保留 FrameLayout 参数；不能向 FrameLayout 子项写入 ConstraintLayout 锚点。
+
+QUEUE 列表沿用原生覆盖式 footer 契约：渐变容器保留原始视口与约束，底 padding 按控制区外层高度同步，其他 padding 由宿主管理。原生遮罩仅初始化一次，修改 controls.top 后必须同步底部覆盖长度及 stop 位置。模块复用同一个 `AlphaGradientFrameLayout` 的原生渐变 API，将渐隐终点放在新进度起点上方 8CSSpx，羽化长度读取 `queue_bottom_gradient_height`；控制区以下保持透明，滚动回调写入旧颜色时在绘制前恢复该边界。
+
+渐变 API 的解析在绑定阶段按当前构建 `gradientEdges` 档案核对并缓存。原生 positions 允许为空，表示均匀分布；不能强转为非空数组，也不能分步发布长度不同的 colors 与 positions。两者作为同一个 ramp 持有，通过原生双数组 setter 一次更新；bottom size 独立持有，顶部渐变不变。恢复空 positions 时先通过 setter 发布等长的均匀 stop 数组以标记 shader 更新，再恢复已核对的 `f: float[]` 字段为空，保留原始状态及属性所有权规则。新版本须同时核对 getter、双数组 setter、尺寸方法与该字段。
+
+`clipBounds` 在原始视口内使用同一透明终点作边界，先于原生渐变写入；不能通过缩短渐变容器的布局高度重复扣除控制区。原生渐变解析或更新失败只释放该实例的渐变属性、停止重试并记录原因，保留列表裁剪和共享播放器布局，不能调用整套播放器降级路径。退出时分别释放裁剪、ramp 与尺寸。顶部信息、列表适配器、滚动与原生封面过渡保持宿主路径。
+
+共享控制区的准备与封面尺寸变换分离。安装、pane view 创建及 native binding 完成标记布局失效；pane 尚未附着时，在事务后合并一次准备。尺寸、密度、insets、原生绑定或父布局变化时重新计算；原生封面帧捕获前与 pre-draw 只在失效或未就绪时准备。先捕获原生右侧按钮基线，再应用共享控制几何；参数变化后重新测量，不能绘制旧矩形。冷启动首次展开与新 pane 的首帧不等待 sheet 停稳，但已准备的动画帧不得重复扫描控件树、重算几何或逐属性反射校正；封面尺寸变换继续保留原生动画保护。
+
+sheet 中途复用已测量的叠加布局，仅更新 alpha、位移和交互门禁，不重复测量整屏 overlay 或查询播放模式。布局矩形与测量约束不变时跳过 measure/layout。已就绪时 SONG/QUEUE 均由共享会话提供音量和模式按钮，停止旧音量显示与监听；失效时按所有权恢复原生参数并保留既有降级路径。右下代理不依赖参考控制组高度计算底线。冷启动显示及展开/收起流畅度由使用者分别对照，不能以静态路径分析或构建成功代替帧率验收。
+
+左栏的原生桥接资源（封面容器、标题/艺人、进度、播放动作与更多动作）在视图绑定时按名称解析并缓存，ConstraintLayout 参数字段复用该构建已恢复的映射。目标构建若更改资源名、限定符、父链或字段映射，需要同步维护对应契约与映射，并在会话重建后重新解析；不能沿用旧缓存或旧字段名。
 
 ### 8.3 封面、视频与恢复
 
-静态封面基准为实际进度内容宽度与上方可用高度的较小值，并在该区域居中。尺寸由当前测量重新计算，封面可因高度限制小于进度宽度。原生暂停 scale、sheet scale/Y、队列和共享过渡分别保留。
+静态封面与左栏内容同宽，按 8.1 的内容宽规则取值，并在封面区间内居中，不再以进度轨道宽度为基准。尺寸由实际逻辑视口和参考断点重新计算；不人为为控制区挤小封面，输入无效时保持原生布局。横屏静态封面使用参考的完整尺寸；暂停缩放、sheet、队列与共享过渡动画由原生处理，模块不再写入 scale。
 
 视频需要分别核对外层 `artwork_container`、内层 card、静态图、TextureView、尺寸基准和目标尺寸。静态转视频、视频转静态、视频转视频、静态转静态必须独立验收。
 

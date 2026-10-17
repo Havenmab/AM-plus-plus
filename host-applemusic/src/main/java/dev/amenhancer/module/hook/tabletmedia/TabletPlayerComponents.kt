@@ -188,8 +188,9 @@ internal class TabletPlayerComponents(
         val visible = root.isShown && expansion > .001f
         if (referenceControls()) { volume.visibility = View.INVISIBLE; volume.setPageVisible(false) }
         if (placed && expansion > .001f && expansion < .999f) {
-            // Binding callbacks already suppress any re-shown native actions.
-            // Sheet frames only change presentation, not the control hierarchy.
+            // Media updates can re-show retained footer views during crossfade.
+            // Reassert only cached identities here; never rescan the sheet hierarchy.
+            hidden.keys.forEach(::hideSource)
             overlay.alpha = expansion; overlay.visibility = if (visible) View.VISIBLE else View.INVISIBLE
             lyrics.isEnabled = false; queue.isEnabled = false; volume.setPageVisible(false)
             return

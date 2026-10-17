@@ -2,6 +2,8 @@ package dev.amenhancer.module.hook.tabletmedia
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.animation.ValueAnimator
+import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.Color
@@ -14,6 +16,8 @@ import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
+import android.view.animation.PathInterpolator
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -62,8 +66,10 @@ internal class TabletSongColumnLayout(
         player.resources.getIdentifier(name, type, player.context.packageName)
     }
     private fun find(root: View, name: String): View? = resource(name).takeIf { it != 0 }?.let { root.findViewById(it) }
-    private val scale get() = player.resources.displayMetrics.density
+    // Visual CSS units must match the reference browser, independently of Android dp.
+    private val scale get() = TabletArtworkLayoutPolicy.REFERENCE_PIXEL_SCALE
     private fun css(value: Float) = (value * scale).roundToInt()
+    private fun dp(value: Float) = (value * player.resources.displayMetrics.density).roundToInt()
     private var insetTop = 0
     val topInset get() = insetTop
     private var insetBottom = 0
@@ -94,23 +100,100 @@ internal class TabletSongColumnLayout(
     }
     private var lastModeState: TabletPlaybackModes.State? = null
     private var lastModeRead = 0L
-    private fun modeButton(description: String) = ImageButton(player.context).apply {
-        background = null; setPadding(0, 0, 0, 0); scaleType = ImageView.ScaleType.MATRIX
-        contentDescription = description
-        imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+    /** Supplemental buttons retain native glyphs; only their interaction follows MediaButton. */
+    private inner class ModeButton(description: String) : ImageButton(player.context) {
+        private var feedbackReady = false
+        private var pulseAnimator: ValueAnimator? = null
+        private var glowAnimator: ValueAnimator? = null
+        private var pendingPulse = false
+        private var iconScale = 1f
+        private var glowAlpha = 0f
+        private var glowTarget = 0f
+        private val cssEase = PathInterpolator(.25f, .1f, .25f, 1f)
+        private val glow = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT) }
+        init {
+            background = glow; setPadding(0, 0, 0, 0)
+            // FIT_XY gives VectorDrawable its final pixel bounds. MATRIX keeps its
+            // intrinsic bounds and can scale a cached raster in hardware rendering.
+            scaleType = ImageView.ScaleType.FIT_XY; cropToPadding = false
+            contentDescription = description
+            imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            feedbackReady = true
+        }
+        private fun animationsEnabled() = android.os.Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
+        fun pulse() {
+            if (!isEnabled || !isShown || !animationsEnabled()) return
+            if (isPressed) { pendingPulse = true; return }
+            pulseAnimator?.cancel()
+            pulseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 700; interpolator = LinearInterpolator()
+                addUpdateListener {
+                    val time = it.animatedValue as Float
+                    val (start, end, local) = when {
+                        time < .2f -> Triple(1f, .85f, time / .2f)
+                        time < .5f -> Triple(.85f, 1.1f, (time - .2f) / .3f)
+                        else -> Triple(1.1f, 1f, (time - .5f) / .5f)
+                    }
+                    iconScale = start + (end - start) * cssEase.getInterpolation(local.coerceIn(0f, 1f))
+                    invalidate()
+                }
+                start()
+            }
+        }
+        override fun drawableStateChanged() {
+            super.drawableStateChanged()
+            // View's constructor can dispatch this before subclass initialization.
+            if (!feedbackReady) return
+            if (!isEnabled || !isShown) { stopFeedback(); return }
+            if (isPressed) {
+                pulseAnimator?.cancel(); pulseAnimator = null; iconScale = 1f; pendingPulse = false
+            } else if (pendingPulse) { pendingPulse = false; pulse() }
+            val target = if (isPressed || isHovered) 34f else 0f
+            if (target == glowTarget) return
+            glowTarget = target; glowAnimator?.cancel()
+            if (!animationsEnabled()) { glowAlpha = target; updateGlow(); return }
+            glowAnimator = ValueAnimator.ofFloat(glowAlpha, target).apply {
+                duration = 300; interpolator = cssEase
+                addUpdateListener { glowAlpha = it.animatedValue as Float; updateGlow() }
+                start()
+            }
+        }
+        private fun updateGlow() { glow.setColor(Color.argb(glowAlpha.roundToInt(), 255, 255, 255)) }
+        fun stopFeedback() {
+            if (pulseAnimator == null && glowAnimator == null && !pendingPulse && iconScale == 1f && glowAlpha == 0f) return
+            pulseAnimator?.cancel(); pulseAnimator = null
+            glowAnimator?.cancel(); glowAnimator = null
+            pendingPulse = false; iconScale = 1f; glowAlpha = 0f; glowTarget = 0f
+            updateGlow(); invalidate()
+        }
+        override fun onDraw(canvas: Canvas) {
+            if (iconScale == 1f || isPressed) { super.onDraw(canvas); return }
+            val saved = canvas.save()
+            canvas.scale(iconScale, iconScale, width / 2f, height / 2f)
+            super.onDraw(canvas)
+            canvas.restoreToCount(saved)
+        }
+        override fun onDetachedFromWindow() { stopFeedback(); super.onDetachedFromWindow() }
     }
-    private val shuffle = modeButton("随机播放").apply { setOnClickListener {
-        modes?.toggleShuffle(); lastModeState = null; player.postInvalidateOnAnimation()
+    private val shuffle = ModeButton("随机播放").apply { setOnClickListener {
+        modes?.toggleShuffle(); pulse(); lastModeState = null; player.postInvalidateOnAnimation()
     } }
-    private val repeat = modeButton("循环播放").apply { setOnClickListener {
-        modes?.cycleRepeat(); lastModeState = null; player.postInvalidateOnAnimation()
+    private val repeat = ModeButton("循环播放").apply { setOnClickListener {
+        modes?.cycleRepeat(); pulse(); lastModeState = null; player.postInvalidateOnAnimation()
     } }
     private val volume = IosVolumeSliderView(player.context, referenceLayout = true, referencePixelScale = { scale })
+    private val output = ImageButton(player.context).apply {
+        background = null; scaleType = ImageView.ScaleType.FIT_XY
+        setPadding(0, 0, 0, 0)
+        setImageDrawable(IosOutputDrawable.referenceAirPlay(scale).fittedToGlyph())
+        alpha = .45f; contentDescription = "媒体输出设备"
+        setOnClickListener { PlatformAudioOutputSwitcher.open(player.context) }
+    }
     val ready get() = !closed && frame != null && (current != null || currentQueue != null)
     fun readyForPane(songVisible: Boolean) = ready && (if (songVisible) current != null else currentQueue != null)
     init {
         thumb.addView(thumbBar, FrameLayout.LayoutParams(1, 1))
-        listOf(thumb, shuffle, repeat, volume).forEach { overlay.addView(it, FrameLayout.LayoutParams(1, 1)) }
+        listOf(thumb, shuffle, repeat, volume, output).forEach { overlay.addView(it, FrameLayout.LayoutParams(1, 1)) }
         player.addView(overlay, ViewGroup.LayoutParams(-1, -1)); overlay.visibility = View.INVISIBLE
         overlay.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(view: View) = Unit
@@ -172,13 +255,34 @@ internal class TabletSongColumnLayout(
         val leftInset = (windowLocation[0] + (safe?.first ?: 0) - playerLocation[0]).coerceAtLeast(0)
         val rightInset = (playerLocation[0] + player.width - windowLocation[0] - player.rootView.width +
             (safe?.second ?: 0)).coerceAtLeast(0)
-        frame = TabletArtworkLayoutPolicy.songColumn(player.width - leftInset - rightInset,
-            player.height, scale)?.let { it.copy(contentLeft = it.contentLeft + leftInset,
+        val width = player.width - leftInset - rightInset
+        val base = TabletArtworkLayoutPolicy.songColumn(width, player.height, scale)
+        val nativeLabelHeight = base?.let { nativeProgressLabelHeight(it.contentWidth) } ?: 0
+        val layout = if (base != null && nativeLabelHeight > base.progressHeight - base.progressTrackHeight - base.progressLabelGap)
+            TabletArtworkLayoutPolicy.songColumn(width, player.height, scale, nativeLabelHeight) else base
+        frame = layout?.let { it.copy(contentLeft = it.contentLeft + leftInset,
                 coverTop = it.coverTop - insetTop, thumbCenterY = it.thumbCenterY - insetTop,
                 controlsTop = it.controlsTop - insetTop, controlsBottom = it.controlsBottom - insetTop,
                 metadataTop = it.metadataTop - insetTop, progressTop = it.progressTop - insetTop,
-                mediaTop = it.mediaTop - insetTop, volumeTop = it.volumeTop - insetTop) }
+                mediaTop = it.mediaTop - insetTop, volumeTop = it.volumeTop - insetTop,
+                outputLeft = it.outputLeft + leftInset, outputTop = it.outputTop - insetTop) }
         return frame
+    }
+    /** Measure only on layout preparation, preserving every native badge property. */
+    private fun nativeProgressLabelHeight(width: Int): Int {
+        var height = 0
+        for (column in columns + queueColumns) {
+            for (name in listOf("audio_badge_with_text", "audio_badge_no_text", "karaoke_badge")) {
+                val badge = find(column, name)?.takeIf { it.visibility != View.GONE } ?: continue
+                val params = badge.layoutParams ?: continue
+                badge.measure(
+                    ViewGroup.getChildMeasureSpec(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.AT_MOST), 0, params.width),
+                    ViewGroup.getChildMeasureSpec(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), 0, params.height))
+                val margins = params as? ViewGroup.MarginLayoutParams
+                height = maxOf(height, badge.measuredHeight + (margins?.topMargin ?: 0) + (margins?.bottomMargin ?: 0))
+            }
+        }
+        return height
     }
     fun prepare(topInset: Int = insetTop, bottomInset: Int = insetBottom): Boolean {
         if (closed) return false
@@ -286,13 +390,8 @@ internal class TabletSongColumnLayout(
                 }
             }
             labels.forEach { properties(it).apply { text(g.labelFontPx); verticalMargins(0, 0) } }
-            listOf("audio_badge_with_text", "audio_badge_no_text", "karaoke_badge").mapNotNull { find(progress, it) }
-                .forEach { badge -> properties(badge).apply {
-                    // Keep its native drawable, text style and click handler. Only its row
-                    // height/padding changes, so the original badge cannot cross the track.
-                    size(badge.layoutParams.width, labelHeight); minimumHeight(0)
-                    padding(badge.paddingLeft, 0, badge.paddingRight, 0)
-                } }
+            // Audio-quality and karaoke badges retain their native wrap-content
+            // size, padding, minimums, font, drawable, alpha and state binding.
         }
         val mediaHeight = (g.mediaHeight - extra).coerceAtLeast(0)
         val button = minOf(g.mediaButtonSize, mediaHeight)
@@ -318,16 +417,22 @@ internal class TabletSongColumnLayout(
         fullscreenForProgress(expansion)
         val g = frame; val column = if (songVisible) current else if (queueVisible) currentQueue else null
         if (closed || g == null || column == null || !column.isShown || !player.isShown || expansion <= .001f) {
-            overlay.visibility = View.INVISIBLE; volume.setPageVisible(false); return
+            overlay.visibility = View.INVISIBLE; volume.setPageVisible(false)
+            output.isEnabled = false
+            shuffle.stopFeedback(); repeat.stopFeedback(); return
         }
         val interactive = !transitioning && expansion >= .999f
+        output.isEnabled = interactive
+        if (!interactive) { shuffle.stopFeedback(); repeat.stopFeedback() }
         if (queueVisible) queueGradients[column]?.takeIf { it.width > 0 && it.height > 0 }?.let { gradients ->
             val boundary = (insetTop + g.progressTop - origin(gradients).second - css(8f)).coerceIn(0, gradients.height)
             val fade = resource("queue_bottom_gradient_height", "dimen").takeIf { it != 0 }
                 ?.let(player.resources::getDimensionPixelSize) ?: css(24f)
             properties(gradients).queueMask(boundary, fade)
         }
-        overlay.alpha = effectiveAlpha(column); overlay.translationX = songHost.translationX; overlay.z = songHost.z + css(2f)
+        overlay.alpha = effectiveAlpha(column); overlay.translationX = songHost.translationX; overlay.z = songHost.z + dp(2f)
+        // Bottom controls stay at the window edge when the song column centers.
+        output.translationX = -overlay.translationX
         if (!interactive && presentedFrame == g && overlay.width == player.width && overlay.height == player.height) {
             overlay.visibility = View.VISIBLE
             thumb.isEnabled = false; shuffle.isEnabled = false; repeat.isEnabled = false
@@ -336,28 +441,41 @@ internal class TabletSongColumnLayout(
             return
         }
         place(overlay, 0, 0, player.width, player.height)
-        val center = insetTop + g.thumbCenterY; val desiredHeight = maxOf(css(44f), g.thumbHeight)
+        val center = insetTop + g.thumbCenterY; val desiredHeight = maxOf(dp(44f), g.thumbHeight)
         val hitTop = (center - desiredHeight / 2).coerceAtLeast(0)
         val hitHeight = (minOf(insetTop + g.coverTop, player.height, center + desiredHeight / 2) - hitTop).coerceAtLeast(g.thumbHeight)
-        val hitWidth = maxOf(css(50f), g.thumbWidth)
+        val hitWidth = maxOf(dp(44f), g.thumbWidth)
         place(thumb, g.contentLeft + (g.contentWidth - hitWidth) / 2, hitTop, hitWidth, hitHeight)
         place(thumbBar, (hitWidth - g.thumbWidth) / 2, center - hitTop - g.thumbHeight / 2, g.thumbWidth, g.thumbHeight)
         (thumbBar.background as GradientDrawable).cornerRadius = g.thumbHeight / 2f; thumb.isEnabled = interactive
         if (!songVisible) thumb.visibility = View.INVISIBLE
-        place(volume, g.contentLeft - css(12f), insetTop + g.volumeTop, g.contentWidth + css(20f), g.volumeHeight)
+        // The complete speaker/track/speaker group shares the progress bounds.
+        place(volume, g.contentLeft, insetTop + g.volumeTop, g.contentWidth, g.volumeHeight)
+        // Use a smaller visible symbol while retaining the bottom-row anchor and hit box.
+        val outputGlyphSize = (g.modeIconSize * .68f).roundToInt()
+        val outputSize = maxOf(g.outputSize, g.modeIconSize)
+        val outputPadding = (outputSize - outputGlyphSize) / 2
+        val outputOpposite = outputSize - outputGlyphSize - outputPadding
+        if (output.paddingLeft != outputPadding || output.paddingRight != outputOpposite)
+            output.setPadding(outputPadding, outputPadding, outputOpposite, outputOpposite)
+        place(output, g.outputLeft + (g.outputSize - outputSize) / 2,
+            insetTop + g.outputTop + (g.outputSize - outputSize) / 2, outputSize, outputSize)
         volume.setPageVisible(interactive)
         presentedFrame = g
         if (modes == null) { shuffle.visibility = View.INVISIBLE; repeat.visibility = View.INVISIBLE; return }
         val now = android.os.SystemClock.uptimeMillis()
         if (lastModeState == null || now - lastModeRead >= 200L) { lastModeState = modes.state(); lastModeRead = now }
         val state = lastModeState ?: TabletPlaybackModes.State()
-        fun mode(view: ImageButton, x: Int, drawable: String, enabled: Boolean, selected: Boolean) {
+        fun mode(view: ModeButton, x: Int, drawable: String, enabled: Boolean, selected: Boolean) {
             val id = resource(drawable, "drawable")
             if (id == 0) { view.visibility = View.INVISIBLE; return }
-            if (view.tag != id) { view.setImageResource(id); view.tag = id }
+            if (view.tag != id) { view.setImageResource(id); view.drawable?.mutate(); view.tag = id }
             view.isEnabled = interactive && enabled; view.isSelected = selected
+            val inset = (g.mediaButtonSize - g.modeIconSize) / 2
+            val opposite = g.mediaButtonSize - g.modeIconSize - inset
+            if (view.paddingLeft != inset || view.paddingRight != opposite || view.paddingTop != inset || view.paddingBottom != opposite)
+                view.setPadding(inset, inset, opposite, opposite)
             place(view, x, insetTop + g.mediaTop + (g.mediaHeight - g.mediaButtonSize) / 2, g.mediaButtonSize, g.mediaButtonSize)
-            imageMatrix(view, g.modeIconSize)?.let { if (matrixValues(view) != it) view.imageMatrix = Matrix().apply { setValues(it.toFloatArray()) } }
         }
         mode(shuffle, g.contentLeft, if (state.shuffle == true) "ic_nowplaying_shuffleon" else "ic_nowplaying_shuffle", state.canShuffle, state.shuffle == true)
         mode(repeat, g.contentLeft + g.contentWidth - g.mediaButtonSize,

@@ -19,6 +19,15 @@ Flamingo volume vectors and their source record are packaged under `tablet-media
 Apple's speaker/AirPods images retain their source and copyright notice in
 `tablet-media/AppleMusicOutputIcons.txt`; they are not covered by GPL.
 
+## AMLL reference tablet player
+
+The reference tablet layout rules, speaker and AirPlay vector paths, volume
+interaction, and supplemental mode-button feedback are adapted from the AMLL
+source bundled in YouLyPlus (`vendor/amll/packages/react-full`). The original
+AMLL license is GNU Affero General Public License, version 3; its full text is
+packaged as `assets/licenses/AMLL.txt`. Native Apple Music artwork, transport
+glyphs, and state bindings remain supplied by the host application.
+
 ## AMLyricBlur
 
 This project includes code adapted from `a23bc/amlyricblur`, commit

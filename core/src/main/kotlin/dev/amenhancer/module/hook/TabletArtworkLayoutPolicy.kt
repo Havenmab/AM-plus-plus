@@ -56,10 +56,12 @@ object TabletArtworkLayoutPolicy {
         )
     }
 
-    // YouLyPlus' horizontal.module.css restated in dp: CSS px map to dp 1:1, vh to 1% of the dp
-    // height, cqh/cqw to the CSS player viewport, and em to ROOT_EM_CSS_PX
-    // unless the only font-size media query at 768 CSS px is active. The column is resolved in CSS px and
-    // reported in the physical pixels the caller measured that viewport in.
+    // YouLyPlus' horizontal.module.css resolved in its browser's CSS coordinate space.
+    // The reference runs at Windows 225% scaling and browser 100% zoom. Android dp
+    // is a separate input space: using its density changes both CSS constants and
+    // media-query branches even when the two player viewports have identical pixels.
+    // Keep one CSS-to-physical scale for geometry, glyphs and supplemental drawing.
+    const val REFERENCE_PIXEL_SCALE = 2.25f
     private const val COMPACT_HEIGHT_CSS_PX = 768f
     private const val CHROME_HEIGHT_CSS_PX = 1000f
     private const val TALL_HEIGHT_CSS_PX = 1080f
@@ -129,9 +131,9 @@ object TabletArtworkLayoutPolicy {
      *
      * Every value is a top-left corner or a size inside the player root: x grows to the right and y
      * grows downwards, with the origin at the top-left of the viewport the caller measures. The
-     * stylesheet is resolved in CSS px, where CSS px, vh and cqh/cqw all reduce to dp for a player that
-     * fills that viewport, and the result is multiplied by the display pixelScale, so the fields place
-     * module views and the native cover slot directly.
+     * stylesheet is resolved in CSS px by dividing the measured viewport by [pixelScale].
+     * Constants, em and viewport units use that same CSS space; the result is converted
+     * once to physical pixels to place module views and the native cover slot directly.
      *
      * The control group always contains the metadata block, the progress track with its labels, the
      * media row and the volume row, in that order, so no rectangle overlaps its neighbour.
@@ -178,6 +180,10 @@ object TabletArtworkLayoutPolicy {
         val modeIconSize: Int,
         val volumeTop: Int,
         val volumeHeight: Int,
+        /** Window-anchored output button in the reference bottom-controls row. */
+        val outputLeft: Int,
+        val outputTop: Int,
+        val outputSize: Int,
         val gap: Int,
     )
 
@@ -195,7 +201,8 @@ object TabletArtworkLayoutPolicy {
     fun songColumn(
         playerWidthPx: Int,
         playerHeightPx: Int,
-        pixelScale: Float,
+        pixelScale: Float = REFERENCE_PIXEL_SCALE,
+        nativeProgressLabelHeightPx: Int = 0,
     ): SongColumn? {
         if (!pixelScale.isFinite() || pixelScale <= 0f) return null
         if (playerWidthPx <= 0 || playerHeightPx <= 0) return null
@@ -224,11 +231,16 @@ object TabletArtworkLayoutPolicy {
         val metadataPadBottomCss = if (paddedMetadata) METADATA_PAD_BOTTOM_VH * height else 0f
         val metadata = METADATA_LINE_COUNT * metadataLine + metadataPadTopCss + metadataPadBottomCss
         val labelFont = maxOf(LABEL_FONT_VH * height, LABEL_FONT_EM * rootEm)
-        val progress = PROGRESS_TRACK_MIN_CSS_PX + (if (compact) 0f else LABEL_MARGIN_CSS_PX) + LABEL_LINE_HEIGHT * labelFont
+        // Native audio-quality badges keep their intrinsic size and padding. Let
+        // that row grow within the existing flex controls rather than squash them.
+        val labelHeight = maxOf(LABEL_LINE_HEIGHT * labelFont, nativeProgressLabelHeightPx.coerceAtLeast(0) / pixelScale)
+        val progress = PROGRESS_TRACK_MIN_CSS_PX + (if (compact) 0f else LABEL_MARGIN_CSS_PX) + labelHeight
         val volumeHeight = if (height <= SHORT_HEIGHT_CSS_PX) COMPACT_VOLUME_ICON_CSS_PX else VOLUME_ICON_CSS_PX
         val controlsRow = CONTROLS_ROW_FRACTION * height
-        val bottomTool = if (height <= CHROME_HEIGHT_CSS_PX || width <= COMPACT_WIDTH_CSS_PX)
+        val compactBottomTools = height <= CHROME_HEIGHT_CSS_PX || width <= COMPACT_WIDTH_CSS_PX
+        val bottomTool = if (compactBottomTools)
             COMPACT_BOTTOM_TOOL_EM * buttonEm else BOTTOM_TOOL_EM * buttonEm
+        val bottomInset = (if (compactBottomTools) 2f else 4f) * rootEm
 
         // CSS Grid's flexible-track algorithm uses max(1, sum(fr)). The 0fr bottom
         // tool track freezes at its min-content base. A drag track below 30px freezes
@@ -291,6 +303,9 @@ object TabletArtworkLayoutPolicy {
             modeIconSize = px(MODE_ICON_EM * buttonEm * mediaScale, pixelScale),
             volumeTop = px(volumeTop, pixelScale),
             volumeHeight = px(volumeHeight, pixelScale),
+            outputLeft = px(bottomInset, pixelScale),
+            outputTop = px(controlsBottom + gap, pixelScale),
+            outputSize = px(bottomTool, pixelScale),
             gap = px(gap, pixelScale),
         )
     }

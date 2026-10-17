@@ -10,6 +10,22 @@ import org.junit.Test
 
 class ModuleSettingsSchemaTest {
     @Test
+    fun `dual pane status bar hiding defaults off and round trips`() {
+        assertFalse(ModuleSettings().dualPaneHideStatusBarEnabled)
+        assertFalse(ModuleSettingsSchema.decode(emptyMap<String, Any>()).dualPaneHideStatusBarEnabled)
+        assertFalse(ModuleSettingsSchema.decode(
+            mapOf("dual_pane_hide_status_bar_enabled" to "true"),
+        ).dualPaneHideStatusBarEnabled)
+        for (enabled in listOf(false, true)) {
+            val values = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(dualPaneHideStatusBarEnabled = enabled),
+            )
+            assertEquals(enabled, values["dual_pane_hide_status_bar_enabled"])
+            assertEquals(enabled, ModuleSettingsSchema.decode(values).dualPaneHideStatusBarEnabled)
+        }
+    }
+
+    @Test
     fun `startup prewarm defaults on and preserves an explicit opt out`() {
         assertEquals(true, ModuleSettings().startupPagePrewarmEnabled)
         assertEquals(true, ModuleSettingsSchema.decode(emptyMap<String, Any>()).startupPagePrewarmEnabled)
@@ -80,6 +96,7 @@ class ModuleSettingsSchemaTest {
         assertEquals(
             mapOf(
                 "dual_pane_enabled" to false,
+                "dual_pane_hide_status_bar_enabled" to false,
                 "disable_editorial_video_on_tablet" to false,
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,
@@ -126,6 +143,7 @@ class ModuleSettingsSchemaTest {
         assertEquals(
             mapOf(
                 "dual_pane_enabled" to false,
+                "dual_pane_hide_status_bar_enabled" to false,
                 "disable_editorial_video_on_tablet" to true,
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,

@@ -369,6 +369,18 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
+                localizedText(ModuleText.TABLET_DUAL_PANE_HIDE_STATUS_BAR),
+                localizedText(ModuleText.TABLET_DUAL_PANE_HIDE_STATUS_BAR_SUMMARY),
+                settings.dualPaneHideStatusBarEnabled,
+                iconTint = EmbeddedSettingsPalette.Light.primary,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.TabletDualPane,
+                    EmbeddedSettingsPalette.Light.primary,
+                ),
+            ) { onSettingsChanged(currentSettings().copy(dualPaneHideStatusBarEnabled = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
                 localizedText(ModuleText.CELLULAR_SETTINGS),
                 localizedText(ModuleText.CELLULAR_SETTINGS_SUMMARY),
                 settings.forceCellularDataEntryEnabled,

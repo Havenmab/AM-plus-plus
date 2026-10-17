@@ -5,6 +5,8 @@ import dev.amenhancer.module.config.TitleCorrectionMode
 
 data class ModuleSettings(
     val dualPaneEnabled: Boolean = true,
+    /** Hide only the status bar while the tablet dual-pane player is expanded. */
+    val dualPaneHideStatusBarEnabled: Boolean = false,
     /** Legacy storage key; Editorial Video suppression now follows dualPaneEnabled. */
     val disableEditorialVideoOnTablet: Boolean = true,
     val phoneLiquidGlassEnabled: Boolean = false,

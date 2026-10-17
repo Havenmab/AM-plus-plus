@@ -17,6 +17,7 @@ internal class TabletPlayerComponents(
     private val rightHost: ViewGroup, private val songVisible: () -> Boolean,
     private val lyricsExpanded: () -> Boolean, private val lyricsClick: () -> Unit,
     private val currentLyricsAvailability: (() -> Boolean?)? = null,
+    private val referenceControls: () -> Boolean = { false },
 ) : AutoCloseable {
     private val overlay = FrameLayout(root.context).apply { clipChildren = false; clipToPadding = false }
     private val rows = TabletNativeControlRows()
@@ -32,6 +33,7 @@ internal class TabletPlayerComponents(
     private val translations = IdentityHashMap<View, Pair<Float, Float>>()
     private var closed = false
     private var placed = false
+    private var songFooterBottomGap: Int? = null
     private val actionStyle = TabletNativeActionStyle()
     private val transportRipple = TabletTransportRipple()
     private var lyricsSource: View? = null
@@ -107,6 +109,12 @@ internal class TabletPlayerComponents(
             actionStyle.bind(queue, find(it, "player_queue") as? ImageView)
         }
         nativeGroups.forEach {
+            // Remember the native right-tool baseline before the left column gets its new height.
+            if (songFooterBottomGap == null && root.height > 0 && it.height > 0 &&
+                (it.parent as? View)?.id == id("player_container")) {
+                root.getLocationInWindow(origin)
+                songFooterBottomGap = (root.height - location(it).second - it.height).coerceAtLeast(0)
+            }
             nativeActions(it).forEach(::hideSource)
             transportButtons(it).forEach(transportRipple::apply)
             if (prepareGroup(it)) changed = true
@@ -125,7 +133,7 @@ internal class TabletPlayerComponents(
     }
     private fun percentTarget(group: ViewGroup): View? = (group.parent as? View)?.takeIf { it.id == id("controls") }
     private fun prepareGroup(group: ViewGroup): Boolean =
-        percentTarget(group)?.let { rows.percentage(it, .25f) } ?: false
+        if (referenceControls()) false else percentTarget(group)?.let { rows.percentage(it, .25f) } ?: false
     private fun hideSource(view: View) {
         val current = hidden[view]
         val visibility = view.visibility
@@ -177,11 +185,20 @@ internal class TabletPlayerComponents(
 
     fun update(expansion: Float, transitioning: Boolean) {
         if (closed) return
+        val visible = root.isShown && expansion > .001f
+        if (referenceControls()) { volume.visibility = View.INVISIBLE; volume.setPageVisible(false) }
+        if (placed && expansion > .001f && expansion < .999f) {
+            // Media updates can re-show retained footer views during crossfade.
+            // Reassert only cached identities here; never rescan the sheet hierarchy.
+            hidden.keys.forEach(::hideSource)
+            overlay.alpha = expansion; overlay.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            lyrics.isEnabled = false; queue.isEnabled = false; volume.setPageVisible(false)
+            return
+        }
         // Both retained fragments can draw during a queue crossfade. Hide their
         // native actions before the transition fast path or any relayout return.
         suppressNativeActions()
         if (!transitioning) prepare()
-        val visible = root.isShown && expansion > .001f
         if (transitioning && placed) {
             overlay.alpha = expansion
             overlay.visibility = if (visible) View.VISIBLE else View.INVISIBLE
@@ -208,7 +225,9 @@ internal class TabletPlayerComponents(
         root.getLocationInWindow(origin)
         val column = location(group)
         // Keep the right actions at their current 44dp / 12dp-from-bottom positions.
-        val footerTop = column.second + group.height - dp(12) - dp(44)
+        val footerTop = if (referenceControls())
+            root.height - (songFooterBottomGap ?: 0) - dp(12) - dp(44)
+            else column.second + group.height - dp(12) - dp(44)
         overlay.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY))
         overlay.layout(0, 0, root.width, root.height)
@@ -251,7 +270,8 @@ internal class TabletPlayerComponents(
         val slot = if (nativeLyrics.height > 0) TabletComponentGeometry.bottomVolume(progressLeft,
             progressRight, volumeCenter, contentBottom, minOf(root.height, column.second + group.height),
             root.resources.displayMetrics.density) else null
-        if (slot != null) place(volume, slot.left, slot.top, slot.width, slot.height)
+        if (referenceControls()) volume.visibility = View.INVISIBLE
+        else if (slot != null) place(volume, slot.left, slot.top, slot.width, slot.height)
         else volume.visibility = View.INVISIBLE
         volume.setPageVisible(visible && expansion >= .999f && volume.visibility == View.VISIBLE)
         val vocal = find(rightHost, "vocal_ctrl")?.takeIf { it.isShown && it.width > 0 }

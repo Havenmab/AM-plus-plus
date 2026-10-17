@@ -775,6 +775,8 @@ LLM 自动兜底不输出逐阶段排查日志，不保留诊断去重集合、�
 
 LLM 不另建混淆成员映射。适配新构建时，核对已有 `TtmlSongInfoFromTtml` 的完整参数、返回值与实际调用路径，以及结果提交的 parser、指针身份和 `lyricResultSubmission` 契约。若宿主不再经过可观察的原文解析入口，停用 LLM 兜底，先在宿主层建立有证据的原文获取方式；不能从视图文本重建歌词或猜测其他歌曲的文档。新的 TTML 时间轴、语言或轨道表达在通用 TTML 业务层适配，宿主私有成员变化留在 `host-applemusic`，不把版本名、反射或 Hook 放入客户端和缓存。
 
+维护结构回归断言时，`CustomLyricsItemUpdateStructuralRegressionTest` 应覆盖手动、自动来源、缓存刷新和 LLM 的共用提交路径，以及手动、自动、LLM 的选择优先级；`TabletLiquidGlassStructuralRegressionTest` 应随配置 schema 提升同步版本断言，保留原有玻璃键兼容性检查。
+
 逐项核对及使用者人工场景见[清单：LLM 翻译兜底](host-adaptation-checklist.md#llm-lyrics-fallback-checks)。
 
 <a id="artist-compose-profile"></a>

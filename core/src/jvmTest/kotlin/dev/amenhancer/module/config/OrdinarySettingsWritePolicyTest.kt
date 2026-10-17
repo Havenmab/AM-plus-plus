@@ -102,6 +102,7 @@ class OrdinarySettingsWritePolicyTest {
         assertEquals(
             mapOf(
                 "dual_pane_enabled" to false,
+                "dual_pane_hide_status_bar_enabled" to false,
                 "disable_editorial_video_on_tablet" to false,
                 "phone_liquid_glass_enabled" to true,
                 "phone_liquid_glass_bottom_gap_dp" to 16,

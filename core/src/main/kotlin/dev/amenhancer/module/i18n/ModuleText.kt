@@ -347,7 +347,60 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     PLUGIN_DEX_HEADER_INVALID("Corrupt DEX header", "损坏的 DEX 头"),
     PLUGIN_DEX_SIGNATURE_INVALID("Corrupt DEX signature", "DEX 签名损坏"),
     PLUGIN_DEX_CHECKSUM_INVALID("Corrupt DEX checksum", "DEX 校验损坏"),
-    PLUGIN_SDK_BUNDLED("Plugins must not bundle SDK classes", "插件不可打包 SDK 类");
+    PLUGIN_SDK_BUNDLED("Plugins must not bundle SDK classes", "插件不可打包 SDK 类"),
+    LLM_LYRICS_FALLBACK("LLM lyrics translation", "LLM 歌词翻译"),
+    LLM_LYRICS_FALLBACK_SUMMARY(
+        "Model, API Key",
+        "模型、API Key",
+    ),
+    LLM_LYRICS_ENABLED("Enable translation", "启用翻译"),
+    LLM_LYRICS_ENABLED_SUMMARY(
+        "Translate to Simplified Chinese when automatic matching misses",
+        "自动补全未命中时译为简体中文",
+    ),
+    LLM_LYRICS_REQUIRES_AUTO(
+        "Enable lyrics replacement and automatic completion first",
+        "先开启歌词替换和自动补全",
+    ),
+    LLM_LYRICS_BASE_URL("API address", "API 地址"),
+    LLM_LYRICS_BASE_URL_SUMMARY(
+        "Use an OpenAI-compatible API",
+        "使用 OpenAI Compatible 接口",
+    ),
+    LLM_LYRICS_API_KEY("API Key", "API Key"),
+    LLM_LYRICS_API_KEY_SUMMARY(
+        "Optional for APIs without authentication",
+        "无需鉴权的接口可留空",
+    ),
+    LLM_LYRICS_MODEL("Model", "模型"),
+    LLM_LYRICS_THINKING("Model thinking", "模型思考"),
+    LLM_LYRICS_THINKING_SUMMARY("Allow reasoning before translation", "允许模型先思考再翻译"),
+    LLM_LYRICS_MODEL_SUMMARY(
+        "Use the model name from your API provider",
+        "填写接口提供的模型名称",
+    ),
+    LLM_LYRICS_INPUT_HINT_BASE_URL(
+        "https://example.com/v1",
+        "https://example.com/v1",
+    ),
+    LLM_LYRICS_INPUT_HINT_API_KEY("API Key", "API Key"),
+    LLM_LYRICS_INPUT_HINT_MODEL("Model name", "模型名称"),
+    LLM_LYRICS_NOT_CONFIGURED("Not set", "未设置"),
+    LLM_LYRICS_TEST_CONNECTION("Test connection", "测试连接"),
+    LLM_LYRICS_TEST_RUNNING("Testing…", "测试中…"),
+    LLM_LYRICS_TEST_SUCCESS("Connected", "连接成功"),
+    LLM_LYRICS_TEST_INVALID_ENDPOINT("Enter a valid HTTP or HTTPS address", "请填写有效的 HTTP 或 HTTPS 地址"),
+    LLM_LYRICS_TEST_MISSING_MODEL("Enter a model name", "请先填写模型名称"),
+    LLM_LYRICS_TEST_AUTH_FAILED("Authentication failed (HTTP %1\$s). Check the API Key and address.", "认证失败（HTTP %1\$s），请检查 API Key 和地址"),
+    LLM_LYRICS_TEST_NOT_FOUND("API route or model not found (404)", "接口或模型不存在（404）"),
+    LLM_LYRICS_TEST_RATE_LIMITED("Request limited (429). Try again later.", "请求受限（429），请稍后重试"),
+    LLM_LYRICS_TEST_HTTP_FAILED("Request failed (HTTP %1\$s)", "请求失败（HTTP %1\$s）"),
+    LLM_LYRICS_TEST_TIMEOUT("Request timed out. Try again later.", "请求超时，请稍后重试"),
+    LLM_LYRICS_TEST_DNS_FAILED("Cannot resolve the API address", "无法解析 API 地址"),
+    LLM_LYRICS_TEST_TLS_FAILED("Secure connection failed. Check the certificate and device time.", "安全连接失败，请检查证书和设备时间"),
+    LLM_LYRICS_TEST_NETWORK_FAILED("Cannot connect. Check the network and API address.", "无法连接，请检查网络和 API 地址"),
+    LLM_LYRICS_TEST_INVALID_RESPONSE("Invalid API response", "接口响应格式不符"),
+    LLM_LYRICS_TEST_FAILED("Connection failed. Check the API settings.", "连接失败，请检查 API 设置");
 
     fun text(vararg arguments: Any?, locale: Locale = Locale.getDefault()): String {
         val template = if (locale.language.equals("zh", ignoreCase = true)) chinese else english

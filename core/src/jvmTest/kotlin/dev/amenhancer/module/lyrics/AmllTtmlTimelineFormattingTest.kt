@@ -136,7 +136,9 @@ class AmllTtmlTimelineFormattingTest {
             "<span ttm:role=\"x-bg\"><span begin=\"1s\" end=\"2s\">back</span>" +
             "<span ttm:role=\"x-translation\">BG</span></span></p></div>")
         val result = AmllTtmlFormatConverter.toAppleFormat(raw).ttml
-        assertTrue(result.contains("<span begin=\"1s\" end=\"2s\">Word</span>\n <span ttm:role=\"x-bg\">(BG)</span>"))
+        assertTrue(result.contains("<span begin=\"1s\" end=\"2s\">Word</span>\n " +
+            "<span xmlns=\"http://www.w3.org/ns/ttml\" " +
+            "xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" ttm:role=\"x-bg\">(BG)</span>"))
         assertEquals(listOf("Word\n (BG)", " "), trackTexts(result, "translations"))
         assertIdempotent(result)
     }

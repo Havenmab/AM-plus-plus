@@ -42,6 +42,8 @@ import textwrap
 import urllib.request
 from typing import Callable
 
+TTML_NAMESPACE = "http://www.w3.org/ns/ttml"
+TTML_METADATA_NAMESPACE = "http://www.w3.org/ns/ttml#metadata"
 ITUNES_NAMESPACE = "http://music.apple.com/lyric-ttml-internal"
 ROLE_TRANSLATION = "x-translation"
 ROLE_ROMAN = "x-roman"
@@ -784,7 +786,7 @@ def append_entry_text(entry: TrackEntry) -> str:
         return result
     return (
         result
-        + f'<span ttm:role="{ROLE_BACKGROUND}">'
+        + f'<span xmlns="{TTML_NAMESPACE}" xmlns:ttm="{TTML_METADATA_NAMESPACE}" ttm:role="{ROLE_BACKGROUND}">'
         + parenthesized(entry.background)
         + "</span>"
     )
@@ -1178,7 +1180,8 @@ def _selftest() -> int:
         )
         result = to_apple_format(background_only).ttml
         assert (
-            '<text for="L9"> <span ttm:role="x-bg">(BT)</span></text>' in result
+            '<text for="L9"> <span xmlns="http://www.w3.org/ns/ttml" '
+            'xmlns:ttm="http://www.w3.org/ns/ttml#metadata" ttm:role="x-bg">(BT)</span></text>' in result
         )
         return True
 

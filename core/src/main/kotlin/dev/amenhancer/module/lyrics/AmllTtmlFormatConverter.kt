@@ -69,6 +69,8 @@ data class TtmlFormatConversion(
  */
 object AmllTtmlFormatConverter {
 
+    private const val TTML_NAMESPACE = "http://www.w3.org/ns/ttml"
+    private const val TTML_METADATA_NAMESPACE = "http://www.w3.org/ns/ttml#metadata"
     private const val ITUNES_NAMESPACE = "http://music.apple.com/lyric-ttml-internal"
     private const val ROLE_TRANSLATION = "x-translation"
     private const val ROLE_ROMAN = "x-roman"
@@ -545,7 +547,9 @@ object AmllTtmlFormatConverter {
     private fun StringBuilder.appendEntryText(entry: TrackEntry) {
         append(entry.main ?: ABSENT_TEXT)
         val background = entry.background ?: return
-        append("<span ttm:role=\"").append(ROLE_BACKGROUND).append("\">")
+        append("<span xmlns=\"").append(TTML_NAMESPACE)
+        append("\" xmlns:ttm=\"").append(TTML_METADATA_NAMESPACE)
+        append("\" ttm:role=\"").append(ROLE_BACKGROUND).append("\">")
         append(parenthesized(background))
         append("</span>")
     }

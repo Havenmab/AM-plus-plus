@@ -230,17 +230,15 @@ fun LiquidBottomTabs(
                 .orEmpty()
         }
         val contentWeighted = measuredContent.isNotEmpty()
-        fun geometryFor(widthPx: Float): dev.amenhancer.glass.GlassTabGeometry =
-            if (!contentWeighted) {
-                dev.amenhancer.glass.GlassTabGeometry(widthPx, panelInset, leadingPx, tabsCount)
-            } else {
-                dev.amenhancer.glass.GlassTabGeometry(
-                    widthPx, panelInset, leadingPx, tabsCount, measuredContent,
-                    textPadding = textPadding,
-                    iconPadding = iconPadding,
-                    iconOnly = tabIconOnly.orEmpty(),
-                )
-            }
+        // AM++: the tablet top bar's measured cells. Only called when the caller supplied content
+        // widths; the equal-cell phone path below deliberately keeps upstream's literal expression.
+        fun contentGeometry(widthPx: Float): dev.amenhancer.glass.GlassTabGeometry =
+            dev.amenhancer.glass.GlassTabGeometry(
+                widthPx, panelInset, leadingPx, tabsCount, measuredContent,
+                textPadding = textPadding,
+                iconPadding = iconPadding,
+                iconOnly = tabIconOnly.orEmpty(),
+            )
         // The panel's width, height and bottom-anchored placement come from the shared entry point,
         // the one the host's native touch hit test calls, so the drawn capsule and the region that
         // answers for it cannot drift apart.
@@ -263,7 +261,14 @@ fun LiquidBottomTabs(
             val collapseDropPx = controls.top - (expandedPanelHeightPx - controls.height) / 2f
             val expandedContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.expandedContentAlpha(progress)
             val compactContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.compactContentAlpha(progress)
-            val geometry = geometryFor(restingWidthPx)
+            // AM++: the phone bar keeps upstream's equal-cell expression verbatim (its collapse
+            // shape is pinned by PhoneLiquidGlassStructuralRegressionTest); the tablet bar only
+            // swaps in the measured cells when its caller supplied them.
+            val geometry = if (contentWeighted) {
+                contentGeometry(restingWidthPx)
+            } else {
+                dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
+            }
             return CollapseFrame(progress, controls, restingWidthPx, geometry, collapseDropPx,
                 expandedContentAlpha, compactContentAlpha)
         }
@@ -300,8 +305,13 @@ fun LiquidBottomTabs(
         ) else IntSize.Zero
         val selectionLayerSize = if (reserveLayer) {
             // Content-hugging cells can be wider than the equal share, and the refraction source
-            // has to cover the widest of them; the phone bar has one scalar width to report.
-            val expandedGeometry = geometryFor(expandedWidthPx)
+            // has to cover the widest of them. The phone (equal-cell) path keeps upstream's scalar
+            // `tabWidth` unchanged — every cell there has the same width.
+            val expandedGeometry = if (contentWeighted) {
+                contentGeometry(expandedWidthPx)
+            } else {
+                dev.amenhancer.glass.GlassTabGeometry(expandedWidthPx, panelInset, leadingPx, tabsCount)
+            }
             val widestCell = (0 until tabsCount).maxOfOrNull { expandedGeometry.cellWidth(it) }
                 ?: expandedGeometry.tabWidth
             IntSize(widestCell.fastRoundToInt().coerceAtLeast(1), refractionLayerSize.height)

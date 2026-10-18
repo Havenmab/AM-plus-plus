@@ -43,6 +43,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -55,6 +58,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
 import com.kyant.shapes.Capsule
 import dev.amenhancer.backdrop.VibrantBlur
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 data class GlassTab(
@@ -126,6 +130,59 @@ fun GlassNavigation(
     // A menu replacement must discard gestures whose indices refer to the old menu.
     key(tabs.map { it.id }, rejectedSelection) {
         val selection = remember { { confirmedIndex.value } }
+        // AM++: the tablet chrome draws its own capsule over the host's top tab bar, which the
+        // reference shows noticeably more compact than the anchor it replaces. Only the
+        // TabletLabels style is trimmed; Stacked keeps the anchor's full geometry.
+        val tabletBar = style == GlassNavigationStyle.TabletLabels
+        val barHeight = if (tabletBar) {
+            (panelHeight.value * GlassPolicy.TABLET_NAV_HEIGHT_FRACTION).roundToInt().dp
+        } else panelHeight
+        // AM++: the tablet bar's labels are slightly larger and heavier than the phone bar's; the
+        // two styles therefore get different typography, and the tablet bar sizes each cell to the
+        // label it is about to draw. The reference's labels are heavier still, hence SemiBold on
+        // the tablet bar only.
+        val labelStyle = if (tabletBar) {
+            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        } else {
+            TextStyle(color = foreground, fontSize = 11.sp)
+        }
+        val density = LocalDensity.current
+        val textMeasurer = rememberTextMeasurer()
+        // Tablet cells hug their content: a label tab is as wide as its text, an icon tab as wide
+        // as its 24dp glyph. The phone bar passes null and keeps upstream's equal shares.
+        val tabContentWidths = if (tabletBar) {
+            remember(tabs, textMeasurer, density, labelStyle) {
+                tabs.map { tab ->
+                    if (tab.icon != null) 24.dp
+                    else with(density) {
+                        textMeasurer.measure(AnnotatedString(tab.title), labelStyle, maxLines = 1)
+                            .size.width.toDp()
+                    }
+                }
+            }
+        } else null
+        // An icon-only tab is exactly the tab that draws its icon and no label above, i.e. the one
+        // with a non-null icon; that flag is the caller's own data rather than a width heuristic.
+        val tabIconOnly = if (tabletBar) remember(tabs) { tabs.map { it.icon != null } } else null
+        val drawerWidth = if (onDrawer == null) 0.dp else barHeight - 8.dp
+        // The capsule is drawn at its content-derived width — the leading action, every padded cell
+        // and the row inset on both sides — while the layout node still reports the anchor's full
+        // width. `insetToDrawnWidth` clamps to that anchor, so content that does not fit keeps the
+        // full-width geometry instead of overflowing.
+        val drawnWidthPx = if (tabContentWidths != null) {
+            remember(tabContentWidths, tabIconOnly, drawerWidth, density) {
+                with(density) {
+                    huggedCapsuleWidth(
+                        contentWidths = tabContentWidths.map { it.toPx() },
+                        iconOnly = tabIconOnly.orEmpty(),
+                        textPadding = GlassPolicy.TABLET_TAB_PADDING_DP.dp.toPx(),
+                        iconPadding = GlassPolicy.TABLET_ICON_TAB_PADDING_DP.dp.toPx(),
+                        leadingWidth = drawerWidth.toPx(),
+                        inset = GlassPolicy.TAB_ROW_INSET_DP.dp.toPx(),
+                    )
+                }
+            }
+        } else Float.NaN
         // The bar occupies only the top `panelHeight` of the host island, so the detached control
         // needs this row box to share the capsule's bottom edge instead of the island's.
         Box(Modifier.fillMaxSize()) {
@@ -140,12 +197,16 @@ fun GlassNavigation(
                     isTabEnabled = { i -> inCapsule.getOrNull(i)?.enabled == true },
                     backdrop = backdrop,
                     tabsCount = inCapsule.size,
+                    // Only the tablet bar narrows; the phone bar keeps the anchor it was given.
+                    modifier = if (tabletBar) {
+                        Modifier.insetToDrawnWidth(drawnWidthPx, GlassPolicy.TABLET_NAV_WIDTH_FRACTION)
+                    } else Modifier,
                     accentOverride = accent,
-                    panelHeight = panelHeight,
+                    panelHeight = barHeight,
                     panelBlur = panelBlur,
-                    leadingWidth = if (onDrawer == null) 0.dp else panelHeight - 8.dp,
+                    leadingWidth = drawerWidth,
                     leadingContent = onDrawer?.let { open -> {
-                        Box(Modifier.width(panelHeight - 8.dp).fillMaxHeight()
+                        Box(Modifier.width(drawerWidth).fillMaxHeight()
                             .semantics { contentDescription = drawerDescription }
                             .clickable(onClick = open), contentAlignment = Alignment.Center) {
                             Canvas(Modifier.size(24.dp)) {
@@ -156,6 +217,8 @@ fun GlassNavigation(
                             }
                         }
                     } },
+                    tabContentWidths = tabContentWidths,
+                    tabIconOnly = tabIconOnly,
                     collapseProgress = progress,
                     optimizeCollapseRendering = collapseProgress != null,
                     // Always present: the withdrawn capsule is the only way back, so it needs a
@@ -164,32 +227,33 @@ fun GlassNavigation(
                     onExpandRequest = onExpandRequest,
                     collapseReboundScale = collapseReboundScale,
                     expandReboundScale = expandReboundScale,
-                ) {
-                    inCapsule.forEach { tab ->
-                        LiquidBottomTab(
-                            shape = GlassCollapseShapes.capsule(collapseProgress != null),
-                            // A faded tab row must stop navigating: `alpha(0f)` hides a subtree
-                            // without disabling it, so an invisible cell could absorb a tap.
-                            onClick = { if (expandedInteractive) request(tab) },
-                            modifier = Modifier.semantics {
-                                selected = tab.id == selectedId
-                                contentDescription = tab.title
-                            },
-                        ) {
-                            if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
-                                tab.icon?.let { icon ->
-                                    val save = drawContext.canvas.nativeCanvas.save()
-                                    try {
-                                        icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                                        icon.draw(drawContext.canvas.nativeCanvas)
-                                    } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
-                                }
+                ) { contentIndex, weight ->
+                    val tab = inCapsule[contentIndex]
+                    LiquidBottomTab(
+                        shape = GlassCollapseShapes.capsule(collapseProgress != null),
+                        // A faded tab row must stop navigating: `alpha(0f)` hides a subtree
+                        // without disabling it, so an invisible cell could absorb a tap.
+                        onClick = { if (expandedInteractive) request(tab) },
+                        // AM++: content-hugging cells carry their measured share; equal cells
+                        // get the literal 1f upstream's row always used.
+                        weight = weight,
+                        modifier = Modifier.semantics {
+                            selected = tab.id == selectedId
+                            contentDescription = tab.title
+                        },
+                    ) {
+                        if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
+                            tab.icon?.let { icon ->
+                                val save = drawContext.canvas.nativeCanvas.save()
+                                try {
+                                    icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
+                                    icon.draw(drawContext.canvas.nativeCanvas)
+                                } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
                             }
-                            if (style == GlassNavigationStyle.Stacked || tab.icon == null)
-                                BasicText(tab.title, style = TextStyle(color = foreground,
-                                    fontSize = if (style == GlassNavigationStyle.Stacked) 11.sp else 14.sp),
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
+                        if (style == GlassNavigationStyle.Stacked || tab.icon == null)
+                            BasicText(tab.title, style = labelStyle,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (searchTab != null) {
@@ -398,3 +462,34 @@ private fun CompactSelectionGlyph(
         }
     }
 }
+
+/**
+ * AM++: draws the bar at an explicit [drawnWidthPx], centred, while the layout node itself keeps
+ * reporting the full width it was offered. That is what makes the tablet top bar hug its content
+ * without breaking the host's layout contract: the tablet session requires the measured Compose
+ * content width to equal the glass host view width (`navigationLayoutReady`), so the narrowing has
+ * to happen *inside* the node rather than by sizing the node.
+ *
+ * The library computes its tab and touch geometry from the constraints it receives, so the capsule
+ * and its gestures stay consistent with the narrower content box. [drawnWidthPx] is clamped to
+ * [maxWidthFraction] of the offered width, and an unusable (non-finite) value falls back to that
+ * full ceiling, so content that does not fit keeps the full-width geometry instead of overflowing.
+ */
+private fun Modifier.insetToDrawnWidth(drawnWidthPx: Float, maxWidthFraction: Float = 1f): Modifier =
+    layout { measurable, constraints ->
+        if (!constraints.hasBoundedWidth) {
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        } else {
+            val ceiling = (constraints.maxWidth * maxWidthFraction).roundToInt()
+                .coerceIn(0, constraints.maxWidth)
+            // Round the content-derived width up so the dp -> px -> Int round trip cannot leave the
+            // measured cells a sub-pixel wider than the box and trip the fallback.
+            val width = if (drawnWidthPx.isFinite()) {
+                ceil(drawnWidthPx).toInt().coerceIn(0, ceiling)
+            } else ceiling
+            val inset = (constraints.maxWidth - width) / 2
+            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+            layout(constraints.maxWidth, placeable.height) { placeable.place(inset, 0) }
+        }
+    }

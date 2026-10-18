@@ -169,4 +169,42 @@ class GlassTabGeometryTest {
         assertTrue(tooWide.uniform)
         assertEquals(56f, tooWide.tabWidth, 0f)
     }
+
+    // AM++: the tablet top bar is drawn at the content-derived width, not the anchor width. That
+    // width is `huggedCapsuleWidth`, and the cells must tile exactly that capsule.
+
+    @Test fun huggedCapsuleWidthIsTheCapsuleTheContentCellsTile() {
+        val content = listOf(68f, 105f, 69f, 24f)
+        val iconOnly = listOf(false, false, false, true)
+        val leading = 44f
+        val inset = 4f
+        val hugged = huggedCapsuleWidth(content, iconOnly, 40f, 14f, leading, inset)
+        assertTrue(hugged > 0f)
+        // Leading action + both row insets + every padded cell, nothing else.
+        val padded = (content[0] + 2f * 40f) + (content[1] + 2f * 40f) +
+            (content[2] + 2f * 40f) + (content[3] + 2f * 14f)
+        assertEquals(leading + 2f * inset + padded, hugged, .0001f)
+        // The capsule is narrower than the 1000px anchor it is measured against.
+        assertTrue(hugged < 1000f)
+
+        val geometry = GlassTabGeometry(
+            hugged, inset, leading, content.size, content,
+            textPadding = 40f, iconPadding = 14f, iconOnly = iconOnly,
+        )
+        assertTrue(geometry.contentHugging)
+        assertEquals(hugged - leading - 2f * inset, geometry.totalWidth, .0001f)
+        // Every cell, including the icon-only last one, owns a hit region on the drawn capsule.
+        for (index in content.indices) {
+            assertEquals(index, geometry.indexAtContent(geometry.centreAt(index.toFloat())))
+        }
+        assertNull(geometry.indexAtContent(geometry.totalWidth))
+    }
+
+    @Test fun huggedCapsuleWidthRejectsUnusableInputSoTheCallerKeepsTheAnchor() {
+        assertTrue(huggedCapsuleWidth(emptyList(), emptyList(), 40f, 14f, 0f, 4f).isNaN())
+        assertTrue(huggedCapsuleWidth(listOf(Float.NaN), listOf(false), 40f, 14f, 0f, 4f).isNaN())
+        assertTrue(huggedCapsuleWidth(listOf(-1f), listOf(false), 40f, 14f, 0f, 4f).isNaN())
+        assertTrue(huggedCapsuleWidth(listOf(10f), listOf(false), -1f, 14f, 0f, 4f).isNaN())
+        assertTrue(huggedCapsuleWidth(listOf(10f), listOf(false), 40f, 14f, -1f, 4f).isNaN())
+    }
 }

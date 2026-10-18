@@ -543,12 +543,14 @@ class NativeLyricModelPolicyTest {
         advertisedLane: String? = null,
         probe: Boolean = false,
         systemLyricsLanguage: String? = null,
+        supplementLane: String? = null,
     ) = NativeLyricModelPolicy.pronunciationPayloadLane(
         stateOfficialLane = stateLane,
         selectedLane = selectedLane,
         advertisedLane = advertisedLane,
         hasOfficialLineProbe = probe,
         systemLyricsLanguage = systemLyricsLanguage,
+        supplementOverlayLane = supplementLane,
     )
 
     /**
@@ -602,6 +604,50 @@ class NativeLyricModelPolicyTest {
         )
     }
 
+    /**
+     * The supplement document's own lane, as the completion feed publishes it into
+     * the overlay, is a first-class payload-lane confirmation.
+     *
+     * The bridge (1.6.6) removed the out-of-band Fragment re-entry that used to
+     * force a fresh pointer presentation after a completion, and the app's install
+     * method latches on pointer identity before it recomputes the pronunciation
+     * flag. A custom document whose lane Apple's model has not advertised
+     * therefore had no evidence left for the payload: every Apple-side source is
+     * empty and the per-line probe is false on 1606/1609 until a language has
+     * already been selected. The overlay lane is the document's real
+     * `<transliteration xml:lang>` tag, so it resolves the lane without touching
+     * Apple's data.
+     */
+    @Test
+    fun `the supplement document's published lane confirms the payload`() {
+        val supplement = payloadLane(supplementLane = "ja-Latn")
+        assertTrue(supplement.confirmed)
+        assertEquals("ja-Latn", supplement.language)
+        assertEquals(PronunciationLaneSource.SUPPLEMENT_OVERLAY, supplement.source)
+
+        // Apple-side evidence still wins over the supplement overlay, so an Apple
+        // source's own lane is never displaced by a document this module wrote.
+        assertEquals(
+            "ko-Latn",
+            payloadLane(advertisedLane = "ko-Latn", supplementLane = "ja-Latn").language,
+        )
+        assertEquals(
+            PronunciationLaneSource.ADVERTISED_VECTOR,
+            payloadLane(advertisedLane = "ko-Latn", supplementLane = "ja-Latn").source,
+        )
+        // The overlay lane is a real language tag, so it wins over the synthesized
+        // probe tag (which exists only to name a lane Apple would not).
+        val overlay = payloadLane(supplementLane = "ja-Latn", probe = true)
+        assertEquals("ja-Latn", overlay.language)
+        assertEquals(PronunciationLaneSource.SUPPLEMENT_OVERLAY, overlay.source)
+        assertEquals(
+            PronunciationLaneSource.LINE_PROBE,
+            payloadLane(probe = true).source,
+        )
+        // A non-Latin tag is never a lane, exactly like every other source.
+        assertFalse(payloadLane(supplementLane = "ja").confirmed)
+    }
+
     @Test
     fun `the payload lane is never confirmed without evidence`() {
         val none = payloadLane()
@@ -621,7 +667,7 @@ class NativeLyricModelPolicyTest {
     @Test
     fun `the payload lane source tokens are the device diagnostic values`() {
         assertEquals(
-            listOf("state", "confirmed", "advertised", "line-probe", "none"),
+            listOf("state", "confirmed", "advertised", "supplement", "line-probe", "none"),
             PronunciationLaneSource.entries.map { it.token },
         )
         // The custom path's late-lane reason is its own, not the build gate's none.

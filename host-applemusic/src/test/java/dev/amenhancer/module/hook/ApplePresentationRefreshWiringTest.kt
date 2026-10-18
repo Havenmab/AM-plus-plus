@@ -317,8 +317,17 @@ class ApplePresentationRefreshWiringTest {
             hooks.contains("mainHandler.post { requestCustomOverlayPresentationRefresh(songId) }"),
         )
         // Expected-song checks: the model the completion belongs to here, and the
-        // bound pointer's native id again before the invoke.
-        assertTrue(hooks.contains("if (songId != modelSongId) return"))
+        // bound pointer's native id again before the invoke. A completion that
+        // lands before the model seam ran binds the model of the pointer the
+        // bridge installed instead of dropping the ask, and a genuine mismatch
+        // is named in the log rather than silently swallowed.
+        assertTrue(hooks.contains("presentationPointerRef?.get()?.let(::pointerGet)"))
+        assertTrue(hooks.contains("ensureNativeModel(presented, viewModel = null)"))
+        assertTrue(
+            hooks.contains(
+                "online-translation presentation-refresh skipped: custom-overlay ",
+            ),
+        )
         assertTrue(hooks.contains("nativeSongId(songNative) != state.songId"))
         // A build arriving after an aborted overlay ask must not drop it before
         // the F2 binding seam can retry; only the completion's next revision
@@ -406,9 +415,16 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("private var pronunciationLaneRevision: Long = 0L"))
         assertTrue(hooks.contains("private var laneReadyKey: String? = null"))
         assertTrue(hooks.contains("private var laneConfirmedKey: String? = null"))
+        // The per-track reset block in `ensureNativeModel`: `modelChanged` is the
+        // engine's track-change signal and the block must still be the one that
+        // clears the per-song lane state before the model id is replaced. (The
+        // previous anchor silently degraded to the whole file when the source
+        // moved, which made these assertions vacuous.)
         val newTrack = hooks
-            .substringAfter("if (songId != modelSongId) {")
+            .substringAfter("val modelChanged = songId != modelSongId")
             .substringBefore("modelSongId = songId")
+        assertTrue(newTrack.isNotEmpty())
+        assertTrue(newTrack.contains("if (modelChanged) {"))
         assertTrue(newTrack.contains("pronunciationLaneRevision = 0L"))
         assertTrue(newTrack.contains("laneReadyKey = null"))
         assertTrue(newTrack.contains("laneConfirmedKey = null"))
@@ -484,6 +500,46 @@ class ApplePresentationRefreshWiringTest {
     }
 
     /**
+     * The supplement recompute: `w2` latches on pointer identity before it calls
+     * `F2`, so re-presenting the already-installed supplement pointer never
+     * recomputes the adapter's pronunciation flag. The custom-overlay refresh
+     * therefore has to re-run the app's own presentation recompute (`F2`) for a
+     * supplement pointer, exactly once and never for Apple's own document.
+     */
+    @Test
+    fun `a supplement refresh re-runs the app's own pronunciation recompute`() {
+        // The method is resolved with the binding seam; a profile without the
+        // point leaves it null and the recompute a no-op.
+        assertTrue(hooks.contains("nativePresentationMethod = method"))
+        assertTrue(
+            hooks.contains(
+                "resolver.resolveMethod(AppleMusicHookPoint.LYRICS_NATIVE_PRESENTATION).method",
+            ),
+        )
+        val perform = hooks
+            .substringAfter("private fun performPresentationRefresh(")
+            .substringBefore("/** The `payload=` token of one attempt")
+        assertTrue(perform.contains("if (!state.sourceIsApple) {"))
+        assertTrue(perform.contains("recomputeSupplementPresentation(fragment, pointer)"))
+        // Ordered after the app presentation and the rebind, before the payload:
+        // the app recompute is what sets `n1.e`; the payload is the last mutation.
+        val recomputeAt = perform.indexOf("recomputeSupplementPresentation(fragment, pointer)")
+        val rebindAt = perform.indexOf("presentationRebind.rebind(fragment)")
+        val payloadAt = perform.indexOf("pronunciationPayload.apply(")
+        assertTrue(rebindAt in 0 until recomputeAt)
+        assertTrue(recomputeAt in 0 until payloadAt)
+        // Guarded like the install invoke, so the presentation hook does not treat
+        // our recompute as a fresh Apple presentation, and fail-open.
+        val recompute = hooks
+            .substringAfter("private fun recomputeSupplementPresentation(")
+            .substringBefore("/** The `payload=` token of one attempt")
+        assertTrue(recompute.contains("presentationInvokeGuard.set(true)"))
+        assertTrue(recompute.contains("presentationInvokeGuard.remove()"))
+        assertTrue(recompute.contains("method.invoke(fragment, pointer)"))
+        assertTrue(recompute.contains("presentation-refresh pronunciation recompute failed"))
+    }
+
+    /**
      * Part 2 of the pronunciation fix. After the re-presentation (`F2` inside
      * `w2`) and the full rebind, the app's own pronunciation payload is replayed
      * last: `F2` writes `e=false` from the empty vector and
@@ -519,6 +575,13 @@ class ApplePresentationRefreshWiringTest {
         )
         assertTrue(perform.contains("hasOfficialLineProbe = hasValidOfficialPronunciation(songNative)"))
         assertTrue(perform.contains("systemLyricsLanguage = systemLyricsLanguage"))
+        // The supplement's own published lane is a payload-lane source: without
+        // it a custom document whose model has not advertised its
+        // `<transliteration xml:lang>` resolves `payload=skipped(custom-no-lane)`
+        // and the romanization never engages.
+        assertTrue(perform.contains("supplementOverlayLane = supplementOverlayLane"))
+        assertTrue(perform.contains("runCatching { supplementOverlayPronunciationLanguage() }"))
+        assertTrue(perform.contains("if (state.sourceIsApple)"))
         assertTrue(perform.contains("hasConfirmedOfficialLane = payloadLane.confirmed"))
         assertTrue(perform.contains("lane = payloadLane"))
         assertTrue(perform.contains("pronunciationSelected = state.pronunciationSelected"))

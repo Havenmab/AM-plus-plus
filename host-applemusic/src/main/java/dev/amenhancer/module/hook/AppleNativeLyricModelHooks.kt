@@ -151,9 +151,20 @@ import java.util.concurrent.ConcurrentHashMap
  *        `trigger=lane-confirmed`;
  *      * [onPronunciationLaneReady], which admits a supplement for the app's own
  *        advertisement/probe edge.
+ *    The 1.6.6 ViewModel result pipeline made one more thing load-bearing:
+ *    `w2` (`LYRICS_RESULT_PRESENTATION`) **latches on pointer identity before it
+ *    calls `F2`**, so re-presenting the already-installed supplement pointer
+ *    never recomputes the adapter's pronunciation flag (`n1.e`). A supplement
+ *    ask therefore re-runs the app's own presentation recompute
+ *    ([recomputeSupplementPresentation], `LYRICS_NATIVE_PRESENTATION`) before the
+ *    payload, so the app itself reads the freshly published overlay lane through
+ *    `matchToSystemLyricsScript`. Apple's document needs none of this: its
+ *    refresh reloads `loadLyrics`, which builds a fresh pointer and lets its own
+ *    `w2` reach `F2`.
  *    The payload lane is resolved from the model actually presenting the lyrics
  *    ([NativeLyricModelPolicy.pronunciationPayloadLane]): a lane Apple advertised
- *    or we selected, or — when Apple exposed the **text** but named no language —
+ *    or we selected, the displayed document's own published overlay lane, or —
+ *    when Apple exposed the **text** but named no language —
  *    a synthesized neutral Latin tag ([probeConfirmedPronunciationLanguage],
  *    HLE's `thirdPartyPronunciationFallbackLanguage()` semantics; the content
  *    stays Apple's own getter output). A supplement that confirms no lane is
@@ -493,6 +504,26 @@ internal class AppleNativeLyricModelHooks(
     private val presentationInvokeGuard = ThreadLocal<Boolean>()
 
     /**
+     * The app's own presentation **recompute** (`LYRICS_NATIVE_PRESENTATION` —
+     * `F2` on the 1606/1609 profiles), resolved with the native-presentation
+     * binding seam. It is the only writer of the live adapters'
+     * pronunciation-selected flag (`n1.e`) and the only place the app derives
+     * that flag from `matchToSystemLyricsScript(model.getPronunciationLanguages())`
+     * and re-dispatches its own `PAYLOAD_TOGGLE_PRONUNCIATION`.
+     *
+     * It is kept separate from [presentationMethod] (`LYRICS_RESULT_PRESENTATION`
+     * — `w2`) because `w2` **latches on pointer identity**
+     * (`if (this.f1 == songInfoPtr) return;`) *before* it calls `F2`: a refresh
+     * that re-presents the already-installed supplement pointer is a no-op and
+     * never recomputes the flag. Apple's own document does not depend on this
+     * (its refresh reloads `loadLyrics`, which builds a fresh pointer), so a
+     * supplement whose overlay lane arrives after the first presentation needs
+     * this explicit recompute to follow the published lanes.
+     */
+    @Volatile
+    private var nativePresentationMethod: Method? = null
+
+    /**
      * The app's own `PlayerLyricsViewModel#loadLyrics` (the 1606 profile's
      * `LYRICS_VIEW_MODEL_LOAD`) and the last (view model, PlaybackItem) pair the
      * app handed it — HLE's `AppleLyricsPlaybackBinding`. Re-invoking that exact
@@ -760,6 +791,7 @@ internal class AppleNativeLyricModelHooks(
             )
             return
         }
+        nativePresentationMethod = method
         ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 runCatching {
@@ -1105,7 +1137,33 @@ internal class AppleNativeLyricModelHooks(
         // Expected-song check: the overlay write must belong to the song whose
         // native model the hooks are installed for. The authoritative check is
         // performed again against the bound pointer before the invoke.
-        if (songId != modelSongId) return
+        //
+        // The result bridge installs the custom pointer and forwards it to this
+        // delivery from the install seam, so a completion that lands before the
+        // model seam ran (or while a previous track's model is still bound) can
+        // still recover: bind the model of the pointer the app actually
+        // installed. Dropping the ask silently is what left the custom lane with
+        // no refresh at all.
+        if (modelSongId != songId) {
+            val presented = runCatching { presentationPointerRef?.get()?.let(::pointerGet) }
+                .getOrNull()
+            if (presented != null && nativeSongId(presented) == songId) {
+                runCatching { ensureNativeModel(presented, viewModel = null) }
+                    .onFailure { error ->
+                        log(
+                            "online-translation presentation-refresh rebind failed: " +
+                                error.message,
+                        )
+                    }
+            }
+        }
+        if (modelSongId != songId) {
+            log(
+                "online-translation presentation-refresh skipped: custom-overlay " +
+                    "id=$songId model=$modelSongId",
+            )
+            return
+        }
         val onlineTranslation = enabled && overlay.hasTranslation(songId.toString())
         // The module's own document romanization is a supplement-only lane: an
         // Apple-sourced song keeps Apple's own lanes and never reads the overlay.
@@ -1809,6 +1867,24 @@ internal class AppleNativeLyricModelHooks(
                 }
         }
 
+        // A module supplement (custom lyrics) pointer never reloads Apple's own
+        // document (`reload=skipped(supplement-pointer)`), and the app's install
+        // method latches on pointer identity *before* it recomputes the
+        // pronunciation flag: `w2` begins with `if (this.f1 == songInfoPtr)
+        // return;` and only then calls `F2`. A post-overlay refresh re-presents
+        // the pointer that is already installed, so that path returns before
+        // `F2` — the only writer of the adapters' `n1.e` flag and the only code
+        // that re-dispatches the app's own pronunciation payload — ever runs.
+        // Re-run that app recompute for the supplement path only, with the
+        // currently presented pointer, so the lanes the completion just
+        // published are what the app itself reads
+        // (`matchToSystemLyricsScript` → the overlay-lane fallback →
+        // `setPronunciation` → `n1.e` + payload). Apple's own document keeps its
+        // build/reload triggers; this branch is never taken for it.
+        if (!state.sourceIsApple) {
+            recomputeSupplementPresentation(fragment, pointer)
+        }
+
         // The last step, deliberately: `F2` (inside the re-presentation above)
         // recomputes `n1.e` from Apple's own vector and dispatches its payload
         // with `e=false` when the lane is not advertised yet, and the rebind's
@@ -1821,10 +1897,19 @@ internal class AppleNativeLyricModelHooks(
         // A module supplement (custom lyrics) document is parsed into its **own**
         // model, so a lane is confirmed from that model: the lane this ask
         // resolved, the lane our selection handed to `setPronunciation`, the
-        // model's live advertisement, or a line that already reads its
-        // romanization. `laneSrc=` on the log line names which one; a supplement
-        // that confirmed none prints `payload=skipped(custom-no-lane)` rather than
-        // showing an empty pronunciation row.
+        // model's live advertisement, the displayed document's own
+        // `<transliteration xml:lang>` published into the overlay (the
+        // supplement's content source, and the only evidence available when the
+        // model has not advertised the custom document's lane), or a line that
+        // already reads its romanization. `laneSrc=` on the log line names which
+        // one; a supplement that confirmed none prints
+        // `payload=skipped(custom-no-lane)` rather than showing an empty
+        // pronunciation row.
+        val supplementOverlayLane = if (state.sourceIsApple) {
+            null
+        } else {
+            runCatching { supplementOverlayPronunciationLanguage() }.getOrNull()
+        }
         val payloadLane = runCatching {
             NativeLyricModelPolicy.pronunciationPayloadLane(
                 stateOfficialLane = state.officialLane,
@@ -1835,6 +1920,7 @@ internal class AppleNativeLyricModelHooks(
                 // this when Apple advertised no language name: the text is
                 // Apple's own, the tag only lets the app reveal the track.
                 systemLyricsLanguage = systemLyricsLanguage,
+                supplementOverlayLane = supplementOverlayLane,
             )
         }.getOrElse { error ->
             log("online-translation presentation-refresh lane resolution failed: ${error.message}")
@@ -1877,6 +1963,40 @@ internal class AppleNativeLyricModelHooks(
             payload = payload,
             lane = payloadLane,
         )
+    }
+
+    /**
+     * Re-runs the app's own presentation recompute for a module supplement
+     * pointer (see [nativePresentationMethod]).
+     *
+     * `w2` is not enough here: it returns at its `this.f1 == songInfoPtr` guard
+     * for the pointer it already presented, so the `F2` call that writes `n1.e`
+     * and dispatches the payload is skipped. `F2` does not install anything — it
+     * re-derives the flags from the model and re-dispatches the payloads — so
+     * running it again is exactly the app's own reaction to a lane change.
+     *
+     * Guarded like our install invoke: the native-presentation hook must not
+     * treat this as a fresh Apple presentation (which would re-arm the binding
+     * and could re-enter this refresh). Main-thread only; the caller already
+     * runs on the main handler. Fail-open.
+     */
+    private fun recomputeSupplementPresentation(fragment: Any?, pointer: Any?) {
+        val method = nativePresentationMethod ?: return
+        if (fragment == null || pointer == null) return
+        log("online-translation presentation-refresh pronunciation recompute id=$modelSongId")
+        runCatching {
+            presentationInvokeGuard.set(true)
+            try {
+                method.invoke(fragment, pointer)
+            } finally {
+                presentationInvokeGuard.remove()
+            }
+        }.onFailure { error ->
+            log(
+                "online-translation presentation-refresh pronunciation recompute failed: " +
+                    error.message,
+            )
+        }
     }
 
     /** The `payload=` token of one attempt: the outcome, or `not-available` for an abort. */

@@ -177,15 +177,22 @@ class CustomLyricsCompletionFeed(
                 "timing=${metadata.timingMode} appleTranslation=${metadata.hasTranslation} " +
                 transliterationSummary(document.ttml),
         )
-        val merged = runCatching { enrich(appleMusicId, document.ttml) }.getOrNull()
         // Publish the displayed document's own lanes *before* the enricher so a
         // merged document (which carries the same romanization plus any provider
         // translation) refines the overlay afterwards instead of racing it. A
         // custom document that already carries its translation produces no merged
         // document at all, so this is the only write its romanization gets.
+        //
+        // The order is load-bearing: the enricher writes the merged per-line
+        // lanes into the same overlay, so publishing the displayed document
+        // afterwards would drop a provider translation the merge had just added
+        // and leave the overlay describing a document the installed pointer no
+        // longer matches. Displayed first, merged second is the order this
+        // comment always named.
         val publishedDisplayed = runCatching {
             onDisplayedDocument(appleMusicId, document.ttml)
         }.getOrDefault(false)
+        val merged = runCatching { enrich(appleMusicId, document.ttml) }.getOrNull()
         // `publish` and the per-lane `translationSource`/`pronunciationSource`
         // line come from the enricher itself; this is the inject counterpart.
         log(appleMusicId, injectLine(appleMusicId, published = merged != null || publishedDisplayed))

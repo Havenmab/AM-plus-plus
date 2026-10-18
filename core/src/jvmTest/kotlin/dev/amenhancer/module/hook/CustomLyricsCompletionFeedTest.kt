@@ -97,6 +97,60 @@ class CustomLyricsCompletionFeedTest {
         assertEquals(0, calls)
     }
 
+    /**
+     * The overlay write order is load-bearing for the custom pronunciation lane.
+     *
+     * The displayed document's own lanes are published **before** the enricher,
+     * so a merged document (the same romanization plus any provider translation)
+     * refines the overlay afterwards. The reverse order would replace a merged
+     * translation with the raw document's lanes right before the refresh reads
+     * them, and the custom pointer installation would then be described by an
+     * overlay that no longer matches it. This is the custom collection chain's
+     * first half: the overlay must hold the lanes of the document the host will
+     * install.
+     */
+    @Test
+    fun `the displayed document's lanes are published before the enricher runs`() {
+        val order = mutableListOf<String>()
+        val feed = newFeed(
+            onDisplayedDocument = { _, _ ->
+                order += "displayed"
+                true
+            },
+            enrich = { _, _ ->
+                order += "enrich"
+                "merged"
+            },
+            onMergedDocument = { _, _, _ -> order += "merged" },
+            onOverlayUpdated = { _ -> order += "overlay" },
+        )
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+
+        // Displayed lanes first, then enrichment, then the merged pointer and
+        // finally the refresh ask that reads the settled overlay.
+        assertEquals(listOf("displayed", "enrich", "merged", "overlay"), order)
+    }
+
+    @Test
+    fun `a displayed-document publish alone still asks for the refresh`() {
+        val requested = mutableListOf<Long>()
+        val feed = newFeed(
+            onDisplayedDocument = { _, _ -> true },
+            onOverlayUpdated = { id -> requested += id },
+            enrich = { _, _ -> null },
+        )
+        feed.remember(42L, REVISION, CUSTOM_DOCUMENT)
+
+        feed.onDisplayed(42L)
+
+        // A custom document that already carries its translation and romanization
+        // produces no merged document; the displayed publish is then the only
+        // overlay write and the only reason to ask for the post-overlay refresh.
+        assertEquals(listOf(42L), requested)
+    }
+
     @Test
     fun `the custom completion reports capture and inject for the track`() {
         val lines = mutableListOf<String>()
@@ -329,6 +383,7 @@ class CustomLyricsCompletionFeedTest {
         log: (Long, String) -> Unit = { _, _ -> },
         onOverlayUpdated: (Long) -> Unit = {},
         onMergedDocument: (Long, String, String) -> Unit = { _, _, _ -> },
+        onDisplayedDocument: (Long, String) -> Boolean = { _, _ -> false },
         enrich: (Long, String) -> String?,
     ): CustomLyricsCompletionFeed = CustomLyricsCompletionFeed(
         enrich = enrich,
@@ -336,6 +391,7 @@ class CustomLyricsCompletionFeedTest {
         log = log,
         onOverlayUpdated = onOverlayUpdated,
         onMergedDocument = onMergedDocument,
+        onDisplayedDocument = onDisplayedDocument,
     )
 
     private fun entry(id: Long, sha256: String = REVISION) = CustomLyricsEntry(

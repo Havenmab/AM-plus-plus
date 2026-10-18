@@ -913,7 +913,16 @@ object NativeLyricModelPolicy {
      *     ([selectedLane]) — the same evidence `F2`'s `z` uses;
      *  3. the model's live/remembered `getPronunciationLanguages` admission
      *     ([advertisedLane]);
-     *  4. a line whose pronunciation getter already returns romanization
+     *  4. the **displayed document's own** lane, as published into the overlay by
+     *     this module ([supplementOverlayLane]) — the supplement path's content
+     *     source. A custom document's `<transliteration xml:lang>` is the lane
+     *     Apple's parser keys the model by; when the model has not advertised it
+     *     yet (or at all) the overlay is the only evidence the module holds, and
+     *     it is exactly the tag the document carries. The host passes it only
+     *     for a module supplement (custom lyrics) song
+     *     ([NativeLyricOverlayStore.hasPronunciation] gates it), so an
+     *     Apple-sourced track is never given a lane it did not advertise;
+     *  5. a line whose pronunciation getter already returns romanization
      *     ([hasOfficialLineProbe]) — HLE's per-call `hasValidOfficialRomanization`,
      *     which is the only evidence a partially-populated official document
      *     offers. Apple exposed the **text** but advertised no language name for
@@ -938,6 +947,7 @@ object NativeLyricModelPolicy {
         advertisedLane: String?,
         hasOfficialLineProbe: Boolean,
         systemLyricsLanguage: String? = null,
+        supplementOverlayLane: String? = null,
     ): PronunciationPayloadLane = when {
         stateOfficialLane.isOfficialLane() ->
             PronunciationPayloadLane(
@@ -956,6 +966,12 @@ object NativeLyricModelPolicy {
                 confirmed = true,
                 language = advertisedLane,
                 source = PronunciationLaneSource.ADVERTISED_VECTOR,
+            )
+        supplementOverlayLane.isOfficialLane() ->
+            PronunciationPayloadLane(
+                confirmed = true,
+                language = supplementOverlayLane,
+                source = PronunciationLaneSource.SUPPLEMENT_OVERLAY,
             )
         hasOfficialLineProbe ->
             PronunciationPayloadLane(
@@ -1054,6 +1070,15 @@ enum class PronunciationLaneSource(val token: String) {
 
     /** The model's live/remembered `getPronunciationLanguages` admission. */
     ADVERTISED_VECTOR("advertised"),
+
+    /**
+     * The displayed supplement document's own `<transliteration xml:lang>`, as
+     * published into the overlay by the custom completion. The supplement path's
+     * content source: a custom document's lane is real and `setPronunciation`
+     * accepts it, but Apple's model advertisement may never name it, so without
+     * this branch the payload could not be dispatched for a custom track.
+     */
+    SUPPLEMENT_OVERLAY("supplement"),
 
     /** The per-line pronunciation getter already returns romanization. */
     LINE_PROBE("line-probe"),

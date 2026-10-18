@@ -231,3 +231,38 @@ data class GlassTabGeometry(
         return valueAtCentre(centre + if (ltr) deltaX else -deltaX)
     }
 }
+
+/**
+ * AM++: the width the capsule needs to hug its content exactly.
+ *
+ * This is the same rule [GlassTabGeometry] applies when [GlassTabGeometry.contentHugging] is true:
+ * the leading action, every cell's measured content plus a fixed padding per side ([textPadding],
+ * or the much smaller [iconPadding] for a tab flagged in [iconOnly]), and the row's own [inset] on
+ * both sides. The tablet top bar uses it to draw the capsule narrower than the anchor it was
+ * measured against, while the cells inside stay tiled by the very same rule.
+ *
+ * Kept as a top-level Android-free function so the drawn width can be pinned by a unit test and
+ * the caller's width and the geometry's cells cannot drift apart. Returns [Float.NaN] for unusable
+ * input, which the caller reads as "keep the full anchor width".
+ */
+fun huggedCapsuleWidth(
+    contentWidths: List<Float>,
+    iconOnly: List<Boolean>,
+    textPadding: Float,
+    iconPadding: Float,
+    leadingWidth: Float,
+    inset: Float,
+): Float {
+    if (contentWidths.isEmpty()) return Float.NaN
+    if (!leadingWidth.isFinite() || leadingWidth < 0f) return Float.NaN
+    if (!inset.isFinite() || inset < 0f) return Float.NaN
+    if (!textPadding.isFinite() || textPadding < 0f) return Float.NaN
+    if (!iconPadding.isFinite() || iconPadding < 0f) return Float.NaN
+    var total = leadingWidth + 2f * inset
+    for (index in contentWidths.indices) {
+        val width = contentWidths[index]
+        if (!width.isFinite() || width < 0f) return Float.NaN
+        total += width + 2f * if (iconOnly.getOrElse(index) { false }) iconPadding else textPadding
+    }
+    return total
+}

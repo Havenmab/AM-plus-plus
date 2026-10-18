@@ -25,6 +25,12 @@ fun RowScope.LiquidBottomTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     shape: Shape = Capsule(),
+    /**
+     * AM++: the cell's share of the row. Every equal-width caller keeps upstream's literal 1f;
+     * the tablet top bar hands each cell the weight its measured content earned
+     * ([dev.amenhancer.glass.GlassTabGeometry.cellWeight]) so the row can hug its labels.
+     */
+    weight: Float = 1f,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val scale = LocalLiquidBottomTabScale.current
@@ -38,7 +44,7 @@ fun RowScope.LiquidBottomTab(
                 onClick = onClick
             )
             .fillMaxHeight()
-            .weight(1f)
+            .weight(weight)
             .graphicsLayer {
                 val scale = scale()
                 scaleX = scale

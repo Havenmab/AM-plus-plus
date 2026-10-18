@@ -4,11 +4,14 @@
  * 65ab177e90e5c1d8c62e70cf7755841982da65f6, Apache License 2.0.
  * Changed by AM++: optional host accent, tap-only native reselection, free thumb dragging with
  * multi-finger hand-over, a panel highlight pinned to the thumb's centre (the reference draws
- * the same light a row inset to the left), and a scroll-collapse progress that animates the
- * panel's width/height and swaps the tab row for a compact face. Every collapse parameter
- * defaults to the expanded bar. Collapse hosts retain material modifiers and fixed effects,
- * read continuous geometry during layout/drawing, reserve expanded effect-layer bounds,
- * avoid redundant offscreen clipping, and suspend the unused refraction source layout.
+ * the same light a row inset to the left), a scroll-collapse progress that animates the
+ * panel's width/height and swaps the tab row for a compact face, and opt-in content-hugging
+ * cells so the tablet top bar can wrap its labels instead of sharing the whole anchor evenly.
+ * Every collapse parameter defaults to the expanded bar and every content parameter defaults to
+ * upstream's equal cells, so the phone bottom bar is unchanged. Collapse hosts retain material
+ * modifiers and fixed effects, read continuous geometry during layout/drawing, reserve expanded
+ * effect-layer bounds, avoid redundant offscreen clipping, and suspend the unused refraction
+ * source layout.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -107,6 +110,12 @@ fun LiquidBottomTabs(
     panelBlur: androidx.compose.ui.unit.Dp = GlassPolicy.PANEL_BLUR_DP.dp,
     leadingWidth: androidx.compose.ui.unit.Dp = 0f.dp,
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
+    // AM++: opt-in content-hugging cells. The caller supplies one intrinsic content width per tab
+    // (its measured label or glyph); null keeps upstream's equal-width tabs for every other caller.
+    tabContentWidths: List<androidx.compose.ui.unit.Dp>? = null,
+    // AM++: per-tab icon-only flags, parallel to tabContentWidths. A flagged tab takes the much
+    // smaller icon padding so a lone glyph keeps a tight capsule around itself.
+    tabIconOnly: List<Boolean>? = null,
     /** AM++ scroll collapse: 0 = expanded bar, 1 = collapsed capsule. */
     collapseProgress: () -> Float = { 0f },
     /** AM++: drawn in place of the tab row once the capsule has withdrawn. */
@@ -123,7 +132,7 @@ fun LiquidBottomTabs(
     expandReboundScale: Float = 1f,
     /** Only collapse-capable hosts reuse fixed material effects and suspend the hidden source. */
     optimizeCollapseRendering: Boolean = false,
-    content: @Composable RowScope.() -> Unit
+    content: @Composable RowScope.(index: Int, weight: Float) -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
     val selectedTabClick = androidx.compose.runtime.rememberUpdatedState(onSelectedTabClick)
@@ -146,7 +155,13 @@ fun LiquidBottomTabs(
     val animationScope = rememberCoroutineScope()
     val offsetAnimation = remember { Animatable(0f) }
     val squeeze = with(density) { 4f.dp.toPx() }
-    val panelInset = with(density) { 4f.dp.toPx() }
+    // AM++: one constant for the row's own inset, because the tablet bar's content-derived width
+    // and the row that pads by it have to agree (see GlassPolicy.TAB_ROW_INSET_DP).
+    val panelInset = with(density) { GlassPolicy.TAB_ROW_INSET_DP.dp.toPx() }
+    // AM++: the fixed per-side padding of a content-hugging cell, in px. Only consulted when the
+    // caller supplies measured content, so the equal-width callers are unaffected.
+    val textPadding = with(density) { GlassPolicy.TABLET_TAB_PADDING_DP.dp.toPx() }
+    val iconPadding = with(density) { GlassPolicy.TABLET_ICON_TAB_PADDING_DP.dp.toPx() }
 
     // AM++: the squeeze nudge is read by both the panel layer and the highlight, so it lives
     // in one place and is evaluated against whichever width is being drawn.
@@ -206,6 +221,26 @@ fun LiquidBottomTabs(
         val expandedWidthPx = constraints.maxWidth.toFloat()
         val expandedPanelHeightPx = with(density) { panelHeight.toPx() }
         val controlPx = with(density) { dev.amenhancer.glass.GlassBarCollapsePolicy.CONTROL_DP.dp.toPx() }
+        // AM++: content-hugging cells for the tablet top bar. The caller measures each tab and
+        // passes it in; empty keeps upstream's equal cells, which is what the phone bar uses.
+        val measuredContent = remember(tabContentWidths, tabIconOnly, density, tabsCount) {
+            tabContentWidths
+                ?.takeIf { it.size == tabsCount }
+                ?.map { with(density) { it.toPx() } }
+                .orEmpty()
+        }
+        val contentWeighted = measuredContent.isNotEmpty()
+        fun geometryFor(widthPx: Float): dev.amenhancer.glass.GlassTabGeometry =
+            if (!contentWeighted) {
+                dev.amenhancer.glass.GlassTabGeometry(widthPx, panelInset, leadingPx, tabsCount)
+            } else {
+                dev.amenhancer.glass.GlassTabGeometry(
+                    widthPx, panelInset, leadingPx, tabsCount, measuredContent,
+                    textPadding = textPadding,
+                    iconPadding = iconPadding,
+                    iconOnly = tabIconOnly.orEmpty(),
+                )
+            }
         // The panel's width, height and bottom-anchored placement come from the shared entry point,
         // the one the host's native touch hit test calls, so the drawn capsule and the region that
         // answers for it cannot drift apart.
@@ -228,13 +263,14 @@ fun LiquidBottomTabs(
             val collapseDropPx = controls.top - (expandedPanelHeightPx - controls.height) / 2f
             val expandedContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.expandedContentAlpha(progress)
             val compactContentAlpha = dev.amenhancer.glass.GlassBarCollapsePolicy.compactContentAlpha(progress)
-            val geometry = dev.amenhancer.glass.GlassTabGeometry(restingWidthPx, panelInset, leadingPx, tabsCount)
+            val geometry = geometryFor(restingWidthPx)
             return CollapseFrame(progress, controls, restingWidthPx, geometry, collapseDropPx,
                 expandedContentAlpha, compactContentAlpha)
         }
         val readFrame: () -> CollapseFrame = if (optimizeCollapseRendering) {
             val state = remember(expandedWidthPx, expandedPanelHeightPx, density, tabsCount,
-                leadingPx, collapseReboundScale, expandReboundScale) {
+                leadingPx, collapseReboundScale, expandReboundScale,
+                measuredContent, textPadding, iconPadding, tabIconOnly) {
                 derivedStateOf { frame(collapseProgressState.value()) }
             }
             remember(state) { { state.value } }
@@ -262,11 +298,14 @@ fun LiquidBottomTabs(
             panelLayerSize.width,
             (expandedPanelHeightPx - 8f * density.density).fastRoundToInt().coerceAtLeast(0),
         ) else IntSize.Zero
-        val selectionLayerSize = if (reserveLayer) IntSize(
-            dev.amenhancer.glass.GlassTabGeometry(expandedWidthPx, panelInset, leadingPx, tabsCount)
-                .tabWidth.fastRoundToInt().coerceAtLeast(1),
-            refractionLayerSize.height,
-        ) else IntSize.Zero
+        val selectionLayerSize = if (reserveLayer) {
+            // Content-hugging cells can be wider than the equal share, and the refraction source
+            // has to cover the widest of them; the phone bar has one scalar width to report.
+            val expandedGeometry = geometryFor(expandedWidthPx)
+            val widestCell = (0 until tabsCount).maxOfOrNull { expandedGeometry.cellWidth(it) }
+                ?: expandedGeometry.tabWidth
+            IntSize(widestCell.fastRoundToInt().coerceAtLeast(1), refractionLayerSize.height)
+        } else IntSize.Zero
 
         val panelOffsetState = remember(density, readFrame) {
             derivedStateOf { squeezeOffset(readFrame().restingWidth) }
@@ -298,7 +337,15 @@ fun LiquidBottomTabs(
                 },
                 onDragStopped = {
                     interactiveHighlight.releasePress()
-                    val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+                    // The tab value is the pill centre's position along the piecewise-linear centre
+                    // map, so its nearest integer is already the nearest tab centre; the content
+                    // branch makes that choice explicit instead of assuming equal cells.
+                    val draggingGeometry = liveGeometry.value().geometry
+                    val targetIndex = if (draggingGeometry.uniform) {
+                        targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+                    } else {
+                        draggingGeometry.snapIndex(targetValue)
+                    }
                     currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
                     animationScope.launch {
@@ -360,8 +407,10 @@ fun LiquidBottomTabs(
             val panelOffset = readPanelOffset()
             highlightAnchor.panelWidth = restingWidthPx
             highlightAnchor.tabWidth = tabWidth
+            highlightAnchor.geometry = current.geometry
             highlightAnchor.collapse = collapseRaw
             freeDragBridge.tabWidth = tabWidth
+            freeDragBridge.geometry = current.geometry
             freeDragBridge.panelWidth = restingWidthPx
             freeDragBridge.panelOffset = panelOffset
         }
@@ -394,6 +443,17 @@ fun LiquidBottomTabs(
             } else layout(0, 0) {}
         } else Modifier
 
+        // AM++: content cells are laid out with the weight their measured content earned, so the
+        // row tiles the capsule exactly (the same ratios the geometry reports). Equal-cell callers
+        // keep upstream's literal 1f and never read the collapse frame here, so the phone bar does
+        // not recompose on every animation frame.
+        val tabRowContent: @Composable RowScope.() -> Unit = {
+            leadingContent?.invoke(this)
+            repeat(tabsCount) { index ->
+                content(index, if (contentWeighted) readFrame().geometry.cellWeight(index) else 1f)
+            }
+        }
+
         Row(
             Modifier
                 .graphicsLayer {
@@ -410,7 +470,7 @@ fun LiquidBottomTabs(
                     heightPx = { readFrame().controls.height })
                 .collapseSize(optimizeCollapseRendering, density, required = true,
                     widthPx = { readFrame().controls.capsuleWidth })
-                .padding(4f.dp),
+                .padding(GlassPolicy.TAB_ROW_INSET_DP.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Only the cells fade, on the clamped resting width minus the panel's 4dp insets.
@@ -420,7 +480,7 @@ fun LiquidBottomTabs(
                     .collapseSize(optimizeCollapseRendering, density, widthPx = { readFrame().restingWidth - 8f * density.density })
                     .fillMaxHeight().collapseAlpha(optimizeCollapseRendering) { readFrame().expandedAlpha },
                 verticalAlignment = Alignment.CenterVertically,
-                content = { leadingContent?.invoke(this); content() }
+                content = tabRowContent
             )
         }
 
@@ -448,7 +508,7 @@ fun LiquidBottomTabs(
                         heightPx = { readFrame().controls.height - 8f * density.density })
                     .collapseSize(optimizeCollapseRendering, density, required = true,
                         widthPx = { readFrame().controls.capsuleWidth })
-                    .padding(horizontal = 4f.dp)
+                    .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                     .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -459,7 +519,7 @@ fun LiquidBottomTabs(
                         widthPx = { readFrame().restingWidth - 8f * density.density })
                         .fillMaxHeight().collapseAlpha(optimizeCollapseRendering) { readFrame().expandedAlpha },
                     verticalAlignment = Alignment.CenterVertically,
-                    content = { leadingContent?.invoke(this); content() }
+                    content = tabRowContent
                 )
             }
         }
@@ -476,30 +536,55 @@ fun LiquidBottomTabs(
                         collapseOutline = true)
                 }
             } else glassSelectionMaterial(selectionBackdrop, dampedDragAnimation, isLightTheme)
+            // AM++: equal cells keep upstream's width rule. A content cell's pill changes width as
+            // it crosses cells, so it reads the animated width in measurement — reading it in
+            // composition would recompose the whole bar on every drag frame.
+            val thumbWidthModifier = when {
+                optimizeCollapseRendering -> Modifier.collapseSize(true, density,
+                    widthPx = {
+                        readFrame().geometry.pillWidthAt(dampedDragAnimation.value)
+                            .coerceAtLeast(density.density)
+                    })
+                contentWeighted -> Modifier.layout { measurable, constraints ->
+                    val pillWidth = liveGeometry.value().geometry
+                        .pillWidthAt(dampedDragAnimation.value)
+                        .fastRoundToInt()
+                        .coerceIn(0, constraints.maxWidth)
+                    val placeable = measurable.measure(
+                        constraints.copy(minWidth = pillWidth, maxWidth = pillWidth)
+                    )
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                else -> Modifier.collapseSize(false, density,
+                    widthPx = { readFrame().geometry.tabWidth.coerceAtLeast(density.density) })
+            }
             Box(
                 Modifier
-                    .padding(horizontal = 4f.dp)
+                    .padding(horizontal = GlassPolicy.TAB_ROW_INSET_DP.dp)
                     .graphicsLayer {
                         val current = readFrame()
-                        val tabWidth = current.geometry.tabWidth
+                        val geometry = current.geometry
                         val panelOffset = readPanelOffset()
-                        translationX =
+                        // AM++: content-hugging cells ride the same piecewise-linear centre map the
+                        // drag inverse uses. The equal-cell branch keeps upstream's literal
+                        // arithmetic, so the phone bar is unchanged.
+                        translationX = if (geometry.uniform) {
                             if (leadingPx == 0f) {
-                                if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
-                                else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
-                            } else current.geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
+                                if (isLtr) dampedDragAnimation.value * geometry.tabWidth + panelOffset
+                                else size.width - (dampedDragAnimation.value + 1f) * geometry.tabWidth + panelOffset
+                            } else geometry.thumbOffset(dampedDragAnimation.value, isLtr) + panelOffset
+                        } else {
+                            geometry.pillTranslation(dampedDragAnimation.value, isLtr) + panelOffset
+                        }
                         translationY = current.drop
                     }
                     .then(thumbMaterial)
                     // The thumb's width must follow the animated panel: `fillMaxWidth(1f / tabsCount)`
                     // measures against the full box, so it would keep the droplet at its expanded
-                    // width while the capsule narrowed. `tabWidth` is the same value whenever no
-                    // leading action exists, because `tabWidth = (panelWidth - 2 * inset) / count`
-                    // and the 4dp inset is applied on both sides here — exact at progress 0.
+                    // width while the capsule narrowed.
                     .collapseSize(optimizeCollapseRendering, density,
                         heightPx = { readFrame().controls.height - 8f * density.density })
-                    .collapseSize(optimizeCollapseRendering, density,
-                        widthPx = { readFrame().geometry.tabWidth.coerceAtLeast(density.density) })
+                    .then(thumbWidthModifier)
             )
         }
 
@@ -660,6 +745,8 @@ private class PillCentre {
     var panelWidth: Float = 0f
     var panelInset: Float = 0f
     var tabWidth: Float = 0f
+    /** AM++: the non-collapsing host's geometry, so content cells find their own centre. */
+    var geometry: dev.amenhancer.glass.GlassTabGeometry? = null
     var isLtr: Boolean = true
 
     /** AM++: 0 = the light sits on the selected tab's cell, 1 = on the panel's own centre. */
@@ -674,15 +761,23 @@ private class PillCentre {
      * circle's left edge, which is what made the pressed glow look offset from the button. Both
      * ends are blended on the collapse progress so the light tracks the glass through the travel.
      *
+     * AM++: a content-hugging cell centre comes from the same piecewise-linear map the thumb rides,
+     * so the light cannot drift off a cell whose width is its own label's.
+     *
      * The result is clamped into the panel, so a stale `tabWidth` during a menu swap cannot push the
      * light outside the glass it belongs to.
      */
     fun x(): Float {
         val current = frame?.invoke()
         val panelWidth = current?.restingWidth ?: this.panelWidth
-        val tabWidth = current?.geometry?.tabWidth ?: this.tabWidth
+        val geometry = current?.geometry ?: this.geometry
+        val tabWidth = geometry?.tabWidth ?: this.tabWidth
         val t = (current?.progress ?: collapse).coerceIn(0f, 1f)
-        val onTab = panelInset + (pillValue() + 0.5f) * tabWidth
+        val onTab = if (geometry != null && !geometry.uniform) {
+            panelInset + geometry.centreAt(pillValue())
+        } else {
+            panelInset + (pillValue() + 0.5f) * tabWidth
+        }
         val fromStart = if (isLtr) onTab else panelWidth - onTab
         val centred = panelWidth / 2f
         val blended = fromStart + (centred - fromStart) * t
@@ -701,6 +796,8 @@ private class FreeDragBridge {
     var offset: (() -> Float)? = null
     var animation: DampedDragAnimation? = null
     var tabWidth: Float = 0f
+    /** AM++: the non-collapsing host's geometry; content cells index themselves, not a scalar. */
+    var geometry: dev.amenhancer.glass.GlassTabGeometry? = null
     var panelWidth: Float = 0f
     var panelInset: Float = 0f
     var panelOffset: Float = 0f
@@ -830,7 +927,10 @@ private class FreeDragBridge {
     }
 
     private fun tabIndexAt(x: Float): Int? {
-        val tabWidth = frame?.invoke()?.geometry?.tabWidth ?: this.tabWidth
+        val geometry = frame?.invoke()?.geometry ?: this.geometry
+        // AM++: content cells have their own starts; only the equal-cell fallback divides evenly.
+        if (geometry != null && !geometry.uniform) return geometry.indexAtContent(logicalX(x))
+        val tabWidth = geometry?.tabWidth ?: this.tabWidth
         if (tabWidth <= 0f) return null
         val contentX = logicalX(x)
         if (contentX < 0f || contentX >= tabWidth * tabsCount) return null
@@ -838,9 +938,14 @@ private class FreeDragBridge {
         return visualIndex
     }
 
-    private fun valueAt(x: Float): Float =
-        ((logicalX(x) / (frame?.invoke()?.geometry?.tabWidth ?: tabWidth)) - 0.5f)
+    private fun valueAt(x: Float): Float {
+        val geometry = frame?.invoke()?.geometry ?: this.geometry
+        if (geometry != null && !geometry.uniform) return geometry.valueAtContent(logicalX(x))
+        val tabWidth = geometry?.tabWidth ?: this.tabWidth
+        if (tabWidth <= 0f) return 0f
+        return ((logicalX(x) / tabWidth) - 0.5f)
             .fastCoerceIn(0f, (tabsCount - 1).toFloat())
+    }
 
     private fun logicalX(x: Float): Float {
         val panelWidth = frame?.invoke()?.restingWidth ?: this.panelWidth

@@ -4,8 +4,8 @@ import android.view.View
 import android.view.ViewGroup
 import java.lang.reflect.Modifier
 
-/** Re-evaluates the native startup predicate after the restored queue/account becomes ready. */
-internal class FragmentTabletMiniStartup(
+/** Re-evaluates the native startup predicate for phone and tablet after queue/account restoration. */
+internal class FragmentMiniStartup(
     private val owner: Any,
     private val root: ViewGroup,
     private val material: View,
@@ -29,12 +29,12 @@ internal class FragmentTabletMiniStartup(
             val currentItem = browser.invoke(owner)?.let { item.invoke(it) != null } == true
             if (readyAccount && currentItem) {
                 if (visibilityStatic) show.invoke(null, owner, true) else show.invoke(owner, true)
-                ModernXposedRuntime.log("7.0 tablet mini startup: restored native visibility after account/queue ready")
+                ModernXposedRuntime.log("Fragment mini startup: restored native visibility after account/queue ready")
                 return
             }
             if (++attempts < 40) root.postDelayed(this, 250)
-            else ModernXposedRuntime.log("7.0 tablet mini startup remains native: account=$readyAccount, item=$currentItem")
-        }.onFailure { ModernXposedRuntime.log("7.0 tablet mini startup refresh failed", it) }
+            else ModernXposedRuntime.log("Fragment mini startup remains native: account=$readyAccount, item=$currentItem")
+        }.onFailure { ModernXposedRuntime.log("Fragment mini startup refresh failed", it) }
     }
     override fun close() { closed = true; root.removeCallbacks(this) }
 }

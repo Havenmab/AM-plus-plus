@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.kyant.shapes.Capsule
@@ -23,15 +24,13 @@ internal val LocalLiquidBottomTabScale =
 fun RowScope.LiquidBottomTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    // AM++: the tablet top bar hands each tab a weight derived from its own label width. The
-    // default 1f keeps the phone bar's equal shares exactly as upstream.
-    weight: Float = 1f,
+    shape: Shape = Capsule(),
     content: @Composable ColumnScope.() -> Unit
 ) {
     val scale = LocalLiquidBottomTabScale.current
     Column(
         modifier
-            .clip(Capsule())
+            .clip(shape)
             .clickable(
                 interactionSource = null,
                 indication = null,
@@ -39,7 +38,7 @@ fun RowScope.LiquidBottomTab(
                 onClick = onClick
             )
             .fillMaxHeight()
-            .weight(weight)
+            .weight(1f)
             .graphicsLayer {
                 val scale = scale()
                 scaleX = scale

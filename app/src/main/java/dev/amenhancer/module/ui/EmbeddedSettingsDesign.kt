@@ -17,6 +17,8 @@ import android.widget.ImageView
 internal enum class EmbeddedSettingsPage {
     MAIN,
     CUSTOM_LYRICS,
+    LLM_LYRICS,
+    BOTTOM_BAR_ANIMATION,
 }
 
 internal data class EmbeddedLyricsEditorAction(

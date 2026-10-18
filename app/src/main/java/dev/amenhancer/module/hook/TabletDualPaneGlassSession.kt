@@ -188,7 +188,12 @@ internal class TabletDualPaneGlassSession(
     // occupied height (navigation capsule + mini); slide back to 0 parks the capsule again.
     override fun driveNavFrameExit(progress: Float) {
         val frame = navFrame ?: return
-        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry)
+        // `collapse` must be threaded through here, not left at its default. `peekHeight()` already
+        // follows the live collapse, so leaving this at 0f made the two disagree whenever the
+        // tablet collapse was on: the peek would shrink to the collapsed row while this exit still
+        // slid by the expanded height. Only reachable with the tablet collapse switch enabled.
+        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry,
+            collapse = collapseProgress())
         // Past the glass fade the exponential tail moves by less than a pixel.
         // Park the row exactly offscreen and avoid subpixel invalidations.
         val target = if (progress >= 0.6f) extent.toFloat() else (1f - exp(-20f * progress)) * extent

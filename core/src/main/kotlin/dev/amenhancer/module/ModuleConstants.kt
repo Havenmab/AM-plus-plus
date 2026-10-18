@@ -7,14 +7,12 @@ object ModuleConstants {
     /**
      * Single merged schema version carrying every feature area at once.
      *
-     * 16 added the region-replacement extras (original-name restore + region
-     * cache); 17 added the online lyric supplement toggle.  The integration
-     * branch resolved the two independent 16/17 bumps to that combined 17.
-     * The lyrics work then continued alone: 18 added the online lyric source
-     * chain (one enable flag per source, the automatic-order flag, the stored
-     * order and the global-best flag) and 19 adds the missing-translation
-     * enrichment toggle.  The merged tree keeps the region keys and the whole
-     * lyric chain under the single final version, 19.
+     * This fork's line numbered its own keys from 16 up: 16 added the
+     * region-replacement extras (original-name restore + region cache); 17 the
+     * online lyric supplement toggle; 18 the online lyric source chain (one
+     * enable flag per source, the automatic-order flag, the stored order and the
+     * global-best flag); 19 the missing-translation enrichment toggle.  The
+     * merged tree kept the region keys and the whole lyric chain under 19.
      *
      * 20 splits the retired single `title_correction_mode` picker into the
      * `region_selection` control plus the existing `restore_cjk_original_metadata`
@@ -38,8 +36,18 @@ object ModuleConstants {
      * store keeps publishing the pronunciation lane exactly as before; the
      * existing `online_lyrics_translation_enabled` key is NOT renamed and now
      * covers the pronunciation lane too, so no migration is needed for it.
+     *
+     * The upstream 1.6.6 sync numbered its own additions 16 (the LLM lyrics
+     * fallback: enabled + OpenAI-compatible base URL / API key / model / thinking
+     * toggle) and 17 (`dual_pane_hide_status_bar`, so hiding the status bar in the
+     * dual-pane player is optional).  Both sides are additive and defaulted, so
+     * the merged tree publishes the single combined version 24: every key is a
+     * new defaulted key, and the only migration is the existing region/lyrics one
+     * which re-encodes decoded values and therefore never rewrites a stored
+     * setting.  A store written by either line (17 or 23) upgrades to 24 with its
+     * values intact.
      */
-    const val CONFIG_SCHEMA_VERSION = 23
+    const val CONFIG_SCHEMA_VERSION = 24
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"
@@ -63,4 +71,5 @@ object ModuleConstants {
     const val FEATURE_APPLE_MUSIC_DPI = "apple_music_dpi"
     const val FEATURE_CELLULAR_DATA_ENTRY = "cellular_data_entry"
     const val FEATURE_PLAYER_RECOVERY = "player_recovery"
+    const val FEATURE_STARTUP_PAGE_PREWARM = "startup_page_prewarm"
 }

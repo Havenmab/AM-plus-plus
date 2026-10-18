@@ -93,13 +93,15 @@ class TabletLiquidGlassStructuralRegressionTest {
         val session = source("dev/amenhancer/module/hook/TabletDualPaneGlassSession.kt")
         val base = source("dev/amenhancer/module/hook/PhoneGlassSession.kt")
         // Nav pill left of one centered row, mini pill in the right slot, equal
-        // outer whitespace of frameWidth/6 ("留白长度一致"): the tablet override
+        // outer whitespace of frameWidth/6 ("留白长度一致): the tablet override
         // carves [W/6, 2W/5] for the nav and [19W/30, W/6] for the mini.
         assertTrue(session.contains("frameWidth * 19 / 30"))
         assertTrue(session.contains("frameWidth * 2 / 5"))
         // The native mini content and the morphing glass share the mini slot, and
         // the expand morph interpolates each edge from its own slot edge to zero.
-        assertTrue(base.contains("capsuleMarginsPx"))
+        // Shared layout starts from the form-owned slot before applying any supported collapse.
+        assertTrue(base.contains("val expandedMiniSlot = capsuleMarginsPx(frame.width, mini = true)"))
+        assertTrue(base.contains("barCollapse.miniMargins(expandedMiniSlot,"))
         assertTrue(base.contains("applySlot(miniContent, miniSlot)"))
     }
 
@@ -143,12 +145,12 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 22`() {
+    fun `keeps the glass configuration keys under schema 24`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
-        // Exactly the three existing glass keys: the tablet form reuses the phone toggle,
-        // gap and blur, so no new key exists and no migration was added.
+        // Keep the serialized glass keys, including the inactive tablet-collapse compatibility key.
+        // Tablet forms use the glass toggle, gap and blur but never opt into scroll collapse.
         val glassKeys = Regex("\"(phone_liquid_glass[a-z_]*)\"").findAll(schema)
             .map { it.groupValues[1] }.toSet()
         assertEquals(
@@ -156,17 +158,21 @@ class TabletLiquidGlassStructuralRegressionTest {
                 "phone_liquid_glass_enabled",
                 "phone_liquid_glass_bottom_gap_dp",
                 "phone_liquid_glass_panel_blur_dp",
+                "phone_liquid_glass_collapse_enabled",
+                "phone_liquid_glass_tablet_collapse_enabled",
+                "phone_liquid_glass_collapse_rebound_percent",
+                "phone_liquid_glass_expand_rebound_percent",
+                "phone_liquid_glass_mini_rebound_percent",
+                "phone_liquid_glass_mini_sink_bounce_dp",
             ),
             glassKeys,
         )
-        // Schema 20 split the retired single title-correction picker into the
-        // region_selection control plus the title-correction switch, on top of the
-        // region extras (16), online lyric supplement (17), source chain (18) and
-        // translation enrichment toggle (19).  Schema 21 retires the fork-only master
-        // switch and adds HLE's override_account_language; schema 22 adds the
-        // metadata_cache_clear_generation one-shot signal; schema 23 adds HLE's
-        // hide-Mandarin-pinyin switch and widens the translation toggle to both
-        // lanes.  Glass still reuses its keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 23"))
+        // Schema 24 is the merged version. This fork's line numbered its own keys
+        // 16..23 (region extras, online lyric supplement, source chain, translation
+        // enrichment, region picker split, HLE's four-control region page, the
+        // cache-clear signal and the hide-Mandarin-pinyin switch); upstream 1.6.6
+        // added the LLM lyrics fallback and optional dual-pane status-bar hiding.
+        // Glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 24"))
     }
 }

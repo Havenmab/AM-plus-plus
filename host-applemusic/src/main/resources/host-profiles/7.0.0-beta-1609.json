@@ -1,11 +1,117 @@
 {
   "schemaVersion": 1,
   "hookProfileId": "am-7.0.0-beta-1609",
+  "lyricResultSubmission": {
+    "contractVersion": 1,
+    "methods": {
+      "resultSet": {
+        "owner": "androidx.lifecycle.H",
+        "name": "setValue",
+        "parameters": [
+          "java.lang.Object"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "resultPost": {
+        "owner": "androidx.lifecycle.H",
+        "name": "postValue",
+        "parameters": [
+          "java.lang.Object"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "buildIndex": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
+        "name": "buildTimeRangeToLyricsMap",
+        "parameters": [
+          "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "loadLyrics": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
+        "name": "loadLyrics",
+        "parameters": [
+          "com.apple.android.music.model.PlaybackItem"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "systemLyricsLanguage": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
+        "name": "getCurrentSystemLyricsLanguage",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
+      },
+      "pointerGet": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
+        "name": "get",
+        "parameters": [],
+        "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "static": false
+      },
+      "pointerAdamId": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "getAdamId",
+        "parameters": [],
+        "returns": "long",
+        "static": false
+      },
+      "pointerScript": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "setScript",
+        "parameters": [
+          "java.lang.String"
+        ],
+        "returns": "boolean",
+        "static": false
+      },
+      "clear": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
+        "name": "onCleared",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "resultValue": {
+        "owner": "androidx.lifecycle.H",
+        "name": "getValue",
+        "parameters": [],
+        "returns": "java.lang.Object",
+        "static": false
+      },
+      "fragmentResume": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "onResume",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      }
+    },
+    "fields": {
+      "fragmentViewModel": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "m1",
+        "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel"
+      },
+      "lyricsResult": {
+        "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
+        "name": "mLyricsResult",
+        "type": "androidx.lifecycle.MutableLiveData"
+      }
+    }
+  },
   "capabilities": {
     "glass": true,
+    "glassScrollCollapse": true,
     "cellular": true,
     "staticCollapsedIntercept": false,
-    "playerRecovery": true
+    "playerRecovery": true,
+    "startupPagePrewarm": true
   },
   "evidence": {
     "status": "descriptor-verified-user-testing",
@@ -15,7 +121,7 @@
     "dexCount": 4,
     "splitCount": 11,
     "sourceIdentity": "com.apple.android.music / 7.0.0-beta / 1609 (binary base Manifest)",
-    "analysis": "docs/applemusic-1609-adaptation.md",
+    "analysis": "docs/host-adaptation-guide.md",
     "composeArtistContract": "Complete instance methods, six distinct Success fields and constructor are recorded in artistComposeProfile v1. 1609 DEX confirms MediaEntity.getViews returns Map<String, Relationship> and Relationship.getEntities returns MediaEntity[]. No getData fallback; runtime acceptance remains pending."
   },
   "indexed": {
@@ -2422,7 +2528,9 @@
       ],
       "Lcom/google/android/material/bottomsheet/BottomSheetBehavior;": [
         "F()I",
-        "L(IZ)V"
+        "L(IZ)V",
+        "P(Landroid/view/View;IZ)V",
+        "y()V"
       ],
       "Lcom/apple/android/music/playback/player/MediaPlayer;": [
         "getCurrentItem()Lcom/apple/android/music/playback/model/PlayerQueueItem;"
@@ -3375,6 +3483,24 @@
           "name": "F",
           "parameters": [],
           "returns": "int",
+          "static": false
+        },
+        "settleSheet": {
+          "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
+          "name": "P",
+          "parameters": [
+            "android.view.View",
+            "int",
+            "boolean"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "refreshCollapsedOffset": {
+          "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
+          "name": "y",
+          "parameters": [],
+          "returns": "void",
           "static": false
         },
         "writePeek": {
@@ -5293,6 +5419,283 @@
       "maskKey": "visual Flex row first child index; c/d delimit that row child range",
       "clock": "getCurrentPosition on the native browser, WordProperties begin/duration in milliseconds",
       "ownership": "retain native ValueAnimator/AnimatorSet; take over only registered wrapped-word update callbacks"
+    }
+  },
+  "startupPagePrewarm": {
+    "schemaVersion": 1,
+    "hostResource": "tab_navigation_host",
+    "navigationResource": "bottom_nav_view",
+    "tabletNavigationResource": "drawer_nav_view",
+    "tabArgumentKey": "O4.S.ARG_KEY_BOTTOM_TAB",
+    "titleArgumentKey": "O4.S.ARG_KEY_DOCUMENT_TITLE",
+    "priorityTab": "LIBRARY",
+    "libraryToolbarResetEvent": 70,
+    "members": {
+      "methods": {
+        "viewCreated": {
+          "owner": "com.apple.android.music.common.fragment.MusicContentFragment",
+          "name": "onViewCreated",
+          "parameters": [
+            "android.view.View",
+            "android.os.Bundle"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "destroyView": {
+          "owner": "com.apple.android.music.common.fragment.MusicContentFragment",
+          "name": "onDestroyView",
+          "parameters": [],
+          "returns": "void",
+          "static": false
+        },
+        "activity": {
+          "owner": "androidx.fragment.app.n",
+          "name": "getActivity",
+          "parameters": [],
+          "returns": "androidx.fragment.app.s",
+          "static": false
+        },
+        "view": {
+          "owner": "androidx.fragment.app.n",
+          "name": "getView",
+          "parameters": [],
+          "returns": "android.view.View",
+          "static": false
+        },
+        "childManager": {
+          "owner": "androidx.fragment.app.n",
+          "name": "getChildFragmentManager",
+          "parameters": [],
+          "returns": "androidx.fragment.app.F",
+          "static": false
+        },
+        "resumed": {
+          "owner": "androidx.fragment.app.n",
+          "name": "isResumed",
+          "parameters": [],
+          "returns": "boolean",
+          "static": false
+        },
+        "viewModel": {
+          "owner": "com.apple.android.music.common.fragment.MusicContentFragment",
+          "name": "s1",
+          "parameters": [],
+          "returns": "com.apple.android.music.common.NavTabsViewModel",
+          "static": false
+        },
+        "tabs": {
+          "owner": "com.apple.android.music.common.NavTabsViewModel",
+          "name": "getGetBottomTabsLiveData",
+          "parameters": [],
+          "returns": "androidx.lifecycle.H",
+          "static": false
+        },
+        "value": {
+          "owner": "androidx.lifecycle.H",
+          "name": "getValue",
+          "parameters": [],
+          "returns": "java.lang.Object",
+          "static": false
+        },
+        "selectedTab": {
+          "owner": "com.apple.android.music.common.NavTabsViewModel",
+          "name": "getSelectedTab",
+          "parameters": [],
+          "returns": "com.apple.android.music.common.B",
+          "static": false
+        },
+        "kindLabel": {
+          "owner": "com.apple.android.music.common.B",
+          "name": "p",
+          "parameters": [],
+          "returns": "java.lang.String",
+          "static": false
+        },
+        "kindId": {
+          "owner": "com.apple.android.music.common.B",
+          "name": "m",
+          "parameters": [],
+          "returns": "int",
+          "static": false
+        },
+        "menu": {
+          "owner": "vf.j",
+          "name": "getMenu",
+          "parameters": [],
+          "returns": "android.view.Menu",
+          "static": false
+        },
+        "selectedId": {
+          "owner": "vf.j",
+          "name": "getSelectedItemId",
+          "parameters": [],
+          "returns": "int",
+          "static": false
+        },
+        "tabletMenu": {
+          "owner": "com.google.android.material.navigation.NavigationView",
+          "name": "getMenu",
+          "parameters": [],
+          "returns": "android.view.Menu",
+          "static": false
+        },
+        "find": {
+          "owner": "androidx.fragment.app.F",
+          "name": "E",
+          "parameters": [
+            "java.lang.String"
+          ],
+          "returns": "androidx.fragment.app.n",
+          "static": false
+        },
+        "stateSaved": {
+          "owner": "androidx.fragment.app.F",
+          "name": "Q",
+          "parameters": [],
+          "returns": "boolean",
+          "static": false
+        },
+        "arguments": {
+          "owner": "androidx.fragment.app.n",
+          "name": "setArguments",
+          "parameters": [
+            "android.os.Bundle"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "add": {
+          "owner": "androidx.fragment.app.a",
+          "name": "d",
+          "parameters": [
+            "int",
+            "androidx.fragment.app.n",
+            "java.lang.String",
+            "int"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "hide": {
+          "owner": "androidx.fragment.app.a",
+          "name": "l",
+          "parameters": [
+            "androidx.fragment.app.n"
+          ],
+          "returns": "androidx.fragment.app.a",
+          "static": false
+        },
+        "onCommit": {
+          "owner": "androidx.fragment.app.Q",
+          "name": "f",
+          "parameters": [
+            "java.lang.Runnable"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "commit": {
+          "owner": "androidx.fragment.app.a",
+          "name": "h",
+          "parameters": [
+            "boolean"
+          ],
+          "returns": "int",
+          "static": false
+        },
+        "tag": {
+          "owner": "androidx.fragment.app.n",
+          "name": "getTag",
+          "parameters": [],
+          "returns": "java.lang.String",
+          "static": false
+        },
+        "hidden": {
+          "owner": "androidx.fragment.app.n",
+          "name": "isHidden",
+          "parameters": [],
+          "returns": "boolean",
+          "static": false
+        },
+        "parent": {
+          "owner": "androidx.fragment.app.n",
+          "name": "getParentFragment",
+          "parameters": [],
+          "returns": "androidx.fragment.app.n",
+          "static": false
+        },
+        "observePlayContext": {
+          "owner": "com.apple.android.music.common.fragment.NavHostContainerFragment",
+          "name": "d1",
+          "parameters": [
+            "O4.J",
+            "boolean"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "containerView": {
+          "owner": "com.apple.android.music.common.fragment.NavHostContainerFragment",
+          "name": "onCreateView",
+          "parameters": [
+            "android.view.LayoutInflater",
+            "android.view.ViewGroup",
+            "android.os.Bundle"
+          ],
+          "returns": "android.view.View",
+          "static": false
+        },
+        "libraryViewCreated": {
+          "owner": "com.apple.android.music.library3.LibraryComposeContentFragment",
+          "name": "onViewCreated",
+          "parameters": [
+            "android.view.View",
+            "android.os.Bundle"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "notifyEvent": {
+          "owner": "com.apple.android.music.viewmodel.BasePropertiesChangeViewModel",
+          "name": "notifyEvent",
+          "parameters": [
+            "int",
+            "java.lang.Object"
+          ],
+          "returns": "void",
+          "static": false
+        }
+      },
+      "fields": {
+        "modelKind": {
+          "owner": "com.apple.android.music.common.A",
+          "name": "a",
+          "type": "com.apple.android.music.common.B"
+        },
+        "primary": {
+          "owner": "androidx.fragment.app.F",
+          "name": "y",
+          "type": "androidx.fragment.app.n"
+        },
+        "reordering": {
+          "owner": "androidx.fragment.app.Q",
+          "name": "p",
+          "type": "boolean"
+        }
+      },
+      "constructors": {
+        "container": {
+          "owner": "com.apple.android.music.common.fragment.NavHostContainerFragment",
+          "parameters": []
+        },
+        "transaction": {
+          "owner": "androidx.fragment.app.a",
+          "parameters": [
+            "androidx.fragment.app.F"
+          ]
+        }
+      }
     }
   }
 }

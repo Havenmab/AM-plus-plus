@@ -1,5 +1,40 @@
 # Third-Party Notices
 
+## YouLyPlus LLM lyrics translation
+
+The OpenAI-compatible request/response handling and lyrics translation prompt in
+`core/src/main/kotlin/dev/amenhancer/module/lyrics/LlmLyricsClient.kt` are adapted
+from the YouLyPlus source (`src/background/services/translation/providers/CustomLLMProvider.js`
+and `src/background/services/translation/prompts.js`). The source fork declares
+AGPL-3.0-only; the full license is packaged as `assets/licenses/YouLyPlus.txt`.
+AM++ ports the workflow to Kotlin and adds host-neutral TTML handling, cancellation,
+an independent bounded cache and exact host result submission.
+
+The original YouLy+ code was distributed under the MIT license. Its notice,
+retained by the source fork, follows:
+
+MIT License
+
+Copyright (c) 2025 Ibra Al Tabian
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Tcrrry Lyrics terminal CJK gradient
 
 The terminal CJK feather-margin rule, native last-word selection, and delayed
@@ -18,6 +53,15 @@ The Halcyon Bluetooth name rules and Kifranei output vectors are retained.
 Flamingo volume vectors and their source record are packaged under `tablet-media/`.
 Apple's speaker/AirPods images retain their source and copyright notice in
 `tablet-media/AppleMusicOutputIcons.txt`; they are not covered by GPL.
+
+## AMLL reference tablet player
+
+The reference tablet layout rules, speaker and AirPlay vector paths, volume
+interaction, and supplemental mode-button feedback are adapted from the AMLL
+source bundled in YouLyPlus (`vendor/amll/packages/react-full`). The original
+AMLL license is GNU Affero General Public License, version 3; its full text is
+packaged as `assets/licenses/AMLL.txt`. Native Apple Music artwork, transport
+glyphs, and state bindings remain supplied by the host application.
 
 ## AMLyricBlur
 

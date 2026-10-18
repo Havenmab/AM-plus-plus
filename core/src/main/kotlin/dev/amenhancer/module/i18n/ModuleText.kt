@@ -140,6 +140,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     FEATURES("Features", "功能"),
     TABLET_DUAL_PANE("Tablet dual-pane player", "平板双栏播放器"),
     TABLET_DUAL_PANE_SUMMARY("Enable two panes on tablets in landscape", "平板横屏启用双栏"),
+    TABLET_DUAL_PANE_HIDE_STATUS_BAR("Hide status bar in dual-pane player", "双栏播放器隐藏状态栏"),
+    TABLET_DUAL_PANE_HIDE_STATUS_BAR_SUMMARY("Hide the status bar while the dual-pane player is expanded · Restart to apply", "双栏播放器展开时隐藏状态栏 · 重启应用后生效"),
     CELLULAR_SETTINGS("Show cellular data settings", "强制显示蜂窝数据入口"),
     CELLULAR_SETTINGS_SUMMARY("Restore native cellular data settings · Restart to apply", "恢复原生蜂窝数据设置 · 重开应用后显示"),
     TABLET_BOTTOM_BAR_FIX("Tablet bottom bar compensation", "平板底栏补偿"),
@@ -150,6 +152,20 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     BOTTOM_BAR_HEIGHT_SUMMARY("Distance from the bottom of the screen", "底栏距屏幕底部的距离"),
     BOTTOM_BAR_BLUR("Bottom bar background blur", "底栏背景模糊强度"),
     BOTTOM_BAR_BLUR_SUMMARY("Applies to the bottom bar and mini player", "作用于底栏与迷你播放器"),
+    BOTTOM_BAR_COLLAPSE("Collapse on scroll", "随滚动收缩"),
+    BOTTOM_BAR_COLLAPSE_SUMMARY("Shrinks the bar while scrolling down; search detaches beside the mini player", "下滑页面时收起底栏，搜索键分离到迷你播放器右侧"),
+    BOTTOM_BAR_ANIMATION_SETTINGS("Bottom bar animation", "底栏动画设置"),
+    BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY("Adjust collapse, expand and mini-player rebound", "调整收缩、展开与迷你播放器的回弹效果"),
+    BOTTOM_BAR_TABLET_COLLAPSE("Tablet collapse on scroll", "平板端随滚动收缩"),
+    BOTTOM_BAR_TABLET_COLLAPSE_SUMMARY("Untested · Tablet bottom bar collapses the same way; may look wrong", "未测试 · 让平板底栏也随滚动收缩，效果可能不正确"),
+    BOTTOM_BAR_COLLAPSE_REBOUND("Collapse rebound", "收缩回弹幅度"),
+    BOTTOM_BAR_COLLAPSE_REBOUND_SUMMARY("How far both side buttons spring back while collapsing · 35%% is recommended", "收缩时左右两个按钮的回弹幅度 · 推荐 35%%"),
+    BOTTOM_BAR_EXPAND_REBOUND("Expand rebound", "展开回弹幅度"),
+    BOTTOM_BAR_EXPAND_REBOUND_SUMMARY("How far both side buttons grow back towards the mini player", "展开时左右两个按钮朝迷你播放器方向长回并落定的幅度"),
+    BOTTOM_BAR_MINI_REBOUND("Mini player left/right rebound", "迷你播放器左右收缩回弹幅度"),
+    BOTTOM_BAR_MINI_REBOUND_SUMMARY("The mini player's own rebound as its left and right edges move; separate because its travel is far shorter than the buttons'", "迷你播放器左右两侧收缩时的回弹幅度 · 因行程远短于左右按钮故单独设置"),
+    BOTTOM_BAR_MINI_SINK_BOUNCE("Mini player sink bounce", "迷你播放器下沉回弹"),
+    BOTTOM_BAR_MINI_SINK_BOUNCE_SUMMARY("Extra dip past the mini player's resting height before it springs back · 4 dp is recommended", "迷你播放器下沉到最低点后额外多沉一点再弹回 · 推荐 4dp，0 为关闭"),
     BIDIRECTIONAL_LYRIC_BLUR("Bidirectional lyric blur", "双向歌词模糊"),
     BIDIRECTIONAL_LYRIC_BLUR_SUMMARY("Resumes one second after manual scrolling stops", "手动滚动停止 1 秒后恢复"),
     CJK_KARAOKE_ANIMATION("CJK lyric tail animation", "CJK 长尾歌词动画"),
@@ -171,6 +187,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     CUSTOM_LYRICS_SUMMARY("Add and manage lyrics by Apple Music ID", "添加和管理 Apple Music ID 歌词映射"),
     CONFIGURED_LYRICS_COUNT("Configured lyrics: %1\$s", "已配置 %1\$s 首歌词"),
     ADVANCED_SETTINGS("Advanced settings", "高级设置"),
+    STARTUP_PAGE_PREWARM("Prewarm navigation pages on startup", "启动时预热导航页面"),
+    STARTUP_PAGE_PREWARM_SUMMARY("Prepare other tabs before first use · More startup work and memory · Restart to apply", "提前准备其他导航页面，减少首次切换开销 · 增加启动负载和内存占用 · 重启生效"),
     APPLICATION("Application", "应用"),
     PLUGINS_SUMMARY("Import ZIPs and manage enabled state and conflicts", "导入 ZIP、管理启用状态与冲突"),
     PRIVATE_STORAGE_NOTICE("Settings are stored in Apple Music's private directory", "配置保存在 Apple Music 私有目录中"),
@@ -229,6 +247,13 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     GOT_IT("Got it", "知道了"),
     LYRIC_BLUR_OFFSET("Lyric blur radius offset", "歌词模糊半径偏移"),
     RESET_DEFAULT("Reset to default", "恢复默认"),
+    /**
+     * The module's "this has never run on a device" marker, shown as a badge on the row.
+     *
+     * Kept generic rather than worded per-setting so it can mark any future unverified option; the
+     * row's own summary says what specifically is unproven.
+     */
+    BADGE_UNTESTED("Untested", "未测试"),
     SETTING_VALUE("%1\$s: %2\$s%3\$s", "%1\$s：%2\$s%3\$s"),
     MUSIC_DPI("Apple Music internal DPI", "Apple Music 内部 DPI"),
     MUSIC_DPI_DEFAULT_SUMMARY("Follow system · Enter 160–640, or 0 to reset", "跟随系统 · 填写 160–640，0 可清除覆盖"),
@@ -348,7 +373,60 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     PLUGIN_DEX_HEADER_INVALID("Corrupt DEX header", "损坏的 DEX 头"),
     PLUGIN_DEX_SIGNATURE_INVALID("Corrupt DEX signature", "DEX 签名损坏"),
     PLUGIN_DEX_CHECKSUM_INVALID("Corrupt DEX checksum", "DEX 校验损坏"),
-    PLUGIN_SDK_BUNDLED("Plugins must not bundle SDK classes", "插件不可打包 SDK 类");
+    PLUGIN_SDK_BUNDLED("Plugins must not bundle SDK classes", "插件不可打包 SDK 类"),
+    LLM_LYRICS_FALLBACK("LLM lyrics translation", "LLM 歌词翻译"),
+    LLM_LYRICS_FALLBACK_SUMMARY(
+        "Model, API Key",
+        "模型、API Key",
+    ),
+    LLM_LYRICS_ENABLED("Enable translation", "启用翻译"),
+    LLM_LYRICS_ENABLED_SUMMARY(
+        "Translate to Simplified Chinese when automatic matching misses",
+        "自动补全未命中时译为简体中文",
+    ),
+    LLM_LYRICS_REQUIRES_AUTO(
+        "Enable lyrics replacement and automatic completion first",
+        "先开启歌词替换和自动补全",
+    ),
+    LLM_LYRICS_BASE_URL("API address", "API 地址"),
+    LLM_LYRICS_BASE_URL_SUMMARY(
+        "Use an OpenAI-compatible API",
+        "使用 OpenAI Compatible 接口",
+    ),
+    LLM_LYRICS_API_KEY("API Key", "API Key"),
+    LLM_LYRICS_API_KEY_SUMMARY(
+        "Optional for APIs without authentication",
+        "无需鉴权的接口可留空",
+    ),
+    LLM_LYRICS_MODEL("Model", "模型"),
+    LLM_LYRICS_THINKING("Model thinking", "模型思考"),
+    LLM_LYRICS_THINKING_SUMMARY("Allow reasoning before translation", "允许模型先思考再翻译"),
+    LLM_LYRICS_MODEL_SUMMARY(
+        "Use the model name from your API provider",
+        "填写接口提供的模型名称",
+    ),
+    LLM_LYRICS_INPUT_HINT_BASE_URL(
+        "https://example.com/v1",
+        "https://example.com/v1",
+    ),
+    LLM_LYRICS_INPUT_HINT_API_KEY("API Key", "API Key"),
+    LLM_LYRICS_INPUT_HINT_MODEL("Model name", "模型名称"),
+    LLM_LYRICS_NOT_CONFIGURED("Not set", "未设置"),
+    LLM_LYRICS_TEST_CONNECTION("Test connection", "测试连接"),
+    LLM_LYRICS_TEST_RUNNING("Testing…", "测试中…"),
+    LLM_LYRICS_TEST_SUCCESS("Connected", "连接成功"),
+    LLM_LYRICS_TEST_INVALID_ENDPOINT("Enter a valid HTTP or HTTPS address", "请填写有效的 HTTP 或 HTTPS 地址"),
+    LLM_LYRICS_TEST_MISSING_MODEL("Enter a model name", "请先填写模型名称"),
+    LLM_LYRICS_TEST_AUTH_FAILED("Authentication failed (HTTP %1\$s). Check the API Key and address.", "认证失败（HTTP %1\$s），请检查 API Key 和地址"),
+    LLM_LYRICS_TEST_NOT_FOUND("API route or model not found (404)", "接口或模型不存在（404）"),
+    LLM_LYRICS_TEST_RATE_LIMITED("Request limited (429). Try again later.", "请求受限（429），请稍后重试"),
+    LLM_LYRICS_TEST_HTTP_FAILED("Request failed (HTTP %1\$s)", "请求失败（HTTP %1\$s）"),
+    LLM_LYRICS_TEST_TIMEOUT("Request timed out. Try again later.", "请求超时，请稍后重试"),
+    LLM_LYRICS_TEST_DNS_FAILED("Cannot resolve the API address", "无法解析 API 地址"),
+    LLM_LYRICS_TEST_TLS_FAILED("Secure connection failed. Check the certificate and device time.", "安全连接失败，请检查证书和设备时间"),
+    LLM_LYRICS_TEST_NETWORK_FAILED("Cannot connect. Check the network and API address.", "无法连接，请检查网络和 API 地址"),
+    LLM_LYRICS_TEST_INVALID_RESPONSE("Invalid API response", "接口响应格式不符"),
+    LLM_LYRICS_TEST_FAILED("Connection failed. Check the API settings.", "连接失败，请检查 API 设置");
 
     fun text(vararg arguments: Any?, locale: Locale = Locale.getDefault()): String {
         val template = if (locale.language.equals("zh", ignoreCase = true)) chinese else english

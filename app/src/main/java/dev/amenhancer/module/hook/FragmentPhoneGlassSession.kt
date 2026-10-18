@@ -29,10 +29,12 @@ internal class FragmentPhoneGlassSession(
         override val replacing get() = activated && !closed
         override fun alpha(view: View, value: Float) = redirectedLayerAlpha(view, value)
         override fun padding(view: View) = redirectedPadding(view)
+        override fun desiredPeek(owner: Any): Int? =
+            if (owner === playerBehavior && activated && !closed) peekHeight() else null
         override fun peek(owner: Any, value: Int): Int? {
             if (owner !== playerBehavior || closed) return null
             observeNativePeek(value)
-            return if (activated) peekHeight() else null
+            return desiredPeek(owner)
         }
     })
     private val subscription = surface.observe { snapshot ->
@@ -51,6 +53,8 @@ internal class FragmentPhoneGlassSession(
     }
     override fun initialSlide(sheet: View, behavior: Any): Float = super.initialSlide(sheet, behavior).also { progress = it }
     override fun nativePeekBaseline(): Int = findPlayerBehavior()?.let(native::nativePeekBaseline) ?: super.nativePeekBaseline()
+    override fun reconcileCollapsedPlayer(): Boolean =
+        playerBehavior?.let(native::reconcileCollapsedSheet) == true
     override val miniVisible: Boolean get() {
         if (progress <= .001f) visibleMini = miniRoot?.isShown == true
         return visibleMini
@@ -71,8 +75,21 @@ internal class FragmentPhoneGlassSession(
             material = this
         }
     }
+    /**
+     * Where the row goes while the full player opens: straight down, by the bar's own occupied
+     * height, on the host's own `1 - exp(-20t)` curve.
+     *
+     * The exit distance follows the collapse, so the collapsed row slides by the collapsed height
+     * rather than the expanded one — otherwise the capsule would overshoot off the screen.
+     *
+     * This deliberately **slides even when collapsed**. An earlier revision crossfaded it to a
+     * fade-in-place at full collapse, on the reading that a withdrawn strip should not dive further
+     * down. The user asked for that to be reverted: the slide is the established behaviour in both
+     * states, and the fade made the collapsed row linger over the player page.
+     */
     override fun driveNavFrameExit(progress: Float) {
-        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry)
+        val extent = GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry,
+            collapse = collapseProgress())
         navFrame?.translationY = FragmentPhoneGlassPolicy.navigationExit(progress, extent)
     }
     override fun onSlide(progress: Float) {
@@ -85,15 +102,28 @@ internal class FragmentPhoneGlassSession(
         super.suppressNativeChromeSeams()
         clearNativeBackground(native.find(ChromeResource.MINI_PLAYER_CONTENT))
         hideSeam(native.find(ChromeResource.NAVIGATION_TABS_DIVIDER))
-        native.syncMiniPresentation(miniRoot)
+        native.syncMiniPresentation(miniRoot, miniDropPx())
     }
     override fun onPreDraw(): Boolean {
         val draw = super.onPreDraw()
+        // Flush after the shared renderer changes the material bounds, even when the
+        // island's own pre-draw listener ran first after a hierarchy reattachment.
+        if (draw && !closed) {
+            try { material?.applyPendingLayout() }
+            catch (error: Throwable) { close(); failure(error); return true }
+        }
         reconcileNativeMaterials()
         if (activated && !reported) { reported = true; ready() }
         return draw
     }
-    override fun observeMiniTouch(event: MotionEvent) = observeTouch(event)
+    override fun observeMiniTouch(event: MotionEvent): Boolean? {
+        observeTouch(event)
+        return null
+    }
+
+    override fun observeContentTouch(event: MotionEvent): Boolean? =
+        super<PhoneGlassSession>.observeContentTouch(event)
+
     private fun reconcileNativeMaterials() {
         // BlurView can reuse a recorded RenderNode without entering draw(). Own the actual
         // native alpha too, so a resume-time setAlpha(1) cannot reveal it behind the glass.
@@ -133,12 +163,15 @@ private class FragmentPhoneMaterialIsland(context: android.content.Context) : Fr
     override fun onAttachedToWindow() { super.onAttachedToWindow(); viewTreeObserver.addOnPreDrawListener(this) }
     override fun onDetachedFromWindow() { close(); super.onDetachedFromWindow() }
     override fun onPreDraw(): Boolean {
+        applyPendingLayout()
+        return true
+    }
+    fun applyPendingLayout() {
         if (pending && width > 0 && height > 0) {
             pending = false
             measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
             layout(left, top, right, bottom)
         }
-        return true
     }
     fun close() { viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(this) }
 }

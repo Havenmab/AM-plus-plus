@@ -43,6 +43,7 @@ internal fun assembleAppleMusicTarget(
             logger = ModernXposedRuntime::log,
             displayedTtml = timingObservations::rawTtmlOfAppleMusicId,
             nativeLyricOverlay = nativeLyricOverlay,
+            configuration = config::settings,
         )
     } else null
     return AppleMusicHostFactory.appleMusic(

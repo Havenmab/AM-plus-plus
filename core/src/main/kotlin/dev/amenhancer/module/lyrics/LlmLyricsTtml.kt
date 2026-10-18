@@ -47,8 +47,10 @@ public class LlmLyricsDocument private constructor(
     /** Indices into [lines] that [texts] answers, in the same order. */
     private val targets: List<Int>,
     private val insertion: LlmInsertion,
-    /** Lines to translate, in document order. */
+    /** Independent vocals in paragraph order: main first, then its backgrounds. */
     public val texts: List<String>,
+    /** Zero-based positions in [texts] that belong to background vocals. */
+    public val backgroundIndices: Set<Int>,
     /** The declared root `<tt>` language, or `null` when the header omits it. */
     public val sourceLanguage: String?,
 ) {
@@ -69,11 +71,18 @@ public class LlmLyricsDocument private constructor(
             append("<translation type=\"").append(TRANSLATION_TYPE)
             append("\" xml:lang=\"").append(TRANSLATION_LANGUAGE).append("\">")
             lines.forEachIndexed { index, line ->
-                append("<text for=\"").append(escapeAttribute(line.key)).append("\">")
+                if (line.background) {
+                    append(" <span xmlns=\"").append(TTML_NAMESPACE)
+                    append("\" xmlns:ttm=\"").append(TTML_METADATA_NAMESPACE)
+                    append("\" ttm:role=\"").append(ROLE_BACKGROUND).append("\">")
+                } else {
+                    if (index > 0) append("</text>")
+                    append("<text for=\"").append(escapeAttribute(line.key)).append("\">")
+                }
                 append(escapeText(byLine[index] ?: line.text.ifBlank { ABSENT_TEXT }))
-                append("</text>")
+                if (line.background) append("</span>")
             }
-            append("</translation>")
+            append("</text></translation>")
         }
         val output = buildString {
             append(ttml, 0, insertion.start)
@@ -130,7 +139,8 @@ public class LlmLyricsDocument private constructor(
                 ?.takeIf { it.end <= root.end } ?: return null
             val parsedLines = TtmlScanner.lines(ttml, body) ?: return null
             if (parsedLines.isEmpty()) return null
-            val existingKeys = parsedLines.map(LlmLine::key).filter(String::isNotBlank)
+            val existingKeys = parsedLines.filterNot(LlmLine::background)
+                .map(LlmLine::key).filter(String::isNotBlank)
             if (existingKeys.distinct().size != existingKeys.size) return null
             val usedKeys = existingKeys.toMutableSet()
             // Reserve identifiers outside paragraphs too. Extra matches inside
@@ -141,13 +151,20 @@ public class LlmLyricsDocument private constructor(
                 }
             }
             var nextKey = 1
+            var paragraphKey: String? = null
             val lines = parsedLines.map { line ->
-                if (line.keyInsertion < 0) line else {
-                    var generatedKey: String
-                    do {
-                        generatedKey = "ampp-llm-line-${nextKey++}"
-                    } while (!usedKeys.add(generatedKey))
-                    line.copy(key = generatedKey)
+                if (line.background) {
+                    line.copy(key = paragraphKey ?: return null)
+                } else {
+                    val resolvedKey = if (line.keyInsertion < 0) line.key else {
+                        var generatedKey: String
+                        do {
+                            generatedKey = "ampp-llm-line-${nextKey++}"
+                        } while (!usedKeys.add(generatedKey))
+                        generatedKey
+                    }
+                    paragraphKey = resolvedKey
+                    line.copy(key = resolvedKey)
                 }
             }
             if (language == null && isChineseText(lines.joinToString("\n") { it.text })) return null
@@ -163,6 +180,9 @@ public class LlmLyricsDocument private constructor(
                 targets = targets,
                 insertion = insertionPoint(ttml, head, root),
                 texts = targets.map { lines[it].text },
+                backgroundIndices = targets.mapIndexedNotNull { position, line ->
+                    position.takeIf { lines[line].background }
+                }.toSet(),
                 sourceLanguage = language,
             )
         }
@@ -250,6 +270,8 @@ public class LlmLyricsDocument private constructor(
     }
 }
 
+private const val TTML_NAMESPACE = "http://www.w3.org/ns/ttml"
+private const val TTML_METADATA_NAMESPACE = "http://www.w3.org/ns/ttml#metadata"
 private const val ITUNES_NAMESPACE = "http://music.apple.com/lyric-ttml-internal"
 private const val ITUNES_OPEN = "<iTunesMetadata xmlns=\"$ITUNES_NAMESPACE\">"
 private const val ITUNES_CLOSE = "</iTunesMetadata>"
@@ -259,6 +281,7 @@ private const val TRANSLATION_TYPE = "subtitle"
 private const val TRANSLATION_LANGUAGE = "zh-Hans"
 private const val ROLE_TRANSLATION = "x-translation"
 private const val ROLE_ROMAN = "x-roman"
+private const val ROLE_BACKGROUND = "x-bg"
 
 /** Stands in for a line the track has no text for, keeping its entry there. */
 private const val ABSENT_TEXT = " "
@@ -278,13 +301,14 @@ private val BARE_ROLE_ATTRIBUTE = attributePattern("role")
 private val LANG_ATTRIBUTE = attributePattern("xml:lang")
 private val BARE_LANG_ATTRIBUTE = attributePattern("lang")
 
-/** One line that already lives in the document, with its own plain text. */
+/** One independent vocal; backgrounds share their paragraph's main entry key. */
 private data class LlmLine(
     val key: String,
     val text: String,
     val language: String?,
     /** Original start-tag offset, or -1 when the paragraph already has a key. */
     val keyInsertion: Int,
+    val background: Boolean = false,
 )
 
 /**
@@ -459,8 +483,17 @@ private class TtmlTag(
     val closing: Boolean,
 )
 
-/** One open element while walking a lyric line, so auxiliary spans can be skipped. */
-private class LlmFrame(val name: String, val auxiliary: Boolean, val line: Boolean)
+/** Open markup and the separate main/background text it owns, if any. */
+private class LlmFrame(
+    val name: String,
+    val auxiliary: Boolean,
+    val line: Boolean,
+    val declaredLanguage: String?,
+    var language: String?,
+    val text: StringBuilder? = null,
+) {
+    var hasExplicitLanguage = declaredLanguage != null
+}
 
 /**
  * The scanner [AmllTtmlFormatConverter] already relies on, repeated here because
@@ -492,22 +525,40 @@ private object TtmlScanner {
         return null
     }
 
-    /** The body's `<p>` lines in document order, or `null` when any of them breaks. */
+    /** Each paragraph contributes a main entry followed by its independent backgrounds. */
     fun lines(ttml: String, body: TtmlElement): List<LlmLine>? {
         val lines = mutableListOf<LlmLine>()
         val frames = ArrayDeque<LlmFrame>()
-        var builder: StringBuilder? = null
+        val backgrounds = mutableListOf<LlmFrame>()
+        var main: LlmFrame? = null
         var key: String? = null
         var keyInsertion = -1
-        var language: String? = null
+
+        fun finishParagraph(frame: LlmFrame): Boolean {
+            val paragraphKey = key ?: return false
+            lines += LlmLine(paragraphKey, normalizeText(frame.text?.toString().orEmpty()), frame.language, keyInsertion)
+            backgrounds.forEach { background ->
+                lines += LlmLine(
+                    paragraphKey, normalizeText(background.text?.toString().orEmpty()), background.language,
+                    keyInsertion = -1, background = true,
+                )
+            }
+            backgrounds.clear()
+            main = null
+            key = null
+            keyInsertion = -1
+            return true
+        }
+
         var index = body.contentStart
         while (index < body.contentEnd) {
             val open = ttml.indexOf('<', index)
             if (open < 0 || open >= body.contentEnd) break
-            val current = builder
+            val vocal = frames.lastOrNull { it.text != null }
+            val current = vocal?.text.takeIf { frames.none(LlmFrame::auxiliary) }
             val literal = literalEnd(ttml, open)
             if (literal > 0) {
-                if (current != null && frames.none(LlmFrame::auxiliary)) {
+                if (current != null) {
                     // The run leading up to the literal is text either way, and
                     // then only a CDATA body joins the line: a comment carries no
                     // text, and a processing instruction is not text at all.
@@ -522,32 +573,39 @@ private object TtmlScanner {
             }
             val end = tagEnd(ttml, open)
             if (end < 0 || end >= body.contentEnd) return null
-            if (current != null && frames.none(LlmFrame::auxiliary)) appendText(current, ttml, index, open)
+            if (current != null) appendText(current, ttml, index, open)
             val node = tag(ttml, open, end)
             if (node.closing) {
                 val frame = popTo(frames, node.name) ?: return null
                 if (frame.line) {
-                    val lineKey = key ?: return null
-                    lines += LlmLine(lineKey, normalizeText(builder?.toString().orEmpty()), language, keyInsertion)
-                    builder = null
-                    key = null
-                    keyInsertion = -1
-                    language = null
+                    if (!finishParagraph(frame)) return null
                 }
                 index = end + 1
                 continue
             }
             val line = node.name.equals("p", ignoreCase = true)
             val declaredLanguage = languageOf(node.attributes)
+            val inheritedLanguage = frames.lastOrNull { it.declaredLanguage != null }?.declaredLanguage
+            val role = if (node.name.equals("span", ignoreCase = true)) roleOf(node.attributes) else null
+            val auxiliary = role == ROLE_TRANSLATION || role == ROLE_ROMAN
+            val background = main != null && role == ROLE_BACKGROUND && frames.none(LlmFrame::auxiliary)
+            val frame = LlmFrame(
+                name = node.name,
+                auxiliary = auxiliary,
+                line = line,
+                declaredLanguage = declaredLanguage,
+                language = declaredLanguage ?: inheritedLanguage,
+                text = if (line || background) StringBuilder() else null,
+            )
             if (line) {
-                if (builder != null || !isClock(attribute(node.attributes, BEGIN_ATTRIBUTE))) return null
+                if (main != null || !isClock(attribute(node.attributes, BEGIN_ATTRIBUTE))) return null
                 val declaredKey = attribute(node.attributes, KEY_ATTRIBUTE)
                     ?: attribute(node.attributes, BARE_KEY_ATTRIBUTE)
                 val decodedKey = declaredKey?.let(::decodeEntities)
                 if (decodedKey != null && decodedKey.isBlank()) return null
                 val localNamespace = attribute(node.attributes, ITUNES_NAMESPACE_ATTRIBUTE)
                 if (declaredKey == null && localNamespace != null && localNamespace != ITUNES_NAMESPACE) return null
-                builder = StringBuilder()
+                main = frame
                 key = decodedKey.orEmpty()
                 keyInsertion = if (declaredKey == null) {
                     if (node.selfClosing) {
@@ -560,40 +618,28 @@ private object TtmlScanner {
                 } else {
                     -1
                 }
-                language = declaredLanguage
-            } else if (builder != null && language == null && declaredLanguage != null &&
-                frames.none(LlmFrame::auxiliary) &&
-                roleOf(node.attributes) !in setOf(ROLE_ROMAN, ROLE_TRANSLATION)
+            } else if (background) {
+                backgrounds += frame
+            } else if (vocal != null && current != null && !vocal.hasExplicitLanguage &&
+                declaredLanguage != null && !auxiliary
             ) {
-                // A Chinese line inside a foreign song declares its own language
-                // on its spans, and that is what keeps it out of the prompt.
-                language = declaredLanguage
+                // A vocal's own/span language outranks an inherited wrapper;
+                // an inferred main language must never leak into its background.
+                vocal.language = declaredLanguage
+                vocal.hasExplicitLanguage = true
             }
             if (node.selfClosing) {
                 if (line) {
-                    lines += LlmLine(key ?: return null, "", language, keyInsertion)
-                    builder = null
-                    key = null
-                    keyInsertion = -1
-                    language = null
-                } else if (node.name.equals("br", ignoreCase = true) && builder != null &&
-                    frames.none(LlmFrame::auxiliary)
-                ) {
-                    builder.append(' ')
+                    if (!finishParagraph(frame)) return null
+                } else if (node.name.equals("br", ignoreCase = true)) {
+                    current?.append(' ')
                 }
             } else {
-                val role = if (node.name.equals("span", ignoreCase = true)) roleOf(node.attributes) else null
-                frames.addLast(
-                    LlmFrame(
-                        name = node.name,
-                        auxiliary = role == ROLE_TRANSLATION || role == ROLE_ROMAN,
-                        line = line,
-                    ),
-                )
+                frames.addLast(frame)
             }
             index = end + 1
         }
-        if (frames.isNotEmpty() || builder != null) return null
+        if (frames.isNotEmpty() || main != null) return null
         return lines
     }
 

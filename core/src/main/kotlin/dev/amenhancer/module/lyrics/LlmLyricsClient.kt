@@ -103,6 +103,7 @@ class LlmLyricsClient(
         title: String? = null,
         artist: String? = null,
         sourceLanguage: String? = null,
+        backgroundIndices: Set<Int> = emptySet(),
         isCancelled: () -> Boolean = { false },
     ): List<String>? {
         if (texts.isEmpty()) return emptyList()
@@ -111,7 +112,8 @@ class LlmLyricsClient(
         if (model.isEmpty()) return null
         if (isCancelled()) return null
         if (!isWithinInputBounds(texts)) return null
-        val body = requestBody(config, texts, title, artist, sourceLanguage) ?: return null
+        if (backgroundIndices.any { it !in texts.indices }) return null
+        val body = requestBody(config, texts, title, artist, sourceLanguage, backgroundIndices) ?: return null
         val response = post(endpoint, config.apiKey, body, isCancelled) ?: return null
         if (isCancelled()) return null
         val content = messageContent(response) ?: return null
@@ -277,13 +279,14 @@ class LlmLyricsClient(
         title: String?,
         artist: String?,
         sourceLanguage: String?,
+        backgroundIndices: Set<Int>,
     ): ByteArray? = runCatching {
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
             .put(
                 JSONObject()
                     .put("role", "user")
-                    .put("content", translationPrompt(texts, title, artist, sourceLanguage)),
+                    .put("content", translationPrompt(texts, title, artist, sourceLanguage, backgroundIndices)),
             )
         encodeRequest(config, messages)
     }.getOrNull()
@@ -301,15 +304,15 @@ class LlmLyricsClient(
     }.getOrNull()
 
     /**
-     * Verbatim port of the upstream createTranslationPrompt plus the
-     * custom-LLM input/output suffix. The upstream custom-prompt override
-     * branch is intentionally dropped: this port exposes no prompt setting.
+     * Fixed Simplified Chinese translation style with the existing custom-LLM
+     * input/output contract. This port exposes no prompt setting.
      */
     private fun translationPrompt(
         texts: List<String>,
         title: String?,
         artist: String?,
         sourceLanguage: String?,
+        backgroundIndices: Set<Int>,
     ): String {
         val targetLang = TARGET_LANGUAGE
         val songContext = if (!title.isNullOrBlank() && !artist.isNullOrBlank()) {
@@ -322,47 +325,22 @@ class LlmLyricsClient(
             ?: "Source Languages: Mixed/Unknown"
         val linesJson = JSONArray(texts).toString(2)
         val base = """### ROLE
-You are an expert, highly precise song lyrics translator. Your task is to translate the provided JSON array of lines into ${targetLang}.
+你是一位专业的歌词译者，请将提供的歌词翻译成简体中文。
 
 ### CONTEXT
 ${songContext}
 ${sourceLangHint}
 
-### STRICT RULES (Read Carefully)
-1. **Target Language Enforcement:**
-   - The FINAL output must be 100% intelligible in ${targetLang}.
-   - **CRITICAL:** Translate ALL text that is not ${targetLang}, regardless of script! This includes foreign non-Latin scripts (Cyrillic, Kanji, Hangul, Arabic, etc.) AND Latin-script regional languages or dialects (e.g. Javanese, Sundanese, Malay, Tagalog, Spanish, etc.).
-   - EVEN IF the source text uses the Latin alphabet (e.g. Javanese "Apa kowe ra ngerti larane"), if it is not in standard ${targetLang}, you MUST translate it into ${targetLang} (e.g., to Indonesian "id-ID": "Apakah kamu tidak tahu sakitnya").
-
-2. **The "Identity" Logic:**
-   - ONLY keep a line UNCHANGED if the line is *already* standard ${targetLang}.
-   - Regional languages, dialects, or related tongues (such as Javanese to Indonesian) are DIFFERENT languages and MUST be translated to standard ${targetLang}.
-
-3. **DIRECTNESS & ANTI-HALLUCINATION (CRITICAL FOR ACCURACY):**
-   - Translate slang and idioms contextually (e.g., "Aku banyak yang mau" -> "Many people want me"), BUT DO NOT overcomplicate simple structures.
-   - **DO NOT invent words or verbs that are not there.** If the source says "[Subject] is [Adjective]", translate it exactly as "[Subject] is [Adjective]".
-   - DO NOT add relational verbs like "you see me as", "you think I am", or "you treat me like" unless they explicitly exist in the original text.
-
-4. **Formatting:**
-   - Preserve repetition ("ma-ma", "la-la-la").
-   - Preserve punctuation, casing, and parentheses exactly from the source.
-
-### FEW-SHOT EXAMPLES
-
-Input: ["(Screaming)", "Я сошла с ума"]
-Target: English
-Output: ["(Screaming)", "I've lost my mind"]
-(Explanation: Parentheses kept. Cyrillic translated to English.)
-
-Input: ["Apa kowe ra ngerti larane", "Nyatane atimu dudu nggo aku"]
-Target: id-ID
-Output: ["Apakah kamu tidak tahu sakitnya", "Kenyataannya hatimu bukan untukku"]
-(Explanation: Javanese written in Latin script is translated to standard Indonesian id-ID.)
-
-Input: ["Aku banyak yang mau", "Walau aku tampan, kau biasa saja"]
-Target: English
-Output: ["Many people want me", "Even though I'm handsome, you are just ordinary"]
-(Explanation: Slang is translated properly. Direct Subject-Adjective structure is kept WITHOUT hallucinating extra verbs like "see me as" or "think I am".)
+### 翻译要求
+- 翻成简体中文，外语、方言、俚语都要处理，不能因为用了拉丁字母就原样保留。
+- 已经是目标语言的句子保持原样。
+- 保留重复表达，比如“ma-ma”“la-la-la”。
+- 要联系歌词上下文、语气和意象理解原文，再翻译成中文，但简单句不要复杂化。
+- 逐句检查并润色全篇，译文要信达雅，尤其注重“雅”，避免生硬直译。
+- 同一句歌词在不同语境下可能要用不同译法，不要固定套用同一句。
+- 重复歌词要按中文语感处理，不要机械重复译文
+- 和声也要翻译完整，不能遗漏；不要直接重复主唱译文充数。
+- 中文译文不要使用逗号和句号。
 
 ### TASK
 Input Lyrics:
@@ -380,6 +358,9 @@ Respond with ONLY a valid JSON object matching the exact structure below. Do not
 }"""
         return base +
             "\n\nINPUT LINES:\n${JSONArray(texts).toString()}\n" +
+            "Background vocal positions (zero-based): ${JSONArray(backgroundIndices.sorted())}. " +
+            "Each array entry is an independent main or background vocal. " +
+            "Translate every entry separately; never merge a background with its main vocal. " +
             "Return only JSON: {\"translated_lyrics\": [one translated string for each input line]}. " +
             "Keep exactly ${texts.size} lines in order."
     }
@@ -428,8 +409,8 @@ Respond with ONLY a valid JSON object matching the exact structure below. Do not
         /** Fixed target for the ported prompt and the translation cache. */
         const val TARGET_LANGUAGE = "zh-Hans"
 
-        /** Bump when the prompt or the answer contract changes; invalidates cached translations. */
-        const val PROMPT_VERSION = 1
+        /** Bump when prompt or answer changes require invalidating cached translations. */
+        const val PROMPT_VERSION = 2
 
         const val DEFAULT_CONNECT_TIMEOUT_MS = 10_000
         const val DEFAULT_READ_TIMEOUT_MS = 60_000

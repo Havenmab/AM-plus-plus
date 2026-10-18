@@ -128,7 +128,9 @@ class AmllTimelineFormattingTest(unittest.TestCase):
                                        '<span ttm:role="x-bg"><span begin="1s" end="2s">back</span>'
                                        '<span ttm:role="x-translation">BG</span></span></p></div>'))
         self.assertEqual(["Word\n (BG)", " "], texts(result))
-        self.assertIn('<span begin="1s" end="2s">Word</span>\n <span ttm:role="x-bg">(BG)</span>', result)
+        self.assertIn('<span begin="1s" end="2s">Word</span>\n '
+                      '<span xmlns="http://www.w3.org/ns/ttml" '
+                      'xmlns:ttm="http://www.w3.org/ns/ttml#metadata" ttm:role="x-bg">(BG)</span>', result)
 
     def test_invalid_times_are_not_guessed(self):
         for invalid in ("bad", "NaN", "-1s", ""):

@@ -180,6 +180,7 @@ internal fun createAutoLyricsRuntime(
                 title = request.title,
                 artist = request.artist,
                 sourceLanguage = document.sourceLanguage,
+                backgroundIndices = document.backgroundIndices,
                 isCancelled = isCancelled,
             ) ?: return@translate null
             if (isCancelled()) return@translate null

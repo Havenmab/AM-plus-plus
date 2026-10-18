@@ -415,6 +415,10 @@ internal class AppleMusicCustomLyricsTarget(
                         // translation pass would then enrich its own output.
                         val moduleParse =
                             parser.isModuleParse() || NativeTtmlParseOrigin.isModuleInitiated()
+                        // The module's own parses never describe what Apple is
+                        // displaying: recording them would let our generated
+                        // document evict or masquerade as the native one.
+                        if (moduleParse) return@runCatching
                         val pointer = param.result
                         val metadata = TtmlTimingPolicy.metadataOf(ttml)
                         val appleMusicId = pointer?.let(parser::adamIdOf)?.takeIf { it > 0L }
@@ -425,10 +429,10 @@ internal class AppleMusicCustomLyricsTarget(
                         timingObservations.record(
                             pointer,
                             metadata,
-                            appleMusicId.takeUnless { moduleParse },
-                            rawTtml = ttml.takeIf { !moduleParse },
+                            appleMusicId,
+                            rawTtml = ttml,
                         )
-                        if (autoSession != null && !moduleParse) {
+                        if (autoSession != null) {
                             val observedId = appleMusicId
                                 ?: currentSong.current()?.details?.appleMusicId
                                 ?: 0L
@@ -442,7 +446,6 @@ internal class AppleMusicCustomLyricsTarget(
                             )
                         }
                         if (
-                            !moduleParse &&
                             appleMusicId != null &&
                             currentSong.current()?.details?.appleMusicId == appleMusicId &&
                             shouldTryAutoLyricsForMetadata(metadata) &&

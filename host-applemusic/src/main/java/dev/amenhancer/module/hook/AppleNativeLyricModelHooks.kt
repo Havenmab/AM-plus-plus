@@ -52,6 +52,13 @@ import java.util.concurrent.ConcurrentHashMap
  *    native-model seam. Before it runs, the pointer is dereferenced to the
  *    `SongInfoNative` model and the per-class lyric hooks are installed, exactly
  *    as HLE does from `LYRICS_VIEW_MODEL_BUILD`.
+ *  - The document itself no longer arrives by rewriting the install method's
+ *    argument. `AppleMusicCustomLyricsTarget` selects our prepared pointer from
+ *    `LyricsResultSubmissionBridge.selectReplacement`, the app's own observer
+ *    calls `PlayerLyricsViewFragment.I2`, and this installer binds from that
+ *    install/native-presentation seam. A custom completion's merged document is
+ *    resubmitted through the same bridge, and [onCustomOverlayUpdated] then
+ *    re-presents that installed model and replays the payload.
  *  - Each line's `getHtmlPronunciationLineText` / `getHtmlTranslationLineText`
  *    is overridden to return the timing-keyed online lane only when Apple's own
  *    value is absent, so Apple's data always wins (HLE's `selectAppleLyricsText`
@@ -1628,8 +1635,11 @@ internal class AppleNativeLyricModelHooks(
      * document is already installed and the heavy re-present/rebind is what HLE
      * reports as the lyrics-page twitch on a supplement pointer, so only the
      * pronunciation payload is replayed (last, as always). The completion feed's
-     * `custom-overlay` ask is the exception and keeps the full sequence, because
-     * only its I2 substitution installs a freshly published merged document.
+     * `custom-overlay` ask is the exception and keeps the full sequence: it is
+     * dispatched after the custom document (or its merged pointer) has already
+     * been submitted through `LyricsResultSubmissionBridge`, so the pointer this
+     * method re-presents is the model the bridge installed and the sequence must
+     * re-run the lane selection and payload for that fresh model.
      *
      * Only an invoke that actually returned latches the state; every abort clears
      * the dedupe state ([PresentationRefreshOutcome.cleared]) *and* leaves the

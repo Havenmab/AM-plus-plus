@@ -37,7 +37,7 @@ class CustomLyricsCompletionWiringTest {
         assertTrue(
             target.contains("customCompletion?.remember(entry.appleMusicId, entry.sha256, ttml)"),
         )
-        assertTrue(target.contains("customCompletion?.onDisplayed(adamId)"))
+        assertTrue(target.contains("customCompletion?.onDisplayed(id)"))
         assertTrue(
             target.indexOf("val readCustomTtml") < target.indexOf("readTtml = readCustomTtml"),
         )
@@ -118,15 +118,14 @@ class CustomLyricsCompletionWiringTest {
         // The fork's equivalent is a per-instance callback handed to the feed and
         // forwarded to the native lyric delivery — never a global — so the overlay
         // write is what requests the re-presentation.
-        assertTrue(target.contains("var onCustomOverlayUpdated: (Long) -> Unit = {}"))
         assertTrue(
             target.contains(
-                "onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },",
+                "onOverlayUpdated = { appleMusicId ->\n                        nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)",
             ),
         )
-        assertTrue(target.contains("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"))
-        // The forward is wired after the delivery exists, so an early completion
-        // fails open on the default instead of touching an unassigned reference.
+        // The forward goes straight to the delivery instance this target owns,
+        // so an early completion fails open on the nullable receiver instead of
+        // touching an unassigned callback variable.
         assertTrue(
             target.indexOf("val customCompletion") <
                 target.indexOf("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"),

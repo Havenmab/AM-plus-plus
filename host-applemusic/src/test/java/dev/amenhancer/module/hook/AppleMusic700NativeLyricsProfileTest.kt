@@ -269,8 +269,8 @@ class AppleMusic700NativeLyricsProfileTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
         )
         assertTrue(target.contains("nativeLyricDelivery: NativeLyricsTarget? = null"))
-        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPointer(original)"))
-        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPresentation(param.thisObject, original)"))
+        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPointer(pointer)"))
+        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPresentation(fragment, pointer)"))
 
         val factory = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt",

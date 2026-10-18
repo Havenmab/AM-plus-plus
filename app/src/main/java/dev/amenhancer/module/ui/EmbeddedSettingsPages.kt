@@ -1031,6 +1031,8 @@ internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(
         .setNegativeButton(localizedText(ModuleText.CANCEL), null)
         .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
         .show()
+}
+
 private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
     activity: Activity,
     parent: LinearLayout,

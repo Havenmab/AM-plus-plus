@@ -220,8 +220,9 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(hooks.contains("if (presentationInvokeGuard.get() == true) return"))
         assertTrue(hooks.contains("presentationInvokeGuard.set(true)"))
         assertTrue(hooks.contains("presentationInvokeGuard.remove()"))
-        // The target records Apple's binding and forwards it.
-        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPresentation(param.thisObject, original)"))
+        // The target records the binding at the result-install seam and forwards
+        // the pointer that was actually installed (the bridge-selected document).
+        assertTrue(target.contains("nativeLyricDelivery?.onLyricsPresentation(fragment, pointer)"))
     }
 
     /**
@@ -300,10 +301,9 @@ class ApplePresentationRefreshWiringTest {
         assertTrue(feed.contains("runCatching { onOverlayUpdated(appleMusicId) }"))
         assertTrue(
             target.contains(
-                "onOverlayUpdated = { appleMusicId -> onCustomOverlayUpdated(appleMusicId) },",
+                "onOverlayUpdated = { appleMusicId ->\n                        nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)",
             ),
         )
-        assertTrue(target.contains("nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)"))
     }
 
     @Test

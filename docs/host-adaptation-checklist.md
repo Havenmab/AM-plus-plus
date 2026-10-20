@@ -54,6 +54,7 @@
 | 模糊 | lyricBlur、显示提交、行词动画、效果所有权 | 待填写 | 待填写 | 待填写 |
 | CJK辉光与末词 | cjk、可选terminalGradient、原生动画 | 待填写 | 待填写 | 待填写 |
 | 跨行扫光 | 独立lyricWrapSweep、视觉行/媒体时间/退役 | 待填写 | 待填写 | 待填写 |
+| 歌词效果优化 | 独立lyricBackgroundHighlight、活动行/词ID/焦点 | 待填写 | 待填写 | 待填写 |
 | 字体与歌词面板 | 生命周期、binding/adapter、资源/度量 | 待填写 | 待填写 | 待填写 |
 | 手机/平板玻璃、mini | chrome/fragmentChrome、导航与sheet | 待填写 | 待填写 | 待填写 |
 | 底栏收缩 | 独立资格、滚动/触摸、共享几何与渲染 | 待填写 | 待填写 | 待填写 |
@@ -165,6 +166,22 @@
 - [ ] 时间单位、原生动画、静态/暗色/渐暗/后继写入的真实路径已核对。
 - [ ] 换绑/回收/文档/布局/Seek/暂停恢复与旧写入退役覆盖，几何不支持保持原生。
 
+<a id="lyric-background-highlight-checks"></a>
+
+#### 4.6.1 歌词效果优化
+
+[维护规则](host-adaptation-guide.md#lyric-background-highlight) · [人工场景](feature-preservation.md#lyric-background-highlight)
+
+- [ ] 开关默认及缺键均关闭，保存/迁移集合包含独立配置键；关闭时返回 `DISABLED`，更改后重启宿主生效。
+- [ ] 精确 profile 声明独立契约，代码必需成员/关系校验、调用方去优化和注册均成功；未声明与安装失败的状态及 scope 清理正确。
+- [ ] 当前构建活动行的内部过滤路径有据；原始输入仍含父行时也能识别未结束背景句，候选覆盖当前、输入与已保留行。
+- [ ] `lineSubset` 仅处理同次提交、同一当前集合的首次过滤结果及真子集变化；模块保留与释放不影响其他原生成员或调用。
+- [ ] 正常提交与结束补交复制合并父行主词/背景词 ID，原生消费路径已核对；原始入参不被修改，释放只清模块旧父行。
+- [ ] 提交后的集合、重绑通知、焦点与显示快照一致；模糊及行词动画读取该状态，滚动仍由原生交互门槛控制。
+- [ ] 窗口以父句起点及原文/发音背景词最终结束点为界；媒体时钟、行调度偏移、到期与补交载荷语义已分别确认，TTML/媒体时钟未改。
+- [ ] 暂停停止到期轮询，恢复继续；Seek、换文档、脱离和视图销毁的释放路径完整，reader 与各 adapter 会话隔离，旧回调不写入新绑定。
+- [ ] 能力状态如实区分安装与运行失败；异常释放/清理、后续会话重建及非主线程透传有据，正常逐句路径无排查日志。
+
 <a id="lyrics-typeface-checks"></a>
 
 ### 4.7 字体与歌词面板
@@ -275,6 +292,7 @@
 | 来源/LLM | 资格/优先级、格式校验、客户端共享编码、独立缓存、取消/迟到及失败恢复 | [规则](host-adaptation-guide.md#llm-lyrics-fallback)；矩阵结果链接 |
 | 模糊 | 显示提交与四路动画保护、代际、帧驱动、效果/裁剪所有权 | [规则](host-adaptation-guide.md#lyrics-blur)；矩阵结果链接 |
 | CJK/跨行 | 各自开关/作用域、原生时序、几何/静态/暗色/交接和退役 | [CJK](host-adaptation-guide.md#cjk-animation) / [跨行](host-adaptation-guide.md#lyric-wrap-sweep)；矩阵结果链接 |
+| 歌词效果优化 | 过滤后活动行、词 ID、时间基准、释放及原生焦点的一致性 | [规则](host-adaptation-guide.md#lyric-background-highlight)；矩阵结果链接 |
 | 玻璃输入/动画 | 单一owner、起点归属、方向/边界、共享几何、原生触摸及展开恢复 | [规则](host-adaptation-guide.md#glass-collapse-rendering)；矩阵结果链接 |
 | 玻璃材质/上游 | 默认门禁、前缀/承载复用、帧阶段、隐藏资源与当前窗口失效 | [规则](host-adaptation-guide.md#glass-collapse-rendering)；来源pin与人工结果 |
 | 预热 | 隐藏事务/同步副作用归属、有界任务与日志阶段，不改导航状态 | [规则](host-adaptation-guide.md#startup-page-prewarm)；矩阵结果链接 |

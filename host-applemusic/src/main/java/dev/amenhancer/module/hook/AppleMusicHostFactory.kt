@@ -94,6 +94,12 @@ object AppleMusicHostFactory {
                 profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
                 AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            lyricBackgroundHighlight = AppleMusicLyricBackgroundHighlightTarget(profile, classLoader,
+                onFailure = { message -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(
+                    dev.amenhancer.module.ModuleConstants.FEATURE_LYRIC_BACKGROUND_HIGHLIGHT,
+                    dev.amenhancer.module.model.FeatureState.DEGRADED, message, build.displayName,
+                )) },
+            ),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

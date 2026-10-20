@@ -170,6 +170,29 @@ def verify_fragment_contracts(document, classes, failures):
                 for role in sorted(roles - wrap.get(group, {}).keys()):
                     failures.append(f'lyricWrapSweep.{group}.{role}: missing required role')
             sections['lyricWrapSweep'] = wrap
+    # Independent native active-row retention; an absent section leaves the capability unsupported.
+    background = document.get('lyricBackgroundHighlight')
+    if background is not None:
+        if not isinstance(background, dict) or background.get('contractVersion') != 4:
+            failures.append('lyricBackgroundHighlight: missing versioned contract')
+        else:
+            required = {
+                'methods': {'commit', 'lineSubset', 'notifyRow', 'mapPosition', 'focus', 'payloadKind', 'document', 'detach',
+                            'lineCount', 'lineAt', 'lineGet', 'lineId', 'backgroundWords',
+                            'pronunciationBackgroundWords', 'vectorSize', 'vectorGet', 'wordGet',
+                            'timingBegin', 'timingEnd', 'mediaBrowser', 'mediaPosition', 'seek',
+                            'pause', 'pauseRequested', 'resume', 'destroyView'},
+                'fields': {'reader', 'currentLines', 'previousLines', 'wordHighlightIds', 'backgroundHighlightIds',
+                           'adapterCallback', 'callbackFragment', 'focusStart', 'focusEnd'},
+            }
+            for group, roles in required.items():
+                entries = background.get(group, {})
+                if not isinstance(entries, dict):
+                    failures.append(f'lyricBackgroundHighlight.{group}: invalid inventory')
+                    continue
+                for role in sorted(roles - entries.keys()):
+                    failures.append(f'lyricBackgroundHighlight.{group}.{role}: missing required role')
+            sections['lyricBackgroundHighlight'] = background
     # Optional navigation startup prewarm. A declared capability needs its exact contract.
     prewarm = document.get('startupPagePrewarm')
     capability = (document.get('capabilities') or {}).get('startupPagePrewarm') is True

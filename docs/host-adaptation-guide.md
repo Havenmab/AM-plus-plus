@@ -160,6 +160,7 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 | [共用歌词结果提交](#lyrics-result-submission) | `indexed`、`lyricResultSubmission`、原生安装与 item 更新 | [结果提交](feature-preservation.md#lyrics-result-submission) |
 | [歌词来源](#lyrics-sources)、[LLM](#llm-lyrics-fallback) | 原生 TTML 观察、指针/歌曲身份及共用结果通道 | [来源](feature-preservation.md#lyrics-sources)、[LLM](feature-preservation.md#llm-lyrics-fallback) |
 | [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[跨行](#lyric-wrap-sweep)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[跨行](feature-preservation.md#lyric-wrap-sweep)、[字体](feature-preservation.md#lyrics-typeface) |
+| [歌词效果优化](#lyric-background-highlight) | `lyricBackgroundHighlight`、活动行过滤、词 ID 与焦点 | [歌词效果](feature-preservation.md#lyric-background-highlight) |
 | [玻璃导航](#chrome-glass)、[收缩](#glass-collapse-rendering) | `chrome` / `fragmentChrome`、独立能力位、滚动与 sheet 端口 | [玻璃](feature-preservation.md#chrome-glass)、[收缩](feature-preservation.md#glass-collapse-rendering) |
 | [启动预热](#startup-page-prewarm) | 独立能力、`startupPagePrewarm` 与形态导航资源 | [预热](feature-preservation.md#startup-page-prewarm) |
 | [平板布局、视频与恢复](#tablet-layout) | 双栏、binding、资源、视频/恢复与布局变体 | [平板](feature-preservation.md#tablet-layout) |
@@ -398,6 +399,26 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 **变更触发。** 新构建复核时间单位、视觉行键/bank、静态前缀比较、退场和后继写入链及全部失效入口；语义变化连同进度、时长或交接策略适配，角色清单与离线覆盖按第 3 节同步。
 
 [证据清单](host-adaptation-checklist.md#lyric-wrap-sweep-checks) · [人工场景](feature-preservation.md#lyric-wrap-sweep)
+
+<a id="lyric-background-highlight"></a>
+
+#### 5.6.1 歌词效果优化
+
+**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled` 对应普通配置键 `lyric_effects_optimization_enabled`，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricBackgroundHighlightFeature` 返回 `DISABLED`，不调用宿主安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖其他歌词能力的开关或安装结果。
+
+启用要求精确 profile 声明 `lyricBackgroundHighlight`、`contractVersion: 4`，通过全部成员及关系校验，并成功对活动行提交方法 `O` 执行 `deoptimize` 后注册、激活 Hook。`lineSubset` 为 `f1.D(TreeSet,Collection)boolean static`，去优化确保此内部调用可被拦截。当前仅 [7.0.0-beta / 1609 档案](../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1609.json) 声明此契约；未声明报告不支持，解析、去优化或注册失败关闭本次注册 scope 并报告降级。
+
+**活动行与词状态。** 1609 的 `A.k` 将背景行登记到 `q`，`O` 可在原始输入仍含父行时将其过滤掉。父行候选来自当前集合、原始输入和已保留行；输入中较旧或已经退出输入的行，只要仍在背景保留窗口内就参与保留。只在本次 `O`、`f1.D` 第一参数与当前 `r` 为同一实例时处理首次过滤结果：合并未结束父行，并在集合变化为真子集时放行更新；其余调用保持原生。结束时以该过滤结果判断应释放哪些模块父行，保留原生仍需要的成员及间奏、分组逻辑。
+
+普通提交与结束补交都在模块副本中复制合并保留父行的主词和背景词 ID，不改调用方的集合与数组。`A.w/x` 缺行会使 `g0/i0/k` 清除遮罩或收起和声，故词 ID 必须随普通提交保留，释放只清模块旧父行。`O` 返回前校正这些父行在 `r/s` 中的成员关系，必要时经原生 `E/h` 通知重绑；核对 `Fragment.G0/H0` 后，仅在需要时调用原生 `N.b` 恢复焦点。行词动画、和声观察者及模糊共同消费提交后的活动状态，模糊以显示快照为准，滚动继续遵守原生用户交互门槛。
+
+**时间与生命周期。** 保留窗口从父句 `begin` 到原文、发音背景词的最大有效 `end`，多个背景段取最终结束点；TTML 和媒体时钟保持原样。窗口判定及到期轮询读取媒体位置，不能使用含 `suggestedLineOffset` 的行调度载荷 `PLAYBACK_POSITION` 提前判定结束。结束补交按最近原生样本还原行时钟偏移，剩余间奏时长按媒体位置差扣减，补交不再次校准偏移；媒体位置不可读时跳过本次判定。
+
+暂停停止到期轮询，恢复后继续按媒体位置判定。Seek、换文档、适配器脱离和视图销毁先尝试释放旧保留行，再移除对应会话；reader 身份变化不得复用旧窗口和时间基准。普通行重绑与回收沿原生绑定读取当前状态，不清除其他行仍有效的会话。关闭注册 scope 时取消轮询并清状态，多歌词视图按各自 adapter 隔离。
+
+**状态与维护。** 安装健康状态由 Feature 统一报告；首次非主线程提交透传并报告降级。运行异常记录原因、尝试释放保留行并清理会话，后续提交可重新建立会话。正常逐句提交不输出诊断，异常日志不含歌词正文。新构建须重新确认过滤调用、词 ID 消费、焦点/显示快照、媒体与行调度时钟及生命周期语义；所需成员清单由代码契约维护，不能照搬相邻构建的混淆名。
+
+[证据清单](host-adaptation-checklist.md#lyric-background-highlight-checks) · [人工场景](feature-preservation.md#lyric-background-highlight)
 
 <a id="lyrics-typeface"></a>
 

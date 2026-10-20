@@ -57,6 +57,8 @@ data class ModuleSettings(
     val futureBlurEnabled: Boolean = true,
     /** Enables the native rush-gradient adaptation for CJK karaoke lyrics. */
     val cjkKaraokeAnimationEnabled: Boolean = true,
+    /** Opt-in lyric effects optimization; applied when the host starts. */
+    val lyricEffectsOptimizationEnabled: Boolean = false,
     val navigationCompensationEnabled: Boolean = false,
     /** Restores native Data settings and the app's cellular availability predicate. */
     val forceCellularDataEntryEnabled: Boolean = false,

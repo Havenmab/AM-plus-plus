@@ -487,6 +487,18 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
             addView(embeddedDivider(activity))
             addView(embeddedSettingRow(
                 activity,
+                localizedText(ModuleText.LYRIC_EFFECTS_OPTIMIZATION),
+                localizedText(ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY),
+                settings.lyricEffectsOptimizationEnabled,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.Music,
+                    EmbeddedSettingsPalette.Light.accent,
+                ),
+            ) { onSettingsChanged(currentSettings().copy(lyricEffectsOptimizationEnabled = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
                 localizedText(ModuleText.TITLE_CORRECTION),
                 if (settings.titleCorrectionEnabled) {
                     localizedText(ModuleText.VALUE_RESTART_REQUIRED, localizedText(settings.titleCorrectionMode.displayText))

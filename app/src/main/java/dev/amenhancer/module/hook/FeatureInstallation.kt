@@ -266,6 +266,7 @@ private fun productionFeatureInstallationModule(
             ),
             FeatureInstallationPlan(feature = CjkKaraokeAnimationFeature()),
             FeatureInstallationPlan(feature = LyricWrapSweepFeature()),
+            FeatureInstallationPlan(feature = LyricBackgroundHighlightFeature()),
             FeatureInstallationPlan(
                 feature = LyricsTypefaceFeature(),
                 registerResources = lyricsTypefaceSession::registerResources,

@@ -3,6 +3,7 @@ package dev.amenhancer.module.lyrics.online
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -407,5 +408,37 @@ class NativeLyricOverlayStoreTest {
     fun `text normalization collapses whitespace like HLE`() {
         assertEquals("a b", NativeLyricOverlayStore.normalizeText("  a \n b "))
         assertEquals("", NativeLyricOverlayStore.normalizeText(null))
+    }
+
+    @Test
+    fun `a repeated line text reuses its normalized form`() {
+        NativeLyricOverlayStore.clearNormalizedTextCacheForTest()
+        val raw = "  \u541b\u306e\u540d\u306f\n  \u4f55\u3067\u3059\u304b "
+
+        val first = NativeLyricOverlayStore.normalizeText(raw)
+        val second = NativeLyricOverlayStore.normalizeText(raw)
+
+        assertEquals(first, second)
+        // String.replace allocates a new string each time; identity proves the cache
+        // answered the second lookup instead of running the regex again.
+        assertSame(first, second)
+        assertEquals(1, NativeLyricOverlayStore.normalizedTextCacheSize())
+
+        NativeLyricOverlayStore.clearNormalizedTextCacheForTest()
+    }
+
+    @Test
+    fun `the normalization cache is bounded`() {
+        NativeLyricOverlayStore.clearNormalizedTextCacheForTest()
+
+        repeat(700) { index ->
+            NativeLyricOverlayStore.normalizeText("line  $index \n text")
+        }
+
+        assertTrue(
+            "cache must stay bounded, was ${NativeLyricOverlayStore.normalizedTextCacheSize()}",
+            NativeLyricOverlayStore.normalizedTextCacheSize() <= 512,
+        )
+        NativeLyricOverlayStore.clearNormalizedTextCacheForTest()
     }
 }

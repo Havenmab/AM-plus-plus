@@ -19,6 +19,25 @@ internal object AppleReflection {
     private val methodsByClass =
         ConcurrentHashMap<Class<*>, Map<String, List<Method>>>()
     private val fieldsByClass = ConcurrentHashMap<Class<*>, Map<String, Field>>()
+    private val hierarchyFieldsByClass = ConcurrentHashMap<Class<*>, List<Field>>()
+
+    /**
+     * Declared fields of [clazz] and its superclasses, in hierarchy order, cached
+     * per class. Ported from HLE v8.2.1 (`1a665f69`): the row-bind / holder paths
+     * used to walk `generateSequence { superclass }` and allocate a fresh
+     * `declaredFields` array on every call, although a class's field list never
+     * changes. The returned list is immutable and must not be mutated.
+     */
+    fun hierarchyFields(clazz: Class<*>): List<Field> =
+        hierarchyFieldsByClass.computeIfAbsent(clazz) { type ->
+            val fields = ArrayList<Field>()
+            var current: Class<*>? = type
+            while (current != null) {
+                current.declaredFields.forEach(fields::add)
+                current = current.superclass
+            }
+            java.util.Collections.unmodifiableList(fields)
+        }
 
     fun findMethod(
         clazz: Class<*>,

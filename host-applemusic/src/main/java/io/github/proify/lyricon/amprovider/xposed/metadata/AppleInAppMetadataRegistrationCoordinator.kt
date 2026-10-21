@@ -6,6 +6,8 @@
 
 package io.github.proify.lyricon.amprovider.xposed
 
+import java.util.concurrent.ConcurrentHashMap
+
 /** Owns in-app metadata/model identity registration and account-value capture. */
 internal class AppleInAppMetadataRegistrationCoordinator(
     runtime: AppleMusicProviderRuntime,
@@ -35,6 +37,14 @@ internal class AppleInAppMetadataRegistrationCoordinator(
                     "base"
             }
     }
+
+    /**
+     * Non-history entity type depends only on a concrete class's inheritance
+     * chain, but it used to be recomputed (with a fresh class-name list) for every
+     * queue row. Cached per class; [NO_ENTITY_TYPE] means null (HLE v8.2.1
+     * `1a665f69`).
+     */
+    private val classEntityTypes = ConcurrentHashMap<Class<*>, Any>()
 
     fun registerMetadata(
         mediaId: String,
@@ -68,6 +78,10 @@ internal class AppleInAppMetadataRegistrationCoordinator(
         analyzeMetadata: Boolean = true,
     ) {
         dataBindingHooks.recordCurrentRecyclerMediaId(mediaId)
+        // Without analysis, registration only adds the registry entry and fills empty
+        // account fields; when both already hold this object/id, reading the raw values
+        // again cannot change anything (HLE v8.2.1 `1a665f69`).
+        if (!analyzeMetadata && isPlaybackItemRegistrationSettled(mediaId, playbackItem)) return
         val contract = playbackItemContract(playbackItem)
         val rawTitle = readPlaybackItemValue(playbackItem, InAppPlaybackItemField.TITLE, contract)
         val rawArtist = readPlaybackItemValue(playbackItem, InAppPlaybackItemField.ARTIST, contract)
@@ -277,12 +291,31 @@ internal class AppleInAppMetadataRegistrationCoordinator(
 
     fun contentItemLocalizedEntityType(
         contentItem: Any,
-    ): AppleInternalCatalogResolver.LocalizedEntityType? = localizedEntityTypeForQueueItem(
-        historyEntry = playbackItemContract(contentItem) == InAppPlaybackItemContract.HISTORY,
-        classNames = generateSequence(contentItem.javaClass as Class<*>?) { it.superclass }
-            .map { it.simpleName }
-            .toList(),
-    )
+    ): AppleInternalCatalogResolver.LocalizedEntityType? {
+        if (playbackItemContract(contentItem) == InAppPlaybackItemContract.HISTORY) {
+            return localizedEntityTypeForQueueItem(historyEntry = true, classNames = emptyList())
+        }
+        val cached = classEntityTypes.computeIfAbsent(contentItem.javaClass) { clazz ->
+            localizedEntityTypeForQueueItem(
+                historyEntry = false,
+                classNames = generateSequence(clazz as Class<*>?) { it.superclass }
+                    .map { it.simpleName }
+                    .toList(),
+            ) ?: NO_ENTITY_TYPE
+        }
+        return cached as? AppleInternalCatalogResolver.LocalizedEntityType
+    }
+
+    /**
+     * True when re-registering [playbackItem] without analysis can change nothing:
+     * the registry already maps this exact object to [mediaId], and the account
+     * title/artist are both present, so the merge is a no-op. [registerPlaybackItem]
+     * uses this to skip the raw-value reads the queue adapter repeats for every
+     * already-seen history row.
+     */
+    private fun isPlaybackItemRegistrationSettled(mediaId: String, playbackItem: Any): Boolean =
+        registry.playbackItemId(playbackItem) == mediaId &&
+            metadataStore.accountMetadata(mediaId).isComplete()
 
     private fun registerMetadataRef(mediaId: String, metadata: Any) {
         val originalTitle = AppleReflection.field(
@@ -324,3 +357,9 @@ internal class AppleInAppMetadataRegistrationCoordinator(
         }
     }
 }
+
+/** Cache sentinel for "the class chain yields no entity type"; never escapes the coordinator. */
+private val NO_ENTITY_TYPE = Any()
+
+internal fun AccountMetadata?.isComplete(): Boolean =
+    this != null && title != null && artist != null

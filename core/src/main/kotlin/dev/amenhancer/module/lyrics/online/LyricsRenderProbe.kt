@@ -47,6 +47,14 @@ class LyricsRenderProbe(
     private val seen = HashSet<String>()
 
     /**
+     * The armed track, mirrored outside [lock] so [isArmed] costs one volatile
+     * read instead of a monitor enter/exit on every overridden getter call
+     * (`1a665f69`-style hot-getter trim). Written only under [lock].
+     */
+    @Volatile
+    private var armedTrack: Long = 0L
+
+    /**
      * Marks a refresh attempt for [songId]. A different track resets the budget
      * and the attempt counter, so one track's probe lines can never answer for
      * another. Called on the main handler immediately before the app's
@@ -65,9 +73,7 @@ class LyricsRenderProbe(
      * skip the (reflective) field extraction a probe line needs while no attempt
      * is armed, so the probe costs nothing on the ordinary first render.
      */
-    fun isArmed(songId: Long): Boolean = synchronized(lock) {
-        songId > 0L && songId == currentTrack && attempt > 0
-    }
+    fun isArmed(songId: Long): Boolean = songId > 0L && songId == armedTrack
 
     /**
      * Records one app read of an overridden getter/adapter. No-op unless
@@ -105,6 +111,7 @@ class LyricsRenderProbe(
     /** Must hold [lock]. */
     private fun reset(songId: Long) {
         currentTrack = songId
+        armedTrack = songId
         attempt = 0
         emitted = 0
         seen.clear()

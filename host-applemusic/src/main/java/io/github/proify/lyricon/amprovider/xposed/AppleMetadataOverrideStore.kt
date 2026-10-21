@@ -8,6 +8,7 @@ package io.github.proify.lyricon.amprovider.xposed
 
 import android.os.SystemClock
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /** Owns Apple Music metadata overrides, identity facts, and request lifecycle state. */
 internal class AppleMetadataOverrideStore {
@@ -189,17 +190,34 @@ internal class AppleMetadataOverrideStore {
 
     fun accountMetadataSnapshot(): Map<String, AccountMetadata> = HashMap(accountMetadataValues)
 
-    fun mergeAccountMetadata(mediaId: String, incoming: AccountMetadata): AccountMetadata =
-        accountMetadataValues.merge(mediaId, incoming) { previous, next ->
+    /**
+     * Merges only the fields [incoming] can still fill. Ported from HLE v8.2.1
+     * (`1a665f69`): when the stored title and artist are already present the
+     * result is identical, so the merge no longer allocates a new
+     * [AccountMetadata] or replaces the map entry on every row registration.
+     */
+    fun mergeAccountMetadata(mediaId: String, incoming: AccountMetadata): AccountMetadata {
+        accountMetadataValues[mediaId]?.let { previous ->
+            if (
+                (previous.title != null || incoming.title == null) &&
+                (previous.artist != null || incoming.artist == null)
+            ) {
+                return previous
+            }
+        }
+        return accountMetadataValues.merge(mediaId, incoming) { previous, next ->
             AccountMetadata(
                 title = previous.title ?: next.title,
                 artist = previous.artist ?: next.artist,
             )
         } ?: incoming
+    }
 
     fun lookupIds(mediaId: String): Set<String> = metadataLookupIds[mediaId].orEmpty()
 
     fun mergeLookupIds(mediaId: String, lookupIds: Collection<String>) {
+        // Same set already stored: skip the copy/set-union allocation.
+        if (metadataLookupIds[mediaId]?.containsAll(lookupIds) == true) return
         metadataLookupIds.merge(mediaId, lookupIds.toSet()) { previous, incoming ->
             previous + incoming
         }
@@ -218,6 +236,8 @@ internal class AppleMetadataOverrideStore {
     fun artistKeys(mediaId: String): Set<String> = metadataArtistKeys[mediaId].orEmpty()
 
     fun mergeArtistKeys(mediaId: String, artistKeys: Collection<String>) {
+        // Same set already stored: skip the copy/set-union allocation.
+        if (metadataArtistKeys[mediaId]?.containsAll(artistKeys) == true) return
         metadataArtistKeys.merge(mediaId, artistKeys.toSet()) { previous, incoming ->
             previous + incoming
         }
@@ -225,6 +245,16 @@ internal class AppleMetadataOverrideStore {
 
     fun associatedArtistIds(mediaId: String): List<String> =
         metadataAssociatedArtistIds[mediaId].orEmpty()
+
+    /**
+     * Incremented whenever any id's associated-artist list actually changes.
+     * The surface runtime keys its request-scope expansion on this plus the
+     * coordinator revision, so an unchanged expansion is skipped without
+     * walking every visible id's artist list again (HLE v8.2.1 `1a665f69`).
+     */
+    private val associatedArtistIdsRevision = AtomicLong()
+
+    fun associatedArtistIdsRevision(): Long = associatedArtistIdsRevision.get()
 
     fun mergeAssociatedArtistIds(mediaId: String, artistIds: Collection<String>): Boolean {
         val normalizedIds = AppleMetadataResolutionEngine
@@ -237,6 +267,7 @@ internal class AppleMetadataOverrideStore {
             changed = merged != previous
             merged
         }
+        if (changed) associatedArtistIdsRevision.incrementAndGet()
         return changed
     }
 

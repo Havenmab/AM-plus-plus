@@ -383,7 +383,41 @@ class NativeLyricOverlayStore {
         /** The `pronunciationSource` of a lane read from the displayed document. */
         const val DISPLAYED_DOCUMENT_SOURCE = "displayed"
 
-        fun normalizeText(text: String?): String = text.orEmpty().replace(WHITESPACE, " ").trim()
+        /**
+         * Normalized forms of recently seen line texts. The native lyric getters
+         * resolve a line's overlay row on every render (translation, pronunciation
+         * and word getters), and each lookup used to run [WHITESPACE] over the same
+         * immutable line text. The cache only depends on the input string, so it
+         * cannot change a lookup result; [MAX_NORMALIZED_TEXT_ENTRIES] bounds it.
+         */
+        private const val MAX_NORMALIZED_TEXT_ENTRIES = 512
+
+        private val normalizedTextCache = object : LinkedHashMap<String, String>(
+            128,
+            0.75f,
+            true,
+        ) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, String>?,
+            ): Boolean = size > MAX_NORMALIZED_TEXT_ENTRIES
+        }
+
+        fun normalizeText(text: String?): String {
+            if (text.isNullOrEmpty()) return ""
+            synchronized(normalizedTextCache) { normalizedTextCache[text] }?.let { return it }
+            val normalized = text.replace(WHITESPACE, " ").trim()
+            synchronized(normalizedTextCache) { normalizedTextCache[text] = normalized }
+            return normalized
+        }
+
+        /** Entry count of the bounded normalization cache, for tests. */
+        internal fun normalizedTextCacheSize(): Int =
+            synchronized(normalizedTextCache) { normalizedTextCache.size }
+
+        /** Drops the normalization cache, for tests that measure a cold lookup. */
+        internal fun clearNormalizedTextCacheForTest() {
+            synchronized(normalizedTextCache) { normalizedTextCache.clear() }
+        }
     }
 }
 

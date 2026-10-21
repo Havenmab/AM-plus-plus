@@ -63,6 +63,17 @@ internal class AppleInAppMetadataResolutionCoordinator(
         linkedMapOf<String, DeferredMetadataResolution>()
     private var deferredMetadataResolutionScheduled = false
 
+    /**
+     * Issues first-seen name requests in small budgeted chunks on the main
+     * thread (HLE v8.2.1 `1a665f69`): each id costs about 1 ms (a cache hit also
+     * applies the alias and propagates artist aliases), and a deferred batch of
+     * 60–94 ms or 24 queue history rows used to block one message.
+     */
+    private val overrideRequests = AppleBudgetedResultQueue(
+        post = { runtime.mainHandler.post(it) },
+        failureMessage = "Apple 元数据批量请求失败",
+    )
+
     fun schedule(
         mediaIds: Collection<String>,
         priority: AppleInternalCatalogResolver.RequestPriority,
@@ -106,17 +117,57 @@ internal class AppleInAppMetadataResolutionCoordinator(
                 .entries
                 .sortedByDescending { it.key.priority.ordinal }
                 .forEach { (resolution, pendingIds) ->
-                    val stillUnresolved = pendingIds.filter(::shouldRequestOverride)
-                    if (stillUnresolved.isNotEmpty()) {
+                    enqueueOverrides(
+                        mediaIds = pendingIds,
+                        preBind = true,
+                        priority = resolution.priority,
+                        originalResolutionMode = resolution.originalResolutionMode,
+                        onlyUnresolved = true,
+                    )
+                }
+        }
+    }
+
+    /**
+     * Same work as [ensureOverrides], split into [ENSURE_OVERRIDES_CHUNK]-id tasks
+     * run from later main-thread messages. Order is preserved; the per-chunk
+     * original-resolution allowance is carried across chunks in submission order,
+     * matching a single [ensureOverrides] call. With [onlyUnresolved], each chunk
+     * re-checks the gate right before running, so an id resolved by an earlier
+     * chunk is not requested again.
+     */
+    fun enqueueOverrides(
+        mediaIds: Collection<String>,
+        preBind: Boolean = false,
+        originalResolutionLimit: Int = Int.MAX_VALUE,
+        priority: AppleInternalCatalogResolver.RequestPriority =
+            AppleInternalCatalogResolver.RequestPriority.BACKGROUND,
+        originalResolutionMode: InAppOriginalResolutionMode =
+            InAppOriginalResolutionMode.AFTER_LOCALIZED,
+        onlyUnresolved: Boolean = false,
+    ) {
+        var remainingOriginal = originalResolutionLimit.coerceAtLeast(0)
+        mediaIds.asSequence()
+            .map(String::trim)
+            .filter { it.isNotEmpty() && it.all(Char::isDigit) }
+            .distinct()
+            .chunked(ENSURE_OVERRIDES_CHUNK)
+            .forEach { chunk ->
+                val chunkOriginalLimit = minOf(remainingOriginal, chunk.size)
+                remainingOriginal -= chunkOriginalLimit
+                overrideRequests.enqueue {
+                    val ids = if (onlyUnresolved) chunk.filter(::shouldRequestOverride) else chunk
+                    if (ids.isNotEmpty()) {
                         ensureOverrides(
-                            mediaIds = stillUnresolved,
-                            preBind = true,
-                            priority = resolution.priority,
-                            originalResolutionMode = resolution.originalResolutionMode,
+                            mediaIds = ids,
+                            preBind = preBind,
+                            originalResolutionLimit = chunkOriginalLimit,
+                            priority = priority,
+                            originalResolutionMode = originalResolutionMode,
                         )
                     }
                 }
-        }
+            }
     }
 
     /**
@@ -1277,3 +1328,6 @@ internal class AppleInAppMetadataResolutionCoordinator(
             nowUptimeMillis = SystemClock.uptimeMillis(),
         )
 }
+
+/** Ids per budgeted first-seen request task; two keeps each message around 6 ms. */
+private const val ENSURE_OVERRIDES_CHUNK = 2

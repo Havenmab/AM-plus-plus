@@ -24,6 +24,11 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                         bridge.metadataStore.associatedArtistIds(mediaId)
                     }
 
+                override fun associatedArtistIdsRevision(): Long? =
+                    bridge.hostCall<Long?>("surface.associatedArtistIdsRevision", null) {
+                        bridge.metadataStore.associatedArtistIdsRevision()
+                    }
+
                 override fun hasVisibleExactConsumer(mediaId: String): Boolean =
                     bridge.hostCall("surface.hasVisibleExactConsumer", false) {
                         bridge.dataBindingHooks.hasVisibleExactConsumer(mediaId)

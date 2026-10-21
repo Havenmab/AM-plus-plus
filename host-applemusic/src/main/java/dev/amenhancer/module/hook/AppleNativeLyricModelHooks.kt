@@ -27,6 +27,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicRuntimeMember
 import io.github.proify.lyricon.amprovider.xposed.AppleReflection
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsPronunciationLanguages
+import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
 import io.github.proify.lyricon.amprovider.xposed.expandAppleLyricsTranslationLanguages
 import io.github.proify.lyricon.amprovider.xposed.selectAppleLyricsTranslationLanguage
 import java.lang.reflect.Method
@@ -369,11 +370,28 @@ internal class AppleNativeLyricModelHooks(
             AppleMusicHookPoint.LYRICS_PRONUNCIATION_PREFERENCE,
         ).isNotEmpty()
 
+    // The id, already rendered as the string every lookup returns, so a hot line
+    // getter no longer boxes/`toString()`s it per call.
     private val lineSongIds =
-        Collections.synchronizedMap(IdentityHashMap<Any, Long>())
+        Collections.synchronizedMap(IdentityHashMap<Any, String>())
+
+    /**
+     * The native word vector's item list, keyed by vector identity and validated
+     * against its current size. A vector's word membership does not change for a
+     * model generation, and the getters used to walk and reflect every word on
+     * every call ([vectorItems]); the size check keeps a mutated/growing vector
+     * correct, and the map is cleared on a track/model change.
+     */
+    private data class CachedVectorItems(val size: Int, val items: List<Any>)
+
+    private val vectorItemsCache = WeakIdentityMap<Any, CachedVectorItems>()
 
     @Volatile
     private var modelSongId: Long = 0L
+
+    /** [modelSongId] as the string the overlay and diagnostics key by; updated with it. */
+    @Volatile
+    private var modelSongIdText: String? = null
 
     @Volatile
     private var systemLyricsLanguage: String? = null
@@ -2217,8 +2235,13 @@ internal class AppleNativeLyricModelHooks(
             // previous track's ask (the hard per-song bound).
             wordReadyKey = null
             wordDecisionSawHidden = false
+            // Word-vector item lists belong to the previous model; a new track must
+            // never answer a getter from them (weak keys would also eventually drop
+            // them, but a track change must be immediate).
+            vectorItemsCache.clear()
         }
         modelSongId = songId
+        modelSongIdText = songId.takeIf { it > 0L }?.toString()
         songNativeRef = java.lang.ref.WeakReference(songNative)
         val languageViewModel = viewModel ?: loadViewModelRef?.get()
         if (languageViewModel != null) {
@@ -2234,7 +2257,8 @@ internal class AppleNativeLyricModelHooks(
         installPronunciationLanguageQueryHook(songNative.javaClass)
         val lines = nativeLines(songNative)
         if (modelChanged) lineSongIds.clear()
-        lines.forEach { line -> lineSongIds[line] = songId }
+        val songIdText = modelSongIdText
+        if (songIdText != null) lines.forEach { line -> lineSongIds[line] = songIdText }
         // HLE-compatible per-call probe as the build-time reading, for the
         // diagnostic and for the "did Apple populate the lines yet" signal. It is
         // not the decision input: on 1606 it is false until a language is
@@ -3672,11 +3696,22 @@ internal class AppleNativeLyricModelHooks(
 
     private fun vectorItems(vector: Any?, limit: Int = MAX_WORDS): List<Any> {
         if (vector == null) return emptyList()
-        return buildList {
-            repeat(vectorSize(vector).coerceIn(0, limit)) { index ->
-                val item = vectorItem(vector, index)
-                if (item != null) add(item)
-            }
+        // The bounded-limit path keeps its exact old semantics; the default path
+        // (every hot getter) reuses the item list for the same vector identity.
+        if (limit < MAX_WORDS) return readVectorItems(vector, limit)
+        val size = vectorSize(vector)
+        vectorItemsCache[vector]?.let { cached ->
+            if (cached.size == size) return cached.items
+        }
+        val items = readVectorItems(vector, MAX_WORDS)
+        vectorItemsCache[vector] = CachedVectorItems(size, items)
+        return items
+    }
+
+    private fun readVectorItems(vector: Any, limit: Int): List<Any> = buildList {
+        repeat(vectorSize(vector).coerceIn(0, limit)) { index ->
+            val item = vectorItem(vector, index)
+            if (item != null) add(item)
         }
     }
 
@@ -4256,7 +4291,7 @@ internal class AppleNativeLyricModelHooks(
     }
 
     private fun lineSongId(line: Any): String? =
-        lineSongIds[line]?.takeIf { it > 0L }?.toString() ?: currentSongId()
+        lineSongIds[line] ?: currentSongId()
 
     private fun onlineTranslation(line: Any): String? {
         if (!enabled) return null
@@ -4386,7 +4421,7 @@ internal class AppleNativeLyricModelHooks(
         return (value as? Number)?.toLong() ?: value?.toString()?.toLongOrNull() ?: 0L
     }
 
-    private fun currentSongId(): String? = modelSongId.takeIf { it > 0L }?.toString()
+    private fun currentSongId(): String? = modelSongIdText
 
     private fun number(value: Any?): Long? = (value as? Number)?.toLong()
 

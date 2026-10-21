@@ -61,8 +61,29 @@ internal class AppleContentItemMetadataHooks(
     private val host: AppleContentItemMetadataHost,
 ) {
     private val hookedMethods = ConcurrentHashMap.newKeySet<Executable>()
+
+    /** Every instance construction calls [ensureHooks]; a concrete class needs it once. */
+    private val processedClasses = ConcurrentHashMap.newKeySet<Class<*>>()
+
     private val mediaIds = WeakIdentityMap<Any, String>()
     private val getterGuard = ThreadLocalReentryGuard()
+
+    /**
+     * What a content item's metadata getter already did, keyed by the item
+     * object. Ported from HLE v8.2.1 (`1a665f69`): the getters run for every
+     * Compose/list read, and each call re-analyzed the item's fields and rewrote
+     * the same alias, even though neither can change after the first call for the
+     * same media id. A host that reuses an object for another id starts fresh.
+     */
+    private class GetterItemState(val mediaId: String) {
+        @Volatile
+        var analyzed = false
+
+        @Volatile
+        var appliedAlias: AppleInternalCatalogResolver.Alias? = null
+    }
+
+    private val getterItemStates = WeakIdentityMap<Any, GetterItemState>()
     private val baseContentItemRuntimeTarget by lazy {
         runtime.hookResolver.resolveClasses(AppleMusicHookPoint.CONTENT_ITEM_METADATA_CLASSES)
             .first { resolved ->
@@ -94,6 +115,7 @@ internal class AppleContentItemMetadataHooks(
     }
 
     fun ensureHooks(contentItemClass: Class<*>) {
+        if (!processedClasses.add(contentItemClass)) return
         listOf(
             AppleContentItemGetter.TITLE to AppleMusicRuntimeMember.CONTENT_ITEM_TITLE_GETTER,
             AppleContentItemGetter.NOW_PLAYING_TITLE to
@@ -142,20 +164,31 @@ internal class AppleContentItemMetadataHooks(
                 val requestPriority = host.requestPriority(mediaId)
                 val surfaceRelevant = host.shouldResolveFromGetter(requestPriority)
                 val resolvedAlias = host.effectiveAlias(mediaId)
+                val itemState = getterItemState(contentItem, mediaId)
+                // Full analysis only reads this object's own fields and merges keys; it
+                // issues no request and cannot change after the first analyze. Running it
+                // again after the alias was applied would also read the localized value
+                // back as the original one.
+                val analyzeMetadata = !itemState.analyzed && surfaceRelevant && (
+                    resolvedAlias == null || host.shouldRequestOverride(mediaId)
+                    )
+                if (analyzeMetadata) itemState.analyzed = true
                 host.registerPlaybackItem(
                     mediaId = mediaId,
                     playbackItem = contentItem,
                     notifyChange = false,
-                    analyzeMetadata = surfaceRelevant && (
-                        resolvedAlias == null || host.shouldRequestOverride(mediaId)
-                        ),
+                    analyzeMetadata = analyzeMetadata,
                 )
-                if (resolvedAlias != null) {
+                // The same object already carries this alias; rewriting the same fields
+                // per getter read is pure reflection work. The getter's return value is
+                // still overridden from the alias below.
+                if (resolvedAlias != null && resolvedAlias != itemState.appliedAlias) {
                     host.applyAliasToPlaybackItem(
                         playbackItem = contentItem,
                         alias = resolvedAlias,
                         notifyChange = false,
                     )
+                    itemState.appliedAlias = resolvedAlias
                 }
                 val alias = resolvedAlias ?: host.effectiveAlias(mediaId)
                 if (alias == null) {
@@ -175,6 +208,11 @@ internal class AppleContentItemMetadataHooks(
             )
         }
     }
+
+    /** State for this object/media-id pair; a host that reuses the object gets a fresh state. */
+    private fun getterItemState(contentItem: Any, mediaId: String): GetterItemState =
+        getterItemStates[contentItem]?.takeIf { it.mediaId == mediaId }
+            ?: GetterItemState(mediaId).also { getterItemStates[contentItem] = it }
 
     fun mediaId(contentItem: Any, refresh: Boolean = false): String? {
         if (!refresh) {

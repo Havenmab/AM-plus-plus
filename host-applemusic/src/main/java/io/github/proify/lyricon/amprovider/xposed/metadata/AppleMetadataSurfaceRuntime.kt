@@ -7,6 +7,7 @@
 package io.github.proify.lyricon.amprovider.xposed
 
 import android.app.Activity
+import android.os.Looper
 import android.os.SystemClock
 import android.view.View
 import androidx.recyclerview.widget.RecyclerView
@@ -18,6 +19,13 @@ internal interface AppleMetadataSurfaceHost {
     fun catalogResolver(): AppleInternalCatalogResolver?
 
     fun associatedArtistIds(mediaId: String): Collection<String>
+
+    /**
+     * Revision of the associated-artist lists, or null when the host cannot tell.
+     * When the scope revision and this revision are unchanged, expanding every
+     * visible id again cannot produce a different request scope.
+     */
+    fun associatedArtistIdsRevision(): Long? = null
 
     fun hasVisibleExactConsumer(mediaId: String): Boolean
 
@@ -43,9 +51,14 @@ internal class AppleMetadataSurfaceRuntime(
     private val syncLock = Any()
     private val dispatchRevision = AtomicLong(0L)
     private var lastSyncedSignature: MetadataSurfaceSignature? = null
+    private var lastSyncedScopeRevision = -1L
+    private var lastSyncedArtistRevision: Long? = null
 
     @Volatile
     private var activePageOwner = WeakReference<Any>(null)
+
+    /** Main-thread only: one coalesced scope sync per message, however many rows mark visible. */
+    private var visibleScopeSyncScheduled = false
 
     fun installLifecycleHooks() {
         val activityGroup = runtime.hookRegistrar.stageInstallation("hle.metadata-lifecycle.activity") {
@@ -121,8 +134,30 @@ internal class AppleMetadataSurfaceRuntime(
         visibleResolutionLeases.mark(mediaIds)
         coordinator.markCurrentPage(mediaIds)
         val snapshot = coordinator.markVisible(mediaIds)
-        syncRequestScope(snapshot)
+        scheduleVisibleScopeSync(snapshot)
         return snapshot
+    }
+
+    /**
+     * A list binds and marks its rows one at a time; expanding the whole request
+     * scope for each row repeats the same work. Priority decisions read the
+     * coordinator directly and take effect immediately; only the catalog request
+     * scope is re-declared, so on the main thread it is coalesced onto the next
+     * message (HLE v8.2.1 `1a665f69`). Other threads still sync inline.
+     */
+    private fun scheduleVisibleScopeSync(
+        snapshot: AppleMetadataSurfaceCoordinator.SurfaceSnapshot,
+    ) {
+        if (Looper.myLooper() !== Looper.getMainLooper()) {
+            syncRequestScope(snapshot)
+            return
+        }
+        if (visibleScopeSyncScheduled) return
+        visibleScopeSyncScheduled = true
+        runtime.mainHandler.post {
+            visibleScopeSyncScheduled = false
+            syncRequestScope()
+        }
     }
 
     fun setPlaybackMediaId(
@@ -168,6 +203,18 @@ internal class AppleMetadataSurfaceRuntime(
         snapshot: AppleMetadataSurfaceCoordinator.SurfaceSnapshot = coordinator.snapshot(),
     ) {
         val resolver = host.catalogResolver() ?: return
+        // Expanding pulls each visible id's associated artists; when neither the page
+        // scope nor those artist lists changed, the expanded scope is identical.
+        val artistRevision = host.associatedArtistIdsRevision()
+        if (artistRevision != null) {
+            synchronized(syncLock) {
+                if (
+                    lastSyncedSignature != null &&
+                    snapshot.scopeRevision == lastSyncedScopeRevision &&
+                    artistRevision == lastSyncedArtistRevision
+                ) return
+            }
+        }
         val visible = expandScopeIds(snapshot.visibleMediaIds)
         val activePage = expandScopeIds(snapshot.activePageMediaIds) - visible
         val signature = MetadataSurfaceSignature(
@@ -176,6 +223,8 @@ internal class AppleMetadataSurfaceRuntime(
             activePageMediaIds = activePage,
         )
         val revision = synchronized(syncLock) {
+            lastSyncedScopeRevision = snapshot.scopeRevision
+            lastSyncedArtistRevision = artistRevision
             if (signature == lastSyncedSignature) return
             lastSyncedSignature = signature
             dispatchRevision.incrementAndGet()

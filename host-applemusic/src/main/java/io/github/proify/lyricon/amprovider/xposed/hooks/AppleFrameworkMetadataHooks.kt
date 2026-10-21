@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.session.MediaSession
+import com.juren233.hyperlyricsenhanced.BuildConfig
 import com.juren233.hyperlyricsenhanced.common.RootConstants
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
@@ -63,17 +64,22 @@ internal class AppleFrameworkMetadataHooks(
                     ?: return@installArgumentRewriteHook null
                 val session = chain.thisObject as? MediaSession
                     ?: return@installArgumentRewriteHook null
-                val identityBefore = activePlaybackIdentity()
+                // The identity snapshot and both diagnostic lines only feed logs; a
+                // release build must not build them on every metadata update
+                // (HLE v8.2.1 `1a665f69`).
+                val identityBefore = if (BuildConfig.DEBUG) activePlaybackIdentity() else null
                 val explicitId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
                 val mediaId = mediaMetadataId(metadata)
                 if (mediaId == null) {
-                    logMetadataIdentity(
-                        "framework_capture_unresolved",
-                        identityBefore,
-                        "explicitId=$explicitId, " +
-                            "title=${metadata.getString(MediaMetadata.METADATA_KEY_TITLE)}, " +
-                            "artist=${metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)}",
-                    )
+                    if (BuildConfig.DEBUG) {
+                        logMetadataIdentity(
+                            "framework_capture_unresolved",
+                            checkNotNull(identityBefore),
+                            "explicitId=$explicitId, " +
+                                "title=${metadata.getString(MediaMetadata.METADATA_KEY_TITLE)}, " +
+                                "artist=${metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)}",
+                        )
+                    }
                     return@installArgumentRewriteHook null
                 }
                 val previous = currentMediaSessionRefresh
@@ -93,14 +99,16 @@ internal class AppleFrameworkMetadataHooks(
                     session = WeakReference(session),
                     metadata = baseMetadata,
                 )
-                logMetadataIdentity(
-                    "framework_capture",
-                    activePlaybackIdentity(),
-                    "explicitId=$explicitId, resolvedId=$mediaId, " +
-                        "aliasHit=${alias != null}, " +
-                        "title=${metadata.getString(MediaMetadata.METADATA_KEY_TITLE)}, " +
-                        "artist=${metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)}",
-                )
+                if (BuildConfig.DEBUG) {
+                    logMetadataIdentity(
+                        "framework_capture",
+                        activePlaybackIdentity(),
+                        "explicitId=$explicitId, resolvedId=$mediaId, " +
+                            "aliasHit=${alias != null}, " +
+                            "title=${metadata.getString(MediaMetadata.METADATA_KEY_TITLE)}, " +
+                            "artist=${metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)}",
+                    )
+                }
                 if (alias == null) return@installArgumentRewriteHook null
                 val rewritten = rewriteMediaMetadata(metadata, alias)
                     ?: return@installArgumentRewriteHook null
@@ -373,7 +381,7 @@ internal class AppleFrameworkMetadataHooks(
         val identity = activePlaybackIdentity()
         val mediaId = identity.mediaId
         if (mediaId == null) {
-            logMetadataIdentity(
+            if (BuildConfig.DEBUG) logMetadataIdentity(
                 "notification_unresolved",
                 identity,
                 "field=${if (title) "title" else "artist"}, value=$value",
@@ -382,7 +390,7 @@ internal class AppleFrameworkMetadataHooks(
         }
         val alias = effectiveMetadataAlias(mediaId)
         if (alias == null) {
-            logMetadataIdentity(
+            if (BuildConfig.DEBUG) logMetadataIdentity(
                 "notification_alias_miss",
                 identity,
                 "field=${if (title) "title" else "artist"}, value=$value",
@@ -405,7 +413,7 @@ internal class AppleFrameworkMetadataHooks(
             )
         }.filterNotNull().filter(String::isNotBlank).toSet()
         if (value.toString() !in originalValues) {
-            logMetadataIdentity(
+            if (BuildConfig.DEBUG) logMetadataIdentity(
                 "notification_value_miss",
                 identity,
                 "field=${if (title) "title" else "artist"}, value=$value, " +
@@ -418,7 +426,7 @@ internal class AppleFrameworkMetadataHooks(
         } else {
             alias.artist.takeIf(String::isNotBlank) ?: value
         }
-        logMetadataIdentity(
+        if (BuildConfig.DEBUG) logMetadataIdentity(
             "notification_rewrite",
             identity,
             "field=${if (title) "title" else "artist"}, value=$value, after=$rewritten",

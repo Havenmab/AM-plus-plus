@@ -118,20 +118,14 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         val shouldForceInAppRebind = forceInAppRebind || previousEffective != effectiveAlias
         val identity = media3MetadataCoordinator.activePlaybackIdentity()
         val appliesToActivePlayback = identity.mediaId == mediaId
-        val hasBoundConsumer = metadataApplier.hasLiveModelTarget(mediaId)
-        val surfaceRelevant = surfaceRuntime.isCurrentMediaId(mediaId)
-        val hasVisibleExactConsumer = surfaceRuntime.hasVisibleConsumer(mediaId)
-        val hasActiveVisibleLease = surfaceRuntime.hasVisibleResolutionLease(mediaId)
-        val allowModelRefresh = shouldRefreshInAppSurface(
-            surfaceRelevant = surfaceRelevant,
-            hasVisibleExactConsumer = hasVisibleExactConsumer,
-            hasActiveVisibleLease = hasActiveVisibleLease,
-        ) && shouldNotifyInAppModelChange(
-            mediaId = mediaId,
-            activeMediaId = identity.mediaId,
-            hasBoundConsumer = hasBoundConsumer,
-        )
+        val allowModelRefresh = allowModelRefresh(mediaId, identity.mediaId)
         if (BuildConfig.DEBUG) {
+            // These consumer counters only feed the diagnostic identity line; the refresh
+            // decision above already has everything it needs from the two booleans.
+            val hasBoundConsumer = metadataApplier.hasLiveModelTarget(mediaId)
+            val surfaceRelevant = surfaceRuntime.isCurrentMediaId(mediaId)
+            val hasVisibleExactConsumer = surfaceRuntime.hasVisibleConsumer(mediaId)
+            val hasActiveVisibleLease = surfaceRuntime.hasVisibleResolutionLease(mediaId)
             media3MetadataCoordinator.logIdentity(
                 event = "model_refresh_policy",
                 identity = identity,
@@ -151,19 +145,24 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         }
         MediaMetadataCache.updateDisplayMetadata(mediaId, effectiveAlias.title, effectiveAlias.artist)
         PlaybackManager.onCatalogMetadataResolved(mediaId)
-        val listenNowDirectBindingTargets = if (
-            !allowModelRefresh && listenNowHooks.hasDataBindingRefs(mediaId)
-        ) {
-            listenNowHooks.refreshDataBindings(mediaId, effectiveAlias)
+        // Coalesce repeated in-app refreshes for the same id onto one later message
+        // (HLE v8.2.1 `1a665f69`): a batch resolves the same id two to four times
+        // (configured metadata, both artist aliases, artist-id propagation) and the
+        // effective alias is usually unchanged, so each application re-bound the
+        // whole surface. The currently playing item still refreshes synchronously.
+        val deferInAppRefresh = !appliesToActivePlayback
+        val listenNowDirectBindingTargets = if (deferInAppRefresh) {
+            if (deferredInAppRefreshes.offer(mediaId, shouldForceInAppRebind)) {
+                runtime.mainHandler.post(::flushDeferredInAppRefreshes)
+            }
+            -1
         } else {
-            0
-        }
-        if (allowModelRefresh) {
-            metadataApplier.applyAliasToMetadataRefs(
+            deferredInAppRefreshes.cancel(mediaId)
+            refreshInAppConsumers(
                 mediaId = mediaId,
                 alias = effectiveAlias,
+                allowModelRefresh = allowModelRefresh,
                 forceRebind = shouldForceInAppRebind,
-                notifyModelChange = true,
             )
         }
         if (appliesToActivePlayback) {
@@ -174,19 +173,22 @@ internal class AppleMetadataOverrideApplicationCoordinator(
                 }
             }
         }
-        val (metadataRefCount, playbackItemRefCount, containerItemRefCount) =
-            registry.refCounts(mediaId)
-        media3MetadataCoordinator.logIdentity(
-            event = "override_applied",
-            identity = identity,
-            details = "overrideId=$mediaId, active=$appliesToActivePlayback, " +
-                "effective=${effectiveAlias.title}/${effectiveAlias.artist}/${effectiveAlias.album}, " +
-                "original=$originalMetadata, confirmed=$originalMetadataConfirmed, " +
-                "artistOnly=$artistOnly, changed=${previousEffective != effectiveAlias}, " +
-                "listenNowDirectBindingTargets=$listenNowDirectBindingTargets, " +
-                "metadataRefs=$metadataRefCount, itemRefs=$playbackItemRefCount, " +
-                "containerRefs=$containerItemRefCount",
-        )
+        if (BuildConfig.DEBUG) {
+            val (metadataRefCount, playbackItemRefCount, containerItemRefCount) =
+                registry.refCounts(mediaId)
+            media3MetadataCoordinator.logIdentity(
+                event = "override_applied",
+                identity = identity,
+                details = "overrideId=$mediaId, active=$appliesToActivePlayback, " +
+                    "effective=${effectiveAlias.title}/${effectiveAlias.artist}/${effectiveAlias.album}, " +
+                    "original=$originalMetadata, confirmed=$originalMetadataConfirmed, " +
+                    "artistOnly=$artistOnly, changed=${previousEffective != effectiveAlias}, " +
+                    "inAppRefreshDeferred=$deferInAppRefresh, " +
+                    "listenNowDirectBindingTargets=$listenNowDirectBindingTargets, " +
+                    "metadataRefs=$metadataRefCount, itemRefs=$playbackItemRefCount, " +
+                    "containerRefs=$containerItemRefCount",
+            )
+        }
         if (previousEffective == effectiveAlias) {
             if (appliesToActivePlayback) {
                 metadataApplier.refreshMetadataCallbacks(mediaId, effectiveAlias)
@@ -203,6 +205,96 @@ internal class AppleMetadataOverrideApplicationCoordinator(
         frameworkMetadataHooks.refreshMediaSessionMetadata(mediaId, effectiveAlias)
         frameworkMetadataHooks.refreshMediaSessionQueue(mediaId)
         metadataApplier.refreshMetadataCallbacks(mediaId, effectiveAlias)
+    }
+
+    /** The refresh policy read once per application (and again per deferred drain). */
+    private fun allowModelRefresh(mediaId: String, activeMediaId: String?): Boolean =
+        shouldRefreshInAppSurface(
+            surfaceRelevant = surfaceRuntime.isCurrentMediaId(mediaId),
+            hasVisibleExactConsumer = surfaceRuntime.hasVisibleConsumer(mediaId),
+            hasActiveVisibleLease = surfaceRuntime.hasVisibleResolutionLease(mediaId),
+        ) && shouldNotifyInAppModelChange(
+            mediaId = mediaId,
+            activeMediaId = activeMediaId,
+            hasBoundConsumer = metadataApplier.hasLiveModelTarget(mediaId),
+        )
+
+    /** Refreshes the exact in-app consumers; returns the direct Listen Now refresh count. */
+    private fun refreshInAppConsumers(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+        allowModelRefresh: Boolean,
+        forceRebind: Boolean,
+    ): Int {
+        val listenNowDirectBindingTargets = if (
+            !allowModelRefresh && listenNowHooks.hasDataBindingRefs(mediaId)
+        ) {
+            listenNowHooks.refreshDataBindings(mediaId, alias)
+        } else {
+            0
+        }
+        if (allowModelRefresh) {
+            metadataApplier.applyAliasToMetadataRefs(
+                mediaId = mediaId,
+                alias = alias,
+                forceRebind = forceRebind,
+                notifyModelChange = true,
+            )
+        }
+        return listenNowDirectBindingTargets
+    }
+
+    /**
+     * Executes the coalesced in-app refreshes, spending at most
+     * [DEFERRED_REFRESH_BUDGET_NS] per message. The remainder goes back to the
+     * queue ahead of newly offered ids, so a cold-start page with ~100 ids does
+     * not block one message for ~90 ms (HLE v8.2.1 `1a665f69`).
+     */
+    private fun flushDeferredInAppRefreshes() {
+        val startNs = System.nanoTime()
+        val drained = deferredInAppRefreshes.drain()
+        val activeMediaId = media3MetadataCoordinator.activePlaybackIdentity().mediaId
+        var refreshed = 0
+        val iterator = drained.pending.entries.iterator()
+        while (iterator.hasNext()) {
+            if (refreshed > 0 && System.nanoTime() - startNs >= DEFERRED_REFRESH_BUDGET_NS) break
+            val (mediaId, forceRebind) = iterator.next()
+            refreshed += 1
+            val alias = resolutionCoordinator.effectiveAlias(mediaId) ?: continue
+            refreshInAppConsumers(
+                mediaId = mediaId,
+                alias = alias,
+                allowModelRefresh = allowModelRefresh(mediaId, activeMediaId),
+                forceRebind = forceRebind,
+            )
+        }
+        val remaining = buildMap { iterator.forEachRemaining { put(it.key, it.value) } }
+        if (deferredInAppRefreshes.restore(remaining)) {
+            runtime.mainHandler.post(::flushDeferredInAppRefreshes)
+        }
+        if (BuildConfig.DEBUG) {
+            ProviderLogger.diagnostic(
+                "[OverrideCoalesce] calls=${drained.offers}, ids=${drained.pending.size}, " +
+                    "refreshed=$refreshed, remaining=${remaining.size}, " +
+                    "ms=${(System.nanoTime() - startNs) / 1_000_000.0}"
+            )
+        }
+    }
+
+    private val deferredInAppRefreshes = AppleDeferredInAppRefreshQueue()
+
+    private companion object {
+        const val DEFERRED_REFRESH_BUDGET_NS = 6_000_000L
+    }
+
+    private fun isSharedArtistAliasCurrent(
+        mediaId: String,
+        alias: AppleInternalCatalogResolver.Alias,
+        originalMetadata: Boolean,
+    ): Boolean = if (originalMetadata) {
+        metadataStore.isOriginalArtistResolved(mediaId) && metadataStore.originalArtist(mediaId) == alias
+    } else {
+        metadataStore.configuredArtist(mediaId) == alias
     }
 
     private fun propagateSharedArtistOverride(
@@ -234,6 +326,13 @@ internal class AppleMetadataOverrideApplicationCoordinator(
                     targetArtistIds = metadataStore.associatedArtistIds(targetMediaId).orEmpty(),
                     targetArtistCredit = resolutionCoordinator.associatedArtistCredit(targetMediaId),
                 )
+            ) return@forEach
+            // Each of an artist's songs propagates the alias when it resolves; writing the
+            // same artist alias again cannot change the row (HLE v8.2.1 `1a665f69`: 48 ids
+            // produced 157 overrides, 130 ms in one message).
+            if (
+                targetMediaId != sourceMediaId &&
+                isSharedArtistAliasCurrent(targetMediaId, alias, originalMetadata)
             ) return@forEach
             apply(
                 mediaId = targetMediaId,

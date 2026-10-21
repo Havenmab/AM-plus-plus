@@ -13,6 +13,7 @@ import android.widget.TextView
 import com.juren233.hyperlyricsenhanced.BuildConfig
 import io.github.proify.lyricon.amprovider.xposed.internal.ThreadLocalStack
 import io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap
+import io.github.proify.lyricon.amprovider.xposed.internal.WeakReferenceBuckets
 import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -144,6 +145,19 @@ internal fun dataBindingAliasAlreadyRendered(
         containsExpected(expectedSubtitle)
 }
 
+/**
+ * True when a row that would otherwise need a full rebind already shows every
+ * requested value. At least one expected value must be non-blank: an alias that
+ * carries neither a title nor a subtitle has nothing to compare, so it must keep
+ * the old refresh behavior instead of being skipped.
+ */
+internal fun shouldSkipDataBindingInvalidate(
+    expectedTitle: String?,
+    expectedSubtitle: String?,
+    renderedTexts: Collection<String>,
+): Boolean = (!expectedTitle.isNullOrBlank() || !expectedSubtitle.isNullOrBlank()) &&
+    dataBindingAliasAlreadyRendered(expectedTitle, expectedSubtitle, renderedTexts)
+
 internal fun isDataBindingRefreshCurrent(
     currentMediaId: String?,
     requestedMediaId: String,
@@ -161,9 +175,11 @@ internal class AppleDataBindingMetadataHooks(
         const val MAX_GENERIC_RECYCLER_MEDIA_IDS = 512
     }
 
-    private val bindingRefs =
-        ConcurrentHashMap<String, ConcurrentLinkedQueue<WeakReference<Any>>>()
-    private val bindingInstances = ConcurrentLinkedQueue<WeakReference<Any>>()
+    // Bucketed against the row-bind path: each registration used to scan the whole
+    // bucket (and the whole instance list) for the same identity (HLE v8.2.1
+    // `1a665f69`).
+    private val bindingRefs = WeakReferenceBuckets<String, Any>()
+    private val bindingInstances = WeakIdentityMap<Any, Unit>()
     private val bindingMediaIds =
         Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val bindingRootViews =
@@ -395,9 +411,12 @@ internal class AppleDataBindingMetadataHooks(
                             )
                         ) return@visibleWork
                         recyclerRootVisibleResolutionIds[root] = mediaIds
-                        captureBoundRoot(root)
+                        // The row's ids already include the DataBinding id, so enrich and
+                        // mark once here and let the binding path skip its own pair
+                        // (HLE v8.2.1 `1a665f69`).
                         host.enrichEntitiesForResolution(mediaIds)
                         host.markMetadataVisible(mediaIds)
+                        captureBoundRoot(root, visible = true, alreadyMarkedVisible = true)
                         host.scheduleMetadataResolution(
                             mediaIds,
                             AppleInternalCatalogResolver.RequestPriority.VISIBLE,
@@ -441,8 +460,8 @@ internal class AppleDataBindingMetadataHooks(
     fun bindingFromHolder(holder: Any?): Any? {
         holder ?: return null
         val bindingClass = bindingBaseClass ?: return null
-        return generateSequence(holder.javaClass) { it.superclass }
-            .flatMap { it.declaredFields.asSequence() }
+        return AppleReflection.hierarchyFields(holder.javaClass)
+            .asSequence()
             .firstOrNull { field -> bindingClass.isAssignableFrom(field.type) }
             ?.let { field ->
                 runCatching {
@@ -460,14 +479,7 @@ internal class AppleDataBindingMetadataHooks(
             bindingRootViews[binding] = WeakReference(root)
             bindingsByRoot[root] = WeakReference(binding)
         }
-        var registered = false
-        bindingInstances.forEach { ref ->
-            val target = ref.get()
-            if (target == null) bindingInstances.remove(ref) else if (target === binding) {
-                registered = true
-            }
-        }
-        if (!registered) bindingInstances.add(WeakReference(binding))
+        bindingInstances.putIfAbsent(binding, Unit)
     }
 
     fun beginModelBind(binding: Any) {
@@ -496,13 +508,7 @@ internal class AppleDataBindingMetadataHooks(
         val previousMediaId = bindingMediaIds[binding]
         host.onBindingMediaIdChanged(binding, previousMediaId, mediaId)
         bindingMediaIds[binding] = mediaId
-        val refs = bindingRefs.computeIfAbsent(mediaId) { ConcurrentLinkedQueue() }
-        var registered = false
-        refs.forEach { ref ->
-            val target = ref.get()
-            if (target == null) refs.remove(ref) else if (target === binding) registered = true
-        }
-        if (!registered) refs.add(WeakReference(binding))
+        bindingRefs.add(mediaId, binding)
         val root = bindingRootViews[binding]?.get()
         if (root != null && isRootVisible(root)) {
             postVisibleResolution(binding, mediaId, originalResolutionMode)
@@ -606,7 +612,13 @@ internal class AppleDataBindingMetadataHooks(
         val invalidateAll = invalidateAllMethod ?: return 0
         val executePending = executePendingBindingsMethod
         val appliedAlias = alias?.let { AppliedMetadataAlias(mediaId, it) }
-        val defaultValues = alias?.let { host.aliasValues(mediaId, it, null) }
+        // These default display values are only printed by the debug line below;
+        // computing them on every refresh used to resolve the alias twice.
+        val defaultValues = if (BuildConfig.DEBUG) {
+            alias?.let { host.aliasValues(mediaId, it, null) }
+        } else {
+            null
+        }
         val bindingCandidates = host.boundModelCandidates(mediaId)
         val targets = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
         bindingRefs[mediaId]?.forEach { ref ->
@@ -628,11 +640,10 @@ internal class AppleDataBindingMetadataHooks(
             }
         }
         if (bindingCandidates.isNotEmpty()) {
-            bindingInstances.forEach { ref ->
-                val binding = ref.get()
-                if (binding == null) {
-                    bindingInstances.remove(ref)
-                } else if (bindingReferencesAny(binding, bindingCandidates)) {
+            // Build the identity candidate set once; the old helper rebuilt it per binding.
+            val candidateSet = identityCandidateSet(bindingCandidates)
+            bindingInstances.keys().forEach { binding ->
+                if (bindingReferencesAny(binding, candidateSet)) {
                     bindingMediaIds[binding] = mediaId
                     if (
                         shouldRefreshExactBoundTarget(
@@ -725,6 +736,20 @@ internal class AppleDataBindingMetadataHooks(
                         titleApplied = variableResults?.titleApplied == true,
                         subtitleApplied = variableResults?.subtitleApplied == true,
                     )
+                    // An already-correct row does not need the whole-row rebind:
+                    // reading its rendered texts is bounded and cheaper than
+                    // invalidating every binding variable.
+                    if (
+                        refreshStrategy == DataBindingRefreshStrategy.FULL_INVALIDATE &&
+                        root != null &&
+                        shouldSkipDataBindingInvalidate(
+                            expectedTitle = values?.title,
+                            expectedSubtitle = values?.subtitle,
+                            renderedTexts = dataBindingRenderedTexts(root),
+                        )
+                    ) {
+                        refreshStrategy = DataBindingRefreshStrategy.ALREADY_RENDERED
+                    }
                     if (refreshStrategy == DataBindingRefreshStrategy.FULL_INVALIDATE) {
                         invalidateAll.invoke(binding)
                     }
@@ -837,10 +862,16 @@ internal class AppleDataBindingMetadataHooks(
         }
     }
 
-    private fun captureBoundRoot(root: View, visible: Boolean = false): String? {
+    private fun captureBoundRoot(
+        root: View,
+        visible: Boolean = false,
+        alreadyMarkedVisible: Boolean = false,
+    ): String? {
         val binding = bindingsByRoot[root]?.get() ?: return null
         val mediaId = resolvedMediaId(binding) ?: return null
-        if (visible && isRootVisible(root)) resolveVisible(binding, mediaId)
+        if (visible && isRootVisible(root)) {
+            resolveVisible(binding, mediaId, alreadyMarkedVisible = alreadyMarkedVisible)
+        }
         return mediaId
     }
 
@@ -910,8 +941,19 @@ internal class AppleDataBindingMetadataHooks(
         binding: Any,
         mediaId: String,
         originalResolutionMode: InAppOriginalResolutionMode = host.originalResolutionMode(binding),
+        alreadyMarkedVisible: Boolean = false,
     ) {
-        resolveVisibleMediaId(mediaId, originalResolutionMode)
+        if (!alreadyMarkedVisible) {
+            resolveVisibleMediaId(mediaId, originalResolutionMode)
+            return
+        }
+        // The caller already enriched and marked this exact id set for the row.
+        host.effectiveAlias(mediaId)?.let { refreshDataBindings(mediaId, it) }
+        host.scheduleMetadataResolution(
+            listOf(mediaId),
+            AppleInternalCatalogResolver.RequestPriority.VISIBLE,
+            originalResolutionMode,
+        )
     }
 
     private fun resolveVisibleMediaId(
@@ -1045,8 +1087,8 @@ internal class AppleDataBindingMetadataHooks(
         mediaId in recyclerRootMediaIds[root].orEmpty()
 
     private fun recyclerViewHolderItemView(holder: Any): View? =
-        generateSequence(holder.javaClass) { it.superclass }
-            .flatMap { it.declaredFields.asSequence() }
+        AppleReflection.hierarchyFields(holder.javaClass)
+            .asSequence()
             .firstOrNull { field -> View::class.java.isAssignableFrom(field.type) }
             ?.let { field ->
                 runCatching {
@@ -1058,8 +1100,8 @@ internal class AppleDataBindingMetadataHooks(
     private fun recyclerViewFromRecycler(recycler: Any?): Any? {
         recycler ?: return null
         val recyclerClass = recyclerViewClass ?: return null
-        return generateSequence(recycler.javaClass) { it.superclass }
-            .flatMap { it.declaredFields.asSequence() }
+        return AppleReflection.hierarchyFields(recycler.javaClass)
+            .asSequence()
             .firstOrNull { field -> recyclerClass.isAssignableFrom(field.type) }
             ?.let { field ->
                 runCatching {
@@ -1069,9 +1111,10 @@ internal class AppleDataBindingMetadataHooks(
             }
     }
 
-    private fun bindingReferencesAny(binding: Any, candidates: List<Any>): Boolean {
-        val candidateSet = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
-        candidateSet.addAll(candidates)
+    private fun identityCandidateSet(candidates: List<Any>): Set<Any> =
+        Collections.newSetFromMap(IdentityHashMap<Any, Boolean>()).apply { addAll(candidates) }
+
+    private fun bindingReferencesAny(binding: Any, candidateSet: Set<Any>): Boolean {
         val fields = bindingContentFields.computeIfAbsent(binding.javaClass) {
             discoverBindingContentFields(it)
         }

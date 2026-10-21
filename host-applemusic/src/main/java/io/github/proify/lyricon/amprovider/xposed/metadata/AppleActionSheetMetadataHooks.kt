@@ -9,10 +9,8 @@ package io.github.proify.lyricon.amprovider.xposed
 import android.os.Looper
 import android.widget.TextView
 import com.juren233.hyperlyricsenhanced.BuildConfig
-import java.lang.ref.WeakReference
+import io.github.proify.lyricon.amprovider.xposed.internal.WeakReferenceBuckets
 import java.lang.reflect.Modifier
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 
 internal interface AppleActionSheetMetadataHost {
     fun activePlaybackIdentity(): ActivePlaybackMediaIdentity
@@ -52,8 +50,7 @@ internal class AppleActionSheetMetadataHooks(
 ) {
     private var collectionItemViewClass: Class<*>? = null
     private var collectionItemContract: AppleActionSheetCollectionItemContract? = null
-    private val bindingRefs =
-        ConcurrentHashMap<String, ConcurrentLinkedQueue<WeakReference<Any>>>()
+    private val bindingRefs = WeakReferenceBuckets<String, Any>()
     private val bindings =
         io.github.proify.lyricon.amprovider.xposed.internal.WeakIdentityMap<
             Any,
@@ -129,13 +126,15 @@ internal class AppleActionSheetMetadataHooks(
                     AppleMusicRuntimeMember.CONTENT_ITEM_TITLE_FIELD,
                 ) as? String
                 if (!itemMatchesMedia(mediaId, field, rawTitle)) {
-                    host.logMetadataIdentity(
-                        event = "action_sheet_bind_skip",
-                        identity = identity,
-                        details = "binding=${binding.javaClass.name}, item=${item.javaClass.name}, " +
-                            "type=$contentType, field=$field, raw=$rawTitle, " +
-                            "reason=active_metadata_mismatch",
-                    )
+                    if (BuildConfig.DEBUG) {
+                        host.logMetadataIdentity(
+                            event = "action_sheet_bind_skip",
+                            identity = identity,
+                            details = "binding=${binding.javaClass.name}, item=${item.javaClass.name}, " +
+                                "type=$contentType, field=$field, raw=$rawTitle, " +
+                                "reason=active_metadata_mismatch",
+                        )
+                    }
                     return@installHook
                 }
                 if (field == VisibleTextField.ARTIST) {
@@ -213,13 +212,7 @@ internal class AppleActionSheetMetadataHooks(
 
     private fun registerBinding(mediaId: String, binding: Any, field: VisibleTextField) {
         bindings[binding] = InAppActionSheetBinding(mediaId, field)
-        val refs = bindingRefs.computeIfAbsent(mediaId) { ConcurrentLinkedQueue() }
-        var registered = false
-        refs.forEach { ref ->
-            val target = ref.get()
-            if (target == null) refs.remove(ref) else if (target === binding) registered = true
-        }
-        if (!registered) refs.add(WeakReference(binding))
+        bindingRefs.add(mediaId, binding)
     }
 
     private fun applyAliasToBinding(
@@ -258,8 +251,8 @@ internal class AppleActionSheetMetadataHooks(
     }
 
     private fun collectionItem(binding: Any): Any? =
-        generateSequence(binding.javaClass) { current -> current.superclass }
-            .flatMap { current -> current.declaredFields.asSequence() }
+        AppleReflection.hierarchyFields(binding.javaClass)
+            .asSequence()
             .firstOrNull { field ->
                 !Modifier.isStatic(field.modifiers) &&
                     isCollectionItemViewField(field)
@@ -274,8 +267,8 @@ internal class AppleActionSheetMetadataHooks(
     private fun titleTextViews(binding: Any, expectedTitle: String?): List<TextView> {
         val normalizedTitle = expectedTitle?.trim()?.takeIf(String::isNotEmpty)
             ?: return emptyList()
-        return generateSequence(binding.javaClass) { current -> current.superclass }
-            .flatMap { current -> current.declaredFields.asSequence() }
+        return AppleReflection.hierarchyFields(binding.javaClass)
+            .asSequence()
             .filter { field ->
                 !Modifier.isStatic(field.modifiers) &&
                     TextView::class.java.isAssignableFrom(field.type)

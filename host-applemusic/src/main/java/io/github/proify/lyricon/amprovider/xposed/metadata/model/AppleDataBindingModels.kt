@@ -20,6 +20,15 @@ internal data class PendingVisibleDataBindingResolution(
 
 internal enum class DataBindingRefreshStrategy {
     VARIABLES_ONLY,
+
+    /**
+     * The row already shows the requested title/subtitle, so a full
+     * `invalidateAll` (the expensive whole-row rebind) is skipped and only the
+     * pending bindings are executed. Added by HLE v8.2.1 (`1a665f69`) after it
+     * measured 61% redundant rebinds; existing equality checks keep their
+     * meaning because neither of them treats this as `FULL_INVALIDATE`.
+     */
+    ALREADY_RENDERED,
     FULL_INVALIDATE,
 }
 

@@ -6,12 +6,14 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.RippleDrawable
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -304,6 +306,8 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             pageContent.removeAllViews()
             val scroll = ScrollView(activity).apply {
                 isFillViewport = false
+                clipChildren = !customLyricsPage
+                clipToPadding = !customLyricsPage
                 isVerticalScrollBarEnabled = false
                 isVerticalFadingEdgeEnabled = true
                 setFadingEdgeLength(dp(activity, 18))
@@ -326,6 +330,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             }
             val content = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
+                clipChildren = !customLyricsPage
             }
             scroll.addView(content)
             pageContent.addView(scroll, FrameLayout.LayoutParams(
@@ -894,6 +899,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
 
         val lyricsContent = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
+            clipChildren = false
 
             addView(
                 embeddedCompactLyricsActionBar(
@@ -983,6 +989,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             }, matchWidthWrapContent())
             val entriesRegion = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
+                clipChildren = false
             }
             addView(entriesRegion, matchWidthWrapContent())
 
@@ -1167,12 +1174,18 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
         song: CurrentSongDetails?,
     ): View = LinearLayout(activity).apply {
         val entry = group.primary
+        val contentInset = dp(activity, if (isEmbeddedPhone(activity)) 12 else 8)
+        val moreIconSize = dp(activity, 28)
+        // MoreVertical's visible stroke ends at x=13.41 in the 24-unit SVG viewport.
+        val moreIconEndSpace = moreIconSize * (24f - 13.41f) / 24f
         orientation = LinearLayout.VERTICAL
-        // Use the same content insets as the compact settings rows above.
+        clipChildren = false
+        clipToPadding = false
+        // Match the visible dots' end inset to the text's start inset.
         setPaddingRelative(
-            dp(activity, if (isEmbeddedPhone(activity)) 12 else 8),
+            contentInset,
             dp(activity, 10),
-            dp(activity, 8),
+            0,
             dp(activity, 10),
         )
         minimumHeight = dp(activity, 68)
@@ -1196,6 +1209,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
         addView(LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(activity).apply {
@@ -1225,10 +1239,26 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                     runAsync(activity) { controller.setLyricsEnabled(group.appleMusicIds, checked) }
                 }
             }, LinearLayout.LayoutParams(dp(activity, if (isEmbeddedPhone(activity)) 56 else 48), dp(activity, 44)))
-            addView(FrameLayout(activity).apply {
+            addView(object : FrameLayout(activity) {
+                override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+                    super.onLayout(changed, left, top, right, bottom)
+                    val icon = getChildAt(0) ?: return
+                    foreground?.setHotspotBounds(icon.left, 0, icon.right, height)
+                    drawableHotspotChanged(icon.left + icon.width / 2f, height / 2f)
+                }
+
+                override fun drawableHotspotChanged(x: Float, y: Float) {
+                    val icon = getChildAt(0)
+                    super.drawableHotspotChanged(
+                        icon?.let { it.left + it.width / 2f } ?: x,
+                        icon?.let { it.top + it.height / 2f } ?: y,
+                    )
+                }
+            }.apply {
                 contentDescription = localizedText(ModuleText.MORE_LYRICS_ACTIONS)
                 isClickable = true
                 isFocusable = true
+                clipChildren = false
                 addView(ImageView(activity).apply {
                     setEmbeddedImageDrawable(activity,
                         EmbeddedGlyphDrawable(
@@ -1237,13 +1267,19 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                         ),
                     )
                     scaleType = ImageView.ScaleType.CENTER
-                    setPadding(dp(activity, 6), dp(activity, 8), dp(activity, 6), dp(activity, 8))
-                    // Align the ink to the content edge while retaining the full hit area.
-                    translationX = dp(activity, 20).toFloat() *
-                        if (activity.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) -1f else 1f
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                bindEmbeddedClickFeedback(activity, cornerRadiusDp = 12)
+                }, FrameLayout.LayoutParams(moreIconSize, moreIconSize, Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                    marginEnd = contentInset - kotlin.math.round(moreIconEndSpace).toInt()
+                })
+                // A bounded mask cuts off the ripple near the content edge.
+                stateListAnimator = null
+                bindEmbeddedTheme(activity) { colors ->
+                    foreground = RippleDrawable(
+                        ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000),
+                        null,
+                        null,
+                    ).apply { radius = dp(activity, 18) }
+                }
                 setOnClickListener { showEmbeddedLyricsOverflowMenu(activity, group, song, this) }
             }, LinearLayout.LayoutParams(dp(activity, 44), dp(activity, 44)))
         }, matchWidthWrapContent())

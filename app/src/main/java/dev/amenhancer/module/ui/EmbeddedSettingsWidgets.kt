@@ -15,6 +15,7 @@ import android.graphics.drawable.DrawableWrapper
 import android.graphics.drawable.RippleDrawable
 import android.text.InputFilter
 import android.text.InputType
+import android.text.Layout
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -774,90 +775,82 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorButton(
         activity: Activity,
         label: String,
         onClick: () -> Unit,
-        compact: Boolean = false,
     ): TextView = TextView(activity).apply {
         text = label
         textSize = embeddedTextSize(activity, 13f, 13f)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         includeFontPadding = false
         setEmbeddedTextColor(activity) { colors -> colors.primary }
-        val horizontalPadding = dp(activity, if (compact) 2 else 6)
+        val horizontalPadding = dp(activity, 6)
         setPadding(horizontalPadding, 0, horizontalPadding, 0)
+        minWidth = 0
+        minimumWidth = 0
+        minimumHeight = dp(activity, 32)
         gravity = Gravity.CENTER
         isClickable = true
         isFocusable = true
-        setSingleLine(true)
-        if (compact) {
-            setAutoSizeTextTypeUniformWithConfiguration(
-                embeddedTextSize(activity, 10f, 10f).toInt(),
-                embeddedTextSize(activity, 13f, 13f).toInt(),
-                1,
-                android.util.TypedValue.COMPLEX_UNIT_SP,
-            )
-        }
+        setSingleLine(false)
+        setHorizontallyScrolling(false)
+        ellipsize = null
         bindEmbeddedClickFeedback(activity, cornerRadiusDp = 8)
         setOnClickListener { fromEmbeddedSettingsView(this) { onClick() } }
-    }
-
-
-internal fun EmbeddedSettingsHost.embeddedLyricsEditorButtonRow(
-        activity: Activity,
-        actions: List<EmbeddedLyricsEditorAction>,
-        useCompactLabels: Boolean = false,
-    ): View = LinearLayout(activity).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
-        setPadding(0, dp(activity, 2), 0, dp(activity, 2))
-        val compactRow = actions.size >= 3
-        actions.forEachIndexed { index, action ->
-            val renderedLabel = if (useCompactLabels) action.compactLabel else action.label
-            val button = embeddedLyricsEditorButton(
-                activity,
-                renderedLabel,
-                action.onClick,
-                compactRow,
-            ).apply { contentDescription = action.label }
-            addView(
-                button,
-                (if (compactRow) {
-                    LinearLayout.LayoutParams(0, dp(activity, 32), 1f)
-                } else {
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        dp(activity, 32),
-                    )
-                }).apply { if (index > 0) marginStart = dp(activity, 8) },
-            )
-        }
     }
 
 
 internal fun EmbeddedSettingsHost.embeddedLyricsEditorActionRows(
         activity: Activity,
         actions: List<EmbeddedLyricsEditorAction>,
-    ): View = LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        val density = activity.resources.displayMetrics.density.coerceAtLeast(1f)
-        val fontScale = activity.resources.configuration.fontScale.coerceAtLeast(1f)
-        val dialogWidthDp = embeddedLyricsEditorDialogWidth(activity) / density
-        val horizontalInsetDp = if (isEmbeddedPhone(activity)) 40f else 48f
-        val usableWidthDp = (dialogWidthDp - horizontalInsetDp).coerceAtLeast(1f)
-        val rows = if (
-            actions.size <= 2 || usableWidthDp / fontScale >= 560f
-        ) {
-            listOf(actions)
-        } else {
-            listOf(actions.take(2), actions.drop(2))
+    ): View = object : LinearLayout(activity) {
+        private val buttons = actions.map { action ->
+            embeddedLyricsEditorButton(activity, action.compactLabel, action.onClick).apply {
+                contentDescription = action.label
+            }
         }
-        rows.forEachIndexed { rowIndex, rowActions ->
-            addView(
-                embeddedLyricsEditorButtonRow(
-                    activity = activity,
-                    actions = rowActions,
-                    useCompactLabels = rows.size > 1 && rowIndex == rows.lastIndex,
-                ),
-                matchWidthWrapContent(),
-            )
+        private var lastRowWidth = -1
+        private var lastLabelWidths = emptyList<Int>()
+
+        init {
+            orientation = VERTICAL
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val gap = dp(activity, 8)
+            val labelWidths = buttons.map { button ->
+                kotlin.math.ceil(Layout.getDesiredWidth(button.text, button.paint).toDouble()).toInt() +
+                    button.compoundPaddingLeft + button.compoundPaddingRight
+            }
+            val availableWidth = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                labelWidths.sum() + gap * (buttons.size - 1).coerceAtLeast(0)
+            } else {
+                MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight
+            }.coerceAtLeast(1)
+            if (availableWidth != lastRowWidth || labelWidths != lastLabelWidths) {
+                // Reuse the themed buttons and callbacks when a viewport change reflows them.
+                buttons.forEach { button -> (button.parent as? ViewGroup)?.removeView(button) }
+                removeAllViews()
+                var row: LinearLayout? = null
+                var usedWidth = 0
+                buttons.forEachIndexed { index, button ->
+                    val buttonWidth = labelWidths[index].coerceAtMost(availableWidth)
+                    if (row == null || usedWidth + gap + buttonWidth > availableWidth) {
+                        row = LinearLayout(activity).apply {
+                            orientation = HORIZONTAL
+                            gravity = Gravity.CENTER
+                            setPadding(0, dp(activity, 2), 0, dp(activity, 2))
+                        }
+                        addView(row, matchWidthWrapContent())
+                        usedWidth = 0
+                    }
+                    row?.addView(button, LinearLayout.LayoutParams(
+                        buttonWidth,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { if (usedWidth > 0) marginStart = gap })
+                    usedWidth += buttonWidth + if (usedWidth > 0) gap else 0
+                }
+                lastRowWidth = availableWidth
+                lastLabelWidths = labelWidths
+            }
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         }
     }
 
@@ -942,8 +935,7 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorInput(
             else -> InputType.TYPE_CLASS_TEXT
         }
         if (multiline) {
-            minLines = if (isEmbeddedPhone(activity)) 9 else 11
-            maxLines = if (isEmbeddedPhone(activity)) 14 else 18
+            setLines(if (isEmbeddedPhone(activity)) 14 else 18)
             gravity = Gravity.TOP or Gravity.START
             typeface = Typeface.MONOSPACE
             isVerticalScrollBarEnabled = true

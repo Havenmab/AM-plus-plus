@@ -179,9 +179,6 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>,
                     if (abs(view.textSize - sizePx) > 0.5f) {
                         view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
                     }
-                    if (abs(spacingScale - 1f) > 0.001f) {
-                        view.setLineSpacing(view.lineSpacingExtra, spacingScale)
-                    }
                 }
                 (view as? ViewGroup)?.let { group -> repeat(group.childCount) { visit(group.getChildAt(it)) } }
             }

@@ -154,7 +154,6 @@ internal object TabletLyricTypography {
 
     private fun applyLyricRowSpacing(row: View) {
         val spacingScale = spacingScale()
-        applyLineSpacingScale(row, spacingScale)
         if (row.getTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied) == true) return
         val params = row.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         val spacingPx = (
@@ -163,20 +162,5 @@ internal object TabletLyricTypography {
         params.bottomMargin += spacingPx
         row.layoutParams = params
         row.setTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied, true)
-    }
-
-    /** The user's line-spacing scale, expressed as the native TextView multiplier. */
-    private fun applyLineSpacingScale(row: View, spacingScale: Float) {
-        if (abs(spacingScale - 1f) < 0.001f) return
-        val primaryIds = resolvePrimaryLyricTextIds(row)
-        fun visit(view: View) {
-            if (view is TextView && (primaryIds.isEmpty() || view.id in primaryIds)) {
-                view.setLineSpacing(view.lineSpacingExtra, spacingScale)
-            }
-            (view as? ViewGroup)?.let { group ->
-                repeat(group.childCount) { index -> visit(group.getChildAt(index)) }
-            }
-        }
-        visit(row)
     }
 }

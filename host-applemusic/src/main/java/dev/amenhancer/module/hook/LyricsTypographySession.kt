@@ -104,7 +104,6 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
 
     private fun observe(root: View) {
         if (closed) return
-        if (isTabletDualPane(root)) return
         val firstRoot = synchronized(roots) {
             if (roots.containsKey(root)) return@synchronized false
             roots[root] = true
@@ -155,8 +154,8 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
 
     private fun applyToRoot(root: View) {
         if (closed) return
-        if (isTabletDualPane(root)) return
         runCatching {
+            val dualPane = isTabletDualPane(root)
             val settings = currentSettings()
             val fontPercent = settings.lyricsFontScalePercent
             val spacingPercent = settings.lyricsLineSpacingScalePercent
@@ -166,18 +165,21 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
                 LyricsTypographyPolicy.isNeutral(spacingPercent)
             val wasAdjusted = synchronized(adjustedRoots) { adjustedRoots.containsKey(root) }
             if (neutral && !wasAdjusted) return
-            applyTree(root, fontPercent, spacingPercent)
+            // Tablet landscape dual pane keeps TabletLyricTypography's size formula; this session
+            // only applies the spacing half there so row padding follows the slider too.
+            applyTree(root, fontPercent, spacingPercent, applyFont = !dualPane)
+            logScalesOnce(fontPercent, spacingPercent, dualPane)
             synchronized(adjustedRoots) {
                 if (neutral) adjustedRoots.remove(root) else adjustedRoots[root] = true
             }
         }.onFailure { ModernXposedRuntime.log("Lyrics typography could not apply to a lyric row", it) }
     }
 
-    private fun applyTree(root: View, fontPercent: Int, spacingPercent: Int) {
+    private fun applyTree(root: View, fontPercent: Int, spacingPercent: Int, applyFont: Boolean) {
         val textViews = ArrayList<TextView>(8)
         val groups = ArrayList<ViewGroup>(8)
         collect(root, textViews, groups)
-        textViews.forEach { view -> applyText(view, fontPercent, spacingPercent) }
+        textViews.forEach { view -> applyText(view, fontPercent, spacingPercent, applyFont) }
         groups.forEach { group -> applyPadding(group, spacingPercent) }
     }
 
@@ -189,7 +191,7 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
         }
     }
 
-    private fun applyText(view: TextView, fontPercent: Int, spacingPercent: Int) {
+    private fun applyText(view: TextView, fontPercent: Int, spacingPercent: Int, applyFont: Boolean) {
         val baseline = synchronized(textBaselines) {
             textBaselines.getOrPut(view) {
                 TextBaseline(
@@ -202,9 +204,11 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
         }
         // The policy returns the base value untouched at the neutral percentage, which keeps the
         // stock rendering byte-for-byte identical.
-        val targetSize = LyricsTypographyPolicy.scaledTextSize(baseline.textSizePx, fontPercent)
-        if (abs(view.textSize - targetSize) > 0.5f) {
-            view.setTextSize(TypedValue.COMPLEX_UNIT_PX, targetSize)
+        if (applyFont) {
+            val targetSize = LyricsTypographyPolicy.scaledTextSize(baseline.textSizePx, fontPercent)
+            if (abs(view.textSize - targetSize) > 0.5f) {
+                view.setTextSize(TypedValue.COMPLEX_UNIT_PX, targetSize)
+            }
         }
         val spacing = LyricsTypographyPolicy.scaledLineSpacing(
             baseExtraPx = baseline.lineSpacingExtra,
@@ -235,7 +239,41 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
         val bottom = LyricsTypographyPolicy.scaledVerticalPadding(baseline.bottom.toFloat(), spacingPercent).roundToInt()
         if (group.paddingTop != top || group.paddingBottom != bottom) {
             group.setPadding(group.paddingLeft, top, group.paddingRight, bottom)
+            if (!loggedPaddingSample) {
+                loggedPaddingSample = true
+                ModernXposedRuntime.log(
+                    "lyrics_typography: row padding " + baseline.top + "/" + baseline.bottom +
+                        " -> " + top + "/" + bottom + " group=" + group.javaClass.simpleName,
+                )
+            }
         }
+    }
+
+    @Volatile
+    private var loggedFontPercent = -1
+
+    @Volatile
+    private var loggedSpacingPercent = -1
+
+    @Volatile
+    private var loggedDualPane: Boolean? = null
+
+    @Volatile
+    private var loggedPaddingSample = false
+
+    /** One line per settings change, so a device log can prove which scale was applied. */
+    private fun logScalesOnce(fontPercent: Int, spacingPercent: Int, dualPane: Boolean) {
+        if (fontPercent == loggedFontPercent && spacingPercent == loggedSpacingPercent &&
+            loggedDualPane == dualPane
+        ) return
+        loggedFontPercent = fontPercent
+        loggedSpacingPercent = spacingPercent
+        loggedDualPane = dualPane
+        loggedPaddingSample = false
+        ModernXposedRuntime.log(
+            "lyrics_typography: font=" + fontPercent + "% spacing=" + spacingPercent +
+                "% dualPane=" + dualPane + " roots=" + synchronized(roots) { roots.size },
+        )
     }
 
     /** The registered client wins; the static fallback keeps the session usable before registration. */

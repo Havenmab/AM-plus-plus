@@ -22,7 +22,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import dev.amenhancer.module.ModuleConstants
 import java.lang.ref.WeakReference
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
@@ -157,7 +156,7 @@ internal class EmbeddedSettingsHost private constructor(
      * implementation.
      */
     override fun onSettingsPreferencesReady(fragment: Any, activity: Activity) {
-        if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        if (!registered || activity.packageName != application.packageName) return
         refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         val previousActivity = activityReference?.get()
@@ -189,7 +188,7 @@ internal class EmbeddedSettingsHost private constructor(
     }
 
     override fun onSettingsFragmentResumed(fragment: Any, activity: Activity) {
-        if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        if (!registered || activity.packageName != application.packageName) return
         refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         lifecycleState.onActivityResumed(
@@ -230,7 +229,7 @@ internal class EmbeddedSettingsHost private constructor(
      * if that seam is not ready yet, keep a visible list-container fallback.
      */
     override fun onSettingsFragmentViewCreated(fragment: Any, activity: Activity, view: View?) {
-        if (!registered || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        if (!registered || activity.packageName != application.packageName) return
         refreshEmbeddedTheme(activity)
         val activityId = activityKey(activity)
         lifecycleState.onActivityResumed(

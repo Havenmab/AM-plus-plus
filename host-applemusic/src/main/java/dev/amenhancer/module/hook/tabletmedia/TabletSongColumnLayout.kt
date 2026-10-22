@@ -25,6 +25,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.hook.ConstraintLayoutPane
 import dev.amenhancer.module.hook.TabletArtworkLayoutPolicy
@@ -64,7 +65,7 @@ internal class TabletSongColumnLayout(
     }
     private val ids = HashMap<String, Int>()
     private fun resource(name: String, type: String = "id") = ids.getOrPut("$type/$name") {
-        player.resources.getIdentifier(name, type, player.context.packageName)
+        player.resources.getIdentifier(name, type, ModuleConstants.TARGET_PACKAGE)
     }
     private fun find(root: View, name: String): View? = resource(name).takeIf { it != 0 }?.let { root.findViewById(it) }
     // Visual CSS units must match the reference browser, independently of Android dp.

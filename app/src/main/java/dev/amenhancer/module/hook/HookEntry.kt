@@ -57,13 +57,19 @@ class HookEntry : XposedModule() {
             ModernXposedRuntime.log("framework API $apiVersion is below the embedded API 102 minimum")
             return
         }
-        if (!bootstrap.prepare(param.packageName, processName, param.isFirstPackage)) return
+        if (!bootstrap.prepare(
+                packageName = param.packageName,
+                processName = processName,
+                isFirstPackage = param.isFirstPackage,
+                mainProcessName = param.applicationInfo.processName?.takeIf(String::isNotBlank) ?: param.packageName,
+            )) return
         ModernXposedRuntime.attach(this)
         val targetClassLoader = param.classLoader
-        installApplicationBootstrap(param.applicationInfo.className, targetClassLoader)
+        installApplicationBootstrap(param.packageName, param.applicationInfo.className, targetClassLoader)
     }
 
     private fun installApplicationBootstrap(
+        targetPackageName: String,
         applicationClassName: String?,
         targetClassLoader: ClassLoader,
     ) {
@@ -86,7 +92,7 @@ class HookEntry : XposedModule() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     runCatching {
                         val application = param.thisObject as? Application ?: return
-                        if (application.packageName != ModuleConstants.TARGET_PACKAGE) return
+                        if (application.packageName != targetPackageName) return
                         if (!isTargetMainProcess(application)) return
                         val build = targetBuild(application)
                         if (!bootstrap.supports(build)) {
@@ -148,7 +154,7 @@ class HookEntry : XposedModule() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     runCatching {
                         val application = param.thisObject as? Application ?: return
-                        if (application.packageName != ModuleConstants.TARGET_PACKAGE) return
+                        if (application.packageName != targetPackageName) return
                         if (!isTargetMainProcess(application)) return
                         val config = embeddedConfig ?: return
                         if (!initializationStarted.compareAndSet(false, true)) return
@@ -229,7 +235,8 @@ class HookEntry : XposedModule() {
     }
 
     private fun isTargetMainProcess(application: Application): Boolean =
-        currentProcessName(application) == ModuleConstants.TARGET_PACKAGE
+        currentProcessName(application) ==
+            (application.applicationInfo.processName?.takeIf(String::isNotBlank) ?: application.packageName)
 
     private fun currentProcessName(application: Application): String? {
         val applicationProcessName = runCatching {

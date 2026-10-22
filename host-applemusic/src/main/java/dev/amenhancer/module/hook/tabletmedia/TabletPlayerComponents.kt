@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import dev.amenhancer.module.ModuleConstants
 import java.util.IdentityHashMap
 import kotlin.math.roundToInt
 
@@ -24,7 +25,7 @@ internal class TabletPlayerComponents(
     private val point = IntArray(2)
     private val origin = IntArray(2)
     private val ids = HashMap<String, Int>()
-    private fun id(name: String) = ids.getOrPut(name) { root.resources.getIdentifier(name, "id", root.context.packageName) }
+    private fun id(name: String) = ids.getOrPut(name) { root.resources.getIdentifier(name, "id", ModuleConstants.TARGET_PACKAGE) }
     private fun find(parent: View, name: String): View? = id(name).takeIf { it != 0 }?.let { parent.findViewById(it) }
     private val progressContent = TabletProgressContent(::find)
     private fun dp(value: Int) = (value * root.resources.displayMetrics.density).roundToInt()
@@ -61,7 +62,7 @@ internal class TabletPlayerComponents(
     private fun nativeButton(drawable: String) = button().apply {
         // Keep Apple's intrinsic symbol size inside the existing 44dp touch target.
         scaleType = ImageView.ScaleType.CENTER; setPadding(0, 0, 0, 0)
-        root.resources.getIdentifier(drawable, "drawable", root.context.packageName)
+        root.resources.getIdentifier(drawable, "drawable", ModuleConstants.TARGET_PACKAGE)
             .takeIf { it != 0 }?.let(::setImageResource)
     }
     private fun location(view: View): Pair<Int, Int> {

@@ -67,7 +67,7 @@ class FragmentCellularDataEntryTargetTest {
     fun `other tuples cannot borrow beta settings or availability contracts`() {
         listOf(
             BUILD.copy(versionName = "7.0.0"), BUILD.copy(versionCode = 1608),
-            BUILD.copy(packageName = "other.package"),
+            BUILD.copy(packageName = ""),
             TargetBuild(ModuleConstants.TARGET_PACKAGE, "6.5.3", 1599),
             TargetBuild.UNKNOWN,
         ).forEach { build ->

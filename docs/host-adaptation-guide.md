@@ -1,6 +1,6 @@
 # Apple Music 宿主适配手册
 
-本手册供维护者为具体 Apple Music 构建建立和维护 AM++ 接入。适配对象是包名、versionName、versionCode 组成的精确组合；正式版、beta 和同名不同构建分别处理。
+本手册供维护者为具体 Apple Music 构建建立和维护 AM++ 接入。适配身份取实际宿主 `packageName` 与 `TargetBuild` 的 `versionName`、`versionCode`；正式版、beta 和同名不同构建分别处理。
 
 | 要解决的问题 | 阅读位置 |
 |---|---|
@@ -15,11 +15,13 @@
 
 ## 1. 版本准入与能力资格
 
-[AppleMusicHostProfiles](../host-applemusic/src/main/java/dev/amenhancer/host/applemusic/AppleMusicHostProfiles.kt) 按版本名、版本号定位文件并核对包名，生产入口另检查 `productionEnabled`。文件名为 `<versionName>-<versionCode>.json`，同一组合只登记一次；`index.json` 还决定旧 HLE 的已审核候选顺序，新增档案保留既有条目的相对顺序。
+实际宿主的版本信息由 [TargetBuildLookup.targetBuild](../host-applemusic/src/main/java/dev/amenhancer/module/hook/TargetBuildLookup.kt) 按 `packageName` 查询包信息读取，并以实际 `packageName`、`versionName`、`versionCode` 构造 `TargetBuild`。[AppleMusicHostProfiles](../host-applemusic/src/main/java/dev/amenhancer/host/applemusic/AppleMusicHostProfiles.kt) 只按精确 `versionName`+`versionCode` 选择共享 profile，生产入口另检查 `productionEnabled`。文件名为 `<versionName>-<versionCode>.json`，同一组合只登记一次；`index.json` 还决定旧 HLE 的已审核候选顺序，新增档案保留既有条目的相对顺序。`profile.packageName` 描述原包及内部类、方法、资源命名空间，不是运行时包名白名单。
+
+本规则只覆盖 Android 安装包名（application ID）变化；内部类、方法和资源命名空间保持原包，其他改包行为不获得兼容。实际安装包名只用于身份、版本和组件。
 
 生产准入、能力可用和人工通过分别判断：
 
-1. 精确组合已登记且生产入口启用，才允许模块接入。
+1. 精确 `versionName`+`versionCode` 组合已登记且生产入口启用，才允许模块接入。
 2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光依赖自己的顶层契约，LLM 则复用已有歌词通道。
 3. 成员解析与 Hook 安装成功只说明该阶段就绪，不能代替页面完成、显示结果或人工验收。`productionEnabled` 与 `runtimeVerified` 各自依据实际证据维护，局部反馈不扩展为整个构建通过。
 
@@ -43,7 +45,7 @@
 
 ### 2.1 装配与执行链
 
-[HookEntry](../app/src/main/java/dev/amenhancer/module/hook/HookEntry.kt) 在 Application 资源准备前完成精确版本门禁、配置迁移/绑定与 DPI 接入。[FeatureInstallation](../app/src/main/java/dev/amenhancer/module/hook/FeatureInstallation.kt) 分开资源注册和 Application 后的能力安装；[AppleMusicAssembly](../app/src/main/java/dev/amenhancer/module/hook/AppleMusicAssembly.kt) 装配歌词服务，[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 将当前 profile、ClassLoader 与服务注入 [TargetAdaptation](../host-api/src/main/java/dev/amenhancer/module/hook/TargetAdaptation.kt)。
+[HookEntry](../app/src/main/java/dev/amenhancer/module/hook/HookEntry.kt) 在 Application 资源准备前按实际宿主 `packageName` 完成一致性校验，保留首次加载（`isFirstPackage`）与声明主进程过滤，再完成精确版本门禁、配置迁移/绑定与 DPI 接入。[FeatureInstallation](../app/src/main/java/dev/amenhancer/module/hook/FeatureInstallation.kt) 分开资源注册和 Application 后的能力安装；[AppleMusicAssembly](../app/src/main/java/dev/amenhancer/module/hook/AppleMusicAssembly.kt) 装配歌词服务，[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 将当前 profile、ClassLoader 与服务注入 [TargetAdaptation](../host-api/src/main/java/dev/amenhancer/module/hook/TargetAdaptation.kt)。
 
 工厂按 `family` 选择设置、双栏、蜂窝和视频路径。单项功能只接收自己的能力；chrome、设置、资源和服务还各有辅助入口，完整接入范围不能仅从能力位或工厂字段枚举。每次适配沿实际安装计划及其调用链展开。
 
@@ -67,7 +69,7 @@
 
 | 区域 | 应表达的宿主事实 |
 |---|---|
-| 身份、资格与证据 | `id`、包名/版本组合、`family`、`productionEnabled`、`profileRevision`、`capabilities`、`evidence`、`knownDegradations` |
+| 身份、资格与证据 | `id`、`packageName`（原包）/`versionName`+`versionCode`、`family`、`productionEnabled`、`profileRevision`、`capabilities`、`evidence`、`knownDegradations` |
 | `indexed` | 符号映射及适用的 `methodContracts` / `fieldContracts` |
 | `hookTargets` / `catalogQueryRenames` | HLE 入口、签名/调用方约束、`runtimeMemberNames`、目录查询映射 |
 | `settings` / `chrome` | 设置模型、入口、导航、播放器资源及旧族成员 |
@@ -77,7 +79,7 @@
 | `startupPagePrewarm` / `artistComposeProfile` | 独立预热、Compose 艺人表面的成员、构造器与语义参数 |
 | `verification` / 匹配策略 | 离线描述符/资源证据、`ambiguityPolicy`、已审核的 `legacyFirstMatchExceptions` |
 
-JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由 Kotlin 实现。profile schema、各独立契约的版本字段和应用配置 schema 分别维护，以当前解析器及 [ModuleConstants](../core/src/main/kotlin/dev/amenhancer/module/ModuleConstants.kt) 为准；普通混淆适配不附带修改配置格式。
+JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由 Kotlin 实现。共享 profile 只按精确 `versionName`+`versionCode` 选择；`profile.packageName` 描述原包及内部类、方法、资源命名空间，不是运行时包名字段，实际运行时包名由 `TargetBuild` 单独记录。profile schema、各独立契约的版本字段和应用配置 schema 分别维护，以当前解析器及 [ModuleConstants](../core/src/main/kotlin/dev/amenhancer/module/ModuleConstants.kt) 为准；普通混淆适配不附带修改配置格式。
 
 ### 3.2 三种接入方式
 
@@ -112,7 +114,7 @@ Java 反编译用于理解流程，原始 owner 与擦除签名以 DEX/smali 为
 
 ### 4.1 建立基线
 
-1. 从实际 base APK 的二进制 Manifest 确认精确组合，外层文件名/清单只作辅助。
+1. 从实际 base APK 的二进制 Manifest 和运行时宿主确认 `packageName`、`versionName`、`versionCode`，记录 `TargetBuild` 的实际包名；将 `profile.packageName` 单列为原包和内部命名空间。外层文件名/清单只作辅助。
 2. 清点 base、全部配置/功能 split、各 DEX 与资源来源；DEX 不一定只在 base。
 3. 保存代码基线、实际页面族、对照宿主和可追溯证据；包哈希仅在明确要求时计算。
 4. 分别确定源码分析、所需检查、构建和人工验收范围，再在任务记录填写[清单](host-adaptation-checklist.md)。
@@ -147,7 +149,7 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 
 ### 4.4 登记、交付与回退
 
-按实际阶段记录成员/资源分析、所需检查、构建、能力状态与人工场景。完成接入后登记 `index.json`；为用户测试启用精确组合时，运行时状态仍按已取得证据保存。交付物与执行范围按[验收与回退](#delivery)处理，不授予邻近构建资格。
+按实际阶段记录成员/资源分析、所需检查、构建、能力状态与人工场景。完成接入后登记 `index.json`；为用户测试启用精确 `versionName`+`versionCode` 组合时，运行时状态仍按已取得证据保存。交付物与执行范围按[验收与回退](#delivery)处理，不授予邻近构建资格。
 
 <a id="feature-index"></a>
 
@@ -622,7 +624,7 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 
 **宿主接缝。** 旧设置为PreferenceFragment/PreferenceScreen与Activity结果桥，Fragment设置使用原生ViewModel/分类/action模型及Compose入口。两路均确认行key/分类去重、点击、callback及SAF/文件结果归属；构造器artwork/callback/Unit按当前包类型，不借相邻构建。UI经SettingsViewBridge等接口查询资格，不读profile或发现私有成员。
 
-蜂窝入口要求独立精确能力，保留原生登录、类别、availability与默认关闭；不同页面族使用各自目标。DPI仅宿主范围，配置合法性、冷启动/重建与失败失活走既有AppleMusicDpiOverride，不把密度变化当新宿主资格。
+蜂窝入口要求独立精确能力，保留原生登录、类别、availability与默认关闭；不同页面族使用各自目标。DPI仅宿主范围，配置合法性、冷启动/重建与失败失活走既有AppleMusicDpiOverride，不把密度变化当新宿主资格。设置入口与 DPI 的组件过滤使用实际宿主 `packageName`；宿主类、方法和资源继续使用现有原包常量，不以安装包名替换。
 
 #### 通用维护：配置与设置界面
 
@@ -645,6 +647,8 @@ LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/�
 ## 6. 安装、降级与所有权
 
 安装顺序为精确版本识别、配置迁移/绑定、DPI、资源回调、Application后功能与设置入口。资源基础设施失败停止依赖它的安装，单能力失败由该能力报告。Feature状态区分disabled、unsupported、degraded、failed及active，不把局部组成功上报为整功能成功。
+
+仅安装包名改变时，`scope.list` 保留 `com.apple.android.music`，`module.prop` 使用 `staticScope=false`；安装后在 LSPosed 中手动为模块选择改名后的 Apple Music。首次加载与声明主进程过滤仍按实际宿主生效。
 
 新增Hook使用 [HookRegistrationScope](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrationScope.kt)：preparing注册，必需项成功后activate，失败/退出close；关闭后回调原生透传，不依赖框架一定unhook。通用 [HookRegistrations](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrations.kt) 保存注册元信息，ModernXposedRuntime与AppleHookRegistrar接入内置记录，插件冲突分析复用同一来源。
 

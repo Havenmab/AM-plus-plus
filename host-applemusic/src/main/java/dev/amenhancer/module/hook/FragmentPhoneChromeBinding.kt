@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
+import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.host.OwnedHostProperty
 import java.util.IdentityHashMap
 
@@ -17,7 +18,7 @@ internal class FragmentPhoneChromeBinding(
     private val names = contract.names.getJSONObject("phone")
     private val resources = names.getJSONObject("resources")
     private val ids = ChromeResource.entries.associateWith { role -> resources.optJSONObject(role.name)?.let {
-        activity.resources.getIdentifier(it.getString("name"), it.getString("type"), activity.packageName)
+        activity.resources.getIdentifier(it.getString("name"), it.getString("type"), ModuleConstants.TARGET_PACKAGE)
     } ?: 0 }
     private val views = HashMap<ChromeResource, View?>()
     private val types = names.getJSONObject("views")
@@ -35,9 +36,9 @@ internal class FragmentPhoneChromeBinding(
     private val menu = contract.navigationMenu
     private val selected = contract.navigationSelected
     private val select = contract.navigationSelect
-    private val drawerId = activity.resources.getIdentifier(names.getString("drawerQualifier"), "bool", activity.packageName)
+    private val drawerId = activity.resources.getIdentifier(names.getString("drawerQualifier"), "bool", ModuleConstants.TARGET_PACKAGE)
     private val blurViews = listOf("bottomNavigationBlur", "miniBlur").mapNotNull { role ->
-        activity.resources.getIdentifier(contract.resources.getString(role), "id", activity.packageName)
+        activity.resources.getIdentifier(contract.resources.getString(role), "id", ModuleConstants.TARGET_PACKAGE)
             .takeIf { it != 0 }?.let { contentRoot.findViewById<View>(it) }
     }
     private var callbacks: FragmentPhoneGlassCallbacks? = null
@@ -57,7 +58,7 @@ internal class FragmentPhoneChromeBinding(
     private var collapseSheet: View? = null
     private var collapseTarget = 0
     private fun extra(role: String): View? = names.getJSONObject("presentation").optString(role).takeIf { it.isNotEmpty() }
-        ?.let { activity.resources.getIdentifier(it, "id", activity.packageName) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
+        ?.let { activity.resources.getIdentifier(it, "id", ModuleConstants.TARGET_PACKAGE) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
 
     override val pageFamily = HostPageFamily.FRAGMENT_VIEW
     override val supportsScrollCollapse: Boolean

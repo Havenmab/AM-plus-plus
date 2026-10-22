@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
+import dev.amenhancer.module.ModuleConstants
 import java.io.Serializable
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -50,7 +51,7 @@ internal class StartupPagePrewarmSession(
         root.post(step)
     }
 
-    private fun resource(name: String) = root.resources.getIdentifier(name, "id", activity.packageName)
+    private fun resource(name: String) = root.resources.getIdentifier(name, "id", ModuleConstants.TARGET_PACKAGE)
     private fun schedule(delay: Long = 0L) { if (!closed) root.postDelayed(step, delay) }
     private fun waitFor(reason: String) { waitReason = reason; schedule(50L) }
 

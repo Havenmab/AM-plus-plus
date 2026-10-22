@@ -8,16 +8,19 @@
 
 | 项目 | 本构建填写内容 |
 |---|---|
-| 精确身份 | 包名 / versionName / versionCode，base二进制Manifest位置 |
+| 精确身份 | 实际宿主 packageName / `TargetBuild` 的 versionName、versionCode，base二进制Manifest位置 |
 | 安装包 | 格式、base、全部split、各DEX及资源来源 |
 | 代码基线 | 提交/分支、已有未提交工作、可回退代码与产物 |
 | 对照宿主 | 对照构建、实际页面族、复用与独立分析范围 |
-| 档案 | 文件名、id、profileRevision、索引位置、生产资格 |
+| 档案 | 文件名、id、profileRevision、索引位置、生产资格；`profile.packageName` 表示原包与内部命名空间 |
 | 能力边界 | 能力位、独立契约、设置/API/手机平板形态与已知缺口 |
 | 执行范围 | 源码/资源分析、所需检查、构建与使用者人工场景分别安排 |
 | 数据兼容 | 当前配置schema/键、文件ID、目录/marker、SQLite/cache、ZIP及公共插件协议 |
+| 作用域 | `module.prop` 的 `staticScope`、`scope.list`，以及 LSPosed 手动选择改名宿主的结果 |
 
+- [ ] 入口按实际宿主 packageName 校验通过，`TargetBuild` 记录实际包名；首次加载与声明主进程过滤保持生效。
 - [ ] 身份、外层清单/显式参数一致，正式版/beta/同名不同构建独立建档。
+- [ ] 仅 Android 安装包名变化；内部类、方法和资源保持原包常量，实际包名只用于身份、版本及组件，其他改包行为未套用本兼容规则。
 - [ ] 所有DEX/资源split已覆盖，页面族由真实入口/生命周期确定。
 - [ ] 当前档案与参考档案资格区分，未凭旧类存在或版本号推定兼容。
 - [ ] 原始owner/擦除描述符有字节码依据，未采用工具修复名/推断类型。
@@ -27,7 +30,7 @@
 
 规则依据：[profile与三种接入方式](host-adaptation-guide.md#profile-contracts)。
 
-- [ ] 文件名、精确组合、唯一id与索引一致，既有候选相对顺序保留。
+- [ ] 文件名与精确 versionName+versionCode 一致、id 唯一且索引有序；`profile.packageName` 仅描述原包和内部命名空间，不作运行时白名单。
 - [ ] 每条接缝标明索引、HLE或独立契约方式及回退策略。
 - [ ] 必需角色/完整描述符、类型关系与当前调用链一致，抽象调用与Hook具体实现已区分。
 - [ ] 新依赖已同步profile、代码Inventory/Contract、verification和适用离线覆盖。
@@ -278,6 +281,7 @@
 [维护规则](host-adaptation-guide.md#settings-data-plugins) · [人工场景](feature-preservation.md#settings-data-plugins)
 
 - [ ] 设置分类/去重、原生构造器/callback、结果桥与文件归属匹配当前族。
+- [ ] 设置入口与 DPI 的组件过滤使用实际宿主；宿主类、方法和资源继续使用现有原包常量。
 - [ ] 蜂窝独立资格与原生登录/availability、DPI宿主范围及失败边界正确。
 - [ ] 配置/资产/缓存/迁移与ZIP兼容范围明确，格式变化有独立迁移/回退。
 - [ ] 公共SDK/插件生命周期及通用Hook注册记录保持，业务未带入宿主私有接口。
@@ -304,6 +308,7 @@
 依据：[安装与所有权](host-adaptation-guide.md#installation)。
 
 - [ ] 资源与Application后安装顺序明确，基础设施失败停止依赖项。
+- [ ] 仅改包名场景中，`module.prop` 为 `staticScope=false`、`scope.list` 保留 `com.apple.android.music`，并在 LSPosed 手动选择改名后的宿主。
 - [ ] 必需解析先于activate，失败/close后的回调原生透传且状态如实上报。
 - [ ] HLE父/子组、后加getter与Hook注册记录同归属，可选缺口不伪装成功。
 - [ ] view/config变化先关旧再发新，监听/observer/动画/延迟任务清理完整。
@@ -324,7 +329,7 @@
 | 已支持构建回归 | 各构建实际范围分别填写 | 待填写 |
 
 - [ ] 全部适用域有明确状态，未执行/不适用/已知降级没有填成通过。
-- [ ] 包、构建、安装和人工结果分别记录，启用资格/运行时状态与证据一致。
+- [ ] 实际宿主包名、TargetBuild 版本、profile 原包及人工结果分别记录，启用资格/运行时状态与证据一致。
 - [ ] 配置/数据/插件协议的兼容或迁移范围与交付物相符。
 - [ ] 新tuple/能力停用、原生恢复与代码/产物回退方法明确。
 - [ ] 通用文档仅更新规则和判据，单次分析/结果留在任务记录，旧冻结基线未无据改写。

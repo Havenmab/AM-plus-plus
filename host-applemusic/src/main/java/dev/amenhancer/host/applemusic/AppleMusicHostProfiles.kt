@@ -27,10 +27,12 @@ object AppleMusicHostProfiles {
         }
     }
 
+    /** Installation package names may change; descriptors follow the exact version tuple. */
     fun find(packageName: String, versionName: String, versionCode: Long): AppleMusicHostProfile? {
+        if (packageName.isBlank()) return null
         val name = "$versionName-$versionCode.json"
         if (name !in filenames) return null
-        return load(name).takeIf { it.packageName == packageName }
+        return load(name)
     }
 
     fun isProductionBuild(packageName: String, versionName: String, versionCode: Long): Boolean =

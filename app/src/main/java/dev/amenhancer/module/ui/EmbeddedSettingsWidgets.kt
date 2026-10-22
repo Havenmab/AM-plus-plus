@@ -410,7 +410,11 @@ internal fun EmbeddedSettingsHost.embeddedBlurRadiusRow(
         }, matchWidthWrapContent())
     }
 
-    /** SeekBar row for the gated liquid-glass extras, with a per-row one-tap default restore. */
+    /**
+     * SeekBar row for numeric ranges (gated liquid-glass extras, lyrics typography), with a
+     * per-row one-tap default restore. [unit] is appended to the value, [suffix] is the summary
+     * line below it.
+     */
 
     internal fun EmbeddedSettingsHost.embeddedGlassRangeRow(
             activity: Activity,

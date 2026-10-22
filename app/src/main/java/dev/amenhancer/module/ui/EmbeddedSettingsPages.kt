@@ -636,6 +636,28 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 onSettingsChanged(currentSettings().copy(lyricBlurRadiusOffsetPx = it))
             })
             addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_FONT_SCALE),
+                value = settings.lyricsFontScalePercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+                suffix = localizedText(ModuleText.LYRICS_FONT_SCALE_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricsFontScalePercent = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE),
+                value = settings.lyricsLineSpacingScalePercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                suffix = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricsLineSpacingScalePercent = it)) })
+            addView(embeddedDivider(activity))
             addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
                 onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))
                 pageRefresh?.invoke()

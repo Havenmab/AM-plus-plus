@@ -113,6 +113,8 @@ class ModuleSettingsSchemaTest {
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 6,
+                "lyrics_font_scale_percent" to 85,
+                "lyrics_line_spacing_scale_percent" to 80,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -178,6 +180,8 @@ class ModuleSettingsSchemaTest {
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 0,
+                "lyrics_font_scale_percent" to 85,
+                "lyrics_line_spacing_scale_percent" to 80,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -291,6 +295,82 @@ class ModuleSettingsSchemaTest {
             ModuleSettingsSchema.decode(
                 mapOf("lyric_blur_radius_offset_px" to -99),
             ).lyricBlurRadiusOffsetPx,
+        )
+    }
+
+    @Test
+    fun `lyrics typography defaults to the shipped smaller percentages`() {
+        val defaults = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT, defaults.lyricsFontScalePercent)
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            defaults.lyricsLineSpacingScalePercent,
+        )
+        assertEquals(85, ModuleSettings().lyricsFontScalePercent)
+        assertEquals(80, ModuleSettings().lyricsLineSpacingScalePercent)
+        // 100 is still Apple Music's own typography and the neutral anchor of the policy.
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_TYPOGRAPHY_PERCENT, 100)
+    }
+
+    @Test
+    fun `lyrics typography is clamped to the supported ranges`() {
+        assertEquals(
+            ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_font_scale_percent" to 999),
+            ).lyricsFontScalePercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_font_scale_percent" to 1),
+            ).lyricsFontScalePercent,
+        )
+        assertEquals(
+            ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_line_spacing_scale_percent" to 999),
+            ).lyricsLineSpacingScalePercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_line_spacing_scale_percent" to 0),
+            ).lyricsLineSpacingScalePercent,
+        )
+        // Malformed values fall back to the shipped default instead of throwing.
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_font_scale_percent" to "big"),
+            ).lyricsFontScalePercent,
+        )
+    }
+
+    @Test
+    fun `lyrics typography round trips through the schema`() {
+        val settings = ModuleSettings(
+            lyricsFontScalePercent = 85,
+            lyricsLineSpacingScalePercent = 120,
+        )
+        val values = ModuleSettingsSchema.encodeOrdinarySettings(settings)
+        assertEquals(85, values["lyrics_font_scale_percent"])
+        assertEquals(120, values["lyrics_line_spacing_scale_percent"])
+        val decoded = ModuleSettingsSchema.decode(values)
+        assertEquals(85, decoded.lyricsFontScalePercent)
+        assertEquals(120, decoded.lyricsLineSpacingScalePercent)
+
+        // Out-of-range stored values are clamped on the way out as well.
+        val clamped = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(lyricsFontScalePercent = 400, lyricsLineSpacingScalePercent = 1),
+        )
+        assertEquals(
+            ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+            clamped["lyrics_font_scale_percent"],
+        )
+        assertEquals(
+            ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            clamped["lyrics_line_spacing_scale_percent"],
         )
     }
 

@@ -21,6 +21,12 @@ internal object TabletLyricTypography {
         applyPrimaryLyricTextSize(root, resolvePrimaryLyricTextIds(root))
     }
 
+    /** Player lyric font size scale (1.0 at 100%); the dual pane keeps its own base size. */
+    private fun fontScale(): Float = LyricsTypographyScales.current().first
+
+    /** Player lyric line spacing scale (1.0 at 100%). */
+    private fun spacingScale(): Float = LyricsTypographyScales.current().second
+
     fun attach(fragment: Any, recyclerGetter: java.lang.reflect.Method) {
         val recycler = runCatching {
             recyclerGetter.invoke(fragment) as? ViewGroup
@@ -123,11 +129,13 @@ internal object TabletLyricTypography {
     private fun applyPrimaryLyricTextSize(root: View, primaryLyricTextIds: Set<Int>) {
         if (primaryLyricTextIds.isEmpty()) return
         val metrics = root.resources.displayMetrics
+        // The user's lyric font-size scale multiplies the dual pane's own target size, so both the
+        // phone and the tablet formula end up at the same visual size for the same percentage.
         val targetSizeSp = TabletLyricVisualPolicy.textSizeSp(
             viewportWidthPx = metrics.widthPixels.toFloat(),
             viewportHeightPx = metrics.heightPixels.toFloat(),
             scaledDensity = metrics.density * root.resources.configuration.fontScale,
-        )
+        ) * fontScale()
         val targetSizePx = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
             targetSizeSp,
@@ -145,13 +153,30 @@ internal object TabletLyricTypography {
     }
 
     private fun applyLyricRowSpacing(row: View) {
+        val spacingScale = spacingScale()
+        applyLineSpacingScale(row, spacingScale)
         if (row.getTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied) == true) return
         val params = row.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         val spacingPx = (
-            TabletLyricVisualPolicy.ITEM_SPACING_EXTRA_DP * row.resources.displayMetrics.density + 0.5f
+            TabletLyricVisualPolicy.ITEM_SPACING_EXTRA_DP * row.resources.displayMetrics.density * spacingScale + 0.5f
             ).toInt()
         params.bottomMargin += spacingPx
         row.layoutParams = params
         row.setTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied, true)
+    }
+
+    /** The user's line-spacing scale, expressed as the native TextView multiplier. */
+    private fun applyLineSpacingScale(row: View, spacingScale: Float) {
+        if (abs(spacingScale - 1f) < 0.001f) return
+        val primaryIds = resolvePrimaryLyricTextIds(row)
+        fun visit(view: View) {
+            if (view is TextView && (primaryIds.isEmpty() || view.id in primaryIds)) {
+                view.setLineSpacing(view.lineSpacingExtra, spacingScale)
+            }
+            (view as? ViewGroup)?.let { group ->
+                repeat(group.childCount) { index -> visit(group.getChildAt(index)) }
+            }
+        }
+        visit(row)
     }
 }

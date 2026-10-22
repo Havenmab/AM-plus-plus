@@ -37,6 +37,8 @@ object AppleMusicHostFactory {
     fun installChromeHooks(loader: ClassLoader, build: TargetBuild, observer: ChromeHookObserver): HostSubscription =
         LegacyChromeHookInstaller.install(loader, build, observer)
     fun newTypefaceResources(): LyricsTypefaceResourceBinding = LyricsTypefaceSession()
+    /** Lyric font-size / line-spacing scales; independent of the typeface and online-lyrics features. */
+    fun newTypographyResources(): LyricsTypographyResourceBinding = LyricsTypographySession()
     fun registerDualPaneResources() {
         DualPaneResourceHook.install()
         FragmentDualPaneResources.install()

@@ -168,19 +168,27 @@ internal class BetaLyricsPaneRuntime(private val lyricsClass: Class<*>,
                 row.resources.getIdentifier(it, "id", ModuleConstants.TARGET_PACKAGE)
             }.filter { it != 0 }.toSet()
             val display = row.resources.displayMetrics
+            val scales = LyricsTypographyScales.current()
+            val fontScale = scales.first
+            val spacingScale = scales.second
             val sizeSp = TabletLyricVisualPolicy.textSizeSp(display.widthPixels.toFloat(), display.heightPixels.toFloat(),
-                display.density * row.resources.configuration.fontScale)
+                display.density * row.resources.configuration.fontScale) * fontScale
             val sizePx = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp, display)
             fun visit(view: View) {
-                if (view is TextView && view.id in primaryIds && abs(view.textSize - sizePx) > 0.5f) {
-                    view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                if (view is TextView && view.id in primaryIds) {
+                    if (abs(view.textSize - sizePx) > 0.5f) {
+                        view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                    }
+                    if (abs(spacingScale - 1f) > 0.001f) {
+                        view.setLineSpacing(view.lineSpacingExtra, spacingScale)
+                    }
                 }
                 (view as? ViewGroup)?.let { group -> repeat(group.childCount) { visit(group.getChildAt(it)) } }
             }
             visit(row)
             if (row.getTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied) != true) {
                 (row.layoutParams as? ViewGroup.MarginLayoutParams)?.let {
-                    it.bottomMargin += (TabletLyricVisualPolicy.ITEM_SPACING_EXTRA_DP * row.resources.displayMetrics.density + 0.5f).toInt()
+                    it.bottomMargin += (TabletLyricVisualPolicy.ITEM_SPACING_EXTRA_DP * row.resources.displayMetrics.density * spacingScale + 0.5f).toInt()
                     row.layoutParams = it
                     row.setTag(dev.amenhancer.host.applemusic.R.id.am_enhancer_lyric_spacing_applied, true)
                 }

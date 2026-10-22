@@ -2,15 +2,27 @@ package dev.amenhancer.module.ui
 
 import dev.amenhancer.module.i18n.ModuleText
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Application
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Rect
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
+import android.os.Bundle
 import android.view.Gravity
+import android.view.ContextThemeWrapper
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.widget.EditText
+import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -27,11 +39,13 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         group: CustomLyricsUiGroup?,
         song: CurrentSongDetails?,
     ) {
+        val origin = embeddedSettingsClickOrigin()
         val entry = group?.primary
         var source = entry?.source ?: CustomLyricsSources.MANUAL
+        val horizontalInset = dp(activity, 18)
         val fields = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(activity, 20), dp(activity, 4), dp(activity, 20), dp(activity, 4))
+            setPadding(horizontalInset, dp(activity, 4), horizontalInset, dp(activity, 4))
         }
         val idInput = embeddedLyricsEditorInput(
             activity = activity,
@@ -73,12 +87,12 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         updateSourceLabel()
         fields.addView(idInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(activity, 56),
-        ).apply { bottomMargin = dp(activity, 2) })
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(activity, 14) })
         fields.addView(nameInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(activity, 56),
-        ).apply { bottomMargin = dp(activity, 2) })
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(activity, 14) })
         fields.addView(sourceLabel, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -116,8 +130,8 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                         importOnline(EmbeddedOnlineSource.LUNABEAT)
                     },
                     EmbeddedLyricsEditorAction(
-                        label = localizedText(ModuleText.IMPORT_FROM_GITHUB),
-                        compactLabel = localizedText(ModuleText.GITHUB_IMPORT),
+                        label = localizedText(ModuleText.IMPORT_FROM_AM_LYRICS),
+                        compactLabel = localizedText(ModuleText.AM_LYRICS_IMPORT),
                     ) {
                         importOnline(EmbeddedOnlineSource.AM_LYRICS)
                     },
@@ -160,55 +174,65 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         val titleBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 16 else 20)
-            setPadding(horizontalPadding, 0, horizontalPadding, 0)
+            setPadding(horizontalInset, 0, horizontalInset, 0)
             addView(TextView(activity).apply {
                 text = if (group == null) localizedText(ModuleText.NEW_LYRICS) else localizedText(ModuleText.EDIT_LYRICS)
                 textSize = embeddedTextSize(activity, 19f, 18f)
                 setEmbeddedTextColor(activity) { colors -> colors.onSurface }
-                setTypeface(typeface, if (isEmbeddedPhone(activity)) Typeface.BOLD else Typeface.NORMAL)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 gravity = Gravity.CENTER_VERTICAL
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
         val editorActions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 16 else 12)
-            setPadding(horizontalPadding, 0, horizontalPadding, 0)
+            setPadding(horizontalInset, 0, horizontalInset, 0)
         }
-        fun editorAction(label: String, onClick: () -> Unit): TextView = TextView(activity).apply {
-            text = label
-            textSize = embeddedTextSize(activity, 16f, 14f)
-            setEmbeddedTextColor(activity) { colors -> colors.primary }
-            gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onClick() }
-        }
+        fun editorAction(label: String, emphasized: Boolean = false, onClick: () -> Unit): TextView =
+            Button(activity).apply {
+                text = label
+                bindEmbeddedDialogActionTheme(activity, emphasized)
+                setOnClickListener { fromEmbeddedSettingsView(this) { onClick() } }
+            }
         editorActions.addView(
             editorAction(localizedText(ModuleText.CANCEL)) { dialog.dismiss() },
             LinearLayout.LayoutParams(
-                dp(activity, if (isEmbeddedPhone(activity)) 64 else 56),
-                dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(activity, 48),
             ),
         )
         editorActions.addView(
-            editorAction(localizedText(ModuleText.SAVE), ::saveLyrics),
+            editorAction(localizedText(ModuleText.SAVE), emphasized = true, onClick = ::saveLyrics),
             LinearLayout.LayoutParams(
-                dp(activity, if (isEmbeddedPhone(activity)) 64 else 56),
-                dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
-            ),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(activity, 48),
+            ).apply { marginStart = dp(activity, 8) },
         )
-        val editorRoot = LinearLayout(activity).apply {
+        val editorRoot = object : LinearLayout(activity) {
+            private val panelClip = Path()
+            private val panelBounds = RectF()
+
+            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                super.onSizeChanged(w, h, oldw, oldh)
+                panelBounds.set(0f, 0f, w.toFloat(), h.toFloat())
+                panelClip.setEmbeddedG3Rect(panelBounds, dp(activity, 24).toFloat())
+            }
+
+            override fun dispatchDraw(canvas: Canvas) {
+                val save = canvas.save()
+                canvas.clipPath(panelClip)
+                super.dispatchDraw(canvas)
+                canvas.restoreToCount(save)
+            }
+        }.apply {
             orientation = LinearLayout.VERTICAL
             minimumHeight = embeddedLyricsEditorDialogHeight(activity)
             bindEmbeddedTheme(activity) { colors ->
-                background = GradientDrawable().apply {
+                background = EmbeddedG3Drawable().apply {
                     setColor(colors.pageBackground)
-                    cornerRadius = embeddedCardCornerRadius(activity)
+                    cornerRadius = dp(activity, 24).toFloat()
                 }
             }
-            clipToOutline = true
             addView(titleBar, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 embeddedTopBarHeight(activity),
@@ -223,21 +247,237 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                 dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
             ))
         }
-        dialog = embeddedDialogBuilder(activity, customPanel = true)
-            .setView(editorRoot)
-            .create()
+        dialog = EmbeddedLyricsEditorDialog(
+            host = this,
+            activity = activity,
+            origin = origin,
+            editorRoot = editorRoot,
+            editorWidth = embeddedLyricsEditorDialogWidth(activity),
+        )
         dialog.setOnDismissListener {
             if (pendingTtmlImport != null) pendingTtmlImport = null
         }
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-            dialog.window?.setLayout(
-                embeddedLyricsEditorDialogWidth(activity),
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT,
-            )
-        }
         dialog.show()
     }
+
+/**
+ * Keeps one transparent window at a stable size throughout both transitions.
+ * Only the centered editor panel moves; resizing the Window after the reveal
+ * would start a second system surface transition.
+ */
+private class EmbeddedLyricsEditorDialog(
+    private val host: EmbeddedSettingsHost,
+    private val activity: Activity,
+    private val origin: Rect?,
+    private val editorRoot: LinearLayout,
+    private val editorWidth: Int,
+) : AlertDialog(embeddedThemedContext(activity, dialog = true)), Application.ActivityLifecycleCallbacks {
+    private val scrim = ColorDrawable(Color.BLACK).apply { alpha = 0 }
+    private val motionStage = object : FrameLayout(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val availableWidth = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                editorWidth
+            } else MeasureSpec.getSize(widthMeasureSpec)
+            val availableHeight = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                editorRoot.minimumHeight
+            } else MeasureSpec.getSize(heightMeasureSpec)
+            // Keep the original panel size, but let the scrollable form shrink
+            // when the IME or a smaller host window reduces the available area.
+            editorRoot.layoutParams.width = minOf(editorWidth, availableWidth)
+            editorRoot.layoutParams.height = minOf(editorRoot.minimumHeight, availableHeight)
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        }
+    }.apply {
+        background = scrim
+        clipChildren = false
+        clipToPadding = false
+        setOnClickListener { cancel() }
+    }
+    private var entryStop: (() -> Unit)? = null
+    private var closing = false
+    private var dismissed = false
+    private var lifecycleRegistered = false
+
+    init {
+        // Consume blank space inside the panel; only taps on the surrounding
+        // transparent stage should behave like taps outside a normal dialog.
+        editorRoot.isClickable = true
+        editorRoot.alpha = 0f
+        editorRoot.scaleX = if (origin == null) 0.92f else 0.08f
+        editorRoot.scaleY = editorRoot.scaleX
+        motionStage.addView(
+            editorRoot,
+            FrameLayout.LayoutParams(
+                editorWidth,
+                editorRoot.minimumHeight,
+                Gravity.CENTER,
+            ),
+        )
+        host.configureEmbeddedDialogWindow(
+            activity = activity,
+            dialog = this,
+            themedContext = context as ContextThemeWrapper,
+            customPanel = true,
+            animateStandardEntrance = false,
+        )
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Install after AlertDialog has created its own content, so its default
+        // panel cannot replace or inset the transparent animation stage.
+        setContentView(motionStage, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setWindowAnimations(0)
+            clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            setDimAmount(0f)
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+            )
+        }
+    }
+
+    override fun show() {
+        if (isShowing) return
+        registerLifecycle()
+        super.show()
+        if (!closing && isShowing) beginEntrance()
+    }
+
+    private fun beginEntrance() {
+        entryStop?.invoke()
+        entryStop = editorRoot.revealEmbeddedSettingsPage(origin, onProgress = { progress ->
+            updateScrimAlpha((51 * progress).toInt())
+        }) {
+            entryStop = null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateScrimAlpha(alpha: Int) {
+        val next = alpha.coerceIn(0, 255)
+        scrim.alpha = next
+        // Decor still fits the system bars; carry the same animated scrim into
+        // the navigation region without resizing the editor or its IME viewport.
+        window?.navigationBarColor = Color.argb(next, 0, 0, 0)
+    }
+
+    override fun dismiss() {
+        if (!isShowing || dismissed) {
+            dismissImmediately()
+            return
+        }
+        if (hostShouldCloseImmediately()) {
+            dismissImmediately()
+            return
+        }
+        if (closing) return
+        closing = true
+        entryStop?.invoke()
+        entryStop = null
+        val duration = if (origin == null) 220L else 340L
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            dismissImmediately()
+            return
+        }
+        beginCloseMotion(duration)
+    }
+
+    private fun beginCloseMotion(duration: Long) {
+        if (dismissed || !isShowing) return
+        if (origin == null) {
+            fadeEditorOut(duration)
+            return
+        }
+        val startScrimAlpha = scrim.alpha
+        val returnMotion = editorRoot.captureEmbeddedSettingsReturn(origin) { progress ->
+            updateScrimAlpha((startScrimAlpha * (1f - progress)).toInt())
+        }
+        if (returnMotion == null) {
+            fadeEditorOut(duration)
+            return
+        }
+        editorRoot.alpha = 0f
+        returnMotion(motionStage) { finishDismiss() }
+    }
+
+    private fun fadeEditorOut(duration: Long) {
+        val startScrimAlpha = scrim.alpha
+        editorRoot.animate().withEndAction(null).cancel()
+        editorRoot.pivotX = editorRoot.width / 2f
+        editorRoot.pivotY = editorRoot.height / 2f
+        editorRoot.animate()
+            .alpha(0f)
+            .scaleX(0.96f)
+            .scaleY(0.96f)
+            .setDuration(duration)
+            .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+            .setUpdateListener { updateScrimAlpha((startScrimAlpha * (1f - it.animatedFraction)).toInt()) }
+            .withEndAction { finishDismiss() }
+            .start()
+    }
+
+    private fun dismissImmediately() {
+        if (dismissed) return
+        dismissed = true
+        closing = true
+        entryStop?.invoke()
+        entryStop = null
+        updateScrimAlpha(0)
+        editorRoot.animate().setUpdateListener(null).withEndAction(null).cancel()
+        unregisterLifecycle()
+        runCatching { super.dismiss() }
+    }
+
+    private fun finishDismiss() {
+        if (dismissed) return
+        dismissed = true
+        updateScrimAlpha(0)
+        editorRoot.animate().setUpdateListener(null)
+        unregisterLifecycle()
+        super.dismiss()
+    }
+
+    private fun hostShouldCloseImmediately(): Boolean =
+        !host.registered || activity.isFinishing || activity.isDestroyed ||
+            host.currentActivity()?.let { it !== activity } == true
+
+    private fun registerLifecycle() {
+        if (lifecycleRegistered) return
+        lifecycleRegistered = true
+        activity.application.registerActivityLifecycleCallbacks(this)
+    }
+
+    private fun unregisterLifecycle() {
+        if (!lifecycleRegistered) return
+        lifecycleRegistered = false
+        activity.application.unregisterActivityLifecycleCallbacks(this)
+    }
+
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+    override fun onActivityStarted(activity: Activity) = Unit
+
+    override fun onActivityResumed(activity: Activity) {
+        if (activity !== this.activity && isShowing && host.pendingTtmlImport == null) dismissImmediately()
+    }
+
+    override fun onActivityPaused(activity: Activity) = Unit
+
+    override fun onActivityStopped(activity: Activity) = Unit
+
+    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+
+    override fun onActivityDestroyed(activity: Activity) {
+        if (activity === this.activity) dismissImmediately()
+    }
+}
 
     /** Compatibility overload used by the legacy embedded dialog path. */
 

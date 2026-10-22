@@ -4,46 +4,88 @@ import dev.amenhancer.module.i18n.ModuleText
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
-import android.widget.Button
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import dev.amenhancer.plugin.runtime.PluginRunState
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 
-internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
-    val manager = plugins ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE), Toast.LENGTH_LONG).show()
-    val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(activity, 12), 0, dp(activity, 12), 0) }
-    val scroll = ScrollView(activity).apply { addView(content) }
-    val dialog = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.PLUGINS)).setView(scroll)
-        .setPositiveButton(localizedText(ModuleText.IMPORT_ZIP), null).setNegativeButton(localizedText(ModuleText.CLOSE), null).create()
-    pluginDialogs += WeakReference(dialog)
+internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
+    activity: Activity,
+    parent: LinearLayout,
+    scroll: ScrollView,
+    initialScrollY: Int = 0,
+    onContentReady: () -> Unit = {},
+): () -> Unit {
+    parent.removeAllViews()
+    val manager = plugins
+    if (manager == null) {
+        parent.addView(
+            embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE)),
+            matchWidthWrapContent(),
+        )
+        onContentReady()
+        return {}
+    }
+
+    val active = AtomicBoolean(true)
     val refreshing = AtomicBoolean()
+    var restoreInitialScroll = true
+    var contentReady = false
     fun action(block: () -> Unit) {
         manager.execute {
             val result = runCatching(block)
             mainHandler.post {
+                if (!active.get() || activity.isFinishing || activity.isDestroyed) return@post
                 currentActivity()?.let { Toast.makeText(it, result.exceptionOrNull()?.message ?: localizedText(ModuleText.SAVED_RESTART), Toast.LENGTH_LONG).show() }
             }
         }
     }
     val refresh = object : Runnable {
         override fun run() {
-            if (!dialog.isShowing || !refreshing.compareAndSet(false, true)) return
+            if (!active.get() || !refreshing.compareAndSet(false, true)) return
             manager.execute {
                 val statuses = runCatching { manager.statuses() }
                 mainHandler.post {
+                    if (!active.get() || activity.isFinishing || activity.isDestroyed) return@post
                     refreshing.set(false)
-                    if (!dialog.isShowing || activity.isDestroyed) return@post
-                    val scrollPosition = scroll.scrollY
-                    content.removeAllViews()
-                    content.addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)))
-                    manager.startupError?.let { content.addView(embeddedInfoCard(activity, localizedText(ModuleText.LOAD_ERROR, it))) }
-                    statuses.onFailure { content.addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGINS_READ_FAILED, it.message))) }
-                    if (statuses.getOrNull()?.isEmpty() == true) content.addView(embeddedInfoCard(activity, localizedText(ModuleText.NO_PLUGINS)))
+                    val scrollPosition = if (restoreInitialScroll) initialScrollY else scroll.scrollY
+                    restoreInitialScroll = false
+                    parent.removeAllViews()
+                    parent.addView(
+                        embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)),
+                        matchWidthWrapContent(),
+                    )
+                    manager.startupError?.let {
+                        parent.addView(embeddedSpacer(activity, 12))
+                        parent.addView(
+                            embeddedInfoCard(activity, localizedText(ModuleText.LOAD_ERROR, it)),
+                            matchWidthWrapContent(),
+                        )
+                    }
+                    statuses.onFailure {
+                        parent.addView(embeddedSpacer(activity, 12))
+                        parent.addView(
+                            embeddedInfoCard(activity, localizedText(ModuleText.PLUGINS_READ_FAILED, it.message)),
+                            matchWidthWrapContent(),
+                        )
+                    }
+                    if (statuses.getOrNull()?.isEmpty() == true) {
+                        parent.addView(embeddedSpacer(activity, 12))
+                        parent.addView(
+                            embeddedInfoCard(activity, localizedText(ModuleText.NO_PLUGINS)),
+                            matchWidthWrapContent(),
+                        )
+                    }
                     statuses.getOrDefault(emptyList()).forEach { status ->
                         val manifest = status.installed.manifest
                         val state = when (status.state) {
@@ -54,13 +96,21 @@ internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
                             PluginRunState.UNSUPPORTED -> localizedText(ModuleText.PLUGIN_UNSUPPORTED)
                             PluginRunState.FAILED -> localizedText(ModuleText.PLUGIN_FAILED)
                         }
-                        content.addView(embeddedSpacer(activity, 12))
-                        content.addView(embeddedCard(activity, manifest.name) {
-                            addView(embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_STATUS_DETAILS, manifest.author, manifest.versionName, manifest.id, state, status.runningVersion?.let { localizedText(ModuleText.PLUGIN_RUNNING_VERSION, it) }.orEmpty(), status.message)))
-                            addView(embeddedSettingRow(activity, localizedText(ModuleText.ENABLE_NEXT_START), if (status.pendingRestart) localizedText(ModuleText.RESTART_PENDING) else "", status.installed.enabled) { enabled ->
+                        parent.addView(embeddedSpacer(activity, 12))
+                        parent.addView(embeddedCard(activity, manifest.name) {
+                            addView(TextView(activity).apply {
+                                text = localizedText(ModuleText.PLUGIN_STATUS_DETAILS, manifest.author, manifest.versionName, manifest.id, state, status.runningVersion?.let { localizedText(ModuleText.PLUGIN_RUNNING_VERSION, it) }.orEmpty(), status.message)
+                                textSize = 12f
+                                setEmbeddedTextColor(activity) { it.secondary }
+                                setSingleLine(false)
+                                setPadding(0, 0, 0, dp(activity, 12))
+                            }, matchWidthWrapContent())
+                            addView(embeddedSettingRow(activity, localizedText(ModuleText.ENABLE_NEXT_START), if (status.pendingRestart) localizedText(ModuleText.RESTART_PENDING) else "", status.installed.enabled,
+                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Power, activity)) { enabled ->
                                 action { manager.store.setEnabled(manifest.id, enabled) }
                             })
-                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, localizedText(ModuleText.CONFLICT_DETAILS), localizedText(ModuleText.ITEM_COUNT, status.conflicts.size)) {
+                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, localizedText(ModuleText.CONFLICT_DETAILS), localizedText(ModuleText.ITEM_COUNT, status.conflicts.size),
+                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Conflict, activity)) {
                                 val details = status.conflicts.joinToString("\n\n") {
                                     localizedText(ModuleText.PLUGIN_CONFLICT_DETAILS,
                                         localizedText(if (it.blocking) ModuleText.CONFLICT_BLOCKING else ModuleText.CONFLICT_WARNING),
@@ -69,31 +119,38 @@ internal fun EmbeddedSettingsHost.showPluginManagement(activity: Activity) {
                                 val info = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.CONFLICT_DETAILS)).setMessage(details).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
                                 pluginDialogs += WeakReference(info); info.show()
                             })
-                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "") { openPluginSettings(activity, manifest.id) })
-                            addView(Button(activity).apply {
-                                bindEmbeddedButtonTheme(activity)
-                                text = localizedText(ModuleText.DELETE)
-                                setOnClickListener {
-                                    val confirm = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
-                                        .setMessage(localizedText(ModuleText.PLUGIN_DELETE_NOTICE))
-                                        .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ -> action { manager.store.delete(manifest.id) } }.setNegativeButton(localizedText(ModuleText.CANCEL), null).create()
-                                    pluginDialogs += WeakReference(confirm); confirm.show()
-                                }
-                            })
-                        })
+                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "",
+                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Settings, activity)) { openPluginSettings(activity, manifest.id) })
+                            addView(embeddedSpacer(activity, 8))
+                            addView(embeddedActionButton(activity, localizedText(ModuleText.DELETE)) {
+                                val confirm = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
+                                    .setMessage(localizedText(ModuleText.PLUGIN_DELETE_NOTICE))
+                                    .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ -> action { manager.store.delete(manifest.id) } }.setNegativeButton(localizedText(ModuleText.CANCEL), null).create()
+                                pluginDialogs += WeakReference(confirm); confirm.show()
+                            }, matchWidthWrapContent())
+                        }, matchWidthWrapContent())
+                    }
+                    if (!contentReady) {
+                        contentReady = true
+                        onContentReady()
                     }
                     mainHandler.postDelayed(this, 1500)
-                    scroll.post { if (dialog.isShowing) scroll.scrollTo(0, scrollPosition) }
+                    scroll.post { if (active.get()) scroll.scrollTo(0, scrollPosition) }
                 }
             }
         }
     }
-    dialog.setOnDismissListener { mainHandler.removeCallbacks(refresh); pluginDialogs.removeAll { it.get() == null || it.get() === dialog } }
-    dialog.show()
-    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-        launchSafPicker(activity, EmbeddedSafOperation.PluginZip, "*/*", arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
-    }
+    parent.addView(
+        embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)),
+        matchWidthWrapContent(),
+    )
     mainHandler.post(refresh)
+    return {
+        if (active.compareAndSet(true, false)) {
+            mainHandler.removeCallbacks(refresh)
+            refreshing.set(false)
+        }
+    }
 }
 
 internal fun EmbeddedSettingsHost.importPluginZip(uri: Uri) {
@@ -143,10 +200,48 @@ internal fun EmbeddedSettingsHost.openPluginSettings(activity: Activity, id: Str
     val session = plugins?.openSettings(id, embeddedThemedContext(activity)) ?: return Toast.makeText(activity, localizedText(ModuleText.PLUGIN_NO_SETTINGS), Toast.LENGTH_SHORT).show()
     try {
         excludeEmbeddedTheme(session.view)
-        val dialog = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.PLUGIN_SETTINGS)).setView(session.view).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
+        lateinit var dialog: AlertDialog
+        val panel = embeddedPluginPageContent(activity, localizedText(ModuleText.PLUGIN_SETTINGS), session.view) { dialog.dismiss() }
+        dialog = embeddedDialogBuilder(activity).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
+            .apply { setView(panel, 0, 0, 0, 0) }
         dialog.setOnDismissListener { session.close() }
         pluginDialogs += WeakReference(dialog); dialog.show()
     } catch (error: Throwable) {
         session.close(); Toast.makeText(activity, localizedText(ModuleText.SETTINGS_OPEN_FAILED, error.message), Toast.LENGTH_LONG).show()
     }
+}
+
+private fun EmbeddedSettingsHost.embeddedPluginPageContent(
+    activity: Activity,
+    title: String,
+    content: View,
+    onBack: () -> Unit,
+): LinearLayout = LinearLayout(activity).apply {
+    orientation = LinearLayout.VERTICAL
+    val hostInset = dp(activity, if (isEmbeddedPhone(activity)) 0 else 8)
+    setPadding(hostInset, 0, hostInset, 0)
+    addView(LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        val headerInset = dp(activity, if (isEmbeddedPhone(activity)) 8 else 0)
+        setPadding(headerInset, 0, headerInset, 0)
+        addView(ImageView(activity).apply {
+            setEmbeddedImageDrawable(activity, embeddedSvgDrawable(EmbeddedSvgIcon.Back, activity) ?: loadEmbeddedArrowIcon(activity))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            contentDescription = localizedText(ModuleText.BACK)
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
+            bindEmbeddedClickFeedback(activity, cornerRadiusDp = 12)
+            setOnClickListener { onBack() }
+        }, LinearLayout.LayoutParams(dp(activity, 44), embeddedTopBarHeight(activity)))
+        addView(TextView(activity).apply {
+            text = title
+            textSize = embeddedTextSize(activity, 19f, 18f)
+            setEmbeddedTextColor(activity) { colors -> colors.onSurface }
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            maxLines = 2
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, embeddedTopBarHeight(activity)))
+    addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 }

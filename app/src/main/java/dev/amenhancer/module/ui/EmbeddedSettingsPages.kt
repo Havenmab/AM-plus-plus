@@ -63,6 +63,8 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         var onPluginBoundsChanged: ((RectF) -> Unit)? = null
         var onTransitionFinished: (() -> Unit)? = null
         lateinit var dialog: AlertDialog
+        val barHeight = dp(activity, 64)
+        val barHorizontalInset = dp(activity, if (isEmbeddedPhone(activity)) 8 else 0)
 
         val pageHost = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -74,9 +76,8 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         val topBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = embeddedTopBarHeight(activity)
-            val phoneHeaderInset = dp(activity, if (isEmbeddedPhone(activity)) 8 else 0)
-            setPadding(phoneHeaderInset, 0, phoneHeaderInset, 0)
+            minimumHeight = barHeight
+            setPadding(barHorizontalInset, 0, barHorizontalInset, 0)
         }
         val backButton = ImageView(activity).apply {
             setEmbeddedImageDrawable(activity,
@@ -103,11 +104,13 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             textSize = embeddedTextSize(activity, 19f, 18f)
             setEmbeddedTextColor(activity) { colors -> colors.onSurface }
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
             setSingleLine(false)
             maxLines = 2
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        topBar.addView(backButton, LinearLayout.LayoutParams(dp(activity, 44), embeddedTopBarHeight(activity)))
+        topBar.addView(backButton, LinearLayout.LayoutParams(dp(activity, 44), barHeight))
         topBar.addView(moduleIcon, LinearLayout.LayoutParams(embeddedHeaderIconSize(activity), embeddedHeaderIconSize(activity)).apply {
             marginStart = dp(activity, if (isEmbeddedPhone(activity)) 0 else 8)
             marginEnd = dp(activity, 8)
@@ -126,7 +129,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         topBar.addView(pageAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 48)))
         pageHost.addView(topBar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            embeddedTopBarHeight(activity),
+            barHeight,
         ))
         val pageContent = FrameLayout(activity)
         pageHost.addView(pageContent, LinearLayout.LayoutParams(
@@ -142,8 +145,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
             setEmbeddedBackgroundColor(activity) { colors -> colors.pageBackground }
-            val horizontalPadding = dp(activity, if (isEmbeddedPhone(activity)) 16 else 12)
-            setPadding(horizontalPadding, 0, horizontalPadding, 0)
+            setPadding(barHorizontalInset, 0, barHorizontalInset, 0)
         }
         val closeButton = Button(activity).apply {
             text = localizedText(ModuleText.CLOSE)
@@ -157,7 +159,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         ))
         pageHost.addView(closeBar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(activity, if (isEmbeddedPhone(activity)) 56 else 48),
+            barHeight,
         ))
 
         val root = object : FrameLayout(activity) {
@@ -315,7 +317,11 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     dp(activity, horizontalInset),
                     0,
                     dp(activity, horizontalInset),
-                    dp(activity, if (lyricsPage) 8 else 12),
+                    dp(activity, when {
+                        page == EmbeddedSettingsPage.MAIN -> 0
+                        lyricsPage -> 8
+                        else -> 12
+                    }),
                 )
             }
             val content = LinearLayout(activity).apply {
@@ -597,11 +603,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
     parent.addView(embeddedCard(activity, null) {
         setPadding(dp(activity, 4), dp(activity, 4), dp(activity, 4), dp(activity, 4))
         fun entry(title: ModuleText, summary: String, icon: EmbeddedSvgIcon, onClick: () -> Unit) {
-            if (childCount > 0) addView(embeddedDivider(activity).apply {
-                alpha = 0.35f
-                (layoutParams as LinearLayout.LayoutParams).marginStart = dp(activity, 60)
-                (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(activity, 12)
-            })
+            if (childCount > 0) addView(embeddedSpacer(activity, 1))
             addView(embeddedNavigationRow(
                 activity = activity,
                 title = localizedText(title),
@@ -648,11 +650,11 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
     onClearFont: () -> Unit,
 ) {
     val settings = currentSettings()
-    fun LinearLayout.separator() {
-        if (childCount > 0) addView(embeddedDivider(activity).apply { alpha = 0.35f })
+    fun LinearLayout.spaceBeforeRow() {
+        if (childCount > 0) addView(embeddedSpacer(activity, 1))
     }
     fun LinearLayout.setting(title: ModuleText, summary: ModuleText, checked: Boolean, onChanged: (Boolean) -> Unit) {
-        separator()
+        spaceBeforeRow()
         addView(embeddedSettingRow(activity, localizedText(title), localizedText(summary), checked, onChanged = onChanged))
     }
 
@@ -672,7 +674,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
                     settings.lyricEffectsOptimizationEnabled) {
                     onSettingsChanged(currentSettings().copy(lyricEffectsOptimizationEnabled = it))
                 }
-                separator()
+                spaceBeforeRow()
                 addView(embeddedBlurRadiusRow(activity, settings.lyricBlurRadiusOffsetPx) {
                     onSettingsChanged(currentSettings().copy(lyricBlurRadiusOffsetPx = it))
                 })
@@ -700,7 +702,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
                             pageRefresh?.invoke()
                         }
                         if (settings.phoneLiquidGlassCollapseEnabled) {
-                            separator()
+                            spaceBeforeRow()
                             addView(embeddedNavigationRow(activity,
                                 localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS),
                                 localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY),
@@ -738,7 +740,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
                 setting(ModuleText.TITLE_CORRECTION, ModuleText.TITLE_CORRECTION_SUMMARY, settings.titleCorrectionEnabled) {
                     onSettingsChanged(currentSettings().copy(titleCorrectionEnabled = it))
                 }
-                separator()
+                spaceBeforeRow()
                 addView(embeddedNavigationRow(activity,
                     localizedText(ModuleText.TITLE_CORRECTION_MODE),
                     localizedText(ModuleText.VALUE_RESTART_REQUIRED, localizedText(settings.titleCorrectionMode.displayText)),
@@ -761,7 +763,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
                     onCellularDataEntryChanged(it)
                     pageRefresh?.invoke()
                 }
-                separator()
+                spaceBeforeRow()
                 addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
                     onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))
                     pageRefresh?.invoke()
@@ -1025,8 +1027,12 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
                 val visibleGroups = state.visibleGroups
                 visibleGroups.forEachIndexed { index, group ->
                     entriesRegion.addView(embeddedCustomLyricsEntryRow(activity, group, song))
-                    if (index < visibleGroups.lastIndex) entriesRegion.addView(embeddedDivider(activity).apply {
+                    if (index < visibleGroups.lastIndex) entriesRegion.addView(View(activity).apply {
                         alpha = 0.35f
+                        setEmbeddedBackgroundColor(activity) { colors -> colors.outline }
+                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 1)).apply {
+                        marginStart = dp(activity, if (isEmbeddedPhone(activity)) 12 else 8)
+                        marginEnd = dp(activity, 8)
                     })
                 }
                 entriesRegion.addView(TextView(activity).apply {
@@ -1162,13 +1168,14 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
     ): View = LinearLayout(activity).apply {
         val entry = group.primary
         orientation = LinearLayout.VERTICAL
-        setPadding(
-            0,
-            dp(activity, 12),
-            0,
-            dp(activity, 12),
+        // Use the same content insets as the compact settings rows above.
+        setPaddingRelative(
+            dp(activity, if (isEmbeddedPhone(activity)) 12 else 8),
+            dp(activity, 10),
+            dp(activity, 8),
+            dp(activity, 10),
         )
-        minimumHeight = dp(activity, 72)
+        minimumHeight = dp(activity, 68)
         val artist = song
             ?.takeIf { it.appleMusicId == entry.appleMusicId }
             ?.artist
@@ -1218,18 +1225,24 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                     runAsync(activity) { controller.setLyricsEnabled(group.appleMusicIds, checked) }
                 }
             }, LinearLayout.LayoutParams(dp(activity, if (isEmbeddedPhone(activity)) 56 else 48), dp(activity, 44)))
-            addView(ImageView(activity).apply {
-                setEmbeddedImageDrawable(activity,
-                    EmbeddedGlyphDrawable(
-                        EmbeddedGlyphKind.MoreVertical,
-                        EmbeddedSettingsPalette.Light.onSurfaceVariant,
-                    ),
-                )
-                scaleType = ImageView.ScaleType.CENTER
+            addView(FrameLayout(activity).apply {
                 contentDescription = localizedText(ModuleText.MORE_LYRICS_ACTIONS)
                 isClickable = true
                 isFocusable = true
-                setPadding(dp(activity, 6), dp(activity, 8), dp(activity, 6), dp(activity, 8))
+                addView(ImageView(activity).apply {
+                    setEmbeddedImageDrawable(activity,
+                        EmbeddedGlyphDrawable(
+                            EmbeddedGlyphKind.MoreVertical,
+                            EmbeddedSettingsPalette.Light.onSurfaceVariant,
+                        ),
+                    )
+                    scaleType = ImageView.ScaleType.CENTER
+                    setPadding(dp(activity, 6), dp(activity, 8), dp(activity, 6), dp(activity, 8))
+                    // Align the ink to the content edge while retaining the full hit area.
+                    translationX = dp(activity, 20).toFloat() *
+                        if (activity.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) -1f else 1f
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 bindEmbeddedClickFeedback(activity, cornerRadiusDp = 12)
                 setOnClickListener { showEmbeddedLyricsOverflowMenu(activity, group, song, this) }
             }, LinearLayout.LayoutParams(dp(activity, 44), dp(activity, 44)))

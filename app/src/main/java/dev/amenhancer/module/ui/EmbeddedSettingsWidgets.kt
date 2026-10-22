@@ -819,29 +819,15 @@ internal fun EmbeddedSettingsHost.embeddedLyricsEditorButtonRow(
             ).apply { contentDescription = action.label }
             addView(
                 button,
-                if (compactRow) {
+                (if (compactRow) {
                     LinearLayout.LayoutParams(0, dp(activity, 32), 1f)
                 } else {
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         dp(activity, 32),
                     )
-                },
+                }).apply { if (index > 0) marginStart = dp(activity, 8) },
             )
-            if (index < actions.lastIndex) {
-                addView(TextView(activity).apply {
-                    text = "|"
-                    textSize = embeddedTextSize(activity, 14f, 13f)
-                    includeFontPadding = false
-                    gravity = Gravity.CENTER
-                    setEmbeddedTextColor(activity) { colors -> colors.secondary }
-                    setPadding(dp(activity, 2), 0, dp(activity, 2), 0)
-                    isClickable = false
-                }, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    dp(activity, 32),
-                ))
-            }
         }
     }
 
@@ -1110,7 +1096,9 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
                 icon = icon,
                 onClick = onClick,
             )
-            container.addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            container.addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                if (container.childCount > 0) marginStart = dp(activity, 1)
+            })
         }
 
         addAction(
@@ -1123,7 +1111,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             ),
             onClick = { onAdd() },
         )
-        container.addView(embeddedCompactLyricsActionDivider(activity))
         addAction(
             label = "TTML",
             description = localizedText(ModuleText.IMPORT_TTML),
@@ -1134,7 +1121,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             ),
             onClick = { onTtml() },
         )
-        container.addView(embeddedCompactLyricsActionDivider(activity))
         addAction(
             label = localizedText(ModuleText.UPDATE),
             description = localizedText(ModuleText.LYRICS_UPDATE),
@@ -1144,7 +1130,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             ),
             onClick = { onUpdate() },
         )
-        container.addView(embeddedCompactLyricsActionDivider(activity))
         addAction(
             label = localizedText(ModuleText.BACKUP),
             description = localizedText(ModuleText.BACKUP_AND_RESTORE),
@@ -1193,16 +1178,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionItem(
             foreground = embeddedActionRipple(activity, colors)
         }
         setOnClickListener { fromEmbeddedSettingsView(this) { onClick(this) } }
-    }
-
-
-internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionDivider(activity: Activity): View = View(activity).apply {
-        setEmbeddedBackgroundColor(activity) { it.actionDivider }
-        layoutParams = LinearLayout.LayoutParams(
-            dp(activity, 1),
-            dp(activity, 42),
-        ).apply { gravity = Gravity.CENTER_VERTICAL }
-        contentDescription = null
     }
 
 
@@ -1456,32 +1431,6 @@ internal fun EmbeddedSettingsHost.embeddedSpacer(activity: Activity, height: Int
     }
 
 
-internal fun EmbeddedSettingsHost.embeddedDivider(activity: Activity): View = View(activity).apply {
-        setEmbeddedBackgroundColor(activity) { colors -> colors.divider }
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(activity, 1),
-        ).apply {
-            marginStart = 0
-            marginEnd = 0
-        }
-    }
-
-    /** Divider for the compact lyrics header: aligns to the reference row edge. */
-
-internal fun EmbeddedSettingsHost.embeddedCustomLyricsDivider(activity: Activity): View = View(activity).apply {
-        setEmbeddedBackgroundColor(activity) { colors -> colors.divider }
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(activity, 1),
-        ).apply {
-            val inset = dp(activity, if (isEmbeddedPhone(activity)) 16 else 6)
-            marginStart = inset
-            marginEnd = inset
-        }
-    }
-
-
 internal fun EmbeddedSettingsHost.addSwitch(
         parent: LinearLayout,
         activity: Activity,
@@ -1565,7 +1514,7 @@ internal fun EmbeddedSettingsHost.addLyricsManagement(
             }
             listOf(
                 "AMLL" to EmbeddedOnlineSource.AMLL,
-                "AM Lyrics" to EmbeddedOnlineSource.AM_LYRICS,
+                "AM-Lyrics" to EmbeddedOnlineSource.AM_LYRICS,
                 "Lunabeat" to EmbeddedOnlineSource.LUNABEAT,
             ).forEach { (label, source) ->
                 onlineRow.addView(

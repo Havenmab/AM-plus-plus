@@ -641,15 +641,17 @@ internal fun View.bindEmbeddedClickFeedback(
     cornerRadiusDp: Int = 12,
 ) {
     stateListAnimator = null
+    val ripple = RippleDrawable(
+        ColorStateList.valueOf(Color.TRANSPARENT),
+        null,
+        EmbeddedG3Drawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = cornerRadiusDp * activity.resources.displayMetrics.density
+        },
+    )
+    foreground = ripple
     bindEmbeddedTheme(activity) { colors ->
-        foreground = RippleDrawable(
-            ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000),
-            null,
-            EmbeddedG3Drawable().apply {
-                setColor(Color.WHITE)
-                cornerRadius = cornerRadiusDp * activity.resources.displayMetrics.density
-            },
-        )
+        ripple.setColor(ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000))
     }
 }
 

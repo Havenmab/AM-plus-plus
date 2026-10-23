@@ -1289,12 +1289,13 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
                 })
                 // A bounded mask cuts off the ripple near the content edge.
                 stateListAnimator = null
+                val ripple = RippleDrawable(ColorStateList.valueOf(Color.TRANSPARENT), null, null).apply {
+                    radius = dp(activity, 18)
+                }
+                foreground = ripple
                 bindEmbeddedTheme(activity) { colors ->
-                    foreground = RippleDrawable(
-                        ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000),
-                        null,
-                        null,
-                    ).apply { radius = dp(activity, 18) }
+                    // Recolour the existing ripple without cancelling its release animation.
+                    ripple.setColor(ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000))
                 }
                 setOnClickListener { showEmbeddedLyricsOverflowMenu(activity, group, song, this) }
             }, LinearLayout.LayoutParams(dp(activity, 44), dp(activity, 44)))

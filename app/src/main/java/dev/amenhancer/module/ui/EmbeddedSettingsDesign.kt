@@ -132,7 +132,8 @@ internal class EmbeddedPanelShadow(private val density: Float) {
     private var tile: Bitmap? = null
     private var tileRadius = -1f
     private var tileCorner = 0
-    private val tileOutset = kotlin.math.ceil(4f * density).toInt() + 1
+    /** Pixel inset required by [draw]: 4dp of AO plus one guard pixel. */
+    internal val outsetPx = kotlin.math.ceil(4f * density).toInt() + 1
     private val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val sourceStops = IntArray(4)
     private val targetX = FloatArray(4)
@@ -153,12 +154,12 @@ internal class EmbeddedPanelShadow(private val density: Float) {
     fun prepare(radius: Float) {
         if (tile != null || radius <= 0f) return
         val corner = kotlin.math.ceil(radius * 1.5f).toInt()
-        val edge = tileOutset + corner
+        val edge = outsetPx + corner
         val size = edge * 2 + 1
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         drawVector(Canvas(bitmap), RectF(
-            tileOutset.toFloat(), tileOutset.toFloat(),
-            (size - tileOutset).toFloat(), (size - tileOutset).toFloat(),
+            outsetPx.toFloat(), outsetPx.toFloat(),
+            (size - outsetPx).toFloat(), (size - outsetPx).toFloat(),
         ), radius, 1f)
         tileRadius = radius
         tileCorner = corner
@@ -179,14 +180,14 @@ internal class EmbeddedPanelShadow(private val density: Float) {
             (tile == null || tileRadius == radius)
         ) {
             prepare(radius)
-            targetX[0] = bounds.left - tileOutset
+            targetX[0] = bounds.left - outsetPx
             targetX[1] = bounds.left + tileCorner
             targetX[2] = bounds.right - tileCorner
-            targetX[3] = bounds.right + tileOutset
-            targetY[0] = bounds.top - tileOutset
+            targetX[3] = bounds.right + outsetPx
+            targetY[0] = bounds.top - outsetPx
             targetY[1] = bounds.top + tileCorner
             targetY[2] = bounds.bottom - tileCorner
-            targetY[3] = bounds.bottom + tileOutset
+            targetY[3] = bounds.bottom + outsetPx
             tilePaint.alpha = (255f * opacity.coerceIn(0f, 1f)).toInt()
             val bitmap = requireNotNull(tile)
             for (row in 0..2) for (column in 0..2) {

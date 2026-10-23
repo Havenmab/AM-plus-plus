@@ -7,11 +7,14 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.DrawableWrapper
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.InputFilter
 import android.text.InputType
@@ -1267,13 +1270,32 @@ internal fun EmbeddedSettingsHost.showEmbeddedActionMenu(
         destructiveIndex: Int = -1,
     ) {
         if (!anchor.isAttachedToWindow || activity.isFinishing || activity.isDestroyed || actions.isEmpty()) return
-        refreshEmbeddedTheme(activity)
         val root = anchor.rootView
         (root.getTag(R.id.ampp_embedded_popup_menu) as? ListPopupWindow)?.dismiss()
-        val inset = dp(activity, 8)
-        val surface = EmbeddedG3Drawable().apply { cornerRadius = dp(activity, 18).toFloat() }
+        val shadow = EmbeddedPanelShadow(activity.resources.displayMetrics.density)
+        val shadowInset = shadow.outsetPx
+        val inset = dp(activity, 8) + shadowInset
+        val radius = dp(activity, 18).toFloat()
+        shadow.prepare(radius)
+        val surface = EmbeddedG3Drawable().apply { cornerRadius = radius }
         val selection = EmbeddedG3Drawable().apply { cornerRadius = dp(activity, 12).toFloat() }
-        val menuBackground = object : DrawableWrapper(surface) {
+        val menuBackground = object : InsetDrawable(surface, shadowInset) {
+            private val surfaceBounds = RectF()
+
+            override fun draw(canvas: Canvas) {
+                surfaceBounds.set(
+                    (bounds.left + shadowInset).toFloat(), (bounds.top + shadowInset).toFloat(),
+                    (bounds.right - shadowInset).toFloat(), (bounds.bottom - shadowInset).toFloat(),
+                )
+                shadow.draw(canvas, surfaceBounds, radius)
+                super.draw(canvas)
+            }
+
+            override fun getOutline(outline: Outline) {
+                // The cached contact shadow replaces the platform's broad elevation shadow.
+                outline.setEmpty()
+            }
+
             override fun getPadding(padding: android.graphics.Rect): Boolean {
                 padding.set(inset, inset, inset, inset)
                 return true
@@ -1324,9 +1346,8 @@ internal fun EmbeddedSettingsHost.showEmbeddedActionMenu(
             row.measure(widthSpec, heightSpec)
             contentWidth = maxOf(contentWidth, row.measuredWidth)
         }
-        val popup = ListPopupWindow(
-            embeddedThemedContext(activity), null, 0, R.style.Widget_AppleMusicEnhancer_ActionMenu,
-        ).apply {
+        // Use framework styling: module style resources cannot be resolved by the host context.
+        val popup = ListPopupWindow(embeddedThemedContext(activity)).apply {
             anchorView = anchor
             isModal = true
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED

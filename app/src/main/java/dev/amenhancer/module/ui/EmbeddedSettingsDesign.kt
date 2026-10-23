@@ -1,5 +1,6 @@
 package dev.amenhancer.module.ui
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -128,6 +129,16 @@ internal class EmbeddedPanelShadow(private val density: Float) {
     private val path = Path()
     private val localBounds = RectF()
     private var cachedRadius = -1f
+    private var tile: Bitmap? = null
+    private var tileRadius = -1f
+    private var tileCorner = 0
+    private val tileOutset = kotlin.math.ceil(16f * density).toInt() + 1
+    private val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val sourceStops = IntArray(4)
+    private val targetX = FloatArray(4)
+    private val targetY = FloatArray(4)
+    private val sourceRect = Rect()
+    private val targetRect = RectF()
     private val layerAlphas = IntArray(16) { index ->
         fun opacity(distance: Float): Float {
             val remaining = 1f - distance / 16f
@@ -140,6 +151,50 @@ internal class EmbeddedPanelShadow(private val density: Float) {
 
     fun draw(canvas: Canvas, bounds: RectF, radius: Float, opacity: Float = 1f) {
         if (bounds.isEmpty || opacity <= 0f) return
+        val corner = kotlin.math.ceil(radius * 1.5f).toInt()
+        // Fixed-radius panels change height during navigation. Rasterize the
+        // existing shadow once; stretch only its straight edges, never corners.
+        // Shrinking return targets retain the exact vector contour below.
+        if (radius > 0f && bounds.width() > corner * 2 && bounds.height() > corner * 2 &&
+            (tile == null || tileRadius == radius)
+        ) {
+            if (tile == null) {
+                tileRadius = radius
+                tileCorner = corner
+                val edge = tileOutset + corner
+                val size = edge * 2 + 1
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                drawVector(Canvas(bitmap), RectF(
+                    tileOutset.toFloat(), tileOutset.toFloat(),
+                    (size - tileOutset).toFloat(), (size - tileOutset).toFloat(),
+                ), radius, 1f)
+                sourceStops[1] = edge
+                sourceStops[2] = edge + 1
+                sourceStops[3] = size
+                tile = bitmap
+            }
+            targetX[0] = bounds.left - tileOutset
+            targetX[1] = bounds.left + tileCorner
+            targetX[2] = bounds.right - tileCorner
+            targetX[3] = bounds.right + tileOutset
+            targetY[0] = bounds.top - tileOutset
+            targetY[1] = bounds.top + tileCorner
+            targetY[2] = bounds.bottom - tileCorner
+            targetY[3] = bounds.bottom + tileOutset
+            tilePaint.alpha = (255f * opacity.coerceIn(0f, 1f)).toInt()
+            val bitmap = requireNotNull(tile)
+            for (row in 0..2) for (column in 0..2) {
+                if (row == 1 && column == 1) continue
+                sourceRect.set(sourceStops[column], sourceStops[row], sourceStops[column + 1], sourceStops[row + 1])
+                targetRect.set(targetX[column], targetY[row], targetX[column + 1], targetY[row + 1])
+                canvas.drawBitmap(bitmap, sourceRect, targetRect, tilePaint)
+            }
+            return
+        }
+        drawVector(canvas, bounds, radius, opacity)
+    }
+
+    private fun drawVector(canvas: Canvas, bounds: RectF, radius: Float, opacity: Float) {
         if (localBounds.width() != bounds.width() || localBounds.height() != bounds.height() || cachedRadius != radius) {
             localBounds.set(0f, 0f, bounds.width(), bounds.height())
             cachedRadius = radius

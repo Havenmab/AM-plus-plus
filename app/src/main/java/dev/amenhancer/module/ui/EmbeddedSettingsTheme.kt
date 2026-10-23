@@ -282,12 +282,6 @@ internal fun View.morphEmbeddedSettingsPage(
     var active = true
     var animator: ValueAnimator? = null
     lateinit var attachListener: View.OnAttachStateChangeListener
-    val cacheIncoming = outgoing != null && incoming.isHardwareAccelerated &&
-        incoming.layerType == View.LAYER_TYPE_NONE && ValueAnimator.areAnimatorsEnabled()
-
-    fun releaseIncomingLayer() {
-        if (cacheIncoming) incoming.setLayerType(View.LAYER_TYPE_NONE, null)
-    }
 
     fun finishCancelled() {
         if (!active) return
@@ -299,7 +293,6 @@ internal fun View.morphEmbeddedSettingsPage(
         if (motion?.isStarted == true) motion.cancel()
         incoming.removeOnAttachStateChangeListener(attachListener)
         outgoing?.removeOnAttachStateChangeListener(attachListener)
-        releaseIncomingLayer()
         incoming.alpha = 1f
         incoming.translationX = 0f
         incoming.translationY = 0f
@@ -319,7 +312,6 @@ internal fun View.morphEmbeddedSettingsPage(
             animator = null
             incoming.removeOnAttachStateChangeListener(attachListener)
             outgoing?.removeOnAttachStateChangeListener(attachListener)
-            releaseIncomingLayer()
             applyState(1f)
             onFinished()
         }
@@ -341,12 +333,6 @@ internal fun View.morphEmbeddedSettingsPage(
         })
     }
     animator = motion
-    // Build before the animator starts: setLayerType alone defers the complex
-    // lyrics page's first draw until it becomes visible during the fade.
-    if (cacheIncoming) {
-        incoming.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        incoming.buildLayer()
-    }
     incoming.addOnAttachStateChangeListener(attachListener)
     outgoing?.addOnAttachStateChangeListener(attachListener)
     applyState(0f)

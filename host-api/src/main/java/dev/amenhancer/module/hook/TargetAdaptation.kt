@@ -48,6 +48,13 @@ data class TargetAdaptation(
     val startupPagePrewarm: StartupPagePrewarmTarget = StartupPagePrewarmTarget {
         TargetCapabilityInstall.Unsupported("Startup page prewarming has no exact host contract")
     },
+    /**
+     * Full-page self-drawn lyrics player (spec §7). Unsupported by default: an unadapted host
+     * never mounts an overlay, so the native lyrics page keeps working untouched.
+     */
+    val lyricsPlayer: LyricsPlayerTarget = LyricsPlayerTarget {
+        TargetCapabilityInstall.Unsupported("Lyrics player has no exact host contract")
+    },
 ) {
 }
 

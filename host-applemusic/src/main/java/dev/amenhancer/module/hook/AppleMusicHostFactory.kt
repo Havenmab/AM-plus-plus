@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.hook.player.AppleMusicLyricPlayerTarget
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
@@ -124,6 +125,7 @@ object AppleMusicHostFactory {
                 profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
                 AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            lyricsPlayer = AppleMusicLyricPlayerTarget(profile, classLoader),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

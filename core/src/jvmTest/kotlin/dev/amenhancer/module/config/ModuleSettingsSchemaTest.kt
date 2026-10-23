@@ -115,6 +115,11 @@ class ModuleSettingsSchemaTest {
                 "lyric_blur_radius_offset_px" to 6,
                 "lyrics_font_scale_percent" to 85,
                 "lyrics_line_spacing_scale_percent" to 80,
+                "lyrics_player_enabled" to false,
+                "lyrics_player_motion_percent" to 100,
+                "lyrics_player_stagger_ms" to 50,
+                "lyrics_player_emphasis_percent" to 114,
+                "lyrics_player_font_scale_percent" to 100,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -182,6 +187,11 @@ class ModuleSettingsSchemaTest {
                 "lyric_blur_radius_offset_px" to 0,
                 "lyrics_font_scale_percent" to 85,
                 "lyrics_line_spacing_scale_percent" to 80,
+                "lyrics_player_enabled" to false,
+                "lyrics_player_motion_percent" to 100,
+                "lyrics_player_stagger_ms" to 50,
+                "lyrics_player_emphasis_percent" to 114,
+                "lyrics_player_font_scale_percent" to 100,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -372,6 +382,152 @@ class ModuleSettingsSchemaTest {
             ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
             clamped["lyrics_line_spacing_scale_percent"],
         )
+    }
+
+    @Test
+    fun `the lyrics player defaults to off with the reference motion values`() {
+        val defaults = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertFalse(defaults.lyricsPlayerEnabled)
+        assertEquals(100, defaults.lyricsPlayerMotionPercent)
+        assertEquals(50, defaults.lyricsPlayerStaggerMs)
+        assertEquals(114, defaults.lyricsPlayerEmphasisPercent)
+        assertEquals(100, defaults.lyricsPlayerFontScalePercent)
+        // The model's own defaults must be the schema's defaults, otherwise an upgrading
+        // store would silently change what it renders.
+        assertEquals(
+            ModuleSettings(),
+            ModuleSettingsSchema.decode(ModuleSettingsSchema.encodeOrdinarySettings(ModuleSettings())),
+        )
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_MOTION_PERCENT, 100)
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_STAGGER_MS, 50)
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT, 114)
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT, 100)
+        // A malformed switch is not a truthy string.
+        assertFalse(
+            ModuleSettingsSchema.decode(
+                mapOf("lyrics_player_enabled" to "true"),
+            ).lyricsPlayerEnabled,
+        )
+    }
+
+    @Test
+    fun `lyrics player values are clamped to the supported ranges`() {
+        val high = ModuleSettingsSchema.decode(
+            mapOf(
+                "lyrics_player_motion_percent" to 999,
+                "lyrics_player_stagger_ms" to 999,
+                "lyrics_player_emphasis_percent" to 999,
+                "lyrics_player_font_scale_percent" to 999,
+            ),
+        )
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_MOTION_PERCENT, high.lyricsPlayerMotionPercent)
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_STAGGER_MS, high.lyricsPlayerStaggerMs)
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_EMPHASIS_PERCENT, high.lyricsPlayerEmphasisPercent)
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT, high.lyricsPlayerFontScalePercent)
+
+        val low = ModuleSettingsSchema.decode(
+            mapOf(
+                "lyrics_player_motion_percent" to 0,
+                "lyrics_player_stagger_ms" to -40,
+                "lyrics_player_emphasis_percent" to 0,
+                "lyrics_player_font_scale_percent" to 1,
+            ),
+        )
+        assertEquals(ModuleSettings.MIN_LYRICS_PLAYER_MOTION_PERCENT, low.lyricsPlayerMotionPercent)
+        assertEquals(ModuleSettings.MIN_LYRICS_PLAYER_STAGGER_MS, low.lyricsPlayerStaggerMs)
+        assertEquals(ModuleSettings.MIN_LYRICS_PLAYER_EMPHASIS_PERCENT, low.lyricsPlayerEmphasisPercent)
+        assertEquals(ModuleSettings.MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT, low.lyricsPlayerFontScalePercent)
+
+        val malformed = ModuleSettingsSchema.decode(
+            mapOf(
+                "lyrics_player_motion_percent" to "fast",
+                "lyrics_player_stagger_ms" to "slow",
+                "lyrics_player_emphasis_percent" to "big",
+                "lyrics_player_font_scale_percent" to "huge",
+            ),
+        )
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_PLAYER_MOTION_PERCENT,
+            malformed.lyricsPlayerMotionPercent,
+        )
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_PLAYER_STAGGER_MS,
+            malformed.lyricsPlayerStaggerMs,
+        )
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT,
+            malformed.lyricsPlayerEmphasisPercent,
+        )
+        assertEquals(
+            ModuleSettings.DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+            malformed.lyricsPlayerFontScalePercent,
+        )
+    }
+
+    @Test
+    fun `lyrics player values round trip through the schema`() {
+        val settings = ModuleSettings(
+            lyricsPlayerEnabled = true,
+            lyricsPlayerMotionPercent = 140,
+            lyricsPlayerStaggerMs = 0,
+            lyricsPlayerEmphasisPercent = 100,
+            lyricsPlayerFontScalePercent = 133,
+        )
+        val values = ModuleSettingsSchema.encodeOrdinarySettings(settings)
+        assertTrue(values.containsKey("lyrics_player_enabled"))
+        assertEquals(true, values["lyrics_player_enabled"])
+        assertEquals(140, values["lyrics_player_motion_percent"])
+        assertEquals(0, values["lyrics_player_stagger_ms"])
+        assertEquals(100, values["lyrics_player_emphasis_percent"])
+        assertEquals(133, values["lyrics_player_font_scale_percent"])
+        assertEquals(settings, ModuleSettingsSchema.decode(values))
+
+        // Out-of-range stored values are clamped on the way out as well.
+        val clamped = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                lyricsPlayerMotionPercent = 400,
+                lyricsPlayerStaggerMs = 400,
+                lyricsPlayerEmphasisPercent = 400,
+                lyricsPlayerFontScalePercent = 400,
+            ),
+        )
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_MOTION_PERCENT, clamped["lyrics_player_motion_percent"])
+        assertEquals(ModuleSettings.MAX_LYRICS_PLAYER_STAGGER_MS, clamped["lyrics_player_stagger_ms"])
+        assertEquals(
+            ModuleSettings.MAX_LYRICS_PLAYER_EMPHASIS_PERCENT,
+            clamped["lyrics_player_emphasis_percent"],
+        )
+        assertEquals(
+            ModuleSettings.MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+            clamped["lyrics_player_font_scale_percent"],
+        )
+    }
+
+    @Test
+    fun `a v25 store upgrades with the player switched off and the reference sliders`() {
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 25,
+                "lyrics_player_enabled" to "not-a-boolean",
+            ),
+            legacyValues = emptyMap<String, Any?>(),
+        )!!
+        assertEquals(false, upgraded["lyrics_player_enabled"])
+        assertEquals(100, upgraded["lyrics_player_motion_percent"])
+        assertEquals(50, upgraded["lyrics_player_stagger_ms"])
+        assertEquals(114, upgraded["lyrics_player_emphasis_percent"])
+        assertEquals(100, upgraded["lyrics_player_font_scale_percent"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
+    }
+
+    @Test
+    fun `the player switch alone identifies a v26 store during upgrade`() {
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf("lyrics_player_enabled" to true),
+            legacyValues = mapOf("dual_pane_enabled" to false),
+        )!!
+        assertEquals(true, upgraded["lyrics_player_enabled"])
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
     }
 
     @Test

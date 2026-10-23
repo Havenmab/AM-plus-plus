@@ -109,6 +109,27 @@ object ModuleSettingsSchema {
                 ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
                 ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
             ) ?: ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            lyricsPlayerEnabled = values.boolean(KEY_LYRICS_PLAYER_ENABLED, default = false),
+            lyricsPlayerMotionPercent = values.number(KEY_LYRICS_PLAYER_MOTION_PERCENT)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRICS_PLAYER_MOTION_PERCENT,
+                    ModuleSettings.MAX_LYRICS_PLAYER_MOTION_PERCENT,
+                ) ?: ModuleSettings.DEFAULT_LYRICS_PLAYER_MOTION_PERCENT,
+            lyricsPlayerStaggerMs = values.number(KEY_LYRICS_PLAYER_STAGGER_MS)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRICS_PLAYER_STAGGER_MS,
+                    ModuleSettings.MAX_LYRICS_PLAYER_STAGGER_MS,
+                ) ?: ModuleSettings.DEFAULT_LYRICS_PLAYER_STAGGER_MS,
+            lyricsPlayerEmphasisPercent = values.number(KEY_LYRICS_PLAYER_EMPHASIS_PERCENT)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                    ModuleSettings.MAX_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                ) ?: ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT,
+            lyricsPlayerFontScalePercent = values.number(KEY_LYRICS_PLAYER_FONT_SCALE_PERCENT)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                    ModuleSettings.MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                ) ?: ModuleSettings.DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT,
             appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
                 values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
             ),
@@ -259,6 +280,23 @@ object ModuleSettingsSchema {
                     ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
                     ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
                 ),
+            KEY_LYRICS_PLAYER_ENABLED to settings.lyricsPlayerEnabled,
+            KEY_LYRICS_PLAYER_MOTION_PERCENT to settings.lyricsPlayerMotionPercent.coerceIn(
+                ModuleSettings.MIN_LYRICS_PLAYER_MOTION_PERCENT,
+                ModuleSettings.MAX_LYRICS_PLAYER_MOTION_PERCENT,
+            ),
+            KEY_LYRICS_PLAYER_STAGGER_MS to settings.lyricsPlayerStaggerMs.coerceIn(
+                ModuleSettings.MIN_LYRICS_PLAYER_STAGGER_MS,
+                ModuleSettings.MAX_LYRICS_PLAYER_STAGGER_MS,
+            ),
+            KEY_LYRICS_PLAYER_EMPHASIS_PERCENT to settings.lyricsPlayerEmphasisPercent.coerceIn(
+                ModuleSettings.MIN_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                ModuleSettings.MAX_LYRICS_PLAYER_EMPHASIS_PERCENT,
+            ),
+            KEY_LYRICS_PLAYER_FONT_SCALE_PERCENT to settings.lyricsPlayerFontScalePercent.coerceIn(
+                ModuleSettings.MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                ModuleSettings.MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+            ),
             KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI to ModuleSettings.normalizeAppleMusicDpi(
                 settings.appleMusicDpiOverrideDpi,
             ),
@@ -520,6 +558,11 @@ object ModuleSettingsSchema {
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
         KEY_LYRICS_FONT_SCALE_PERCENT,
         KEY_LYRICS_LINE_SPACING_SCALE_PERCENT,
+        KEY_LYRICS_PLAYER_ENABLED,
+        KEY_LYRICS_PLAYER_MOTION_PERCENT,
+        KEY_LYRICS_PLAYER_STAGGER_MS,
+        KEY_LYRICS_PLAYER_EMPHASIS_PERCENT,
+        KEY_LYRICS_PLAYER_FONT_SCALE_PERCENT,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_REGION_SELECTION,
         KEY_OVERRIDE_ACCOUNT_LANGUAGE,
@@ -597,6 +640,12 @@ object ModuleSettingsSchema {
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"
     private const val KEY_LYRICS_FONT_SCALE_PERCENT = "lyrics_font_scale_percent"
     private const val KEY_LYRICS_LINE_SPACING_SCALE_PERCENT = "lyrics_line_spacing_scale_percent"
+    /** v26: the LyricsBlossom-style full-page lyrics player. */
+    private const val KEY_LYRICS_PLAYER_ENABLED = "lyrics_player_enabled"
+    private const val KEY_LYRICS_PLAYER_MOTION_PERCENT = "lyrics_player_motion_percent"
+    private const val KEY_LYRICS_PLAYER_STAGGER_MS = "lyrics_player_stagger_ms"
+    private const val KEY_LYRICS_PLAYER_EMPHASIS_PERCENT = "lyrics_player_emphasis_percent"
+    private const val KEY_LYRICS_PLAYER_FONT_SCALE_PERCENT = "lyrics_player_font_scale_percent"
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
     /** Retired v21: the fork-only master switch for the whole HLE runtime. */
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"

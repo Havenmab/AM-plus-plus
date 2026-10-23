@@ -167,9 +167,11 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 25 adds the two lyrics typography sliders on top of the merged 24
+        // Schema 25 added the two lyrics typography sliders on top of the merged 24
         // (this fork's 16..23 plus upstream 1.6.6's LLM lyrics fallback and optional
-        // dual-pane status-bar hiding). Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 25"))
+        // dual-pane status-bar hiding); 26 adds the LyricsBlossom-style full-page
+        // player's switch and its four motion/typography sliders. Glass still reuses
+        // its original keys under both versions.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 26"))
     }
 }

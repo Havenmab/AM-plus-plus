@@ -82,6 +82,40 @@ data class ModuleSettings(
      * live.
      */
     val lyricsLineSpacingScalePercent: Int = DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+    /**
+     * Enables the LyricsBlossom-style full-page lyrics player: AM++ draws the whole
+     * lyrics page (background, top bar, lyrics, transport) as an opaque overlay on top
+     * of the host's own, which keeps running underneath.
+     *
+     * Off by default, so the host's lyrics page is exactly what it always was. Read
+     * when the module installs, so it needs a restart of Apple Music to take effect.
+     */
+    val lyricsPlayerEnabled: Boolean = false,
+    /**
+     * Overall motion speed of the self-drawn player as a percentage of the reference
+     * spring timing: 100 is LyricsBlossom's own timing, below slows every spring and
+     * stagger down, above speeds them up. Clamped by the schema to
+     * [MIN_LYRICS_PLAYER_MOTION_PERCENT]..[MAX_LYRICS_PLAYER_MOTION_PERCENT]. Read live.
+     */
+    val lyricsPlayerMotionPercent: Int = DEFAULT_LYRICS_PLAYER_MOTION_PERCENT,
+    /**
+     * Per-line stagger of the self-drawn player, in milliseconds, capped at three lines
+     * by the motion policy: 0 moves every line at once, 50 is the reference. Clamped to
+     * [MIN_LYRICS_PLAYER_STAGGER_MS]..[MAX_LYRICS_PLAYER_STAGGER_MS]. Read live.
+     */
+    val lyricsPlayerStaggerMs: Int = DEFAULT_LYRICS_PLAYER_STAGGER_MS,
+    /**
+     * Peak scale of the self-drawn player's current line as a percentage: 100 removes the
+     * emphasis, 114 is LyricsBlossom's own current-line scale. Clamped to
+     * [MIN_LYRICS_PLAYER_EMPHASIS_PERCENT]..[MAX_LYRICS_PLAYER_EMPHASIS_PERCENT]. Read live.
+     */
+    val lyricsPlayerEmphasisPercent: Int = DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT,
+    /**
+     * Font size of the self-drawn player as a percentage of its reference size (34 sp on
+     * phones, 48 sp on tablets): 100 keeps the reference. Clamped to
+     * [MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT]..[MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT]. Read live.
+     */
+    val lyricsPlayerFontScalePercent: Int = DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
     /**
@@ -233,6 +267,29 @@ data class ModuleSettings(
         const val MAX_LYRICS_FONT_SCALE_PERCENT = 130
         const val MIN_LYRICS_LINE_SPACING_SCALE_PERCENT = 40
         const val MAX_LYRICS_LINE_SPACING_SCALE_PERCENT = 160
+
+        /**
+         * Reference motion speed of the self-drawn lyrics player: LyricsBlossom's own
+         * spring timing, i.e. the values in the port spec's constant table.
+         */
+        const val DEFAULT_LYRICS_PLAYER_MOTION_PERCENT = 100
+        const val MIN_LYRICS_PLAYER_MOTION_PERCENT = 40
+        const val MAX_LYRICS_PLAYER_MOTION_PERCENT = 160
+
+        /** Reference per-line stagger (50 ms, at most three lines) of the player. */
+        const val DEFAULT_LYRICS_PLAYER_STAGGER_MS = 50
+        const val MIN_LYRICS_PLAYER_STAGGER_MS = 0
+        const val MAX_LYRICS_PLAYER_STAGGER_MS = 120
+
+        /** Reference current-line scale of the player (1.0 -> 1.14); 100 disables it. */
+        const val DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT = 114
+        const val MIN_LYRICS_PLAYER_EMPHASIS_PERCENT = 100
+        const val MAX_LYRICS_PLAYER_EMPHASIS_PERCENT = 114
+
+        /** Reference font size of the player (the spec's 34 sp phone / 48 sp tablet). */
+        const val DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT = 100
+        const val MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT = 80
+        const val MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT = 140
         const val FOLLOW_SYSTEM_APPLE_MUSIC_DPI = 0
         const val MIN_APPLE_MUSIC_DPI = 160
         const val MAX_APPLE_MUSIC_DPI = 640

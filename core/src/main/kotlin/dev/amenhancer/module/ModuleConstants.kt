@@ -51,8 +51,17 @@ object ModuleConstants {
      * `lyrics_line_spacing_scale_percent`).  Both are new defaulted keys: 100 keeps
      * Apple Music's own font size and line spacing, so an upgrading store renders
      * exactly what it rendered before and no migration step is needed.
+     *
+     * 26 adds the LyricsBlossom-style full-page lyrics player: its master switch
+     * (`lyrics_player_enabled`, off) plus the four motion/typography sliders
+     * `lyrics_player_motion_percent` / `lyrics_player_stagger_ms` /
+     * `lyrics_player_emphasis_percent` / `lyrics_player_font_scale_percent`.
+     * Every key is new and defaulted, and the defaults (100 / 50 / 114 / 100) are
+     * exactly the reference values the player itself uses, so an upgrading store
+     * renders what it rendered before and no migration step is needed.  The
+     * feature being off leaves the host's own lyrics page untouched.
      */
-    const val CONFIG_SCHEMA_VERSION = 25
+    const val CONFIG_SCHEMA_VERSION = 26
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"
@@ -63,13 +72,14 @@ object ModuleConstants {
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
+    const val FEATURE_LYRICS_PLAYER = "lyrics_player"
 
     /**
      * Identifies the package a device log came from. Bump it whenever a
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-23-1.6.6-lyrics-typography-1609"
+    const val BUILD_TAG = "2026-10-23-1.6.6-lyrics-player-1609"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

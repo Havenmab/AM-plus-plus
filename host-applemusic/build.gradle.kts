@@ -24,6 +24,9 @@ dependencies {
     implementation(project(":core"))
     api(project(":host-api"))
     implementation(project(":hook-runtime"))
+    // Full-page self-drawn lyrics player: this module implements its LyricsPlayerPort and mounts
+    // LyricsPlayerHostView on the activity decor (spec §2/§7).
+    implementation(project(":lyrics-player"))
     compileOnly("io.github.libxposed:api:102.0.0")
     compileOnly("io.github.libxposed:service:102.0.0")
     implementation("org.luckypray:dexkit:2.2.0")

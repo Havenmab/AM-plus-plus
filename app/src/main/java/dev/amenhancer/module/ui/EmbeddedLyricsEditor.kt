@@ -277,8 +277,8 @@ private class EmbeddedLyricsEditorDialog(
     private val editorWidth: Int,
 ) : AlertDialog(embeddedThemedContext(activity, dialog = true)), Application.ActivityLifecycleCallbacks {
     private val scrim = ColorDrawable(Color.BLACK).apply { alpha = 0 }
+    private val panelShadow = EmbeddedPanelShadow(context.resources.displayMetrics.density)
     private val motionStage = object : FrameLayout(context) {
-        private val panelShadow = EmbeddedPanelShadow(resources.displayMetrics.density)
         private val shadowBounds = RectF()
 
         override fun dispatchDraw(canvas: Canvas) {
@@ -355,6 +355,7 @@ private class EmbeddedLyricsEditorDialog(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
+        panelShadow.prepare(host.dp(activity, 24).toFloat())
         window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setWindowAnimations(0)

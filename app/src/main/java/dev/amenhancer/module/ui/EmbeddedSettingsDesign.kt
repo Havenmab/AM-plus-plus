@@ -149,6 +149,26 @@ internal class EmbeddedPanelShadow(private val density: Float) {
         ((near - far) / (1f - far) * 255f + 0.5f).toInt()
     }
 
+    /** Prepare the fixed-radius shadow before an entrance animation starts. */
+    fun prepare(radius: Float) {
+        if (tile != null || radius <= 0f) return
+        val corner = kotlin.math.ceil(radius * 1.5f).toInt()
+        val edge = tileOutset + corner
+        val size = edge * 2 + 1
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        drawVector(Canvas(bitmap), RectF(
+            tileOutset.toFloat(), tileOutset.toFloat(),
+            (size - tileOutset).toFloat(), (size - tileOutset).toFloat(),
+        ), radius, 1f)
+        tileRadius = radius
+        tileCorner = corner
+        sourceStops[1] = edge
+        sourceStops[2] = edge + 1
+        sourceStops[3] = size
+        bitmap.prepareToDraw()
+        tile = bitmap
+    }
+
     fun draw(canvas: Canvas, bounds: RectF, radius: Float, opacity: Float = 1f) {
         if (bounds.isEmpty || opacity <= 0f) return
         val corner = kotlin.math.ceil(radius * 1.5f).toInt()
@@ -158,21 +178,7 @@ internal class EmbeddedPanelShadow(private val density: Float) {
         if (radius > 0f && bounds.width() > corner * 2 && bounds.height() > corner * 2 &&
             (tile == null || tileRadius == radius)
         ) {
-            if (tile == null) {
-                tileRadius = radius
-                tileCorner = corner
-                val edge = tileOutset + corner
-                val size = edge * 2 + 1
-                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                drawVector(Canvas(bitmap), RectF(
-                    tileOutset.toFloat(), tileOutset.toFloat(),
-                    (size - tileOutset).toFloat(), (size - tileOutset).toFloat(),
-                ), radius, 1f)
-                sourceStops[1] = edge
-                sourceStops[2] = edge + 1
-                sourceStops[3] = size
-                tile = bitmap
-            }
+            prepare(radius)
             targetX[0] = bounds.left - tileOutset
             targetX[1] = bounds.left + tileCorner
             targetX[2] = bounds.right - tileCorner

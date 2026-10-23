@@ -63,7 +63,9 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             hint = localizedText(ModuleText.TTML_CONTENT),
             initial = entry?.let { controller.readLyrics(it.appleMusicId) }.orEmpty(),
             multiline = true,
-        )
+        ).apply {
+            setLines(if (isEmbeddedPhone(activity)) 9 else 11)
+        }
         val sourceLabel = TextView(activity).apply {
             textSize = embeddedTextSize(activity, 14f, 13f)
             setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
@@ -141,8 +143,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         )
         fields.addView(ttmlInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            // A line count alone still measures the text layout (including
-            // fallback font metrics). Keep the viewport independent of content.
+            // Keep the original empty-field height regardless of TTML length.
             ttmlInput.lineHeight * ttmlInput.minLines + ttmlInput.compoundPaddingTop + ttmlInput.compoundPaddingBottom,
         ).apply { topMargin = dp(activity, 8) })
         val scroll = ScrollView(activity).apply {

@@ -117,9 +117,21 @@ internal class LyricLineMotionSession(
             return
         }
         if (!synchronized(hookedMethods) { hookedMethods.add(move) }) return
+        val change = changeMethodOf(animator.javaClass)
+        if (change != null && synchronized(hookedMethods) { hookedMethods.add(change) }) {
+            register(change, object : ModernMethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val holder = param.args.firstOrNull() ?: return
+                    val view = holderView(holder) ?: return
+                    if (!belongsToLyricRecycler(view)) return
+                    trace("animateChange args=" + param.args.size + " position=" + adapterPosition(holder))
+                }
+            })
+        }
         trace(
             "remember animator=" + animator.javaClass.name +
                 " move=" + move.declaringClass.name + "#" + move.name +
+                " change=" + (change?.let { it.declaringClass.name + "#" + it.name } ?: "none") +
                 " enabled=" + runCatching(settings).getOrNull()?.let { LyricLineMotionPolicy.isEnabled(it) },
         )
         register(move, object : ModernMethodHook() {
@@ -131,6 +143,7 @@ internal class LyricLineMotionSession(
                 if (!LyricLineMotionPolicy.isEnabled(policy)) return
                 val holder = param.args.firstOrNull() ?: return
                 val view = holderView(holder) ?: return
+                if (!belongsToLyricRecycler(view)) return
                 val fromY = (param.args.getOrNull(2) as? Number)?.toInt() ?: return
                 val toY = (param.args.getOrNull(4) as? Number)?.toInt() ?: return
                 val dy = (fromY - toY).toFloat()
@@ -156,11 +169,15 @@ internal class LyricLineMotionSession(
         val recyclerType = runCatching {
             Class.forName("androidx.recyclerview.widget.RecyclerView", false, contract.loader)
         }.getOrNull()
+        if (recyclerType == null) trace("probe androidx RecyclerView missing")
         if (recyclerType != null) {
             for (name in SCROLL_PROBES) {
                 val method = runCatching {
                     recyclerType.getMethod(name, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                }.getOrNull() ?: continue
+                }.getOrNull() ?: run {
+                    trace("probe missing " + name)
+                    continue
+                }
                 register(method, object : ModernMethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val view = param.thisObject as? View ?: return
@@ -172,14 +189,21 @@ internal class LyricLineMotionSession(
         }
         val managerType = runCatching {
             Class.forName("androidx.recyclerview.widget.LinearLayoutManager", false, contract.loader)
-        }.getOrNull() ?: return
+        }.getOrNull() ?: run {
+            trace("probe LinearLayoutManager missing")
+            return
+        }
         val anchorScroll = runCatching {
             managerType.getMethod(
                 "scrollToPositionWithOffset",
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType,
             )
-        }.getOrNull() ?: return
+        }.getOrNull() ?: run {
+            trace("probe scrollToPositionWithOffset missing")
+            return
+        }
+        trace("probe scrollToPositionWithOffset registered")
         register(anchorScroll, object : ModernMethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val manager = param.thisObject ?: return
@@ -207,6 +231,16 @@ internal class LyricLineMotionSession(
                 }
             }
         })
+    }
+    private fun belongsToLyricRecycler(view: View): Boolean {
+        var parent: View? = view
+        var depth = 0
+        while (parent != null && depth < BELONGING_DEPTH) {
+            if (isLyricRecycler(parent)) return true
+            parent = parent.parent as? View
+            depth++
+        }
+        return false
     }
     private fun isComputingLayout(recycler: View): Boolean = runCatching {
         recycler.javaClass.getMethod("isComputingLayout").invoke(recycler) as? Boolean
@@ -351,6 +385,7 @@ internal class LyricLineMotionSession(
         if (closed) return
         val from = view.scaleX
         if (abs(from - target) < SCALE_EPSILON) return
+        trace("scale " + from + " -> " + target)
         scaleAnimators.remove(view)?.cancel()
         val duration = LyricLineMotionPolicy.durationMillis(policy)
         val animator = springAnimator(duration, 0L, policy) { progress ->
@@ -415,11 +450,23 @@ internal class LyricLineMotionSession(
             !Modifier.isStatic(method.modifiers) &&
                 method.returnType == java.lang.Boolean.TYPE &&
                 method.parameterTypes.size == MOVE_PARAMETERS &&
-                method.parameterTypes[0].name.endsWith("RecyclerView\$ViewHolder") &&
+                method.parameterTypes[0].name.startsWith(VIEW_HOLDER_PREFIX) &&
                 (1 until MOVE_PARAMETERS).all { method.parameterTypes[it] == Integer.TYPE }
         }
         ?.apply { isAccessible = true }
 
+    /** `ItemAnimator.animateChange(ViewHolder, ViewHolder, int, int, int, int): Boolean`. */
+    private fun changeMethodOf(type: Class<*>): Method? = generateSequence<Class<*>>(type) { it.superclass }
+        .flatMap { current -> current.declaredMethods.asSequence() }
+        .firstOrNull { method ->
+            !Modifier.isStatic(method.modifiers) &&
+                method.returnType == java.lang.Boolean.TYPE &&
+                method.parameterTypes.size == CHANGE_PARAMETERS &&
+                method.parameterTypes[0].name.startsWith(VIEW_HOLDER_PREFIX) &&
+                method.parameterTypes[1].name.startsWith(VIEW_HOLDER_PREFIX) &&
+                (2 until CHANGE_PARAMETERS).all { method.parameterTypes[it] == Integer.TYPE }
+        }
+        ?.apply { isAccessible = true }
     private fun holderView(holder: Any): View? = runCatching {
         holder.javaClass.getMethod("getItemView").invoke(holder) as? View
     }.getOrNull()
@@ -429,6 +476,15 @@ internal class LyricLineMotionSession(
         val method = positionMethods.getOrPut(type.name) {
             runCatching { type.getMethod("getAbsoluteAdapterPosition") }.getOrNull()
                 ?: runCatching { type.getMethod("getAdapterPosition") }.getOrNull()
+                ?: generateSequence<Class<*>>(type) { it.superclass }
+                    .flatMap { it.declaredMethods.asSequence() }
+                    .firstOrNull {
+                        it.returnType == Integer.TYPE &&
+                            it.parameterTypes.isEmpty() &&
+                            !Modifier.isStatic(it.modifiers)
+                    }
+                    ?.apply { isAccessible = true }
+                    ?.also { trace("holderPositionMethod=" + it.declaringClass.name + "#" + it.name) }
         } ?: return NO_POSITION
         return (runCatching { method.invoke(holder) as? Number }.getOrNull())?.toInt() ?: NO_POSITION
     }
@@ -436,6 +492,16 @@ internal class LyricLineMotionSession(
     private fun childPosition(recycler: ViewGroup, child: View): Int {
         val method = positionMethods.getOrPut(CHILD_POSITION_KEY) {
             runCatching { recycler.javaClass.getMethod("getChildAdapterPosition", View::class.java) }.getOrNull()
+                ?: generateSequence<Class<*>>(recycler.javaClass) { it.superclass }
+                    .flatMap { it.declaredMethods.asSequence() }
+                    .firstOrNull {
+                        it.returnType == Integer.TYPE &&
+                            it.parameterTypes.size == 1 &&
+                            View::class.java.isAssignableFrom(it.parameterTypes[0]) &&
+                            !Modifier.isStatic(it.modifiers)
+                    }
+                    ?.apply { isAccessible = true }
+                    ?.also { trace("childPositionMethod=" + it.declaringClass.name + "#" + it.name) }
         } ?: return NO_POSITION
         return (runCatching { method.invoke(recycler, child) as? Number }.getOrNull())?.toInt() ?: NO_POSITION
     }
@@ -462,10 +528,19 @@ internal class LyricLineMotionSession(
         const val NO_LINE = -1
         const val NO_POSITION = -1
         const val MOVE_PARAMETERS = 5
+        const val CHANGE_PARAMETERS = 6
+
+        /**
+         * The host obfuscates androidx's inner classes, so `RecyclerView.ViewHolder` is
+         * `androidx.recyclerview.widget.RecyclerView$D` in this build. The outer class name
+         * survives, the member name does not: match the outer prefix, not `$ViewHolder`.
+         */
+        const val VIEW_HOLDER_PREFIX = "androidx.recyclerview.widget.RecyclerView\$"
         const val MIN_MOVE_PX = 1f
         const val MIN_GLIDE_PX = 2f
         const val SCALE_EPSILON = 0.001f
         const val CHILD_POSITION_KEY = "RecyclerView#getChildAdapterPosition"
+        const val BELONGING_DEPTH = 8
         val SCROLL_PROBES = listOf("scrollBy", "smoothScrollBy")
     }
 }

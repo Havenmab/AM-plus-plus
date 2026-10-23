@@ -45,6 +45,8 @@ interface ChromeHostBinding : PlayerSurfacePort, AutoCloseable {
     fun playerBehavior(preferPlayerRuntime: Boolean): Any?
     fun sheetSnapshot(owner: Any): NativeSheetSnapshot
     fun writePeek(owner: Any, height: Int)
+    /** Draw a compatible host-owned content recording, or return false without drawing. */
+    fun drawContentBackdrop(source: View, canvas: android.graphics.Canvas): Boolean = false
     fun navigation(view: View): NativeNavigationSnapshot
     fun selectNavigation(view: View, id: Int)
     fun isScrollContainer(view: View): Boolean

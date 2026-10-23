@@ -49,6 +49,8 @@ internal class FragmentChromeContract(loader: ClassLoader, val names: JSONObject
     val collapsedSheetTop = members.field("collapsedSheetTop")
     val peek = members.field("peek")
     val autoPeek = members.field("autoPeek")
+    val contentBackdropNode = if (names.getJSONObject("members").getJSONObject("fields").has("contentBackdropNode"))
+        members.field("contentBackdropNode") else null
     val expandedSheetTop = members.method("expandedSheetTop")
     val writePeek = members.method("writePeek")
     val settleSheet = members.method("settleSheet")
@@ -109,7 +111,18 @@ internal class FragmentChromeContract(loader: ClassLoader, val names: JSONObject
             selectMenuItem.declaringClass.isAssignableFrom(nativeMenuListener.type)) { "Chrome owner fields mismatch" }
         listOf(behaviorState, collapsedSheetTop, peek).forEach { check(it.type == integer) }
         check(autoPeek.type == boolean && slideProgress.type == floating)
+        contentBackdropNode?.let {
+            check(it.type.name == "android.graphics.RenderNode" &&
+                android.view.ViewGroup::class.java.isAssignableFrom(it.declaringClass)) { "Chrome content recording field mismatch" }
+        }
         check(playerBehavior.type == members.type("com.google.android.material.bottomsheet.BottomSheetBehavior"))
+        if (names.optJSONObject("phone")?.optJSONObject("behavior")?.optString("collapsedPeekMode") == "offset") {
+            check(listOf(behaviorState, collapsedSheetTop, peek, autoPeek).all {
+                it.declaringClass.isAssignableFrom(playerBehavior.type)
+            } && listOf(writePeek, refreshCollapsedOffset).all {
+                it.declaringClass.isAssignableFrom(playerBehavior.type)
+            }) { "Chrome collapsed peek receiver mismatch" }
+        }
         listOf(viewModel, libraryModel, libraryTitle, drawerOf, navigationTabs, activityOf, browser, currentItem).forEach {
             check(!java.lang.reflect.Modifier.isStatic(it.modifiers) && it.parameterCount == 0 && it.returnType != void)
         }

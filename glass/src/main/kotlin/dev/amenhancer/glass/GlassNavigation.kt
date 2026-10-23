@@ -21,10 +21,15 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.LastBaseline
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
@@ -36,13 +41,18 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFontFamilyResolver
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -55,6 +65,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
 import com.kyant.shapes.Capsule
 import dev.amenhancer.backdrop.VibrantBlur
+import dev.amenhancer.backdrop.traceBackdrop
 import kotlin.math.roundToInt
 
 data class GlassTab(
@@ -123,6 +134,12 @@ fun GlassNavigation(
     val expandedInteractive by remember {
         derivedStateOf { GlassBarCollapsePolicy.expandedInteractive(liveProgress.value()) }
     }
+    // The visible and refraction rows share only the latest layout for each current tab.
+    // Keep BasicText in the visible row so its semantics and font invalidation stay native.
+    val labelLayouts = if (collapseProgress != null) remember(
+        tabs, style, foreground, LocalConfiguration.current, LocalDensity.current,
+        LocalLayoutDirection.current, LocalFontFamilyResolver.current,
+    ) { HashMap<Int, Pair<Constraints, TextLayoutResult>>() } else null
     // A menu replacement must discard gestures whose indices refer to the old menu.
     key(tabs.map { it.id }, rejectedSelection) {
         val selection = remember { { confirmedIndex.value } }
@@ -130,6 +147,35 @@ fun GlassNavigation(
         // needs this row box to share the capsule's bottom edge instead of the island's.
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxWidth().height(panelHeight).align(Alignment.TopStart)) {
+                val tabContent: @Composable androidx.compose.foundation.layout.RowScope.(Boolean) -> Unit = { refraction ->
+                    inCapsule.forEach { tab ->
+                        LiquidBottomTab(
+                            shape = GlassCollapseShapes.capsule(collapseProgress != null),
+                            onClick = { if (expandedInteractive) request(tab) },
+                            modifier = Modifier.semantics {
+                                selected = tab.id == selectedId
+                                contentDescription = tab.title
+                            },
+                        ) {
+                            if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
+                                tab.icon?.let { icon ->
+                                    val save = drawContext.canvas.nativeCanvas.save()
+                                    try {
+                                        icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
+                                        icon.draw(drawContext.canvas.nativeCanvas)
+                                    } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
+                                }
+                            }
+                            if (style == GlassNavigationStyle.Stacked || tab.icon == null) {
+                                val textStyle = TextStyle(color = foreground,
+                                    fontSize = if (style == GlassNavigationStyle.Stacked) 11.sp else 14.sp)
+                                if (labelLayouts == null) BasicText(tab.title, style = textStyle,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                else NavigationLabel(tab.id, tab.title, textStyle, labelLayouts, refraction)
+                            }
+                        }
+                    }
+                }
                 LiquidBottomTabs(
                     selectedTabIndex = selection,
                     // The drag path navigates too, so it takes the same gate as the tap path.
@@ -164,33 +210,9 @@ fun GlassNavigation(
                     onExpandRequest = onExpandRequest,
                     collapseReboundScale = collapseReboundScale,
                     expandReboundScale = expandReboundScale,
+                    refractionContent = if (labelLayouts != null) { { tabContent(true) } } else null,
                 ) {
-                    inCapsule.forEach { tab ->
-                        LiquidBottomTab(
-                            shape = GlassCollapseShapes.capsule(collapseProgress != null),
-                            // A faded tab row must stop navigating: `alpha(0f)` hides a subtree
-                            // without disabling it, so an invisible cell could absorb a tap.
-                            onClick = { if (expandedInteractive) request(tab) },
-                            modifier = Modifier.semantics {
-                                selected = tab.id == selectedId
-                                contentDescription = tab.title
-                            },
-                        ) {
-                            if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
-                                tab.icon?.let { icon ->
-                                    val save = drawContext.canvas.nativeCanvas.save()
-                                    try {
-                                        icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                                        icon.draw(drawContext.canvas.nativeCanvas)
-                                    } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
-                                }
-                            }
-                            if (style == GlassNavigationStyle.Stacked || tab.icon == null)
-                                BasicText(tab.title, style = TextStyle(color = foreground,
-                                    fontSize = if (style == GlassNavigationStyle.Stacked) 11.sp else 14.sp),
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
+                    tabContent(false)
                 }
                 if (searchTab != null) {
                     DetachedSearchControl(
@@ -215,6 +237,67 @@ fun GlassNavigation(
                 }
             }
         }
+    }
+}
+
+/** Reuse visible text only for the semantically hidden, separately tinted refraction row. */
+@Composable
+private fun NavigationLabel(
+    id: Int,
+    title: String,
+    textStyle: TextStyle,
+    layouts: MutableMap<Int, Pair<Constraints, TextLayoutResult>>,
+    refraction: Boolean,
+) {
+    if (!refraction) {
+        val measured = remember(title, textStyle) { arrayOfNulls<TextLayoutResult>(1) }
+        BasicText(title, style = textStyle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            onTextLayout = { measured[0] = it },
+            modifier = Modifier.layout { measurable, constraints ->
+                val child = measurable.measure(constraints)
+                measured[0]?.let { layouts[id] = constraints to it }
+                layout(child.width, child.height, mapOf(
+                    FirstBaseline to child[FirstBaseline], LastBaseline to child[LastBaseline],
+                )) { child.placeRelative(0, 0) }
+            },
+        )
+        return
+    }
+    val fontResolver = LocalFontFamilyResolver.current
+    var sharedLayout by remember { mutableStateOf<TextLayoutResult?>(null, referentialEqualityPolicy()) }
+    Layout(
+        content = {
+            // A reused label still needs a real placed drawing node in the recorded source.
+            // Skipping the Box's inner coordinator also skipped its drawWithContent path.
+            Canvas(Modifier) {
+                sharedLayout?.let { drawText(it, color = textStyle.color) }
+            }
+            BasicText(title, style = textStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+    ) { measurables, constraints ->
+            val candidate = layouts[id]?.takeIf { (originalConstraints, result) ->
+                val input = result.layoutInput
+                originalConstraints == constraints && input.text.text == title &&
+                    input.style.hasSameLayoutAffectingAttributes(textStyle) &&
+                    input.fontFamilyResolver === fontResolver && input.layoutDirection == layoutDirection &&
+                    input.density.density == density && input.density.fontScale == fontScale &&
+                    !result.multiParagraph.intrinsics.hasStaleResolvedFonts
+            }?.second
+            sharedLayout = candidate
+            if (candidate != null) traceBackdrop("AM++/nav/labelReuse") {
+                val drawing = measurables[0].measure(Constraints.fixed(candidate.size.width, candidate.size.height))
+                layout(candidate.size.width, candidate.size.height, mapOf(
+                    FirstBaseline to candidate.firstBaseline.roundToInt(),
+                    LastBaseline to candidate.lastBaseline.roundToInt(),
+                )) { drawing.placeRelative(0, 0) }
+            } else traceBackdrop("AM++/nav/labelFallback") {
+                // A source measured later, changed fonts, or different constraints keeps the
+                // original BasicText path. Never stretch or crop a layout from another width.
+                val child = measurables[1].measure(constraints)
+                layout(child.width, child.height, mapOf(
+                    FirstBaseline to child[FirstBaseline], LastBaseline to child[LastBaseline],
+                )) { child.placeRelative(0, 0) }
+            }
     }
 }
 

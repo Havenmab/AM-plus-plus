@@ -49,7 +49,7 @@ internal class FragmentGlassSession(
     private val initial = surface.snapshot()
     private val root = initial.contentRoot
     private val moduleContext = moduleContext(activity)
-    private val backdrop = ViewBackdrop(initial.backdropSource) { fail(it) }
+    private val backdrop = ViewBackdrop(initial.backdropSource, onFailure = { fail(it) })
     private var state by mutableStateOf(initial)
     private var navSnapshot by mutableStateOf(surface.navigation.snapshot())
     private var configuration by mutableStateOf(Configuration(activity.resources.configuration))

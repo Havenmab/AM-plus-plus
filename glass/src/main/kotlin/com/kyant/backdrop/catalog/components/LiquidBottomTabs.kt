@@ -8,7 +8,8 @@
  * panel's width/height and swaps the tab row for a compact face. Every collapse parameter
  * defaults to the expanded bar. Collapse hosts retain material modifiers and fixed effects,
  * read continuous geometry during layout/drawing, reserve expanded effect-layer bounds,
- * avoid redundant offscreen clipping, and suspend the unused refraction source layout.
+ * avoid redundant offscreen clipping, suspend the unused refraction source layout, and
+ * accept an optional refraction row that can reuse the visible labels' text layouts.
  * See backdrop/UPSTREAM.md and THIRD_PARTY_NOTICES.md.
  */
 
@@ -123,6 +124,8 @@ fun LiquidBottomTabs(
     expandReboundScale: Float = 1f,
     /** Only collapse-capable hosts reuse fixed material effects and suspend the hidden source. */
     optimizeCollapseRendering: Boolean = false,
+    /** AM++: optional equivalent content for the semantically hidden refraction source only. */
+    refractionContent: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     // AM++: preserve Apple's reselect action without changing drag/animation behavior.
@@ -459,7 +462,7 @@ fun LiquidBottomTabs(
                         widthPx = { readFrame().restingWidth - 8f * density.density })
                         .fillMaxHeight().collapseAlpha(optimizeCollapseRendering) { readFrame().expandedAlpha },
                     verticalAlignment = Alignment.CenterVertically,
-                    content = { leadingContent?.invoke(this); content() }
+                    content = { leadingContent?.invoke(this); (refractionContent ?: content).invoke(this) }
                 )
             }
         }

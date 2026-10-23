@@ -72,9 +72,9 @@
 | 身份、资格与证据 | `id`、`packageName`（原包）/`versionName`+`versionCode`、`family`、`productionEnabled`、`profileRevision`、`capabilities`、`evidence`、`knownDegradations` |
 | `indexed` | 符号映射及适用的 `methodContracts` / `fieldContracts` |
 | `hookTargets` / `catalogQueryRenames` | HLE 入口、签名/调用方约束、`runtimeMemberNames`、目录查询映射 |
-| `settings` / `chrome` | 设置模型、入口、导航、播放器资源及旧族成员 |
+| `settings` / `chrome` | 设置模型、入口、导航、播放器资源及旧族成员；`settings.members` 保存变化后的完整偏好列表和 Compose 方法契约 |
 | `layoutVariants` / `cjk` | binding、渐变变体、前景文本与可选 `terminalGradient` 契约 |
-| `lyricResultSubmission` / `lyricBlur` / `lyricWrapSweep` | 歌词结果、显示模糊、跨行扫光的独立角色与契约 |
+| `lyricResultSubmission` / `lyricBlur` / `lyricWrapSweep` / `lyricBackgroundHighlight` | 歌词结果、显示模糊、跨行扫光及活动行背景高亮优化的独立角色与契约 |
 | Fragment 专用区域 | `fragmentDualPane`、`fragmentLyricsRuntime`、`fragmentKaraokeWidth`、`fragmentTabletVideoHandoff`、`fragmentChrome`、`playerRecovery` |
 | `startupPagePrewarm` / `artistComposeProfile` | 独立预热、Compose 艺人表面的成员、构造器与语义参数 |
 | `verification` / 匹配策略 | 离线描述符/资源证据、`ambiguityPolicy`、已审核的 `legacyFirstMatchExceptions` |
@@ -108,6 +108,8 @@ JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由
 
 Java 反编译用于理解流程，原始 owner 与擦除签名以 DEX/smali 为准。类型推断、命名修复、大小写冲突后的文件名不能作为原始契约。“存在”“参数个数相同”“可以反射调用”均不能替代调用语义证据；数组、primitive、装箱与实例/静态不能互换。
 
+类结构、字段顺序、相似描述符或反编译浏览中的近似签名只能提出结构候选，用于缩小核查范围；在缺少语义闭合前不能据此认定目标版本已适配、授予能力或推定运行时兼容。候选转为已确认映射时，须同时核对当前 split 中的原始 owner 与完整擦除签名或字段类型、实际声明及继承/接口关系、调用方与读写语义、Hook 的具体实现，以及页面生命周期中的实际作用；资源与布局还须按上表确认限定符和运行时父链。
+
 <a id="adaptation-workflow"></a>
 
 ## 4. 每个构建的适配流程
@@ -115,7 +117,7 @@ Java 反编译用于理解流程，原始 owner 与擦除签名以 DEX/smali 为
 ### 4.1 建立基线
 
 1. 从实际 base APK 的二进制 Manifest 和运行时宿主确认 `packageName`、`versionName`、`versionCode`，记录 `TargetBuild` 的实际包名；将 `profile.packageName` 单列为原包和内部命名空间。外层文件名/清单只作辅助。
-2. 清点 base、全部配置/功能 split、各 DEX 与资源来源；DEX 不一定只在 base。
+2. 清点 base、全部配置/功能 split、各 DEX 与资源来源；DEX 不一定只在 base。由原始已适配版直接比较目标版时，先按实际安装计划逐项配对 base 对 base、同类 ABI split 对同 ABI、密度 split 对同密度，其余配置/功能 split 按相同身份与限定符配对；不得以 base 与 split、不同 ABI 或不同密度的产物互相替代。记录各证据的配对来源及目标新增、缺失的 split，再核对对应的 Manifest、DEX、资源和 native 内容。
 3. 保存代码基线、实际页面族、对照宿主和可追溯证据；包哈希仅在明确要求时计算。
 4. 分别确定源码分析、所需检查、构建和人工验收范围，再在任务记录填写[清单](host-adaptation-checklist.md)。
 
@@ -449,11 +451,17 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 
 原生收回 settling 中只在同 owner、sheet、目标状态下，目标坐标确实改变时通过原生平滑入口更新剩余终点；拖动/展开/隐藏、新目标或稳定状态清旧记录，不直接改 top/translation，也不因相同目标重启动画。终态 `reconcileCollapsedSheet` 只作兜底：已折叠而实际落点错误时合并布局并在完成前阻止该帧绘制，后续 inset/布局变化同样覆盖。
 
+稳定收起的逐帧 peek 更新可单独声明 `fragmentChrome.phone.behavior.collapsedPeekMode="offset"`，缺省继续调用原生 setter。放行前追踪当前包 setter 及其调用：确认固定 peek 只写已声明字段、重算 collapsed offset，并在 state=4 时请求布局，没有遗漏通知或其他副作用。绑定仅在当前 owner、非自动 peek、sheet/父树无待布局且实际位置已对齐时更新字段、调用原生重算并 `offsetTopAndBottom`；目标越界请求原生布局，拖动/settling/展开/恢复仍走 setter。这不允许直接移动正在运行的原生 sheet 动画。
+
 sheet 校准先于 mini 锚点采样，材质岛尺寸/边距在同轮绘制前完成布局，不依赖多个 pre-draw listener 顺序。底栏收缩弹簧运行时暂停 sheet 落点校准，结束后恢复。
 
 Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding` 创建时启动。先检查一次，条件未就绪每 250ms 再查，最多 40 次；已显示、补调成功或异常即结束。补调要求原生登录且存在当前播放对象；每次确认 owner 当前 root 仍附着，销毁取消全部回调。该接入沿既有玻璃资格，不等同独立播放器恢复能力。
 
 原生内容、材质采样和模块岛按视图会话管理。关闭/失败/视图替换恢复仍拥有的透明度、裁剪、尺寸和原生触摸，旧回调不能影响新树。旧 Activity 保留自己的导航/mini 组合与视频语义。
+
+宿主已维护兼容的内容 RenderNode 时，可在 `fragmentChrome.members.fields.contentBackdropNode` 声明完整 owner/name/type，经既有解析器预解析；未声明保持 View 采样。宿主绑定通过 Canvas 语义端口提供录制，核对直接父类型、唯一内容子树、原点/矩阵/alpha/Z、尺寸、父滚动/padding及 display-list 就绪。宿主本轮正常绘制在 RenderThread 使用引用前更新同一节点；窗口背景、源脏状态与代次仍由 `ViewBackdrop` 处理。首帧未就绪或层级/几何不匹配时返回未绘制并回退 `source.draw`；模块只释放自己的记录，不丢弃宿主节点，也不在材质库发现私有字段。
+
+预绘制中的裁剪和留白更新必须先比较当前值，只在实际变化时调用 setter。不要假设原生控件对同值写入没有副作用：适配原生列表时须追踪其 `setClipToPadding` 等覆写，确认首次布局后是否仍无条件 `requestLayout`。每帧重复写入会形成“预绘制 → 请求布局 → 全局布局通知 → 下帧预绘制”的循环，连带触发层级扫描、背景录制和材质绘制；纯 Compose 场景未进入该分支不能证明原生列表路径正常。保持原值捕获、离开目标/关闭时的恢复，以及宿主真实改值后重新接管的语义；不能用降低动画帧率或冻结背景掩盖布局循环。
 
 **变更触发。** 导航模型、原生落位、资源层级或显示/恢复机制改变时调整绑定/会话，复核当前形态；普通材质修改沿用这些宿主接缝。独立收缩规则见下一节。
 
@@ -469,7 +477,7 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 
 #### 通用维护：方向、触摸与单一动画
 
-`GlassBarCollapseController` 唯一持有目标、启用/外观状态、Animatable、协程及滚动监听，`PhoneGlassSession` 只接入几何；导航、mini、padding 和 peek 读同一进度。输入由 `GlassBarCollapseInput` 独占，`GlassBarTouchRegions` 只做屏幕命中，`GlassBarCollapseLayout.controls` 提供共享几何。
+`GlassBarCollapseController` 唯一持有目标、启用/外观状态、Animatable、协程及滚动监听，`PhoneGlassSession` 只接入几何；导航、mini 和 peek 逐帧读同一进度，内容留白取同一几何并可在下述边界合并布局。输入由 `GlassBarCollapseInput` 独占，`GlassBarTouchRegions` 只做屏幕命中，`GlassBarCollapseLayout.controls` 提供共享几何。
 
 | 输入阶段 | 规则 |
 |---|---|
@@ -480,7 +488,11 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 | 原生惯性 | 只跟踪起点命中的容器，延续最后确认方向；弹簧期间不因 peek、padding、列表估算或回弹位移反判，也不累加多列表 |
 | 导航/配置/会话变化 | `expand()` 清手势与惯性并同步展开，宿主主动选中也处理；重建不沿旧状态，mini start/end 边距随 RTL 交换 |
 
-原生位移缓存实际运行时类的 framework `computeVerticalScrollOffset(): int` 覆写，不用 RecyclerView 的 scrollY 或模块 AndroidX 强转；单类失败只停该类信号，保留页面观察。Compose 外壳不代表可滚动：在 profile 识别场景内找语义 owner，等子树处理 DOWN 后于 MOVE/UP 查询当前位置的 framework 边界。每手势重选目标，层级失效才整树扫描/更新 owner；每帧仅检查已发现场景 isShown/高度，不缓存可见性结论，关闭清类缓存。
+原生位移缓存实际运行时类的 framework `computeVerticalScrollOffset(): int` 覆写，不用 RecyclerView 的 scrollY 或模块 AndroidX 强转；单类失败只停该类信号，保留页面观察。Compose 外壳不代表可滚动：在 profile 识别场景内找语义 owner，等子树处理 DOWN 后于 MOVE/UP 查询当前位置的 framework 边界。每手势重选目标，层级失效才重新发现容器/更新 owner；每帧仅检查已发现场景 isShown/高度，不缓存可见性结论，关闭清类缓存。
+
+列表回收也可能触发 global layout，层级发现用显式栈遍历，在已识别的外层滚动目标或 Compose 场景停止，不逐行展开列表子树；ViewPager 的页面承载 RecyclerView 不作为滚动目标，继续深入页面。隐藏 Compose 场景仍登记，以覆盖不触发布局的显隐切换；目标替换/分离时恢复旧 padding。资格检查、材质初始化和收缩配置共用会话设置快照，沿既有短周期及前台恢复刷新，不在重复接入时重新解码设置。
+
+收缩弹簧运行且播放器稳定收起时，已有留白的长列表若仍可向末尾滚动，保留已应用的底 padding，停稳后提交当前占高，避免每帧让整个列表重新布局；到末尾、短内容、未知边界、新目标及几何变化立即更新，前台恢复丢弃旧值。模块导航/mini材质沿既有隔离容器局部测量，在本轮绘制前刷完。原生 mini 仅在自身与父 FrameLayout 无待布局时局部测量更新边距，其他情形交还正常布局；不重挂原生控件，不抑制滚动输入。
 
 只观察内容根事件，不消费、改写或重新分发。呈现接管后隐藏的原生导航仍可能收触摸：先向该身份发送 ACTION_CANCEL，再按当前 view 呈现状态隔离其子树；撤销/销毁恢复分派。隔离不覆盖内容根、mini、整条玻璃行，也不改菜单启用或程序化选择；未支持收缩的宿主不进入此路径。
 
@@ -500,10 +512,15 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 | mini | hasPresentation、收缩运行且完整播放器进度为零才预留；上界取当前父宽，slot 边距不为负，打开播放器回原材质路径，原生布局/输入保留 |
 | 隐藏节点 | 折射源和分离搜索不可见时保持附着与层/材质资源，挂起子测量/放置及内部录制；门禁翻转后下次绘制前恢复 |
 | 帧阶段 | 连续尺寸在测量、位移/alpha 在 graphicsLayer 读当前不可变几何，组合只读显隐/交互/承载门禁；动态 modifier 逐轴按原顺序收敛约束，背板/折射源保留 required 语义 |
+| 标签排版 | 可见标签继续使用 `BasicText`；当前导航实例按 tab ID 只保存最近一次原始约束与 `TextLayoutResult`，表随菜单/样式/配置/字体 resolver/密度/方向重建，容量限当前菜单。隐藏折射标签仅在文字、样式、字体状态（无 stale）及原始约束匹配时复用该结果，否则由 `BasicText` 独立测量回退 |
 | 交互时效 | 拖拽、索引、按压高亮和补偿读当前几何提供者；标签/水珠沿 clamped resting width，仅背板继承回弹。透明度裁切与原 alpha 一致 |
 | 资源恢复 | 旋转、分屏、密度/配置变化重算预留；移除时释放层/效果，修改本地上游补丁同步维护 `backdrop/UPSTREAM.md` 与源码 pin |
 
 渲染优化保留弹簧参数、共享几何、位移端口、peek、内容留白和 mini 原生输入。不能以整体缩放文字/图标或冻结背景代替承载复用，单设备性能收益不作为所有设备保证。
+
+可见标签仍使用 `BasicText`，并由 `onTextLayout` 捕获真实的 `TextLayoutResult`；当前导航实例按 tab ID 只保存最近一次原始约束与结果，表随菜单、样式、配置、字体 resolver、密度或方向变化重建，容量限于当前菜单。隐藏折射标签仅在文字、样式、字体状态（无 stale）及原始约束匹配时直接使用该结果绘制；不匹配或隐藏层先于可见层测量时，继续由原 `BasicText` 独立测量回退。`LiquidBottomTabs` 的可选 `refractionContent` 默认仍使用原 `content`，只有 `GlassNavigation` 收缩路径传入替代文字绘制。可见与折射两份内容各自的图标、绘制/着色、触摸、图层及原单行省略号、基线、命中、选中和无障碍语义分别保留；原生列表和宿主契约边界不变。该复用是当前实例的最近一次排版结果复用，未命中原 `BasicText` 回退，不承诺固定命中率、统一减半或整页 RecyclerView 布局减少。
+
+折射文字命中复用时，仍须按排版结果的实际尺寸测量、放置独立绘制节点，并保留基线；仅跳过重复 `BasicText` 的测量与放置。不能用空的 placement 块替代文字承载，或依赖未放置子树的绘制 modifier，否则选中指示器采样的源可能缺字。未命中时只测量、放置原 `BasicText`，两条路径都保留原有折射层坐标、颜色滤镜和显隐门禁。
 
 需要测量时沿既有 `AM++/` Trace：collapse/progress（进度×10000）/running、source/record、effects/update、backdrop/record/createLayer 及导航/mini measure/layout/recordView 分段；CPU 区段成对结束，不采样不写标记，CPU 分段不等于 GPU 耗时。操作与视觉标准见[收缩矩阵](feature-preservation.md#glass-collapse-rendering)，[清单](host-adaptation-checklist.md#glass-collapse-rendering-checks)仅登记证据及结果。
 
@@ -516,6 +533,8 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 **生效与接缝。** 独立宿主能力，与玻璃/收缩/双栏无依赖。精确生产档案须授予 `startupPagePrewarm`、提供解析器支持的完整 v1 契约及当前形态导航资源，入口和安装共同限定 schema。普通配置默认由 EnhancementDefaults 与缺键解码共用，已有关闭值保留；默认开启不授予未知构建或形态资格，重开应用生效。
 
 `StartupPagePrewarmContract` 使用 FragmentProfileMembers 解析生命周期、tab 模型、容器构造/参数、原生隐藏事务和共享状态保护；`FragmentStartupPagePrewarmTarget` 安装及隔离失败，`StartupPagePrewarmSession` 持有当前内容 root 的有界任务。原生必须按标签隐藏/显示保留实例，所有导航图、参数键和真实根页面以当前包为证据。
+
+`tabArgumentKey` 与 `titleArgumentKey` 须追溯原生正常创建容器的参数写入点和对应读取点，记录当前包的完整键值与 Bundle 值类型。若键由 `Class.getName()` 与后缀拼接，须确认常量初始化引用的实际类；不能直接沿用旧值或只按类映射推导。成员描述符通过无法证明参数键有效，错误键会使异步 Fragment 事务在原生创建视图时失败。
 
 手机 navigationResource 位于内容根的底部导航；平板可选 tabletNavigationResource 从 Activity 取抽屉菜单并需 tabletMenu 角色，顶部 Compose 不套手机 API。菜单 checked、选中模型及主导航标签一致，不主动开抽屉或选中项；抽屉关闭/玻璃隐藏导航时仍可读取。hostResource 指向一级页面视口，不能预热抽屉/播放器。就绪依据实际视口尺寸与原生菜单/选中状态，不要求平板底部导航具有可见高度。
 
@@ -602,6 +621,10 @@ FragmentTabletVideoHandoff在原生尺寸/resize前通过Coordinator准备当前
 
 接入至少覆盖播放器、队列、历史、操作表、最近搜索、资料库、专辑、歌单、艺术家、主页与封面连续性。每表面展开Epoxy holder、model/binding、LiveData、辅助getter及封面加载，分别安装/报告。原地区/cn/jp、原名/ISRC/ID证据、目录查询、缓存/离线及显示优先级沿现有业务，一个表面成功不代表整项通过；已知子面降级保存在profile。
 
+页面歌曲应保留原生实体提供的 genre，并按歌曲 ID 送入同一原名解析器；不能要求播放后才能取得地区证据。空别名、未知地区或请求失败只代表本次没有可用结果，后续可见绑定采用有上限的退避间隔，不在每次重绑时清除退避。新的 lookup ID、关联艺人 ID、genre 或已确认地区语言可重置负状态；合作艺人、候选身份与原名置信度校验继续保留，地区显示名不充当原名证据。
+
+目录身份阶段与后续批量查询分别限制并发，复用同 ID 在途请求，按当前可见/活动页优先级选取；成功、空结果、同步异常和超时完成均释放容量。身份和艺人语言派生缓存有容量边界，不通过清空已确认原名来减小缓存。绑定登记使用弱身份索引，反射缓存只保存按实际运行类解析的成员；候选集合每次更新复用，文本树扫描先判断适用角色。可见项分批入现有帧队列，每项执行前重查绑定 ID、代次与当前可见性，不能把无界整批塞进一个动作而绕过帧预算。详细逐项日志在调用点门控，保留安装、失败和降级信息。
+
 <a id="artist-compose-profile"></a>
 
 #### Compose 艺人页
@@ -614,6 +637,12 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 
 `ArtistComposeProfileSessions` 弱持有owner/Success/艺人歌曲及pending。新Success、loading/error、非艺人或缺ID/属性关闭旧会话和排队任务；帧队列执行前确认会话和安装组仍活动，关闭只清本组，已出队旧任务也须失活。alias到达/恢复原名按当前entity重建title/header/shelves，保留原生ID/revision；top-songs关联在enrich前，地区判断仍来自歌曲。
 
+原生实体或 shelf 的 `equals` 可能忽略标题，原地修改属性后重建相同列表仍会被 Compose 跳过。先核对真实文字读取链与快照实现；适用构建在 `metadataPresentation` v1 声明 `createState/readState/writeState/entityType/lockup/roomPrepare/pagedRow/pagedRebuild` 完整方法及 `searchSongRow/searchGridRow` 实体字段，沿既有成员解析器一次解析全部必需角色，独立安装 `hle.metadata-presentation`。未声明的旧档案沿用原路径，声明不全或解析失败报告本组降级。
+
+显示状态通过已登记属性的 getter 在实际行组合内读取宿主 SnapshotState，alias 到达后更新该状态，让读取它的行失效；不改原生实体 ID、Success revision、点击和收藏字段。状态按属性弱身份持有，同别名由原生结构判等合并，恢复/关闭时发出恢复通知并清理状态与任务。该路径可用时，歌曲只通知对应显示依赖，艺人标题仍走既有 Success 重建；不要再为每首歌曲重建整页。
+
+“查看全部”应从真实导航动作分别追到 Compose/StateFlow 和分页 Epoxy/PagedList 的实体准备、行构建与最终绑定，不复用资料库 LiveData 的假设。Compose 在原生 lockup 读取前登记当前行实体，分页行保存 model 与实体的弱身份关系，最终绑定再登记精确 binding/ID；有原生 model 缓存时使用声明的分页重建方法清缓存后构建，仍由既有控制器队列合并请求。搜索结果与最近搜索独立确认，歌曲行通过当前构建声明的实体字段识别，不凭标题相似匹配；沿现有查询、帧队列和恢复链提交结果。
+
 **变更触发。** 状态布局、构造器、相等性、发布线程或生命周期变化时重分析Contract/Runtime/Session，名称/别名变化优先改精确档案。覆盖从index遍历，不硬编码版本文件列表。停用的全局目录语言及未启用播放模式UI不会因加档案自动启用。
 
 [证据清单](host-adaptation-checklist.md#artist-compose-profile-checks) · [名称修正场景](feature-preservation.md#metadata) · [Compose场景](feature-preservation.md#artist-compose-profile)
@@ -623,6 +652,8 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 ### 5.13 设置、蜂窝、DPI、数据与插件
 
 **宿主接缝。** 旧设置为PreferenceFragment/PreferenceScreen与Activity结果桥，Fragment设置使用原生ViewModel/分类/action模型及Compose入口。两路均确认行key/分类去重、点击、callback及SAF/文件结果归属；构造器artwork/callback/Unit按当前包类型，不借相邻构建。UI经SettingsViewBridge等接口查询资格，不读profile或发现私有成员。
+
+偏好列表的回调数量、函数接口或 Compose 参数变化时，在当前档案声明 `settings.members`，使用 `contractVersion=1` 及 `methods.preferenceItems`、`methods.compose` 的完整 owner/name/parameters/returns/static。两项由既有成员解析器在注册前完整解析，并分别校验 ViewModel/List 与设置 Fragment/void 的归属；只更新方法名不能适配参数变化。旧档案未声明该区域时保留其已审核签名，不能以目标构建的新参数覆盖旧路径。Compose 入口只观察原生参数，不自行调用或重排偏好列表回调；离线覆盖同步核对该区域的必需角色与完整描述符。
 
 蜂窝入口要求独立精确能力，保留原生登录、类别、availability与默认关闭；不同页面族使用各自目标。DPI仅宿主范围，配置合法性、冷启动/重建与失败失活走既有AppleMusicDpiOverride，不把密度变化当新宿主资格。设置入口与 DPI 的组件过滤使用实际宿主 `packageName`；宿主类、方法和资源继续使用现有原包常量，不以安装包名替换。
 
@@ -637,6 +668,8 @@ LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/�
 #### 通用维护：数据和公共协议
 
 配置schema/键、文件ID/目录、迁移marker、SQLite/cache namespace及ZIP格式有明确归属，普通设置保存不覆盖字体/歌词等资产。继续使用既有原子发布、事务恢复、只读迁移重试、导入冲突与取消路径；格式变更单独设计迁移/回退。
+
+宿主普通设置通过 `decodeOrdinarySettings` 解码，跳过独立歌词索引及旧内联歌词 JSON；显示/动画与资格检查不能因读取开关而反复解析歌词资产。歌词查询继续通过 `customLyricsManifest()` 的独立后台读取与缓存，完整 `decode` 保留导入/迁移语义。调整读取路径时核对消费者是否需要资产字段，不能用普通设置快照代替歌词索引。
 
 插件公共SDK与runtime不持有Apple Music私有事实；内置Hook经通用注册记录参与冲突分析，作用域关闭同步释放记录。SDK/生命周期/冲突规则唯一参考[插件开发手册](plugin-development.md)，独立工程操作见[作者教程](plugin-author-guide.md)，不因宿主混淆改公共协议。设置文案/语言维护见[本地化说明](localization.md)。
 

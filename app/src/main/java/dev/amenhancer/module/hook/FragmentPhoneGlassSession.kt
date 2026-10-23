@@ -19,7 +19,7 @@ internal class FragmentPhoneGlassSession(
 ) : PhoneGlassSession(surface.activity, config, checkNotNull(surface.phoneChrome), failure), FragmentGlassSessionLifecycle {
     private val native = checkNotNull(surface.phoneChrome)
     private val root = native.contentRoot
-    private var frame: FrameLayout? = null
+    private var frame: FragmentPhoneMaterialIsland? = null
     private var material: FragmentPhoneMaterialIsland? = null
     private var closed = false
     private var progress = 0f
@@ -43,7 +43,7 @@ internal class FragmentPhoneGlassSession(
 
     init { try { attachAvailableViews() } catch (error: Throwable) { close(); throw error } }
 
-    override fun sessionEligible() = !closed && root.isAttachedToWindow && native.eligible() && config.settings().phoneLiquidGlassEnabled
+    override fun sessionEligible() = !closed && root.isAttachedToWindow && native.eligible() && glassSettings.phoneLiquidGlassEnabled
     override val navigationScrimEnabled: Boolean = false
     override fun resolveBottomNavigationRoot(): View = root
     override fun find(role: ChromeResource): View? = when (role) {
@@ -59,11 +59,11 @@ internal class FragmentPhoneGlassSession(
         if (progress <= .001f) visibleMini = miniRoot?.isShown == true
         return visibleMini
     }
-    private fun navigationFrame(): FrameLayout = frame ?: FrameLayout(activity).apply {
+    private fun navigationFrame(): FrameLayout = frame ?: FragmentPhoneMaterialIsland(activity).apply {
         clipChildren = false; clipToPadding = false
         z = checkNotNull(native.find(ChromeResource.BOTTOM_NAVIGATION)).z
         root.addView(this, native.navigationFrameParams(
-            ((GlassPolicy.NAV_HEIGHT_DP + config.settings().phoneLiquidGlassBottomGapDp) * density).toInt() + bottomInset))
+            ((GlassPolicy.NAV_HEIGHT_DP + glassSettings.phoneLiquidGlassBottomGapDp) * density).toInt() + bottomInset))
         frame = this
     }
     override fun miniMaterialParent(root: FrameLayout): FrameLayout {
@@ -109,7 +109,7 @@ internal class FragmentPhoneGlassSession(
         // Flush after the shared renderer changes the material bounds, even when the
         // island's own pre-draw listener ran first after a hierarchy reattachment.
         if (draw && !closed) {
-            try { material?.applyPendingLayout() }
+            try { frame?.applyPendingLayout(); material?.applyPendingLayout() }
             catch (error: Throwable) { close(); failure(error); return true }
         }
         reconcileNativeMaterials()
@@ -146,12 +146,12 @@ internal class FragmentPhoneGlassSession(
         surface.setNavigationGlassReady(false); surface.setMiniGlassReady(false)
         subscription.close(); hooks.close()
         super.close()
-        frame?.let { (it.parent as? ViewGroup)?.removeView(it) }; frame = null
+        frame?.close(); frame?.let { (it.parent as? ViewGroup)?.removeView(it) }; frame = null
         material?.close(); material?.let { (it.parent as? ViewGroup)?.removeView(it) }; material = null
     }
 }
 
-/** Reference material island keeps per-frame glass measurement out of native lyrics/player layout. */
+/** Module material islands keep per-frame glass measurement out of native page/player layout. */
 private class FragmentPhoneMaterialIsland(context: android.content.Context) : FrameLayout(context), ViewTreeObserver.OnPreDrawListener {
     init { clipChildren = false; clipToPadding = false }
     private var pending = false

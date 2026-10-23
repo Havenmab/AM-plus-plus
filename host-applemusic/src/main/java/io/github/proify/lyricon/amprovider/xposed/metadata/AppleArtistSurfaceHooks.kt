@@ -455,6 +455,8 @@ internal class AppleArtistSurfaceHooks(
 
     /** Re-publishes the last Success state of every live Compose artist page showing [mediaId]. */
     fun refreshComposeProfiles(mediaId: String): Int {
+        if (librarySurfaceHooks.hasPresentationObservation() &&
+            metadataStore.entityType(mediaId) == AppleInternalCatalogResolver.LocalizedEntityType.SONG) return 0
         val installation = composeProfiles ?: return 0
         val sessions = installation.sessions
         val pending = sessions.requestRefresh(mediaId)
@@ -778,6 +780,8 @@ internal class AppleArtistSurfaceHooks(
             renderedTexts = renderedTexts,
         )
     }
+
+    fun isHeaderBinding(binding: Any, mediaId: String): Boolean = headerBindingIds[binding] == mediaId
 
     fun subtitleForBinding(
         binding: Any?,
@@ -1167,11 +1171,12 @@ internal class AppleArtistSurfaceHooks(
             .filter { it.isNotEmpty() && it.all(Char::isDigit) }
             .distinct()
             .toList()
-        if (pageMediaIds.isEmpty() || !topSongRetryIds.addAll(pageMediaIds)) return
-        host.markMetadataVisible(pageMediaIds)
-        host.enrichLibraryEntitiesForResolution(pageMediaIds)
+        val requestIds = pageMediaIds.filter { topSongRetryIds.add(it) || host.shouldRequestOverride(it) }
+        if (requestIds.isEmpty()) return
+        host.markMetadataVisible(requestIds)
+        host.enrichLibraryEntitiesForResolution(requestIds)
         host.retryOriginalMetadata(
-            mediaIds = pageMediaIds,
+            mediaIds = requestIds,
             priority = AppleInternalCatalogResolver.RequestPriority.ACTIVE_PAGE,
             originalResolutionMode = InAppOriginalResolutionMode.ORIGINAL_FIRST,
         )

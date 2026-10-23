@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
+import dev.amenhancer.module.lyrics.motion.LyricLineMotionPolicy
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.reflect.Method
 
@@ -36,6 +37,10 @@ internal class AppleMusicLyricLineMotionTarget(
             scope.onClose { session.close() }
             scope.activate()
             registration = scope
+            ModernXposedRuntime.log(
+                "lyric_line_motion: switch=" +
+                    runCatching { LyricLineMotionPolicy.isEnabled(settings()) }.getOrElse { "unknown:" + it.message },
+            )
             TargetCapabilityInstall.Active("Spring lyric line motion installed; ${profile.id}")
         } catch (error: Throwable) {
             scope.close()

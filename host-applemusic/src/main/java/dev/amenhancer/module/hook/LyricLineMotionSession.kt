@@ -317,12 +317,13 @@ internal class LyricLineMotionSession(
         if (closed) return
         val policy = runCatching(settings).getOrNull() ?: return
         val recycler = activeRecycler() ?: return
-        if (!LyricLineMotionPolicy.isEnabled(policy)) {
+        val enabled = LyricLineMotionPolicy.isEnabled(policy)
+        trace("emphasise line=" + current + " children=" + recycler.childCount + " enabled=" + enabled)
+        if (!enabled) {
             resetRows(recycler)
             return
         }
         val emphasis = LyricLineMotionPolicy.emphasisScale(policy)
-        trace("emphasise line=" + current + " children=" + recycler.childCount + " scale=" + emphasis)
         for (index in 0 until recycler.childCount) {
             val child = recycler.getChildAt(index) ?: continue
             val position = childPosition(recycler, child)

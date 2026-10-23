@@ -63,6 +63,11 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
     @Volatile
     private var appliedSpacingScale = 1f
 
+    private val karaokeWordCache = Collections.synchronizedMap(WeakHashMap<View, Boolean>())
+
+    @Volatile
+    private var loggedKaraokeWord = false
+
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     private val ticker = object : Runnable {
@@ -204,10 +209,18 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
         }
         // The policy returns the base value untouched at the neutral percentage, which keeps the
         // stock rendering byte-for-byte identical.
-        if (applyFont) {
+        val karaokeWord = isKaraokeWord(view)
+        if (applyFont || karaokeWord) {
             val targetSize = LyricsTypographyPolicy.scaledTextSize(baseline.textSizePx, fontPercent)
             if (abs(view.textSize - targetSize) > 0.5f) {
                 view.setTextSize(TypedValue.COMPLEX_UNIT_PX, targetSize)
+                if (karaokeWord && !loggedKaraokeWord) {
+                    loggedKaraokeWord = true
+                    ModernXposedRuntime.log(
+                        "lyrics_typography: karaoke word id=" + view.id + " textSize " +
+                            baseline.textSizePx + " -> " + targetSize,
+                    )
+                }
             }
         }
         val spacing = LyricsTypographyPolicy.scaledLineSpacing(
@@ -298,8 +311,34 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
             view.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     }.getOrDefault(false)
 
+    /**
+     * The karaoke word views (the lit word and the faded backing copy) live outside the rows the
+     * dual-pane path rewrites, so at stock they keep the full size while the rest of the line follows
+     * the slider — the current word would then sit visibly larger than its neighbours. They are
+     * matched by resource name, with the ids pinned from the 1.6.6 base as a fallback.
+     */
+    private fun isKaraokeWord(view: View): Boolean {
+        val cached = synchronized(karaokeWordCache) { karaokeWordCache[view] }
+        if (cached != null) return cached
+        val resolved = resolveKaraokeWord(view)
+        synchronized(karaokeWordCache) { karaokeWordCache[view] = resolved }
+        return resolved
+    }
+
+    private fun resolveKaraokeWord(view: View): Boolean {
+        val id = view.id
+        if (id == View.NO_ID) return false
+        val name = runCatching { view.resources.getResourceEntryName(id) }.getOrNull()
+        if (name == KARAOKE_WORD_NAME || name == KARAOKE_BG_WORD_NAME) return true
+        return id == KARAOKE_WORD_BASE_ID || id == KARAOKE_BG_WORD_BASE_ID
+    }
+
     private companion object {
         const val TICK_MILLIS = 700L
+        const val KARAOKE_WORD_NAME = "song_lyrics_word"
+        const val KARAOKE_BG_WORD_NAME = "song_lyrics_bg_word"
+        const val KARAOKE_WORD_BASE_ID = 0x7f0a0a17
+        const val KARAOKE_BG_WORD_BASE_ID = 0x7f0a0a14
     }
 }
 

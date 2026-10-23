@@ -10,7 +10,12 @@ object ModuleSettingsSchema {
     /** Keys removed by the profile migration. */
     val obsoleteKeys: Set<String> = setOf(KEY_TITLE_CORRECTION_TARGET_LANGUAGE)
 
-    fun decode(values: Map<String, *>): ModuleSettings = ModuleSettings(
+    fun decode(values: Map<String, *>): ModuleSettings = decode(values, values.customLyricsManifest())
+
+    /** Feature/animation reads never deserialize the independent legacy lyrics index. */
+    fun decodeOrdinarySettings(values: Map<String, *>): ModuleSettings = decode(values, CustomLyricsManifest.empty())
+
+    private fun decode(values: Map<String, *>, customLyricsManifest: CustomLyricsManifest): ModuleSettings = ModuleSettings(
         dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
         dualPaneHideStatusBarEnabled = values.boolean(KEY_DUAL_PANE_HIDE_STATUS_BAR, default = false),
         disableEditorialVideoOnTablet = values.boolean(
@@ -96,7 +101,7 @@ object ModuleSettingsSchema {
         llmLyricsModel = ModuleSettings.normalizeLlmLyricsModel(values.string(KEY_LLM_LYRICS_MODEL)),
         llmLyricsThinkingEnabled = values.boolean(KEY_LLM_LYRICS_THINKING_ENABLED, default = false),
         fontManifest = values.fontManifest(),
-        customLyricsManifest = values.customLyricsManifest(),
+        customLyricsManifest = customLyricsManifest,
         schemaVersion = values.number(KEY_SCHEMA_VERSION)
             ?: ModuleConstants.CONFIG_SCHEMA_VERSION,
     )

@@ -123,10 +123,14 @@ internal open class PhoneGlassSession(
     private var contentDownY = 0f
     private var observingPress = false
     private var underlap = false
+    private var contentInset: Int? = null
+    private var expandedContentInset = -1
     private var scanNeeded = true
     private var scrollTargets: List<View> = emptyList()
     private var composeScenes: List<View> = emptyList()
     private var hierarchyDirty = false
+    protected var glassSettings = config.settings()
+        private set
     private val barCollapse = GlassBarCollapseController(activity, hostBinding,
         inputActive = { activated && !closed && isCollapsed }, failure = ::scheduleFailure)
     private val collapseSupported: Boolean get() = !geometry.sideBySide && hostBinding.supportsScrollCollapse
@@ -224,7 +228,7 @@ internal open class PhoneGlassSession(
     // Form seams overridden by the dual-pane session; the phone behavior below stays
     // exactly what shipped on the stacked host.
     protected open fun sessionEligible(): Boolean =
-        config.settings().phoneLiquidGlassEnabled && !TabletModeQualifier.isOfficialTablet(activity)
+        glassSettings.phoneLiquidGlassEnabled && !TabletModeQualifier.isOfficialTablet(activity)
 
     protected open fun resolveBottomNavigationRoot(): View? = find(ChromeResource.BOTTOM_NAVIGATION_ROOT_STACKED)
 
@@ -265,7 +269,6 @@ internal open class PhoneGlassSession(
             return
         }
         if (navGlass == null) {
-            val glassSettings = config.settings()
             bottomGapDp = ModuleSettings.normalizePhoneLiquidGlassBottomGapDp(glassSettings.phoneLiquidGlassBottomGapDp)
             navBlurDp = ModuleSettings.normalizePhoneLiquidGlassPanelBlurDp(glassSettings.phoneLiquidGlassPanelBlurDp)
             hostRoot = resolveBottomNavigationRoot() ?: return
@@ -289,7 +292,8 @@ internal open class PhoneGlassSession(
             attachHandler.removeCallbacks(retryAttach)
             retryPending = false
             barCollapse.configure(glassSettings, collapseSupported)
-            val bg = ViewBackdrop(content, ::scheduleFailure).also { backdrop = it; it.start() }
+            val bg = ViewBackdrop(content, ::scheduleFailure,
+                sourceRenderer = { hostBinding.drawContentBackdrop(content, it) }).also { backdrop = it; it.start() }
             refreshMenu()
             // Bottom fade: blurred, washed-out strip under the tabs, matching the
             // reference apps' gradient bar. Added first so the tabs stay on top.
@@ -456,16 +460,17 @@ internal open class PhoneGlassSession(
         if (closed || failureScheduled) return true
         states.forEach { (view,state) -> state.observeNative(view) }
         try {
-            if (hierarchyDirty) { hierarchyDirty = false; attachAvailableViews() }
             val now = android.os.SystemClock.uptimeMillis()
             if (now >= nextSettingsCheck) {
                 nextSettingsCheck = now + 500
+                glassSettings = config.settings()
                 if (!sessionEligible()) {
                     activity.window.decorView.post { close() }
                     return true
                 }
-                barCollapse.configure(config.settings(), collapseSupported)
+                barCollapse.configure(glassSettings, collapseSupported)
             }
+            if (hierarchyDirty) { hierarchyDirty = false; attachAvailableViews() }
             refreshMenu()
             if (!activated && backdrop?.ready == true && navGlass?.isLaidOut == true && glassMenuReady) {
                 activate()
@@ -602,7 +607,20 @@ internal open class PhoneGlassSession(
                 val params = surface.layoutParams as? ViewGroup.MarginLayoutParams ?: return
                 if (params.leftMargin != slot[0] || params.rightMargin != slot[1]) {
                     params.leftMargin = slot[0]; params.rightMargin = slot[1]
-                    surface.layoutParams = params
+                    val nativeRoot = miniRoot
+                    if (surface === miniContent && barCollapse.isRunning && isCollapsed &&
+                        nativeRoot != null && surface.parent === nativeRoot && nativeRoot.isLaidOut &&
+                        nativeRoot.isShown && nativeRoot.width > 0 && nativeRoot.height > 0 &&
+                        !nativeRoot.isLayoutRequested && !surface.isLayoutRequested) {
+                        // Only this native mini subtree changes width. Measuring its existing
+                        // FrameLayout locally keeps the host page out of the animation layout.
+                        surface.forceLayout()
+                        nativeRoot.forceLayout()
+                        nativeRoot.measure(View.MeasureSpec.makeMeasureSpec(nativeRoot.width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(nativeRoot.height, View.MeasureSpec.EXACTLY))
+                        nativeRoot.layout(nativeRoot.left, nativeRoot.top, nativeRoot.right, nativeRoot.bottom)
+                        nativeRoot.invalidate()
+                    } else surface.layoutParams = params
                 }
             }
             val slotsChanged = !navSlot.contentEquals(navMarginPx) || !miniSlot.contentEquals(miniMarginPx)
@@ -669,14 +687,29 @@ internal open class PhoneGlassSession(
                     entries.remove()
                 }
             }
-            val contentViews = descendants(root).toList()
-            val candidates = contentViews.filter { view ->
-            view.isShown && view.height >= root.height / 2 && view.height > 0 && !isViewPagerPageHost(view) && hostBinding.isScrollContainer(view)
-            }.toList()
-            scrollTargets = candidates.filter { child ->
-                generateSequence(child.parent) { it.parent }.takeWhile { it !== root }.none { parent -> candidates.any { it === parent } }
+            val targets = ArrayList<View>()
+            val scenes = ArrayList<View>()
+            val pending = ArrayDeque<ViewGroup>()
+            pending.add(root)
+            while (pending.isNotEmpty()) {
+                val parent = pending.removeLast()
+                for (index in 0 until parent.childCount) {
+                    val view = parent.getChildAt(index)
+                    // Compose owns its virtual children; native list rows cannot introduce
+                    // another outer scroll target. Do not visit recycled cells on each layout.
+                    // Keep hidden Compose scenes registered: visibility can change without layout.
+                    if (hostBinding.isComposeScene(view)) {
+                        scenes.add(view)
+                    } else if (view.isShown && view.height > 0 && view.height >= root.height / 2 &&
+                        !isViewPagerPageHost(view) && hostBinding.isScrollContainer(view)) {
+                        targets.add(view)
+                    } else if (view is ViewGroup) {
+                        pending.add(view)
+                    }
+                }
             }
-            composeScenes = contentViews.filter(hostBinding::isComposeScene)
+            scrollTargets = targets
+            composeScenes = scenes
             barCollapse.updateTargets(scrollTargets,
                 composeScenes.mapNotNull(hostBinding::verticalScrollTouchTarget).distinct())
         }
@@ -693,6 +726,19 @@ internal open class PhoneGlassSession(
         // not expose RecyclerView children. Padding their View viewport removes
         // the very pixels the backdrop needs; their own content owns scrolling.
         val occupied = if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry, collapse = barCollapse.progress) else 0
+        val expanded = if (navFrame?.isShown == true) GlassPolicy.occupiedHeight(density, bottomInset, miniVisible, bottomGapDp, geometry) else 0
+        if (expandedContentInset != expanded) {
+            expandedContentInset = expanded
+            contentInset = null
+        }
+        // Off the end of a long list, bottom padding is outside the visible content.
+        // Commit it once the spring settles; short/end/unknown targets stay live.
+        val deferContentInset = barCollapse.isRunning && isCollapsed && navFrame?.isShown == true &&
+            terminal.isNotEmpty() && terminal.all {
+                states[it]?.scrollPaddingActive == true && hostBinding.canScrollVertically(it, 1) == true
+            }
+        val layoutOccupied = if (deferContentInset) contentInset ?: occupied else occupied
+        contentInset = layoutOccupied
         val composeSceneVisible = composeScenes.any { it.isShown && it.height > 0 }
         if (terminal.isEmpty() && !composeSceneVisible) {
             underlap = false
@@ -701,12 +747,15 @@ internal open class PhoneGlassSession(
         }
         underlap = true
         if (root.paddingBottom != 0) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, 0)
-        root.clipToPadding = false
+        if (root.clipToPadding) root.clipToPadding = false
         terminal.forEach { view ->
             val initial = save(view).also { it.scrollPadding = true; it.scrollPaddingActive = true }
-            val desired = initial.bottomPadding + occupied
+            val desired = initial.bottomPadding + layoutOccupied
             if (view.paddingBottom != desired) view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, desired)
-            (view as? ViewGroup)?.clipToPadding = false
+            // RecyclerView requests layout even when setClipToPadding receives
+            // the current value. Writing it on each pre-draw keeps the window
+            // laying out and recording the backdrop while the list is idle.
+            if (view is ViewGroup && view.clipToPadding) view.clipToPadding = false
         }
         return sourceNeedsLayout
     }
@@ -893,6 +942,13 @@ internal open class PhoneGlassSession(
     }
 
     override fun foreground(active: Boolean) {
+        if (active) {
+            glassSettings = config.settings()
+            nextSettingsCheck = android.os.SystemClock.uptimeMillis() + 500L
+            contentInset = null
+            hierarchyDirty = true
+            scanNeeded = true
+        }
         if (!active) {
             captureWait.timedOut(0L, false)
             barCollapse.resetInput()
@@ -934,10 +990,6 @@ internal open class PhoneGlassSession(
         releaseGlassOwnership(hostRoot)
         hostBinding.close()
         activity.window.decorView.requestLayout()
-    }
-
-    private fun descendants(root: ViewGroup): Sequence<View> = sequence {
-        for (i in 0 until root.childCount) { val view = root.getChildAt(i); yield(view); if (view is ViewGroup) yieldAll(descendants(view)) }
     }
 
     private fun isDescendant(child: View, parent: View) = generateSequence(child.parent) { it.parent }.any { it === parent }

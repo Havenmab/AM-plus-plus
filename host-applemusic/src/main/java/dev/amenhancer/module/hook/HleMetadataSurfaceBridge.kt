@@ -190,6 +190,9 @@ internal class HleMetadataSurfaceBridge(
 
         installSafely("metadata-surface-lifecycle") { surfaceRuntime.installLifecycleHooks() }
         installSafely("library-entity") { librarySurfaceHooks.installEntityHooks() }
+        if (librarySurfaceHooks.hasPresentationSurface()) {
+            installSafely("metadata-presentation") { librarySurfaceHooks.installPresentationHooks() }
+        }
         installSafely("library-compose") { librarySurfaceHooks.installComposeHooks() }
         installSafely("library-epoxy") { librarySurfaceHooks.installEpoxyHooks() }
         installSafely("data-binding") { dataBindingHooks.installDataBindingHooks() }
@@ -502,6 +505,7 @@ internal class HleMetadataSurfaceBridge(
     }
 
     internal fun shouldRetryOriginalMetadataCacheProbe(mediaId: String): Boolean =
+        metadataStore.shouldRetryOriginalSong(mediaId, SystemClock.uptimeMillis()) ?:
         io.github.proify.lyricon.amprovider.xposed.shouldRetryOriginalMetadataCacheProbe(
             originalResolved = metadataStore.isOriginalResolved(mediaId),
             lastMissUptimeMillis = metadataStore.originalCacheMissUptimeMillis(mediaId),

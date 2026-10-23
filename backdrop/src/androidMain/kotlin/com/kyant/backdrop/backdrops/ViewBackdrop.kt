@@ -33,6 +33,8 @@ import kotlin.math.abs
 class ViewBackdrop(
     private val source: View,
     private val onFailure: (Throwable) -> Unit,
+    /** Return false without drawing when a compatible host recording is unavailable. */
+    private val sourceRenderer: ((android.graphics.Canvas) -> Boolean)? = null,
 ) : Backdrop, AutoCloseable, ViewTreeObserver.OnPreDrawListener {
     private val node = RenderNode("AM++ content backdrop")
     private val sourceToWindow = Matrix()
@@ -85,7 +87,7 @@ class ViewBackdrop(
                     val canvas = node.beginRecording()
                     try {
                         drawWindowBackground(canvas)
-                        source.draw(canvas)
+                        if (sourceRenderer?.invoke(canvas) != true) source.draw(canvas)
                     } finally { node.endRecording(); recording = false }
                 }
                 matrixValues.copyInto(previousMatrix)

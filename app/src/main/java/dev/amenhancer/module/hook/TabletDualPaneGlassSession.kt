@@ -166,7 +166,7 @@ internal class TabletDualPaneGlassSession(
     // The session lives only while the official tablet runs the dual-pane player;
     // portrait or dual-pane-off restores the native chrome through close().
     override fun sessionEligible(): Boolean =
-        config.settings().phoneLiquidGlassEnabled && TabletModeQualifier.isEligible(activity)
+        glassSettings.phoneLiquidGlassEnabled && TabletModeQualifier.isEligible(activity)
 
     // Flat layout resolves bottom_navigation_root_flat; stacked stays the fallback.
     override fun resolveBottomNavigationRoot(): View? =

@@ -153,10 +153,7 @@ internal class FragmentSettingsRuntime(
                 require(Activity::class.java.isAssignableFrom(returnType))
             }
             val view = inherited(fragment, "getView").apply { require(View::class.java.isAssignableFrom(returnType)) }
-            val compose = fragment.getDeclaredMethod(names.composeMethod, loader.loadClass(names.composerClass)).apply {
-                require(!Modifier.isStatic(modifiers) && returnType == Void.TYPE)
-                isAccessible = true
-            }
+            val compose = names.composeMethod(loader)
             val onViewCreated = inherited(fragment, "onViewCreated", View::class.java, Bundle::class.java)
             val onResume = inherited(fragment, "onResume")
             val onDestroyView = inherited(fragment, "onDestroyView")

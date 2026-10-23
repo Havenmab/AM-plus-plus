@@ -27,6 +27,8 @@ class LyricsPlayerMotionTest {
         // while the 1 % settle (isSettled epsilon 0.01) is 0.512 s. 604 ms is neither.
         assertEquals(0.918, LyricsPlayerMotion.nominalDurationSeconds(LyricsPlayerMotion.lineChange), 1e-3)
         assertEquals(0.512, LyricsPlayerMotion.settleDurationSeconds(LyricsPlayerMotion.lineChange), 1e-3)
+        // The classic envelope 1 % (amplitude factor included) is a third, equally valid number.
+        assertEquals(0.604, LyricsPlayerMotion.lineChange.durationSeconds(), 1e-3)
         // Critical/over-damped springs use 2m*ln(100)/c only.
         val secondSpringNominal = LyricsPlayerMotion.nominalDurationSeconds(LyricsPlayerMotion.secondSpring)
         assertEquals(0.369, secondSpringNominal, 1e-2)
@@ -37,23 +39,23 @@ class LyricsPlayerMotionTest {
     }
 
     @Test
-    fun `stagger uses five lanes with the step as group delay`() {
-        // RE: A level model — applyTransitionUpdate assigns lanes 0..4 (lane = 4 - g).
-        assertEquals(5, LyricsPlayerMotion.STAGGER_LANES)
+    fun `stagger uses four lanes with the step as group delay`() {
+        // RE: A level (round 3) — lane = 4 - g with g in {1,2,3,4}, i.e. lanes 0..3.
+        assertEquals(4, LyricsPlayerMotion.STAGGER_LANES)
         assertEquals(0, LyricsPlayerMotion.staggerLane(2, 2))
         assertEquals(1, LyricsPlayerMotion.staggerLane(3, 2))
         assertEquals(2, LyricsPlayerMotion.staggerLane(0, 2))
-        assertEquals(4, LyricsPlayerMotion.staggerLane(9, 2))
-        assertEquals(4, LyricsPlayerMotion.staggerLane(-4, 2))
+        assertEquals(3, LyricsPlayerMotion.staggerLane(9, 2))
+        assertEquals(3, LyricsPlayerMotion.staggerLane(-4, 2))
         assertEquals(0L, LyricsPlayerMotion.staggerDelayMs(2, 2))
         assertEquals(50L, LyricsPlayerMotion.staggerDelayMs(3, 2))
         assertEquals(100L, LyricsPlayerMotion.staggerDelayMs(1, 3))
-        // Distance is capped at lane 4, so a jump of many lines waits 4 steps, not more.
-        assertEquals(200L, LyricsPlayerMotion.staggerDelayMs(9, 2))
-        assertEquals(200L, LyricsPlayerMotion.staggerDelayMs(-4, 2))
+        // Distance is capped at lane 3, so a jump of many lines waits 3 steps (150 ms).
+        assertEquals(150L, LyricsPlayerMotion.staggerDelayMs(9, 2))
+        assertEquals(150L, LyricsPlayerMotion.staggerDelayMs(-4, 2))
         assertEquals(0L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 0))
         // The settings slider scales the step.
-        assertEquals(320L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 80))
+        assertEquals(240L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 80))
     }
 
     @Test
@@ -95,16 +97,55 @@ class LyricsPlayerMotionTest {
     }
 
     @Test
-    fun `line scale runs from 0_98 to the emphasis setting`() {
+    fun `line scale runs from 0_98 and does not enlarge by default`() {
+        // RE: A level (negative) — the selected line is 1.0, only deselected is 0.98.
         assertEquals(0.98f, LyricsPlayerMotion.lineScale(0f, 0f), 1e-4f)
         assertEquals(0.98f, LyricsPlayerMotion.lineScale(0f, 1f), 1e-4f)
         assertEquals(1f, LyricsPlayerMotion.lineScale(1f, 0f), 1e-4f)
-        assertEquals(1.14f, LyricsPlayerMotion.lineScale(1f, 1f), 1e-4f)
-        assertEquals(1.07f, LyricsPlayerMotion.lineScale(1f, 0.5f), 1e-4f)
-        assertEquals(1.06f, LyricsPlayerMotion.lineScale(0.5f, 1f), 1e-4f)
+        assertEquals(1f, LyricsPlayerMotion.lineScale(1f, 1f), 1e-4f)
+        assertEquals(1f, LyricsPlayerMotion.lineScale(1f, 0.5f), 1e-4f)
+        assertEquals(0.99f, LyricsPlayerMotion.lineScale(0.5f, 1f), 1e-4f)
+        // An opt-in slider position (114 %) restores the emphasis growth.
+        assertEquals(1.14f, LyricsPlayerMotion.lineScale(1f, 1f, emphasisPercent = 114), 1e-4f)
+        assertEquals(1.07f, LyricsPlayerMotion.lineScale(1f, 0.5f, emphasisPercent = 114), 1e-4f)
+        assertEquals(1.06f, LyricsPlayerMotion.lineScale(0.5f, 1f, emphasisPercent = 114), 1e-4f)
         // The setting is clamped to 100–114 %.
         assertEquals(1f, LyricsPlayerMotion.lineScale(1f, 1f, emphasisPercent = 90), 1e-4f)
         assertEquals(1.14f, LyricsPlayerMotion.lineScale(1f, 1f, emphasisPercent = 200), 1e-4f)
+    }
+
+    @Test
+    fun `adaptive word spring maps short and long words to the binary range`() {
+        // p = clamp((x - 0.2) / 0.55, 0, 1); response = 0.48 + 0.27p; zeta = 0.90 - 0.12p.
+        val short = LyricsPlayerMotion.wordSpring(0.2f)
+        assertEquals(1.0, short.mass, 1e-9)
+        assertEquals(0.48, short.responseSeconds, 1e-3)
+        assertEquals(0.90, short.dampingRatio, 1e-3)
+        assertEquals(171.35, short.stiffness, 0.2)
+
+        val long = LyricsPlayerMotion.wordSpring(0.75f)
+        assertEquals(0.75, long.responseSeconds, 1e-3)
+        assertEquals(0.78, long.dampingRatio, 1e-3)
+        assertEquals(70.18, long.stiffness, 0.2)
+
+        // Word durations outside the mapping clamp to its ends.
+        assertEquals(0.48, LyricsPlayerMotion.wordSpring(0.05f).responseSeconds, 1e-6)
+        assertEquals(0.75, LyricsPlayerMotion.wordSpring(5f).responseSeconds, 1e-6)
+
+        // Halfway through the range (p = 0.5).
+        val mid = LyricsPlayerMotion.wordSpring(0.475f)
+        assertEquals(0.615, mid.responseSeconds, 1e-3)
+        assertEquals(0.84, mid.dampingRatio, 1e-3)
+
+        // Longer words get a softer, less bouncy emphasis.
+        assertTrue(
+            LyricsPlayerMotion.wordSpring(0.3f).responseSeconds <
+                LyricsPlayerMotion.wordSpring(0.6f).responseSeconds,
+        )
+        assertTrue(
+            LyricsPlayerMotion.wordSpring(0.3f).dampingRatio >
+                LyricsPlayerMotion.wordSpring(0.6f).dampingRatio,
+        )
     }
 
     @Test

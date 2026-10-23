@@ -185,8 +185,8 @@ class LyricsPlayerLayout(
 
     companion object {
         /**
-         * Phone type size. RE: C level — the Android binary only has 48.0; 34 sp is the iOS
-         * preset and stays until the second RE round derives the phone size from UI scale.
+         * Phone type size. RE: C level — the binary has a 34.0 float but no xref in the lyric
+         * code (round 2), and only 48.0 is consumed as a type size. 34 sp is the iOS preset.
          */
         const val PHONE_FONT_SP = 34f
 
@@ -208,7 +208,11 @@ class LyricsPlayerLayout(
         /** The measured line box is usually ~1.2× the type size for the system font. */
         const val DEFAULT_LINE_HEIGHT_RATIO = 1.2f
 
-        /** RE: C level — 12 % is the iOS preset; not recovered from the Android binary yet. */
+        /**
+         * RE: C level — 12 % is the iOS preset. Round 2 found that the binary's 0.12 is the
+         * zeta span coefficient of the adaptive spring, not a viewport anchor, so this value
+         * remains unverified.
+         */
         const val PHONE_ANCHOR_FRACTION = 0.12f
 
         /** RE: C level — short-window fallback, pending the second RE round. */

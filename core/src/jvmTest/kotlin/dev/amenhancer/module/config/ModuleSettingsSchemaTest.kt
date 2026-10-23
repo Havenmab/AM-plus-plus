@@ -118,7 +118,7 @@ class ModuleSettingsSchemaTest {
                 "lyrics_player_enabled" to false,
                 "lyrics_player_motion_percent" to 100,
                 "lyrics_player_stagger_ms" to 50,
-                "lyrics_player_emphasis_percent" to 114,
+                "lyrics_player_emphasis_percent" to 100,
                 "lyrics_player_font_scale_percent" to 100,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
@@ -190,7 +190,7 @@ class ModuleSettingsSchemaTest {
                 "lyrics_player_enabled" to false,
                 "lyrics_player_motion_percent" to 100,
                 "lyrics_player_stagger_ms" to 50,
-                "lyrics_player_emphasis_percent" to 114,
+                "lyrics_player_emphasis_percent" to 100,
                 "lyrics_player_font_scale_percent" to 100,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
@@ -390,7 +390,7 @@ class ModuleSettingsSchemaTest {
         assertFalse(defaults.lyricsPlayerEnabled)
         assertEquals(100, defaults.lyricsPlayerMotionPercent)
         assertEquals(50, defaults.lyricsPlayerStaggerMs)
-        assertEquals(114, defaults.lyricsPlayerEmphasisPercent)
+        assertEquals(100, defaults.lyricsPlayerEmphasisPercent)
         assertEquals(100, defaults.lyricsPlayerFontScalePercent)
         // The model's own defaults must be the schema's defaults, otherwise an upgrading
         // store would silently change what it renders.
@@ -400,7 +400,7 @@ class ModuleSettingsSchemaTest {
         )
         assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_MOTION_PERCENT, 100)
         assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_STAGGER_MS, 50)
-        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT, 114)
+        assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT, 100)
         assertEquals(ModuleSettings.DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT, 100)
         // A malformed switch is not a truthy string.
         assertFalse(
@@ -515,7 +515,7 @@ class ModuleSettingsSchemaTest {
         assertEquals(false, upgraded["lyrics_player_enabled"])
         assertEquals(100, upgraded["lyrics_player_motion_percent"])
         assertEquals(50, upgraded["lyrics_player_stagger_ms"])
-        assertEquals(114, upgraded["lyrics_player_emphasis_percent"])
+        assertEquals(100, upgraded["lyrics_player_emphasis_percent"])
         assertEquals(100, upgraded["lyrics_player_font_scale_percent"])
         assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, upgraded["schema_version"])
     }

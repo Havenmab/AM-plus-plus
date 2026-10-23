@@ -16,8 +16,12 @@ data class LyricsPlayerConfig(
     val motionPercent: Int = 100,
     /** Per-line stagger in milliseconds (0–120, 50 = Apple timing). */
     val staggerMs: Int = 50,
-    /** Emphasis scale of the current line in percent (100–114). */
-    val emphasisPercent: Int = 114,
+    /**
+     * Emphasis scale of the current line in percent (100–114). RE: default 100 — the binary
+     * does not enlarge the selected line (1.14 is a self-invented value); 114 stays available
+     * as an opt-in slider position.
+     */
+    val emphasisPercent: Int = 100,
     /** Type size multiplier in percent (80–140). */
     val fontScalePercent: Int = 100,
 )

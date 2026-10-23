@@ -274,8 +274,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     ),
     LYRICS_PLAYER_EMPHASIS("Player current-line scale", "播放器当前行缩放"),
     LYRICS_PLAYER_EMPHASIS_SUMMARY(
-        "100–114%% · 100%% disables the emphasis · default 114%%",
-        "100–114%% · 100%% 为不放大 · 默认 114%%",
+        "100–114%% · 100%% matches the original player (selected line 1.0) · default 100%%",
+        "100–114%% · 100%% 与原版一致（选中行就是 1.0）· 默认 100%%",
     ),
     LYRICS_PLAYER_FONT_SCALE("Player font size", "播放器字号"),
     LYRICS_PLAYER_FONT_SCALE_SUMMARY(

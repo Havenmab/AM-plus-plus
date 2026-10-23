@@ -105,9 +105,11 @@ data class ModuleSettings(
      */
     val lyricsPlayerStaggerMs: Int = DEFAULT_LYRICS_PLAYER_STAGGER_MS,
     /**
-     * Peak scale of the self-drawn player's current line as a percentage: 100 removes the
-     * emphasis, 114 is LyricsBlossom's own current-line scale. Clamped to
-     * [MIN_LYRICS_PLAYER_EMPHASIS_PERCENT]..[MAX_LYRICS_PLAYER_EMPHASIS_PERCENT]. Read live.
+     * Peak scale of the self-drawn player's current line as a percentage. 100 keeps the
+     * original layout: rev-eng found no 1.14 constant in the Android binary (the selected
+     * line stays at 1.0, unselected lines at 0.98), so the emphasis is an AM++ option, not
+     * a ported value. The slider still allows up to
+     * [MAX_LYRICS_PLAYER_EMPHASIS_PERCENT]. Read live.
      */
     val lyricsPlayerEmphasisPercent: Int = DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT,
     /**
@@ -281,8 +283,12 @@ data class ModuleSettings(
         const val MIN_LYRICS_PLAYER_STAGGER_MS = 0
         const val MAX_LYRICS_PLAYER_STAGGER_MS = 120
 
-        /** Reference current-line scale of the player (1.0 -> 1.14); 100 disables it. */
-        const val DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT = 114
+        /**
+         * Reference current-line scale of the player: 100 is the original layout (rev-eng
+         * found no 1.14 in the Android binary; the unselected lines are 0.98). The slider
+         * can raise it to [MAX_LYRICS_PLAYER_EMPHASIS_PERCENT] = 114 as an AM++ option.
+         */
+        const val DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT = 100
         const val MIN_LYRICS_PLAYER_EMPHASIS_PERCENT = 100
         const val MAX_LYRICS_PLAYER_EMPHASIS_PERCENT = 114
 

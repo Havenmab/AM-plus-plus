@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import dev.amenhancer.module.lyrics.motion.SpringTiming
 import dev.amenhancer.module.lyrics.player.LyricsPlayerLayout
 import dev.amenhancer.module.lyrics.player.LyricsPlayerMotion
 import dev.amenhancer.module.lyrics.player.LyricsPlayerTimeline
@@ -182,6 +183,8 @@ internal fun LyricsPlayerLyrics(
         // RE: A level — Specs +0x54 = 40.0 (the iOS notes said 30).
         val featherPx = with(density) { LyricsPlayerMotion.FEATHER_DP.dp.toPx() }
         val syllableLiftPx = with(density) { LyricsPlayerMotion.SYLLABLE_LIFT_DP.dp.toPx() }
+        // One cached adaptive spring for the word currently being lit (no per-frame allocation).
+        val wordSpringCache = remember { WordSpringCache() }
 
         Canvas(
             Modifier
@@ -231,7 +234,9 @@ internal fun LyricsPlayerLyrics(
                 drawEmptyLyrics(emptyText, layout, breath)
                 return@Canvas
             }
-            drawLyrics(measured, layout, runtime, nowNanos, featherPx, glowShadow, syllableLiftPx)
+            drawLyrics(
+                measured, layout, runtime, nowNanos, featherPx, glowShadow, syllableLiftPx, wordSpringCache,
+            )
         }
     }
 }
@@ -252,6 +257,7 @@ private fun DrawScope.drawLyrics(
     featherPx: Float,
     glowShadow: Shadow,
     syllableLiftPx: Float,
+    wordSpringCache: WordSpringCache,
 ) {
     val lines = runtime.document?.lines.orEmpty()
     // A document can change between the frame loop and the next recomposition; the measured
@@ -265,6 +271,7 @@ private fun DrawScope.drawLyrics(
     val currentLine = lines[currentIndex]
     val currentHighlight = LyricsPlayerTimeline.wordHighlight(currentLine, positionMs)
     val currentProgress = LyricsPlayerTimeline.lineProgress(currentLine, positionMs)
+    val currentWordLit = wordLightProgress(currentLine, currentHighlight, positionMs, wordSpringCache)
     val range = layout.visibleLineRange(runtime.displayedIndex, lineCount)
 
     for (index in range) {
@@ -273,6 +280,7 @@ private fun DrawScope.drawLyrics(
             index, measured.rows[index], layout, runtime, config, elapsedMs,
             isCurrent = false, highlight = WordHighlight.NONE, lineProgress = 0f,
             featherPx = featherPx, glowShadow = glowShadow, syllableLiftPx = syllableLiftPx,
+            wordLit = 0f,
         )
     }
     // The current line is painted last so its glow sits above its neighbours.
@@ -280,6 +288,7 @@ private fun DrawScope.drawLyrics(
         currentIndex, measured.rows[currentIndex], layout, runtime, config, elapsedMs,
         isCurrent = true, highlight = currentHighlight, lineProgress = currentProgress,
         featherPx = featherPx, glowShadow = glowShadow, syllableLiftPx = syllableLiftPx,
+        wordLit = currentWordLit,
     )
 }
 
@@ -296,6 +305,7 @@ private fun DrawScope.drawLine(
     featherPx: Float,
     glowShadow: Shadow,
     syllableLiftPx: Float,
+    wordLit: Float,
 ) {
     val centerY = layout.lineCenterY(index, runtime.displayedIndex)
     if (centerY < -layout.lineHeightPx || centerY > size.height + layout.lineHeightPx) return
@@ -323,8 +333,10 @@ private fun DrawScope.drawLine(
             val fillX = row.fillX(highlight).coerceIn(0f, textWidth)
             if (fillX > 0f) {
                 // The shadow makes the sung part glow; the dim, not-yet-sung tail keeps none.
+                // The adaptive per-word spring drives how strongly the current word glows.
+                val glowAlpha = GLOW_TEXT_ALPHA * (0.35f + 0.65f * wordLit.coerceIn(0f, 1f))
                 clipRect(right = fillX, top = 0f, bottom = size.height) {
-                    drawText(main, Color.White.copy(alpha = GLOW_TEXT_ALPHA), topLeft, shadow = glowShadow)
+                    drawText(main, Color.White.copy(alpha = glowAlpha), topLeft, shadow = glowShadow)
                 }
                 val brush = row.gradientBrush(textWidth, fillX, featherPx)
                 val liftedStart = row.wordStart(highlight.wordIndex)
@@ -344,14 +356,16 @@ private fun DrawScope.drawLine(
                             drawText(main, brush, topLeft)
                         }
                     }
-                    // …and the sung part of the current word floats up by the syllable lift (§5.2).
+                    // …and the sung part of the current word floats up by the syllable lift,
+                    // eased by the adaptive per-word spring (§5.2 + rev-eng round 2).
+                    val lift = syllableLiftPx * wordLit.coerceIn(0f, 1f)
                     clipRect(
                         left = liftedStart,
-                        top = -syllableLiftPx,
+                        top = -lift,
                         right = liftedEnd,
                         bottom = size.height,
                     ) {
-                        drawText(main, brush, topLeft + Offset(0f, -syllableLiftPx))
+                        drawText(main, brush, topLeft + Offset(0f, -lift))
                     }
                 }
             } else {
@@ -457,6 +471,39 @@ private fun wordEdges(main: TextLayoutResult, line: PlayerLine): Pair<FloatArray
         cursor = end
     }
     return starts to ends
+}
+
+/** Reuses one adaptive word spring across frames instead of allocating one per word. */
+private class WordSpringCache {
+    private var cachedDurationSeconds = -1f
+    private var cachedSpring = LyricsPlayerMotion.wordSpring(0f)
+
+    fun springFor(wordDurationSeconds: Float): SpringTiming {
+        if (wordDurationSeconds != cachedDurationSeconds) {
+            cachedDurationSeconds = wordDurationSeconds
+            cachedSpring = LyricsPlayerMotion.wordSpring(wordDurationSeconds)
+        }
+        return cachedSpring
+    }
+}
+
+/**
+ * Lit progress (0–1) of the current word, sampled from the binary's adaptive per-word spring
+ * (x = the word's duration in seconds). Only the word being sung uses it; the line-change
+ * motion always comes from the fixed line spring.
+ */
+private fun wordLightProgress(
+    line: PlayerLine,
+    highlight: WordHighlight,
+    positionMs: Long,
+    cache: WordSpringCache,
+): Float {
+    val index = highlight.wordIndex
+    if (index < 0 || index >= line.words.size) return 0f
+    val word = line.words[index]
+    val spring = cache.springFor(word.durationMs / 1000f)
+    val elapsedSeconds = ((positionMs - word.startMs).coerceAtLeast(0L)) / 1000.0
+    return spring.value(elapsedSeconds).toFloat().coerceIn(0f, 1f)
 }
 
 private val EMPTY_EDGES = FloatArray(0)

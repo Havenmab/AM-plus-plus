@@ -4,7 +4,6 @@ import dev.amenhancer.module.lyrics.motion.SpringTiming
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * Motion model of the lyrics page: the four springs the iOS preset uses, the per-line
@@ -19,14 +18,18 @@ object LyricsPlayerMotion {
     /**
      * Line change / vertical scroll: ζ = 0.90, ω = 10 rad/s.
      * RE: A level — inline in `LyricsRenderer` ctor (this+0x4e0..0x4f0).
-     * Nominal duration is 0.918 s (see [nominalDurationSeconds]); 1 % settle is 0.512 s.
+     * Three durations, all with an evidence trail:
+     *  - nominal (binary `duration()`): **0.918 s** = max(ln100/(ζω), 4/ω_d);
+     *  - true unit-step envelope 1 % (incl. amplitude factor): **0.604 s**
+     *    = ln(100/√(1−ζ²))/(ζω), the value [SpringTiming.durationSeconds] returns;
+     *  - pure decay-term 1 %: **0.512 s** = ln(100)/(ζω), see [settleDurationSeconds].
      */
     val lineChange: SpringTiming = SpringTiming(mass = 1.0, stiffness = 100.0, damping = 18.0)
 
     /**
-     * Whole-block lift used for drag release and large jumps: ζ ≈ 0.935, deliberately soft.
-     * RE: C level — this exact spring is not in the Android binary; 14.0 only appears as a
-     * Specs field (+0xE4). The A-level second spring is [secondSpring] (2.0/260.0/50.0).
+     * Whole-block lift used for drag release and large jumps: ζ ≈ 0.935, response 1.678 s.
+     * RE: A level (round 2) — .rodata 0x1d9000 = [1.0, 14.0], 0x1d7e30 = [7.0, 0.0];
+     * used at fn 0x29c8878 (object +0x2e0..+0x2f8).
      */
     val lift: SpringTiming = SpringTiming(mass = 1.0, stiffness = 14.0, damping = 7.0)
 
@@ -52,13 +55,15 @@ object LyricsPlayerMotion {
     const val DEFAULT_STAGGER_MS = 50
 
     /**
-     * RE: A level — the transition state machine (0x29f20ec) hands the incoming lines to
-     * 5 lanes (0..4), `lane = 4 - g`. `lineDelay` (0.05 s) is the lane step, not a per-line
-     * linear delay. We approximate the lane of a line by its distance from the current one.
+     * RE: A level (round 3 correction) — the state machine (0x29f20ec) writes g ∈ {1,2,3,4}
+     * and `applyTransitionUpdate` (0x29e45bc) returns `lane = 4 - g`, so the lanes are 0..3.
+     * `lineDelay` (0.05 s) is the lane step: the current line starts first, each lane further
+     * away waits one more step, and the farthest waits 3 steps (150 ms) — equivalent to the
+     * old `50 ms × min(|i − now|, 3)` rule. We use that distance mapping directly.
      */
-    const val STAGGER_LANES = 5
+    const val STAGGER_LANES = 4
 
-    /** Highest lane index, i.e. the longest stagger (4 × step). */
+    /** Highest lane index, i.e. the longest stagger (3 × step = 150 ms). */
     const val MAX_STAGGER_LANE = STAGGER_LANES - 1
 
     /** A jump farther than this many lines uses the soft lift spring. */
@@ -85,16 +90,63 @@ object LyricsPlayerMotion {
      */
     const val FEATHER_DP = 40f
 
-    /** Glow radius. RE: C level — 5.0 not found in the binary; candidate 7.0 at +0x80. */
+    /**
+     * Glow radius. RE: C level — 5.0 has no xref inside the lyrics code (round 2 negative
+     * result); candidate 7.0 at Specs +0x80. Kept as a self-drawn appearance value.
+     */
     const val GLOW_DP = 5f
 
     /** Syllable lift. RE: B level — Specs +0x88 = 2.0 (candidate syllableLift). */
     const val SYLLABLE_LIFT_DP = 2f
 
-    /** Current-line emphasis upper bound. RE: C level — 1.14 not found in the binary yet. */
-    const val DEFAULT_EMPHASIS_PERCENT = 114
+    /**
+     * Current-line emphasis. RE: A level (round 2, negative) — 1.14 does not exist in the
+     * binary; the selected line is 1.0 and deselected is 0.98. The default therefore does
+     * *not* enlarge the current line; the 114 % upper bound stays only as a user preference
+     * (settings slider), never as the default.
+     */
+    const val DEFAULT_EMPHASIS_PERCENT = 100
     const val MIN_EMPHASIS_PERCENT = 100
     const val MAX_EMPHASIS_PERCENT = 114
+
+    // ---- adaptive per-word spring (RE: A parameters, C input meaning) --------------------
+    //
+    // The binary contains the "adaptive spring" the iOS author redacted: fn 0x29d30b4,
+    // called from 0x29d2238 / 0x29d45dc, with the fallback branch bool=false equal to the
+    // fixed 1.0/100.0/18.0 line spring. The public formula is
+    //   p = clamp((x - 0.2) / 0.55, 0, 1)
+    //   response = 0.48 + 0.27p   (0.48…0.75 s)
+    //   zeta     = 0.90 - 0.12p   (0.90…0.78)
+    // Round 3 found the dispatcher (0x29d2198): it picks adaptive / fixed 1.0/100/18 /
+    // fixed 2.0/260/50 per line-render flag, so the original app itself falls back to the
+    // fixed line spring. We keep that fixed spring everywhere and use the adaptive one only
+    // for the per-word lighting, with x = the word's duration in seconds (Lead's call).
+    // The physical meaning of x is still C level — candidates are line progress, normalized
+    // distance to the current line, or syllable duration; the parameters above are A level.
+    const val WORD_RESPONSE_MIN_S = 0.48f
+    const val WORD_RESPONSE_MAX_S = 0.75f
+    const val WORD_ZETA_MAX = 0.90f
+    const val WORD_ZETA_MIN = 0.78f
+
+    /**
+     * Spring of the per-word lighting emphasis for a word that lasts [wordDurationSeconds]
+     * **in seconds** (callers divide `PlayerWord.durationMs` by 1000; the mapping was
+     * calibrated against syllable durations of 0.2–0.75 s). Only the current word's scale and
+     * glow may use it; line changes always use [lineChange].
+     */
+    fun wordSpring(wordDurationSeconds: Float): SpringTiming {
+        val p = ((wordDurationSeconds - WORD_X_MIN_S) / WORD_X_SPAN_S).coerceIn(0f, 1f)
+        val response = WORD_RESPONSE_MIN_S + (WORD_RESPONSE_MAX_S - WORD_RESPONSE_MIN_S) * p
+        val zeta = WORD_ZETA_MAX - (WORD_ZETA_MAX - WORD_ZETA_MIN) * p
+        val omega = TWO_PI / response.toDouble()
+        val stiffness = omega * omega
+        val damping = 2.0 * zeta.toDouble() * omega
+        return SpringTiming(mass = 1.0, stiffness = stiffness, damping = damping)
+    }
+
+    private const val WORD_X_MIN_S = 0.2f
+    private const val WORD_X_SPAN_S = 0.55f
+    private const val TWO_PI = 2.0 * Math.PI
 
     /** Resting scale of every line that is not the current one. RE: A level — Specs +0x40 = 0.98. */
     const val DESELECTED_SCALE = 0.98f
@@ -138,27 +190,20 @@ object LyricsPlayerMotion {
         motionPercent.coerceIn(MIN_MOTION_PERCENT, MAX_MOTION_PERCENT) / 100f
 
     /**
-     * Nominal spring duration, the Android binary's `TimingFunction::duration()`
-     * (0x28423c8): `max(ln(100)/(ζω), 4/ω_d)` while under-damped and `2m·ln(100)/c`
-     * (i.e. `ln(100)/(ζω)`) once critical/over-damped. For [lineChange] this is 0.918 s.
-     * RE: A level.
+     * Nominal spring duration, the Android binary's `TimingFunction::duration()` (0x28423c8).
+     * Delegates to [SpringTiming.nominalDurationSeconds] so the model has a single owner:
+     * `max(ln(100)/(ζω), 4/ω_d)` under-damped, `2m·ln(100)/c` otherwise. For [lineChange]
+     * this is 0.918 s. RE: A level.
      */
-    fun nominalDurationSeconds(timing: SpringTiming): Double {
-        val zeta = timing.dampingRatio
-        val omega = timing.naturalFrequency
-        val decay = LN_100 / (zeta * omega)
-        if (zeta < 1.0 - CRITICAL_EPSILON) {
-            val dampedOmega = omega * sqrt(1.0 - zeta * zeta)
-            return maxOf(decay, 4.0 / dampedOmega)
-        }
-        return decay
-    }
+    fun nominalDurationSeconds(timing: SpringTiming): Double = timing.nominalDurationSeconds()
 
     /**
-     * Time until the spring is within [threshold] of its target, i.e. the binary's
-     * `isSettled` epsilon (0.01). For [lineChange] this is 0.512 s — distinct from the
-     * nominal 0.918 s above, and the reason 604 ms must not be used for either concept.
-     * RE: A level (epsilon 0.01 @spring state +0x58).
+     * Time for the exponential decay term alone to reach 1 %: `-ln(threshold)/(ζω)`, i.e.
+     * 0.512 s for [lineChange]. It is the first term of the binary's `duration()`, *without*
+     * the under-damped amplitude factor; the real unit-step envelope (0.604 s) also includes
+     * that factor and is what [SpringTiming.durationSeconds] computes. Neither is the nominal
+     * 0.918 s the binary actually schedules with — keep the three concepts apart.
+     * RE: A level (epsilon 0.01 at spring state +0x58).
      */
     fun settleDurationSeconds(timing: SpringTiming, threshold: Double = 0.01): Double {
         val zeta = timing.dampingRatio
@@ -197,7 +242,8 @@ object LyricsPlayerMotion {
 
     /**
      * Scale of one line: unselected rows rest at 0.98, the current row grows from 1.0 to the
-     * emphasis setting (114 %) as the line is sung, and [emphasis] blends between the two.
+     * user's emphasis setting as the line is sung (the default setting is 100 %, i.e. no
+     * enlargement — the binary's selected line is 1.0), and [emphasis] blends between the two.
      */
     fun lineScale(
         emphasis: Float,
@@ -235,8 +281,6 @@ object LyricsPlayerMotion {
     /** Soft lift spring for a big jump, the normal line-change spring otherwise. */
     fun springForJump(lineDistance: Float): SpringTiming =
         if (abs(lineDistance) > LIFT_JUMP_LINES) lift else lineChange
-
-    private const val LN_100: Double = 4.605170185988091
 
     /** Below this a spring counts as under-damped (same epsilon the binary's setup uses). */
     private const val CRITICAL_EPSILON: Double = 1e-4

@@ -66,9 +66,17 @@ internal class LyricsPlayerPortImpl(
         lastDocumentAttemptMs = 0L
     }
 
-    /** The host redrew its own lyrics background: this bitmap is the current cover. */
+    /**
+     * The host redrew its own lyrics background: this bitmap is the current cover.
+     *
+     * The page keeps the bitmap across frames while the host may recycle its own copy, so the
+     * cover is copied once per track. A copy failure (huge/OOM) falls back to the host bitmap,
+     * which [artwork] still guards with [Bitmap.isRecycled].
+     */
     fun onArtwork(bitmap: Bitmap?) {
-        artworkBitmap = bitmap?.takeIf { !it.isRecycled }
+        artworkBitmap = bitmap?.takeIf { !it.isRecycled }?.let { source ->
+            runCatching { source.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull() ?: source
+        }
     }
 
     /** True while the host fragment exposes a readable lyric document source (adapter + reader). */

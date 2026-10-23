@@ -124,7 +124,7 @@ class OrdinarySettingsWritePolicyTest {
                 "lyrics_player_enabled" to false,
                 "lyrics_player_motion_percent" to 100,
                 "lyrics_player_stagger_ms" to 50,
-                "lyrics_player_emphasis_percent" to 114,
+                "lyrics_player_emphasis_percent" to 100,
                 "lyrics_player_font_scale_percent" to 100,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",

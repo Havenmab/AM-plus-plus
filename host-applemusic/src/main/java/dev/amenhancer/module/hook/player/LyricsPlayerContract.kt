@@ -147,8 +147,10 @@ internal class LyricsPlayerContract(
         check(wordResolve.declaringClass == wordGet.returnType)
         check(wordText.declaringClass == wordResolve.returnType && wordWhitespace.declaringClass == wordText.declaringClass)
         check(wordBegin.declaringClass == timing && wordEnd.declaringClass == timing)
-        // Playback lives on the media3 controller the lyrics fragment already owns.
+        // Playback lives on the media3 controller the lyrics fragment already owns; the browser
+        // getter must be callable on the fragment itself (same check lyricWrapSweep uses).
         check(mediaController.isAssignableFrom(mediaBrowser.returnType))
+        check(mediaBrowser.declaringClass.isAssignableFrom(fragment))
         listOf(mediaPosition, mediaPlaying, mediaPlaybackState, mediaDuration, mediaSeekTo, mediaPlay, mediaPause,
             mediaSkipNext, mediaSkipPrevious, mediaMetadataPrimary, mediaMetadataAlternate).forEach { method ->
             check(method.declaringClass == mediaController) { "playback member off the controller: ${method.name}" }

@@ -112,6 +112,21 @@ class LyricsPlayerStructuralTest {
         assertEquals("a b", LyricsPlaybackText.plainText("a\u00A0 b"))
     }
 
+    @Test
+    fun `the factory wires the target and its fallback source exactly once`() {
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        assertTrue(factory.contains("import dev.amenhancer.module.hook.player.LyricsFallbackDocument"))
+        assertTrue(factory.contains("lyricsPlayer = AppleMusicLyricPlayerTarget("))
+        // One instance, built at compose() time, so the fallback's per-song cache survives polling.
+        assertTrue(factory.contains("LyricsFallbackDocument(config, currentSong)"))
+        assertEquals(1, Regex("LyricsFallbackDocument\\(").findAll(factory).count())
+    }
+
+    private fun moduleSource(relative: String): String = listOf(
+        File("src/main/java/dev/amenhancer/module/hook/$relative"),
+        File("../host-applemusic/src/main/java/dev/amenhancer/module/hook/$relative"),
+    ).firstOrNull(File::isFile)?.readText() ?: error("$relative was not found")
+
     private fun source(relative: String): String = listOf(
         File("src/main/java/dev/amenhancer/module/hook/player/$relative"),
         File("../host-applemusic/src/main/java/dev/amenhancer/module/hook/player/$relative"),

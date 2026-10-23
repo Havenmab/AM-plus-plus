@@ -75,7 +75,7 @@ object ModuleConstants {
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-23-1.6.6-lyric-line-motion-1609-b3"
+    const val BUILD_TAG = "2026-10-23-1.6.6-lyric-line-motion-1609-b5"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

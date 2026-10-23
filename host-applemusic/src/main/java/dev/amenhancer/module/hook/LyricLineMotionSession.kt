@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.LinearInterpolator
@@ -44,9 +45,8 @@ internal class LyricLineMotionSession(
     private val handler = Handler(Looper.getMainLooper())
     private val recyclers = Collections.synchronizedMap(WeakHashMap<ViewGroup, Boolean>())
     private val hookedMethods = Collections.synchronizedSet(HashSet<Method>())
-    private val rowAnimators = Collections.synchronizedMap(WeakHashMap<View, ValueAnimator>())
     private val scaleAnimators = Collections.synchronizedMap(WeakHashMap<View, ValueAnimator>())
-    private val scrollAnimators = Collections.synchronizedMap(WeakHashMap<View, ValueAnimator>())
+    private val glides = Collections.synchronizedMap(WeakHashMap<ViewGroup, GlideState>())
     private val positionMethods = Collections.synchronizedMap(HashMap<String, Method?>())
     private val traceCounts = HashMap<String, Int>()
 
@@ -91,12 +91,16 @@ internal class LyricLineMotionSession(
     fun close() {
         closed = true
         handler.removeCallbacksAndMessages(null)
-        resetAll(rowAnimators) { it.translationY = 0f }
+        val live = synchronized(glides) { glides.keys.toList() }
+        live.forEach { recycler ->
+            cancelGlide(recycler)
+            runCatching { translateRows(recycler, 0f) }
+        }
+        synchronized(glides) { glides.clear() }
         resetAll(scaleAnimators) {
             it.scaleX = 1f
             it.scaleY = 1f
         }
-        scrollAnimators.keys.toList().forEach { scrollAnimators.remove(it)?.cancel() }
         synchronized(recyclers) { recyclers.clear() }
         synchronized(hookedMethods) { hookedMethods.clear() }
         synchronized(positionMethods) { positionMethods.clear() }
@@ -124,7 +128,14 @@ internal class LyricLineMotionSession(
                     val holder = param.args.firstOrNull() ?: return
                     val view = holderView(holder) ?: return
                     if (!belongsToLyricRecycler(view)) return
-                    trace("animateChange args=" + param.args.size + " position=" + adapterPosition(holder))
+                    val policy = runCatching(settings).getOrNull() ?: return
+                    val enabled = LyricLineMotionPolicy.isEnabled(policy)
+                    trace("animateChange row=" + adapterPosition(holder) + " enabled=" + enabled)
+                    if (!enabled) return
+                    // Apple Music cross-fades the outgoing row into the incoming one in place.
+                    // On top of the block offset that showed the same line twice, so the offset
+                    // alone carries the motion and the cross-fade is refused.
+                    param.result = false
                 }
             })
         }
@@ -138,23 +149,25 @@ internal class LyricLineMotionSession(
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (param.throwable != null) return
                 val policy = runCatching(settings).getOrNull() ?: return
-                trace("animateMove enabled=" + LyricLineMotionPolicy.isEnabled(policy) + " dy=" +
-                    param.args.getOrNull(2) + "/" + param.args.getOrNull(4))
-                if (!LyricLineMotionPolicy.isEnabled(policy)) return
                 val holder = param.args.firstOrNull() ?: return
                 val view = holderView(holder) ?: return
-                if (!belongsToLyricRecycler(view)) return
+                val recycler = lyricRecyclerOf(view)
                 val fromY = (param.args.getOrNull(2) as? Number)?.toInt() ?: return
                 val toY = (param.args.getOrNull(4) as? Number)?.toInt() ?: return
+                val enabled = LyricLineMotionPolicy.isEnabled(policy)
+                trace(
+                    "animateMove enabled=" + enabled + " dy=" + fromY + "/" + toY +
+                        " row=" + adapterPosition(holder) + " list=" + (recycler != null),
+                )
+                if (!enabled || recycler == null) return
+                // Apple Music slides every moved row with its own 750 ms linear tween. The row
+                // is refused here and the whole block is offset instead: one uniform spring is
+                // what makes the change read as the list scrolling rather than a stack of rows
+                // sliding past each other.
+                param.result = false
                 val dy = (fromY - toY).toFloat()
                 if (abs(dy) < MIN_MOVE_PX) return
-                // Apple Music would translate the row over its own duration; the spring
-                // below owns the same displacement instead.
-                param.result = false
-                val position = adapterPosition(holder)
-                val line = highlightedLine
-                val distance = if (position >= 0 && line >= 0) abs(position - line) else 0
-                onMain { slide(view, dy, distance, policy) }
+                startGlide(recycler, dy, policy)
             }
         })
     }
@@ -216,22 +229,23 @@ internal class LyricLineMotionSession(
                         " offset=" + offset +
                         " top=" + firstVisibleTop(manager),
                 )
-                val recycler = view as? ViewGroup ?: return
-                val policy = runCatching(settings).getOrNull() ?: return
-                if (!LyricLineMotionPolicy.isEnabled(policy)) return
-                if (isComputingLayout(recycler)) return
-                val delta = anchoredDelta(recycler, position, offset) ?: return
-                if (abs(delta) < MIN_GLIDE_PX) return
-                // Apple Music re-anchors the list instantly; gliding the same distance with
-                // the iOS spring is what makes a line change look like iOS instead of a cut.
-                param.result = null
-                trace("glide pos=" + position + " delta=" + delta)
-                glide(recycler, delta, policy) {
-                    runCatching { anchorScroll.invoke(manager, position, offset) }
-                }
+                // Diagnostics only: the block offset started from animateMove owns the motion.
+                trace("anchor pos=" + position + " offset=" + offset + " list=" + (view != null))
             }
         })
     }
+    /** Nearest ancestor that is the lyric list itself, or null for any other row. */
+    private fun lyricRecyclerOf(view: View): ViewGroup? {
+        var parent: View? = view
+        var depth = 0
+        while (parent != null && depth < BELONGING_DEPTH) {
+            if (isLyricRecycler(parent)) return parent as? ViewGroup
+            parent = parent.parent as? View
+            depth++
+        }
+        return null
+    }
+
     private fun belongsToLyricRecycler(view: View): Boolean {
         var parent: View? = view
         var depth = 0
@@ -241,51 +255,6 @@ internal class LyricLineMotionSession(
             depth++
         }
         return false
-    }
-    private fun isComputingLayout(recycler: View): Boolean = runCatching {
-        recycler.javaClass.getMethod("isComputingLayout").invoke(recycler) as? Boolean
-    }.getOrNull() == true
-
-    /** How far the list has to move to put [position] at [offset] from the padded top. */
-    private fun anchoredDelta(recycler: ViewGroup, position: Int, offset: Int): Float? {
-        val manager = runCatching {
-            recycler.javaClass.getMethod("getLayoutManager").invoke(recycler)
-        }.getOrNull() ?: return null
-        val find = runCatching {
-            manager.javaClass.getMethod("findViewByPosition", Int::class.javaPrimitiveType)
-        }.getOrNull() ?: return null
-        val child = runCatching { find.invoke(manager, position) as? View }.getOrNull() ?: return null
-        val targetTop = recycler.paddingTop + offset
-        return (child.top - targetTop).toFloat()
-    }
-
-    /** Drives [recycler] over [delta] pixels with the iOS spring, then snaps exactly. */
-    private fun glide(recycler: ViewGroup, delta: Float, policy: ModuleSettings, snap: () -> Unit) {
-        if (closed) return
-        scrollAnimators.remove(recycler)?.cancel()
-        val duration = LyricLineMotionPolicy.durationMillis(policy)
-        var applied = 0
-        val animator = springAnimator(duration, 0L, policy) { progress ->
-            val target = (delta * progress).toInt()
-            val step = target - applied
-            if (step != 0) {
-                applied = target
-                runCatching { recycler.scrollBy(0, step) }
-            }
-        }
-        animator.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator) {
-                if (scrollAnimators[recycler] !== animation) return
-                scrollAnimators.remove(recycler)
-                if (!closed) runCatching(snap)
-            }
-
-            override fun onAnimationCancel(animation: Animator) {
-                if (scrollAnimators[recycler] === animation) scrollAnimators.remove(recycler)
-            }
-        })
-        scrollAnimators[recycler] = animator
-        animator.start()
     }
     private fun isLyricRecycler(view: View): Boolean =
         synchronized(recyclers) { recyclers.containsKey(view) }
@@ -319,27 +288,67 @@ internal class LyricLineMotionSession(
     }
 
     private var layoutManagerField: java.lang.reflect.Field? = null
-    private fun slide(view: View, dy: Float, distance: Int, policy: ModuleSettings) {
+
+    /**
+     * One uniform offset for the whole block, driven by the iOS line-change spring.
+     *
+     * Every row of a single layout pass reports the same distance, so only the first call of a
+     * pass starts the animator; the rest are already refused by the move hook. Rows are offset
+     * with `translationY` (androidx member names are renamed in this build, so
+     * `offsetChildrenVertical` cannot be reached reliably) and the value is written
+     * absolutely on every frame so a row that gets rebound mid-glide cannot drift.
+     */
+    private fun startGlide(recycler: ViewGroup, delta: Float, policy: ModuleSettings) {
         if (closed) return
-        rowAnimators.remove(view)?.cancel()
-        view.translationY = dy
+        val now = SystemClock.uptimeMillis()
+        val state = synchronized(glides) { glides.getOrPut(recycler) { GlideState() } }
+        if (state.animator != null && now - state.at < BATCH_WINDOW_MS && abs(state.delta - delta) < MIN_MOVE_PX) {
+            state.at = now
+            return
+        }
+        state.animator?.cancel()
+        state.delta = delta
+        state.at = now
         val duration = LyricLineMotionPolicy.durationMillis(policy)
-        val animator = springAnimator(duration, LyricLineMotionPolicy.rowDelayMillis(policy, distance), policy) { progress ->
-            view.translationY = dy * (1f - progress)
+        // Rows are already laid out at the new positions; pushing them back by the same
+        // distance restores the previous frame, and the spring releases that offset.
+        translateRows(recycler, delta)
+        val animator = springAnimator(duration, 0L, policy) { progress ->
+            translateRows(recycler, delta * (1f - progress))
         }
         animator.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
-                if (rowAnimators[view] !== animation) return
-                rowAnimators.remove(view)
-                if (!closed) view.translationY = 0f
+                if (state.animator !== animation) return
+                state.animator = null
+                if (!closed) runCatching { translateRows(recycler, 0f) }
             }
 
             override fun onAnimationCancel(animation: Animator) {
-                if (rowAnimators[view] === animation) rowAnimators.remove(view)
+                if (state.animator === animation) state.animator = null
             }
         })
-        rowAnimators[view] = animator
+        state.animator = animator
         animator.start()
+        trace("glide delta=" + delta.toInt() + " rows=" + recycler.childCount)
+    }
+
+    private fun cancelGlide(recycler: ViewGroup) {
+        val state = synchronized(glides) { glides[recycler] } ?: return
+        state.animator?.cancel()
+        state.animator = null
+    }
+
+    private fun translateRows(recycler: ViewGroup, offset: Float) {
+        for (index in 0 until recycler.childCount) {
+            val child = recycler.getChildAt(index) ?: continue
+            child.translationY = offset
+        }
+    }
+
+    private class GlideState {
+        var animator: ValueAnimator? = null
+        var delta = 0f
+        var at = 0L
     }
 
     /**
@@ -362,17 +371,17 @@ internal class LyricLineMotionSession(
             val child = recycler.getChildAt(index) ?: continue
             val position = childPosition(recycler, child)
             if (position == NO_POSITION) continue
-            val target = if (position == current) emphasis else LyricLineMotionPolicy.DESELECTED_SCALE
-            scaleTo(child, target, policy)
+            val selected = position == current
+            scaleTo(child, if (selected) emphasis else LyricLineMotionPolicy.DESELECTED_SCALE, policy, selected)
         }
     }
 
     /** Puts every visible row back to Apple's own scale, e.g. after the feature is switched off. */
     private fun resetRows(recycler: ViewGroup) {
+        cancelGlide(recycler)
         for (index in 0 until recycler.childCount) {
             val child = recycler.getChildAt(index) ?: continue
             scaleAnimators.remove(child)?.cancel()
-            rowAnimators.remove(child)?.cancel()
             runCatching {
                 child.scaleX = 1f
                 child.scaleY = 1f
@@ -381,11 +390,16 @@ internal class LyricLineMotionSession(
         }
     }
 
-    private fun scaleTo(view: View, target: Float, policy: ModuleSettings) {
+    private fun scaleTo(view: View, target: Float, policy: ModuleSettings, anchorLeft: Boolean) {
         if (closed) return
         val from = view.scaleX
         if (abs(from - target) < SCALE_EPSILON) return
-        trace("scale " + from + " -> " + target)
+        trace("scale " + from + " -> " + target + " pivotLeft=" + anchorLeft)
+        // Apple Music scales the whole row about its centre. A full-width row then grows past
+        // the left edge of the lyrics pane, which clips the first glyph and breaks the block's
+        // left alignment; anchoring the emphasised row at its leading edge keeps the text
+        // inside the pane. Rows that are not emphasised keep the host's centred pivot.
+        view.pivotX = if (anchorLeft) 0f else view.width / 2f
         scaleAnimators.remove(view)?.cancel()
         val duration = LyricLineMotionPolicy.durationMillis(policy)
         val animator = springAnimator(duration, 0L, policy) { progress ->
@@ -489,8 +503,13 @@ internal class LyricLineMotionSession(
         return (runCatching { method.invoke(holder) as? Number }.getOrNull())?.toInt() ?: NO_POSITION
     }
 
+    /**
+     * Adapter position of a visible row. `getChildAdapterPosition` is renamed in this build,
+     * so the fallback asks the recycler for the child's ViewHolder (no other method takes a
+     * View and returns a `RecyclerView$…` member) and reads the position off that holder.
+     */
     private fun childPosition(recycler: ViewGroup, child: View): Int {
-        val method = positionMethods.getOrPut(CHILD_POSITION_KEY) {
+        val direct = positionMethods.getOrPut(CHILD_POSITION_KEY) {
             runCatching { recycler.javaClass.getMethod("getChildAdapterPosition", View::class.java) }.getOrNull()
                 ?: generateSequence<Class<*>>(recycler.javaClass) { it.superclass }
                     .flatMap { it.declaredMethods.asSequence() }
@@ -498,12 +517,30 @@ internal class LyricLineMotionSession(
                         it.returnType == Integer.TYPE &&
                             it.parameterTypes.size == 1 &&
                             View::class.java.isAssignableFrom(it.parameterTypes[0]) &&
+                            it.declaringClass.name.startsWith(RECYCLER_PACKAGE) &&
                             !Modifier.isStatic(it.modifiers)
                     }
                     ?.apply { isAccessible = true }
                     ?.also { trace("childPositionMethod=" + it.declaringClass.name + "#" + it.name) }
+        }
+        if (direct != null) {
+            val value = runCatching { direct.invoke(recycler, child) as? Number }.getOrNull()
+            if (value != null) return value.toInt()
+        }
+        val holderMethod = positionMethods.getOrPut(HOLDER_OF_CHILD_KEY) {
+            generateSequence<Class<*>>(recycler.javaClass) { it.superclass }
+                .flatMap { it.declaredMethods.asSequence() }
+                .firstOrNull {
+                    it.parameterTypes.size == 1 &&
+                        View::class.java.isAssignableFrom(it.parameterTypes[0]) &&
+                        it.returnType.name.startsWith(VIEW_HOLDER_PREFIX) &&
+                        !Modifier.isStatic(it.modifiers)
+                }
+                ?.apply { isAccessible = true }
+                ?.also { trace("childViewHolderMethod=" + it.declaringClass.name + "#" + it.name) }
         } ?: return NO_POSITION
-        return (runCatching { method.invoke(recycler, child) as? Number }.getOrNull())?.toInt() ?: NO_POSITION
+        val holder = runCatching { holderMethod.invoke(recycler, child) }.getOrNull() ?: return NO_POSITION
+        return adapterPosition(holder)
     }
 
     private fun resetAll(map: MutableMap<View, ValueAnimator>, reset: (View) -> Unit) {
@@ -537,10 +574,14 @@ internal class LyricLineMotionSession(
          */
         const val VIEW_HOLDER_PREFIX = "androidx.recyclerview.widget.RecyclerView\$"
         const val MIN_MOVE_PX = 1f
-        const val MIN_GLIDE_PX = 2f
+        const val BATCH_WINDOW_MS = 250L
         const val SCALE_EPSILON = 0.001f
         const val CHILD_POSITION_KEY = "RecyclerView#getChildAdapterPosition"
         const val BELONGING_DEPTH = 8
+        const val HOLDER_OF_CHILD_KEY = "RecyclerView#getChildViewHolder"
+
+        /** androidx is obfuscated member-wise but keeps its package prefix. */
+        const val RECYCLER_PACKAGE = "androidx.recyclerview.widget."
         val SCROLL_PROBES = listOf("scrollBy", "smoothScrollBy")
     }
 }

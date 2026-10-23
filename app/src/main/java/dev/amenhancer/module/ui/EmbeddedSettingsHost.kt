@@ -404,6 +404,7 @@ internal class EmbeddedSettingsHost private constructor(
                 }
             }
             elevation = 4f * density
+            bindEmbeddedClickFeedback(activity, cornerRadiusDp = 28)
             setOnClickListener { showSettingsDialog(activity) }
         }
         val size = (56f * density).toInt()
@@ -439,6 +440,7 @@ internal class EmbeddedSettingsHost private constructor(
             minimumHeight = dp(activity, 64)
             setPadding(dp(activity, 20), dp(activity, 12), dp(activity, 20), dp(activity, 12))
             setBackgroundColor(Color.TRANSPARENT)
+            bindEmbeddedClickFeedback(activity, cornerRadiusDp = 12)
             contentDescription = localizedText(ModuleText.OPEN_MODULE_SETTINGS)
             setOnClickListener { showSettingsDialog(activity) }
             addView(TextView(activity).apply {

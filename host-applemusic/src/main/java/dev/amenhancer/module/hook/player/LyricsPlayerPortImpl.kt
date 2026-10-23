@@ -71,6 +71,15 @@ internal class LyricsPlayerPortImpl(
         artworkBitmap = bitmap?.takeIf { !it.isRecycled }
     }
 
+    /** True while the host fragment exposes a readable lyric document source (adapter + reader). */
+    fun hostDocumentAvailable(): Boolean = try {
+        val fragment = fragmentRef?.get() ?: return false
+        val adapter = contract.adapter(fragment) ?: return false
+        contract.reader(adapter) != null
+    } catch (_: Throwable) {
+        false
+    }
+
     fun release() {
         fragmentRef = null
         viewRef = null

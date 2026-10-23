@@ -53,15 +53,16 @@ class LyricsPlayerLayout(
     val presetFontSizePx: Float = presetFontSp * density
 
     /**
-     * Type size in px: the host hint when it has one, otherwise the preset times the setting.
-     * A host hint far outside the preset range is treated as unmeasured — the host may hand
-     * back a chrome label size by mistake, and a 10 sp lyric page would be unusable.
+     * Type size in px: the host hint when it is inside the plausible range, otherwise the
+     * preset times the setting. A hint outside the range is *ignored entirely* rather than
+     * clamped — clamping a chrome label size (e.g. 4 px) to the lower bound would still
+     * paint a lyric page with the wrong size, while falling back to the preset looks right.
      */
-    val fontSizePx: Float = if (hostTextSizePx > 0f) {
-        hostTextSizePx.coerceIn(
-            presetFontSizePx * MIN_HOST_TEXT_RATIO,
-            presetFontSizePx * MAX_HOST_TEXT_RATIO,
-        ) * fontScale
+    val fontSizePx: Float = if (
+        hostTextSizePx >= presetFontSizePx * MIN_HOST_TEXT_RATIO &&
+        hostTextSizePx <= presetFontSizePx * MAX_HOST_TEXT_RATIO
+    ) {
+        hostTextSizePx * fontScale
     } else {
         presetFontSizePx * fontScale
     }
@@ -107,12 +108,29 @@ class LyricsPlayerLayout(
     /** Width available to one lyric row; never zero so text measurement stays valid. */
     val contentWidthPx: Float = (availableWidthPx - 2f * horizontalInsetPx).coerceAtLeast(1f)
 
-    /** Distance from the top of the lyric viewport to the centre of the current line. */
-    val anchorYPx: Float = when {
-        isTablet -> TABLET_ANCHOR_DP * density
-        windowHeightPx / density < SHORT_WINDOW_DP -> viewportHeightPx * SHORT_WINDOW_ANCHOR_FRACTION
-        else -> viewportHeightPx * PHONE_ANCHOR_FRACTION
-    }.coerceIn(0f, viewportHeightPx)
+    /**
+     * Text top of the first line when the document is at its opening position.
+     * RE: A level — Specs +0x78 = 60.0 (`firstLineStartingPosition`).
+     */
+    val firstLineTopPx: Float = FIRST_LINE_START_DP * density
+
+    /**
+     * Distance from the top of the lyric viewport to the centre of the current line.
+     *
+     * The policy anchors (12 % phone, 20 dp tablet, 30 % short window) are RE C level — the
+     * Android binary has none of them recovered yet. The A-level 60 pt first-line start is a
+     * floor: the current line may never sit higher than the first line's own resting place.
+     */
+    val anchorYPx: Float = maxOf(
+        when {
+            isTablet -> TABLET_ANCHOR_DP * density
+            windowHeightPx / density < SHORT_WINDOW_DP -> viewportHeightPx * SHORT_WINDOW_ANCHOR_FRACTION
+            else -> viewportHeightPx * PHONE_ANCHOR_FRACTION
+        },
+        firstLineTopPx + lineHeightPx * 0.5f,
+    )
+        .coerceAtMost(viewportHeightPx * MAX_ANCHOR_FRACTION)
+        .coerceIn(0f, viewportHeightPx)
 
     /**
      * Centre of [lineIndex] for a scroll position of [displayedIndex].
@@ -166,21 +184,38 @@ class LyricsPlayerLayout(
     }
 
     companion object {
-        /** Phone type size from the iOS preset. */
+        /**
+         * Phone type size. RE: C level — the Android binary only has 48.0; 34 sp is the iOS
+         * preset and stays until the second RE round derives the phone size from UI scale.
+         */
         const val PHONE_FONT_SP = 34f
 
-        /** Tablet type size from the iOS preset. */
+        /** Tablet type size. RE: A level — Specs +0x64 = 48.0 (the only type size in the binary). */
         const val TABLET_FONT_SP = 48f
 
-        /** Line spacing at the 34 pt phone type size (iOS `lineSpacing = 25`). */
-        const val BASE_LINE_SPACING_DP = 25f
+        /**
+         * Line spacing. RE: A level — Specs +0x68 = 26.0 (the iOS notes say 25, the Android
+         * build stores 26).
+         */
+        const val BASE_LINE_SPACING_DP = 26f
+
+        /** First line's text top. RE: A level — Specs +0x78 = 60.0. */
+        const val FIRST_LINE_START_DP = 60f
+
+        /** The anchor may never take more than half of a very short lyric viewport. */
+        const val MAX_ANCHOR_FRACTION = 0.5f
 
         /** The measured line box is usually ~1.2× the type size for the system font. */
         const val DEFAULT_LINE_HEIGHT_RATIO = 1.2f
 
+        /** RE: C level — 12 % is the iOS preset; not recovered from the Android binary yet. */
         const val PHONE_ANCHOR_FRACTION = 0.12f
+
+        /** RE: C level — short-window fallback, pending the second RE round. */
         const val SHORT_WINDOW_ANCHOR_FRACTION = 0.30f
         const val SHORT_WINDOW_DP = 600f
+
+        /** RE: C level — 20 dp is the iOS tablet preset; not recovered from the binary. */
         const val TABLET_ANCHOR_DP = 20f
 
         const val PHONE_HORIZONTAL_INSET_DP = 24f

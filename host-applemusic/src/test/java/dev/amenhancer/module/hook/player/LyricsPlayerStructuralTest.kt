@@ -65,6 +65,9 @@ class LyricsPlayerStructuralTest {
         val session = source("LyricsPlayerHostSession.kt")
         assertTrue(session.contains("val document = port.document()"))
         assertTrue(session.contains("lyrics document unavailable"))
+        // Not-yet-bound is logged separately so a healthy page never reads as a degradation.
+        assertTrue(session.contains("lyrics player waiting: "))
+        assertTrue(session.contains("hostDocumentAvailable()"))
         // The document check runs before the decor addView, so a blank page cannot appear.
         assertTrue(session.indexOf("port.document()") < session.indexOf("decor.addView"))
         assertTrue(session.contains("\"lyrics player degraded: "))

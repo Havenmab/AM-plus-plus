@@ -52,6 +52,11 @@ object LyricsPlayerChromeSpec {
 
     val EMPTY_TEXT_SIZE = 17.sp
 
+    /** Point-press highlight plate. RE: C level — Specs candidates 16.0 / 16.0 / 0.85. */
+    val HIGHLIGHT_CORNER_RADIUS: Dp = 16.dp
+    val HIGHLIGHT_MARGIN: Dp = 16.dp
+    const val HIGHLIGHT_ALPHA = 0.85f
+
     /** Gaussian radius of the blurred artwork behind the page. */
     val BACKGROUND_BLUR: Dp = 80.dp
 

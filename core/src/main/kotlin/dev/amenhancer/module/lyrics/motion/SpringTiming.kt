@@ -105,6 +105,31 @@ class SpringTiming(
         return high
     }
 
+    /**
+     * The duration the LyricsBlossom binary itself reports for this spring
+     * (`TimingFunction::duration()`, `0x28423c8` in libmain.so 8.1):
+     * under-damped `max(ln(100) / (ζ·ω), 4 / ω_d)`; critical/over-damped
+     * `2·m·ln(100) / c`.
+     *
+     * This is a *nominal* duration, not a settle time: for the line-change spring
+     * (1.0 / 100 / 18) it is 0.918 s, while [durationSeconds] (1 % envelope) is about
+     * 0.604 s. Callers that end an animation on a clock use this value; callers that
+     * snap when the displacement becomes imperceptible use [durationSeconds].
+     * Evidence: `.prep/lyricsblossom-re/FINDINGS.md` §2.4.
+     */
+    fun nominalDurationSeconds(): Double {
+        val z = dampingRatio
+        val w = naturalFrequency
+        val seconds = if (z in CRITICAL_EPSILON..(1.0 - CRITICAL_EPSILON)) {
+            val damped = w * sqrt(1.0 - z * z)
+            maxOf(ln(NOMINAL_SETTLE_DIVISOR) / (z * w), 4.0 / damped)
+        } else {
+            if (damping <= 0.0) return MAX_DURATION_SECONDS
+            2.0 * mass * ln(NOMINAL_SETTLE_DIVISOR) / damping
+        }
+        return seconds.coerceIn(MIN_DURATION_SECONDS, MAX_DURATION_SECONDS)
+    }
+
     /** A plain multiply used by the settings slider (100 % = Apple's own timing). */
     fun scaledDurationSeconds(percent: Int, threshold: Double = DEFAULT_THRESHOLD): Double =
         durationSeconds(threshold) * (percent.coerceAtLeast(1) / 100.0)
@@ -120,6 +145,8 @@ class SpringTiming(
         private const val CRITICAL_EPSILON = 1e-4
         private const val MIN_DURATION_SECONDS = 0.016
         private const val MAX_DURATION_SECONDS = 10.0
+        /** `ln(100)` as stored at `.rodata 0x1dd190` in the LyricsBlossom binary. */
+        private const val NOMINAL_SETTLE_DIVISOR = 100.0
         private const val SCAN_SAMPLES_PER_PERIOD = 200
         private const val BISECTION_STEPS = 24
     }

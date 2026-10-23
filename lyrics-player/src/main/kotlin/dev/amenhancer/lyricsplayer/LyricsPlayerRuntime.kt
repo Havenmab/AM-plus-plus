@@ -229,7 +229,9 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         /** Frames a missing document is tolerated before the page falls back to the empty state. */
         private const val DOCUMENT_GRACE_FRAMES = 30
         private const val TAP_PRESS_MS = 180L
-        private const val TAP_EXTRA_SCALE = 0.06f
+
+        /** Extra scale of a tapped line: it dips to the A-level pressed scale (Specs +0x5c = 0.95). */
+        private val TAP_EXTRA_SCALE = 1f - dev.amenhancer.module.lyrics.player.LyricsPlayerMotion.PRESSED_SCALE
         private const val LOG_TAG = "lyrics player"
     }
 }

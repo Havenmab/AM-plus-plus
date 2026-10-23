@@ -45,6 +45,18 @@ class SpringTimingTest {
     }
 
     @Test
+    fun `nominal duration follows the binary definition`() {
+        // LyricsBlossom TimingFunction::duration(): max(ln(100)/(ζω), 4/ω_d)
+        // = max(0.5117, 4 / (10 * sqrt(1 - 0.81))) = 0.9177 s for the line-change spring.
+        assertEquals(0.9177, lineChange.nominalDurationSeconds(), 1e-3)
+        // The 1 % envelope is a different number on purpose (settle, not nominal).
+        assertTrue(lineChange.nominalDurationSeconds() > lineChange.durationSeconds())
+        // Critical damping switches to the 2·m·ln(100)/c branch: 2 * 1 * 4.60517 / 20 = 0.4605 s.
+        val critical = SpringTiming(mass = 1.0, stiffness = 100.0, damping = 20.0)
+        assertEquals(0.4605, critical.nominalDurationSeconds(), 1e-3)
+    }
+
+    @Test
     fun `critical and over damped springs still settle`() {
         val critical = SpringTiming(mass = 1.0, stiffness = 100.0, damping = 20.0)
         assertEquals(1.0, critical.dampingRatio, 1e-9)

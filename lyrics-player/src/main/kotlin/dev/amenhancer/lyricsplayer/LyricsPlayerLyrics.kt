@@ -174,9 +174,13 @@ internal fun LyricsPlayerLyrics(
             )
         }
         val glowShadow = remember(density) {
-            Shadow(color = Color.White.copy(alpha = GLOW_ALPHA), blurRadius = with(density) { 5.dp.toPx() })
+            Shadow(
+                color = Color.White.copy(alpha = GLOW_ALPHA),
+                blurRadius = with(density) { LyricsPlayerMotion.GLOW_DP.dp.toPx() },
+            )
         }
-        val featherPx = with(density) { 30.dp.toPx() }
+        // RE: A level — Specs +0x54 = 40.0 (the iOS notes said 30).
+        val featherPx = with(density) { LyricsPlayerMotion.FEATHER_DP.dp.toPx() }
         val syllableLiftPx = with(density) { LyricsPlayerMotion.SYLLABLE_LIFT_DP.dp.toPx() }
 
         Canvas(

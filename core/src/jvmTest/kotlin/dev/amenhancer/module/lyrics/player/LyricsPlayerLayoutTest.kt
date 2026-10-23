@@ -14,21 +14,22 @@ class LyricsPlayerLayoutTest {
     )
 
     @Test
-    fun `phone preset uses the 34 sp type size and the 25 pt line spacing`() {
+    fun `phone preset uses the 34 sp type size and the 26 pt line spacing`() {
         assertEquals(34f, phone.fontSp, 1e-4f)
         assertEquals(68f, phone.fontSizePx, 1e-4f)
         assertEquals(81.6f, phone.lineHeightPx, 1e-3f)
-        assertEquals(50f, phone.lineSpacingPx, 1e-4f)
-        // 1.2 x type size + 25 pt of spacing.
-        assertEquals(131.6f, phone.linePitchPx, 1e-3f)
+        // RE: A level, Specs +0x68 = 26.0.
+        assertEquals(52f, phone.lineSpacingPx, 1e-4f)
+        assertEquals(133.6f, phone.linePitchPx, 1e-3f)
         assertEquals(48f, phone.horizontalInsetPx, 1e-4f)
         assertEquals(984f, phone.contentWidthPx, 1e-3f)
+        // RE: A level, Specs +0x78 = 60 pt first-line start.
+        assertEquals(120f, phone.firstLineTopPx, 1e-4f)
     }
 
     @Test
     fun `a tall phone anchors the current line at twelve percent of the lyric viewport`() {
         assertEquals(168f, phone.anchorYPx, 1e-3f)
-        // 1200 dp window: not short.
         assertEquals(0.12f, phone.anchorYPx / phone.viewportHeightPx, 1e-4f)
     }
 
@@ -45,7 +46,19 @@ class LyricsPlayerLayoutTest {
     }
 
     @Test
-    fun `tablet preset uses 48 sp and a fixed 20 dp anchor`() {
+    fun `the sixty point first line start is a floor for the anchor`() {
+        val cramped = LyricsPlayerLayout(
+            viewportWidthPx = 1080f,
+            viewportHeightPx = 500f,
+            windowHeightPx = 2400f,
+            density = 2f,
+        )
+        // 12 % of 500 px is 60 px, but the first line may not start above 60 pt (120 px).
+        assertEquals(160.8f, cramped.anchorYPx, 1e-2f)
+    }
+
+    @Test
+    fun `tablet preset uses 48 sp and the first line floor`() {
         val tablet = LyricsPlayerLayout(
             viewportWidthPx = 2400f,
             viewportHeightPx = 1800f,
@@ -56,12 +69,13 @@ class LyricsPlayerLayoutTest {
         assertEquals(48f, tablet.fontSp, 1e-4f)
         assertEquals(96f, tablet.fontSizePx, 1e-4f)
         assertEquals(115.2f, tablet.lineHeightPx, 1e-3f)
-        assertEquals(40f, tablet.anchorYPx, 1e-4f)
+        // The 20 dp tablet anchor (RE C) is raised by the A-level 60 pt first-line start.
+        assertEquals(120f + 57.6f, tablet.anchorYPx, 1e-1f)
         assertEquals(96f, tablet.horizontalInsetPx, 1e-4f)
     }
 
     @Test
-    fun `the font setting scales the type size, the spacing and the anchor is clamped`() {
+    fun `the font setting scales the type size and the spacing`() {
         val large = LyricsPlayerLayout(
             viewportWidthPx = 1080f,
             viewportHeightPx = 1400f,
@@ -69,7 +83,7 @@ class LyricsPlayerLayoutTest {
             fontScalePercent = 140,
         )
         assertEquals(95.2f, large.fontSizePx, 1e-3f)
-        assertEquals(70f, large.lineSpacingPx, 1e-3f)
+        assertEquals(72.8f, large.lineSpacingPx, 1e-3f)
 
         val tiny = LyricsPlayerLayout(
             viewportWidthPx = 1080f,
@@ -90,25 +104,23 @@ class LyricsPlayerLayoutTest {
             measuredLineHeightPx = 100f,
         )
         assertEquals(100f, measured.lineHeightPx, 1e-4f)
-        assertEquals(150f, measured.linePitchPx, 1e-3f)
+        assertEquals(152f, measured.linePitchPx, 1e-3f)
     }
 
     @Test
     fun `line centres follow the spring-driven displayed index`() {
         assertEquals(168f, phone.lineCenterY(0, 0f), 1e-3f)
-        assertEquals(168f + 2f * 131.6f, phone.lineCenterY(2, 0f), 1e-3f)
-        // A half-finished spring puts the pair half a pitch below the anchor.
-        assertEquals(168f - 0.5f * 131.6f, phone.lineCenterY(0, 0.5f), 1e-3f)
+        assertEquals(168f + 2f * 133.6f, phone.lineCenterY(2, 0f), 1e-3f)
+        assertEquals(168f - 0.5f * 133.6f, phone.lineCenterY(0, 0.5f), 1e-3f)
         assertEquals(phone.lineCenterY(3, 3f), phone.anchorYPx, 1e-3f)
-        assertEquals(168f + 2.5f * 131.6f - 40.8f, phone.lineTopY(3, 0.5f), 1e-2f)
+        assertEquals(168f + 2.5f * 133.6f - 40.8f, phone.lineTopY(3, 0.5f), 1e-2f)
     }
 
     @Test
     fun `dragging maps pixels to lines one to one`() {
         assertEquals(4f, phone.displayedIndexForDrag(4f, 0f), 1e-4f)
-        // Finger moves down one pitch: content follows, index drops by one.
-        assertEquals(3f, phone.displayedIndexForDrag(4f, 131.6f), 1e-3f)
-        assertEquals(6f, phone.displayedIndexForDrag(4f, -2f * 131.6f), 1e-3f)
+        assertEquals(3f, phone.displayedIndexForDrag(4f, 133.6f), 1e-3f)
+        assertEquals(6f, phone.displayedIndexForDrag(4f, -2f * 133.6f), 1e-3f)
     }
 
     @Test

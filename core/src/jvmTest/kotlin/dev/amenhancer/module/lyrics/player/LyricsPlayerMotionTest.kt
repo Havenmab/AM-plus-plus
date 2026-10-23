@@ -7,24 +7,53 @@ import org.junit.Test
 
 class LyricsPlayerMotionTest {
     @Test
-    fun `the four iOS springs keep their published parameters`() {
+    fun `the spring presets keep the Android binary parameters`() {
+        // Line change: RE A level (LyricsRenderer ctor, this+0x4e0..0x4f0).
         assertEquals(0.9, LyricsPlayerMotion.lineChange.dampingRatio, 1e-9)
         assertEquals(10.0, LyricsPlayerMotion.lineChange.naturalFrequency, 1e-9)
+        // Press: 1.0 / 322.2728 / 35.9039 is critically damped in the Android build.
+        assertEquals(1.0, LyricsPlayerMotion.press.dampingRatio, 1e-3)
+        assertEquals(0.35, LyricsPlayerMotion.press.responseSeconds, 1e-3)
+        // Release: the renderer's second inline spring, 2.0 / 260.0 / 50.0.
+        assertEquals(1.096, LyricsPlayerMotion.release.dampingRatio, 1e-2)
+        assertTrue(LyricsPlayerMotion.release === LyricsPlayerMotion.secondSpring)
+        // Lift is still a C-level (iOS) value until the second RE round finds it.
         assertEquals(0.935, LyricsPlayerMotion.lift.dampingRatio, 1e-3)
-        assertEquals(0.669, LyricsPlayerMotion.press.dampingRatio, 1e-3)
-        assertEquals(1.02, LyricsPlayerMotion.release.dampingRatio, 1e-2)
-        assertEquals(0.6039, LyricsPlayerMotion.lineChange.durationSeconds(), 0.001)
     }
 
     @Test
-    fun `stagger is fifty milliseconds per line capped at three lines`() {
+    fun `nominal duration and one percent settle are different concepts`() {
+        // RE: A level — duration() = max(ln100/(zeta*omega), 4/omega_d) = 0.918 s,
+        // while the 1 % settle (isSettled epsilon 0.01) is 0.512 s. 604 ms is neither.
+        assertEquals(0.918, LyricsPlayerMotion.nominalDurationSeconds(LyricsPlayerMotion.lineChange), 1e-3)
+        assertEquals(0.512, LyricsPlayerMotion.settleDurationSeconds(LyricsPlayerMotion.lineChange), 1e-3)
+        // Critical/over-damped springs use 2m*ln(100)/c only.
+        val secondSpringNominal = LyricsPlayerMotion.nominalDurationSeconds(LyricsPlayerMotion.secondSpring)
+        assertEquals(0.369, secondSpringNominal, 1e-2)
+        assertTrue(
+            LyricsPlayerMotion.settleDurationSeconds(LyricsPlayerMotion.lift) <
+                LyricsPlayerMotion.nominalDurationSeconds(LyricsPlayerMotion.lift),
+        )
+    }
+
+    @Test
+    fun `stagger uses five lanes with the step as group delay`() {
+        // RE: A level model — applyTransitionUpdate assigns lanes 0..4 (lane = 4 - g).
+        assertEquals(5, LyricsPlayerMotion.STAGGER_LANES)
+        assertEquals(0, LyricsPlayerMotion.staggerLane(2, 2))
+        assertEquals(1, LyricsPlayerMotion.staggerLane(3, 2))
+        assertEquals(2, LyricsPlayerMotion.staggerLane(0, 2))
+        assertEquals(4, LyricsPlayerMotion.staggerLane(9, 2))
+        assertEquals(4, LyricsPlayerMotion.staggerLane(-4, 2))
         assertEquals(0L, LyricsPlayerMotion.staggerDelayMs(2, 2))
         assertEquals(50L, LyricsPlayerMotion.staggerDelayMs(3, 2))
         assertEquals(100L, LyricsPlayerMotion.staggerDelayMs(1, 3))
-        assertEquals(150L, LyricsPlayerMotion.staggerDelayMs(9, 2))
-        assertEquals(150L, LyricsPlayerMotion.staggerDelayMs(-4, 2))
+        // Distance is capped at lane 4, so a jump of many lines waits 4 steps, not more.
+        assertEquals(200L, LyricsPlayerMotion.staggerDelayMs(9, 2))
+        assertEquals(200L, LyricsPlayerMotion.staggerDelayMs(-4, 2))
         assertEquals(0L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 0))
-        assertEquals(240L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 80))
+        // The settings slider scales the step.
+        assertEquals(320L, LyricsPlayerMotion.staggerDelayMs(9, 2, staggerMs = 80))
     }
 
     @Test
@@ -35,14 +64,14 @@ class LyricsPlayerMotionTest {
         assertTrue(LyricsPlayerMotion.lineEmphasis(700, 3, 3, 2) > 0.999f)
         assertEquals(1f, LyricsPlayerMotion.lineEmphasis(0, 2, 3, 2), 1e-4f)
         assertTrue(LyricsPlayerMotion.lineEmphasis(700, 2, 3, 2) < 0.001f)
-        // Lines that are neither entering nor leaving are at rest: a ten-line jump must not flash.
+        // A ten-line jump must not flash the lines in between.
         assertEquals(0f, LyricsPlayerMotion.lineEmphasis(100, 7, 3, 2), 1e-6f)
         assertEquals(0f, LyricsPlayerMotion.lineEmphasis(100, 4, 3, 3), 1e-6f)
     }
 
     @Test
-    fun `the leaving line waits for its stagger delay`() {
-        // Line 2 left for line 5: 3 lines apart, i.e. 150 ms of delay.
+    fun `the leaving line waits for its lane delay`() {
+        // Line 2 left for line 5: three lanes apart, i.e. 150 ms of delay.
         assertEquals(1f, LyricsPlayerMotion.lineEmphasis(50, 2, 5, 2), 1e-4f)
         assertEquals(1f, LyricsPlayerMotion.lineEmphasis(140, 2, 5, 2), 1e-4f)
         assertTrue(LyricsPlayerMotion.lineEmphasis(400, 2, 5, 2) < 0.5f)
@@ -88,7 +117,6 @@ class LyricsPlayerMotionTest {
     @Test
     fun `release projects the fling onto a line and clamps`() {
         assertEquals(3, LyricsPlayerMotion.releaseTargetIndex(3f, 0f, 100f, 20))
-        // A downward fling (positive velocity) moves the document down, i.e. towards line 2.
         assertEquals(2, LyricsPlayerMotion.releaseTargetIndex(3f, 400f, 100f, 20))
         assertEquals(4, LyricsPlayerMotion.releaseTargetIndex(3f, -400f, 100f, 20))
         assertEquals(0, LyricsPlayerMotion.releaseTargetIndex(0f, 8000f, 100f, 20))
@@ -115,9 +143,9 @@ class LyricsPlayerMotionTest {
         assertEquals(2f, channel.valueAt(0L), 1e-5f)
         val mid = channel.valueAt(300_000_000L)
         assertTrue("mid=$mid", mid > 2f && mid < 4f)
+        // The channel keeps the nominal duration (0.918 s for the line spring).
         assertEquals(4f, channel.valueAt(1_000_000_000L), 1e-5f)
         assertFalse(channel.isAnimating)
-        // Animating to the value it already has is a no-op.
         channel.animateTo(4f, nowNanos = 2_000_000_000L)
         assertFalse(channel.isAnimating)
     }

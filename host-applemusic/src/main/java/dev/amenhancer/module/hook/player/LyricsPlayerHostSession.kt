@@ -87,7 +87,10 @@ internal class LyricsPlayerHostSession(
         val document = port.document()
         if (document == null || document.lines.isEmpty()) {
             // Never mount a page that has nothing to paint: the native lyrics stay visible.
-            degrade("lyrics document unavailable")
+            // A source that exists but produced nothing is a real degradation (no lyrics /
+            // broken contract); a source that is merely not bound yet is just "waiting".
+            if (port.hostDocumentAvailable()) degrade("lyrics document unavailable")
+            else waiting("lyrics document not ready")
             return
         }
         val view = mount(activity) ?: run {
@@ -173,6 +176,13 @@ internal class LyricsPlayerHostSession(
         if (lastReason == reason) return
         lastReason = reason
         ModernXposedRuntime.log("lyrics player degraded: $reason")
+    }
+
+    /** Not a failure: the host has not bound its lyrics model yet. Logged once per reason. */
+    private fun waiting(reason: String) {
+        if (lastReason == "waiting:$reason") return
+        lastReason = "waiting:$reason"
+        ModernXposedRuntime.log("lyrics player waiting: $reason")
     }
 
     private companion object {

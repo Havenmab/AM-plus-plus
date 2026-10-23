@@ -20,7 +20,7 @@ import java.lang.reflect.Modifier
  * Everything is selected by the exact production build; a stale profile degrades the
  * feature instead of guessing.
  */
-internal class LyricLineMotionContract(profile: AppleMusicHostProfile, loader: ClassLoader) {
+internal class LyricLineMotionContract(profile: AppleMusicHostProfile, val loader: ClassLoader) {
     private val names = profile.document.getJSONObject("lyricBlur")
     private val members = FragmentProfileMembers(loader, names, "lyricBlur", FragmentMemberRequirements(
         methods = setOf("createView", "vmLine"),

@@ -22,11 +22,20 @@ class LyricsPlayerStructuralRegressionTest {
     private val pages: String by lazy {
         normalized(source("dev/amenhancer/module/ui/EmbeddedSettingsPages.kt"))
     }
-    private val appBuild: String by lazy { File("build.gradle.kts").readText() }
+    /** Works whether the unit tests run from :app or from the repository root. */
+    private val appBuild: String by lazy {
+        sequenceOf(
+            File("app/build.gradle.kts"),
+            File("build.gradle.kts"),
+            File("../app/build.gradle.kts"),
+        ).firstOrNull(File::isFile)?.readText()
+            ?: error("app/build.gradle.kts was not found from the unit-test working directory")
+    }
 
     private fun source(relativePath: String): String = sequenceOf(
-        File("src/main/java/$relativePath"),
+        File("app/src/main/java/$relativePath"),
         File("../app/src/main/java/$relativePath"),
+        File("src/main/java/$relativePath"),
         File("core/src/main/kotlin/$relativePath"),
         File("../core/src/main/kotlin/$relativePath"),
         File("host-api/src/main/java/$relativePath"),

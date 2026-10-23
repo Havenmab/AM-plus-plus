@@ -82,7 +82,7 @@ class LyricsPlayerLayoutTest {
     }
 
     @Test
-    fun `a measured line height wins over the 1.2 estimate`() {
+    fun `a measured line height wins over the estimate`() {
         val measured = LyricsPlayerLayout(
             viewportWidthPx = 1080f,
             viewportHeightPx = 1400f,

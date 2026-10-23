@@ -165,11 +165,12 @@ internal fun LyricsPlayerLyrics(
         }
         val emptyText = remember(textMeasurer, layout.fontSizePx, density) {
             textMeasurer.measure(
-                AnnotatedString(EMPTY_TEXT),
-                TextStyle(fontSize = LyricsPlayerChromeSpec.EMPTY_TEXT_SIZE, textAlign = TextAlign.Center),
-                TextOverflow.Clip,
-                true,
-                1,
+                text = AnnotatedString(EMPTY_TEXT),
+                style = TextStyle(
+                    fontSize = LyricsPlayerChromeSpec.EMPTY_TEXT_SIZE,
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
             )
         }
         val glowShadow = remember(density) {
@@ -391,38 +392,34 @@ private fun measureDocument(
     val constraints = Constraints(maxWidth = layout.contentWidthPx.roundToInt())
     val rows = ArrayList<MeasuredRow>(lines.size)
     for (line in lines) {
-        // Positional arguments: (text, style, overflow, softWrap, maxLines, placeholders, constraints).
         val main = textMeasurer.measure(
-            AnnotatedString(line.text),
-            mainStyle,
-            TextOverflow.Ellipsis,
-            true,
-            MAX_LINE_ROWS,
-            null,
-            constraints,
+            text = AnnotatedString(line.text),
+            style = mainStyle,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = true,
+            maxLines = MAX_LINE_ROWS,
+            constraints = constraints,
         )
         val (wordStarts, wordEnds) = wordEdges(main, line)
         val translation = line.translation.trim().takeIf { it.isNotEmpty() }?.let { text ->
             textMeasurer.measure(
-                AnnotatedString(text),
-                translationStyle,
-                TextOverflow.Ellipsis,
-                true,
-                1,
-                null,
-                constraints,
+                text = AnnotatedString(text),
+                style = translationStyle,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = true,
+                maxLines = 1,
+                constraints = constraints,
             )
         }
         val harmonyText = line.backgroundWords.joinToString(separator = " ") { word -> word.text }.trim()
         val harmony = harmonyText.takeIf { it.isNotEmpty() && it != line.text }?.let { text ->
             textMeasurer.measure(
-                AnnotatedString(text),
-                harmonyStyle,
-                TextOverflow.Ellipsis,
-                true,
-                1,
-                null,
-                constraints,
+                text = AnnotatedString(text),
+                style = harmonyStyle,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = true,
+                maxLines = 1,
+                constraints = constraints,
             )
         }
         rows.add(MeasuredRow(main, translation, harmony, wordStarts, wordEnds))

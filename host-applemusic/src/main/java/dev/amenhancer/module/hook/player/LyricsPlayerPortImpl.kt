@@ -37,6 +37,8 @@ import java.lang.reflect.Method
  */
 internal class LyricsPlayerPortImpl(
     private val contract: LyricsPlayerContract,
+    /** Spec §7.3 second source: the module's own document for this song, or null. */
+    private val fallback: (() -> PlayerDocument?)? = null,
 ) : LyricsPlayerPort {
     private var fragmentRef: WeakReference<Any>? = null
     private var viewRef: WeakReference<View>? = null
@@ -81,20 +83,33 @@ internal class LyricsPlayerPortImpl(
 
     // ---- PlayerHostPort ------------------------------------------------------------------
 
+    /**
+     * Host native model first, then the module's own stored document, then null (spec §7.3).
+     * A null result is what keeps the overlay unmounted: the page never shows an empty lyrics
+     * area over Apple's own page.
+     */
     override fun document(): PlayerDocument? {
         documentCache?.let { return it }
         val now = SystemClock.uptimeMillis()
         if (now - lastDocumentAttemptMs < DOCUMENT_RETRY_MS) return null
         lastDocumentAttemptMs = now
-        val built = try {
-            readDocument()
-        } catch (error: Throwable) {
-            report("document read failed: ${error.javaClass.simpleName}")
-            return null
-        } ?: return null
-        if (built.lines.isEmpty()) return null
-        documentCache = built
-        return built
+        primaryDocument()?.let { built ->
+            documentCache = built
+            return built
+        }
+        val stored = runCatching { fallback?.invoke() }.getOrNull()?.takeIf { it.lines.isNotEmpty() }
+        if (stored != null) {
+            documentCache = stored
+            return stored
+        }
+        return null
+    }
+
+    private fun primaryDocument(): PlayerDocument? = try {
+        readDocument()?.takeIf { it.lines.isNotEmpty() }
+    } catch (error: Throwable) {
+        report("document read failed: ${error.javaClass.simpleName}")
+        null
     }
 
     override fun positionMs(): Long? = contract.position(controller())

@@ -30,6 +30,8 @@ internal class AppleMusicLyricPlayerTarget(
     private val enabled: () -> Boolean = {
         runCatching { TargetConfigClient.currentSettings().lyricsPlayerEnabled }.getOrDefault(false)
     },
+    /** Spec §7.3 second source (module-owned document); null keeps the host model as the only source. */
+    private val fallback: (() -> dev.amenhancer.module.lyrics.player.PlayerDocument?)? = null,
 ) : LyricsPlayerTarget {
     private val lock = Any()
     private var registration: HookRegistrationScope? = null
@@ -47,7 +49,7 @@ internal class AppleMusicLyricPlayerTarget(
         val scope = HookRegistrationScope()
         return try {
             val contract = LyricsPlayerContract(profile, loader)
-            val port = LyricsPlayerPortImpl(contract)
+            val port = LyricsPlayerPortImpl(contract, fallback)
             val session = LyricsPlayerHostSession(port, enabled)
             fun hook(method: Method, callback: ModernMethodHook) {
                 check(ModernXposedRuntime.hookMethod(method, callback, scope)) {

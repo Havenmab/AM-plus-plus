@@ -213,9 +213,12 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             lastTrackIdentity = track?.identity
             trackState.value = track
             durationMsState.value = track?.durationMs ?: 0L
-            artworkState.value = track?.let {
-                runCatching { port.artwork() }.getOrNull()?.asImageBitmap()
-            }
+            artworkState.value = null
+        }
+        // The host hands the cover to its own background layer after the metadata is ready, so
+        // keep retrying while we have none: one decode per poll, never per frame (spec §5.1).
+        if (artworkState.value == null && track != null) {
+            artworkState.value = runCatching { port.artwork() }.getOrNull()?.asImageBitmap()
         }
     }
 

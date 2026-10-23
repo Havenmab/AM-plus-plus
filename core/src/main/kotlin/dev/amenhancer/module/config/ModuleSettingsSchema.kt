@@ -98,6 +98,17 @@ object ModuleSettingsSchema {
                     ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
                     ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
                 ) ?: 0,
+            lyricsFontScalePercent = values.number(KEY_LYRICS_FONT_SCALE_PERCENT)
+                ?.coerceIn(
+                    ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT,
+                    ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+                ) ?: ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+            lyricsLineSpacingScalePercent = values.number(
+                KEY_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            )?.coerceIn(
+                ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+            ) ?: ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
             appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
                 values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
             ),
@@ -239,6 +250,15 @@ object ModuleSettingsSchema {
                 ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX,
                 ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
             ),
+            KEY_LYRICS_FONT_SCALE_PERCENT to settings.lyricsFontScalePercent.coerceIn(
+                ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT,
+                ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+            ),
+            KEY_LYRICS_LINE_SPACING_SCALE_PERCENT to
+                settings.lyricsLineSpacingScalePercent.coerceIn(
+                    ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                    ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                ),
             KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI to ModuleSettings.normalizeAppleMusicDpi(
                 settings.appleMusicDpiOverrideDpi,
             ),
@@ -498,6 +518,8 @@ object ModuleSettingsSchema {
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_STARTUP_PAGE_PREWARM,
         KEY_LYRIC_BLUR_RADIUS_OFFSET,
+        KEY_LYRICS_FONT_SCALE_PERCENT,
+        KEY_LYRICS_LINE_SPACING_SCALE_PERCENT,
         KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI,
         KEY_REGION_SELECTION,
         KEY_OVERRIDE_ACCOUNT_LANGUAGE,
@@ -573,6 +595,8 @@ object ModuleSettingsSchema {
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"
+    private const val KEY_LYRICS_FONT_SCALE_PERCENT = "lyrics_font_scale_percent"
+    private const val KEY_LYRICS_LINE_SPACING_SCALE_PERCENT = "lyrics_line_spacing_scale_percent"
     private const val KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI = "apple_music_dpi_override_dpi"
     /** Retired v21: the fork-only master switch for the whole HLE runtime. */
     private const val KEY_TITLE_CORRECTION_ENABLED = "title_correction_enabled"

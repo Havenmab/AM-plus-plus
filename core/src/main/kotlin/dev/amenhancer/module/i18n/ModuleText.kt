@@ -246,6 +246,17 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     LSPOSED_HELP_RESTART("After changing settings, force-stop and reopen Apple Music.", "修改设置后，请先强制停止，再重新打开 Apple Music。"),
     GOT_IT("Got it", "知道了"),
     LYRIC_BLUR_OFFSET("Lyric blur radius offset", "歌词模糊半径偏移"),
+    LYRICS_FONT_SCALE("Lyrics font size", "歌词字号"),
+    // Literal percent signs: text() always runs String.format, so they must be escaped.
+    LYRICS_FONT_SCALE_SUMMARY(
+        "50–130%% · 100%% keeps Apple Music's size · default 85%%",
+        "50–130%% · 100%% 为 Apple Music 原大小 · 默认 85%%",
+    ),
+    LYRICS_LINE_SPACING_SCALE("Lyrics line spacing", "歌词行距"),
+    LYRICS_LINE_SPACING_SCALE_SUMMARY(
+        "40–160%% · 100%% keeps Apple Music's spacing · default 80%%",
+        "40–160%% · 100%% 为 Apple Music 原行距 · 默认 80%%",
+    ),
     RESET_DEFAULT("Reset to default", "恢复默认"),
     /**
      * The module's "this has never run on a device" marker, shown as a badge on the row.

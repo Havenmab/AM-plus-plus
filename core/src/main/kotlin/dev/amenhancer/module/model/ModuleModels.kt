@@ -63,6 +63,25 @@ data class ModuleSettings(
     /** Prepare native bottom-tab roots on startup; restart required, exact host opt-in only. */
     val startupPagePrewarmEnabled: Boolean = EnhancementDefaults.STARTUP_PAGE_PREWARM_ENABLED,
     val lyricBlurRadiusOffsetPx: Int = 0,
+    /**
+     * Lyrics font size as a percentage of Apple Music's own text size.
+     *
+     * The shipped default is slightly smaller than Apple Music's own size
+     * ([DEFAULT_LYRICS_FONT_SCALE_PERCENT] = 85), because the stock lyrics are too
+     * large for the user. 100 = Apple Music's original size and still means "leave
+     * the views untouched"; the slider and its reset keep that meaning. Read live
+     * (no Apple Music restart needed).
+     */
+    val lyricsFontScalePercent: Int = DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+    /**
+     * Lyrics line spacing as a percentage of Apple Music's own row spacing: the
+     * TextView line spacing plus the lyric row's vertical padding.
+     *
+     * The shipped default is [DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT] = 80, and
+     * 100 is Apple Music's original spacing (see [lyricsFontScalePercent]). Read
+     * live.
+     */
+    val lyricsLineSpacingScalePercent: Int = DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
     /**
@@ -195,6 +214,25 @@ data class ModuleSettings(
     companion object {
         const val MIN_LYRIC_BLUR_RADIUS_OFFSET_PX = -10
         const val MAX_LYRIC_BLUR_RADIUS_OFFSET_PX = 10
+
+        /**
+         * Neutral percentage of both lyrics typography sliders: Apple Music's own
+         * font size / line spacing. Used by the policy and by the tests as the
+         * "original rendering" anchor; the sliders' shipped defaults are smaller
+         * and live in [DEFAULT_LYRICS_FONT_SCALE_PERCENT] /
+         * [DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT].
+         */
+        const val DEFAULT_LYRICS_TYPOGRAPHY_PERCENT = 100
+
+        /** Shipped font-size default: slightly smaller than Apple Music's own size. */
+        const val DEFAULT_LYRICS_FONT_SCALE_PERCENT = 85
+
+        /** Shipped line-spacing default: tighter than Apple Music's own spacing. */
+        const val DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT = 80
+        const val MIN_LYRICS_FONT_SCALE_PERCENT = 50
+        const val MAX_LYRICS_FONT_SCALE_PERCENT = 130
+        const val MIN_LYRICS_LINE_SPACING_SCALE_PERCENT = 40
+        const val MAX_LYRICS_LINE_SPACING_SCALE_PERCENT = 160
         const val FOLLOW_SYSTEM_APPLE_MUSIC_DPI = 0
         const val MIN_APPLE_MUSIC_DPI = 160
         const val MAX_APPLE_MUSIC_DPI = 640

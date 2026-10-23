@@ -167,12 +167,9 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 24 is the merged version. This fork's line numbered its own keys
-        // 16..23 (region extras, online lyric supplement, source chain, translation
-        // enrichment, region picker split, HLE's four-control region page, the
-        // cache-clear signal and the hide-Mandarin-pinyin switch); upstream 1.6.6
-        // added the LLM lyrics fallback and optional dual-pane status-bar hiding.
-        // Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 24"))
+        // Schema 25 adds the two lyrics typography sliders on top of the merged 24
+        // (this fork's 16..23 plus upstream 1.6.6's LLM lyrics fallback and optional
+        // dual-pane status-bar hiding). Glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 25"))
     }
 }

@@ -67,6 +67,12 @@ internal class FeatureInstallationModule(
     ) -> Unit,
     private val reportHealth: (HookContext, FeatureHealth) -> Unit,
     private val reportError: (String, Throwable) -> Unit,
+    /**
+     * Resource-stage work that runs before the feature plans and is independent of every feature:
+     * the lyric typography session registers its layout callbacks here. Fail-open, because a
+     * typography problem must never take the whole resource stage down.
+     */
+    private val registerIndependentResources: (TargetConfigClient) -> Unit = {},
 ) {
     @Volatile
     private var activeSession: FeatureInstallationSession? = null
@@ -109,6 +115,8 @@ internal class FeatureInstallationModule(
         if (resourceRegistrationAttempted) return
         resourceRegistrationAttempted = true
         try {
+            runCatching { registerIndependentResources(config) }
+                .onFailure { reportError("Lyrics typography resource registration failed", it) }
             plans.forEach { plan -> plan.registerResources(config) }
             installLayoutInflationHooks()
         } catch (error: Throwable) {
@@ -242,6 +250,8 @@ internal class FeatureInstallResult private constructor(
 
 private fun productionFeatureInstallationModule(
     lyricsTypefaceSession: LyricsTypefaceResourceBinding,
+    // Created once with the lazy module: the single typography session for this process.
+    lyricsTypographySession: LyricsTypographyResourceBinding = AppleMusicHostFactory.newTypographyResources(),
 ): FeatureInstallationModule {
     // The same session is used by resource callbacks registered before
     // Application.onCreate and by lifecycle hooks installed afterwards.
@@ -279,6 +289,7 @@ private fun productionFeatureInstallationModule(
             // regular post-Application features.
             FeatureInstallationPlan(feature = AppleMusicDpiOverrideFeature()),
         ),
+        registerIndependentResources = lyricsTypographySession::registerResources,
         installLayoutInflationHooks = AppleMusicHostFactory::installLayoutCallbacks,
         registerApplicationCreated = { config, targetClassLoader, onCreated ->
             val onCreate = Application::class.java.getDeclaredMethod("onCreate")

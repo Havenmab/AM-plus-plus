@@ -119,6 +119,8 @@ class OrdinarySettingsWritePolicyTest {
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
                 "lyric_blur_radius_offset_px" to 6,
+                "lyrics_font_scale_percent" to 85,
+                "lyrics_line_spacing_scale_percent" to 80,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,

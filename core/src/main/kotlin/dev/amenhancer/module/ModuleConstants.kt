@@ -46,8 +46,13 @@ object ModuleConstants {
      * which re-encodes decoded values and therefore never rewrites a stored
      * setting.  A store written by either line (17 or 23) upgrades to 24 with its
      * values intact.
+     *
+     * 25 adds the two lyrics typography sliders (`lyrics_font_scale_percent` and
+     * `lyrics_line_spacing_scale_percent`).  Both are new defaulted keys: 100 keeps
+     * Apple Music's own font size and line spacing, so an upgrading store renders
+     * exactly what it rendered before and no migration step is needed.
      */
-    const val CONFIG_SCHEMA_VERSION = 24
+    const val CONFIG_SCHEMA_VERSION = 25
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"
@@ -64,7 +69,7 @@ object ModuleConstants {
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-18-1.6.6-custom-pronunciation-1609"
+    const val BUILD_TAG = "2026-10-23-1.6.6-lyrics-typography-1609"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

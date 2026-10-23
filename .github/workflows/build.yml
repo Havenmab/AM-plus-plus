@@ -3,6 +3,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,6 +16,9 @@ jobs:
       AMPP_RELEASE_STORE_PASSWORD: ${{ secrets.AMPP_RELEASE_STORE_PASSWORD }}
       AMPP_RELEASE_KEY_ALIAS: ${{ secrets.AMPP_RELEASE_KEY_ALIAS }}
       AMPP_RELEASE_KEY_PASSWORD: ${{ secrets.AMPP_RELEASE_KEY_PASSWORD }}
+      # 没有配置发布密钥时（例如我们自己的 fork），push 也走 debug 验证路径，
+      # 而不是在 assembleRelease/签名校验处失败。
+      AMPP_HAS_RELEASE_KEY: ${{ secrets.AMPP_RELEASE_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -38,7 +42,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests
 
       - name: Prepare release signing
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.AMPP_HAS_RELEASE_KEY == 'true'
         env:
           AMPP_RELEASE_KEYSTORE_BASE64: ${{ secrets.AMPP_RELEASE_KEYSTORE_BASE64 }}
         run: |
@@ -68,13 +72,13 @@ jobs:
           fi
 
       - name: Build and test release
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.AMPP_HAS_RELEASE_KEY == 'true'
         run: |
           chmod +x gradlew
           ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :plugin-api:lintDebug :plugin-runtime:lintDebug :app:assembleRelease -PpluginFixture="$PWD/build/plugin-example/basic-plugin.zip" --no-daemon
 
       - name: Verify release signature
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.AMPP_HAS_RELEASE_KEY == 'true'
         run: |
           verification="$($ANDROID_HOME/build-tools/37.0.0/apksigner verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk)"
           printf '%s\n' "$verification"
@@ -85,7 +89,7 @@ jobs:
           fi
 
       - name: Build and test pull request
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || env.AMPP_HAS_RELEASE_KEY != 'true'
         run: |
           chmod +x gradlew
           ./gradlew test :app:lintDebug :app:lintVitalRelease :glass:lintDebug :host-applemusic:lintDebug :plugin-api:lintDebug :plugin-runtime:lintDebug :app:assembleDebug -PpluginFixture="$PWD/build/plugin-example/basic-plugin.zip" --no-daemon
@@ -98,15 +102,15 @@ jobs:
           if-no-files-found: error
 
       - name: Upload release APK
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.AMPP_HAS_RELEASE_KEY == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: AM-plus-plus-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      - name: Upload pull request APK
-        if: github.event_name == 'pull_request'
+      - name: Upload debug APK
+        if: github.event_name == 'pull_request' || env.AMPP_HAS_RELEASE_KEY != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: AM-plus-plus-debug

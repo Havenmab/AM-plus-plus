@@ -44,6 +44,8 @@ internal interface EmbeddedPaletteDrawable {
     fun applyPalette(colors: EmbeddedSettingsColors)
 }
 
+internal const val EMBEDDED_DIALOG_DIM_AMOUNT = 0.4f
+
 internal fun embeddedPalette(activity: Activity): EmbeddedSettingsColors =
     EmbeddedSettingsPalette.forUiMode(activity.resources.configuration.uiMode)
 
@@ -853,7 +855,7 @@ internal fun EmbeddedSettingsHost.configureEmbeddedDialogWindow(
         // Finalise dim before attachment. Changing the theme's default amount
         // after the first surface appears produces a separate dark frame.
         addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        setDimAmount(0.2f)
+        setDimAmount(EMBEDDED_DIALOG_DIM_AMOUNT)
         if (customPanel) setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
     }
     themedDialogs.removeAll { it.get() == null }

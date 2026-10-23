@@ -353,7 +353,7 @@ private class EmbeddedLyricsEditorDialog(
     private fun beginEntrance() {
         entryStop?.invoke()
         entryStop = editorRoot.revealEmbeddedSettingsPage(origin, onProgress = { progress ->
-            updateScrimAlpha((51 * progress).toInt())
+            updateScrimAlpha((255 * EMBEDDED_DIALOG_DIM_AMOUNT * progress).toInt())
         }) {
             entryStop = null
         }

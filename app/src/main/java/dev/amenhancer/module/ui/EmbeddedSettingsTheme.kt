@@ -341,9 +341,12 @@ internal fun View.morphEmbeddedSettingsPage(
         })
     }
     animator = motion
-    // Fade the cached page as one texture instead of compositing every lyrics
-    // row into a fresh alpha layer on every frame. Release it on all exit paths.
-    if (cacheIncoming) incoming.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+    // Build before the animator starts: setLayerType alone defers the complex
+    // lyrics page's first draw until it becomes visible during the fade.
+    if (cacheIncoming) {
+        incoming.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        incoming.buildLayer()
+    }
     incoming.addOnAttachStateChangeListener(attachListener)
     outgoing?.addOnAttachStateChangeListener(attachListener)
     applyState(0f)

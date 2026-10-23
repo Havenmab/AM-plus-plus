@@ -15,7 +15,8 @@ internal data class EmbeddedSettingsColors(
     val disabled: Int,
 ) {
     val filledAccent: Int get() = 0xFFD62447.toInt()
-    val onPrimary: Int get() = 0xFFFFFFFF.toInt()
+    val onFilledAccent: Int get() = 0xFFFFFFFF.toInt()
+    val onPrimary: Int get() = if (isDark) 0xFF2B0710.toInt() else 0xFFFFFFFF.toInt()
 
     // Existing dialogs use this role for the panel itself, which the reference paints as surface.
     val pageBackground: Int get() = surface

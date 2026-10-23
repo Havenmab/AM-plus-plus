@@ -484,11 +484,9 @@ internal enum class EmbeddedGlyphKind {
  * now rendered from the shared SVG catalogue instead of hand-authored Canvas
  * geometry.
  */
-@Suppress("UNUSED_PARAMETER")
 internal class EmbeddedGlyphDrawable(
     kind: EmbeddedGlyphKind,
     tint: Int,
-    strokeWidthFraction: Float = 0.08f,
 ) : Drawable(), EmbeddedPaletteDrawable {
     private val delegate = EmbeddedSettingsSvgAssets.glyphDrawable(kind.toSvgIcon(), tint)
     private var alphaValue = 255

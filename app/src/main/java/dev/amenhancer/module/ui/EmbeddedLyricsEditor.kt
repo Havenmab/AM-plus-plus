@@ -148,28 +148,30 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             isVerticalScrollBarEnabled = false
             addView(fields)
         }
-        lateinit var dialog: AlertDialog
+        lateinit var dialog: EmbeddedLyricsEditorDialog
+        var saveSubmitted = false
         fun saveLyrics() {
-                val ids = CustomLyricsIdParser.parse(idInput.text.toString())
-                if (ids == null) {
-                    idInput.error = localizedText(ModuleText.MUSIC_IDS_INVALID)
-                } else if (ttmlInput.text.toString().isBlank()) {
-                    ttmlInput.error = localizedText(ModuleText.TTML_REQUIRED)
-                } else {
-                    runAsync(activity) {
-                        saveMany(
-                            CustomLyricsMultiIdDraft(
-                                appleMusicIds = ids,
-                                displayName = nameInput.text.toString(),
-                                ttml = ttmlInput.text.toString(),
-                                source = source,
-                                enabled = entry?.enabled ?: true,
-                            ),
-                            group?.appleMusicIds.orEmpty(),
-                        )
-                    }
-                    dialog.dismiss()
-                }
+            if (saveSubmitted || !dialog.acceptsInput) return
+            val ids = CustomLyricsIdParser.parse(idInput.text.toString())
+            val ttml = ttmlInput.text.toString()
+            if (ids == null) {
+                idInput.error = localizedText(ModuleText.MUSIC_IDS_INVALID)
+                return
+            }
+            if (ttml.isBlank()) {
+                ttmlInput.error = localizedText(ModuleText.TTML_REQUIRED)
+                return
+            }
+            val draft = CustomLyricsMultiIdDraft(
+                appleMusicIds = ids,
+                displayName = nameInput.text.toString(),
+                ttml = ttml,
+                source = source,
+                enabled = entry?.enabled ?: true,
+            )
+            saveSubmitted = true
+            runAsync(activity) { saveMany(draft, group?.appleMusicIds.orEmpty()) }
+            dialog.dismiss()
         }
         val titleBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -312,6 +314,12 @@ private class EmbeddedLyricsEditorDialog(
     private var closing = false
     private var dismissed = false
     private var lifecycleRegistered = false
+
+    val acceptsInput: Boolean
+        get() = isShowing && !closing && !dismissed
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean =
+        closing || dismissed || super.dispatchTouchEvent(event)
 
     init {
         // Consume blank space inside the panel; only taps on the surrounding

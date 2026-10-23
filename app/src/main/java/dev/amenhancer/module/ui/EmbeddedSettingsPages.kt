@@ -56,6 +56,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         var cancelPageReady: (() -> Unit)? = null
         var disposePage: (() -> Unit)? = null
         var pageTransitionActive = false
+        var pageContentReady = true
         var pendingNavigation: (() -> Unit)? = null
         var refreshAfterTransition = false
         val panelBounds = RectF()
@@ -87,7 +88,6 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 embeddedSvgDrawable(EmbeddedSvgIcon.Back, activity) ?: EmbeddedGlyphDrawable(
                     EmbeddedGlyphKind.BackArrow,
                     EmbeddedSettingsPalette.Light.primary,
-                    strokeWidthFraction = 0.055f,
                 ),
             )
             scaleType = ImageView.ScaleType.CENTER_INSIDE
@@ -182,6 +182,10 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 val panelWidth = embeddedPanelWidth(activity, page, availableWidth)
                 val panelMaxHeight = (availableHeight - dp(activity, 16)).coerceAtLeast(1)
                 val exactWidth = MeasureSpec.makeMeasureSpec(panelWidth, MeasureSpec.EXACTLY)
+                val animatedHeight = pageHost.measuredHeight.takeIf {
+                    pageTransitionActive && stopPageTransition != null &&
+                        viewportWidth == availableWidth && viewportHeight == availableHeight
+                }
                 pageHost.measure(exactWidth, MeasureSpec.makeMeasureSpec(panelMaxHeight, MeasureSpec.EXACTLY))
                 val scroll = pageContent.getChildAt(0) as? ScrollView
                 val contentHeight = topBar.measuredHeight + (scroll?.getChildAt(0)?.measuredHeight ?: 0) +
@@ -189,7 +193,11 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     (if (closeBar.visibility == View.VISIBLE) closeBar.measuredHeight else 0)
                 // Every page follows its actual content height and scrolls only
                 // when that content exceeds the available viewport.
-                val panelHeight = contentHeight.coerceIn(1, panelMaxHeight)
+                // Retain the current size while plugin I/O runs; loading must
+                // not hold the navigation lock or briefly shrink the panel.
+                val panelHeight = (animatedHeight ?: if (!pageContentReady && !panelBounds.isEmpty) {
+                    panelBounds.height().toInt()
+                } else contentHeight).coerceIn(1, panelMaxHeight)
                 if (panelHeight != panelMaxHeight) {
                     pageHost.measure(exactWidth, MeasureSpec.makeMeasureSpec(panelHeight, MeasureSpec.EXACTLY))
                 }
@@ -301,7 +309,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             disposePage?.invoke()
             disposePage = null
             page = nextPage
-            var contentReady = page != EmbeddedSettingsPage.PLUGINS
+            pageContentReady = page != EmbeddedSettingsPage.PLUGINS
             val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
             val llmLyricsPage = page == EmbeddedSettingsPage.LLM_LYRICS
             val lyricsPage = customLyricsPage || llmLyricsPage
@@ -389,7 +397,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 disposePage = renderEmbeddedPluginManagementPage(activity, content, scroll,
                     initialScrollY = pageScrollPositions[page] ?: 0,
                     onContentReady = {
-                        contentReady = true
+                        pageContentReady = true
                         root.requestLayout()
                     })
             } else if (page == EmbeddedSettingsPage.MAIN) {
@@ -435,9 +443,6 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                         if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
                         return true
                     }
-                    // Keep the outgoing page visible until the first plugin
-                    // result has its real height; don't morph via a placeholder.
-                    if (!contentReady && pageTransitionActive) return true
                     if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
                     if (pageContent.getChildAt(0) !== scroll) return true
                     cancelPageReady = null
@@ -475,6 +480,9 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             stopPageTransition = null
             pageTransitionActive = false
             clearOutgoingPage()
+            // Plugin data may arrive during the short entrance motion. Remeasure
+            // after it finishes so a changed content height gets its own morph.
+            root.requestLayout()
             val nextNavigation = pendingNavigation
             pendingNavigation = null
             val needsRefresh = refreshAfterTransition
@@ -619,8 +627,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 activity = activity,
                 title = localizedText(title),
                 summary = summary,
-                iconDrawable = embeddedSvgDrawable(icon, activity),
-                showIcon = true,
+                icon = icon,
                 summaryMaxLines = 1,
                 onClick = onClick,
             ))
@@ -866,10 +873,6 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT),
             localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT_SUMMARY),
             settings.customLyricsEnabled,
-            iconDrawable = EmbeddedGlyphDrawable(
-                EmbeddedGlyphKind.Exchange,
-                EmbeddedSettingsPalette.Light.accent,
-            ),
             compactWidePadding = true,
         ) {
             onSettingsChanged(settings.copy(customLyricsEnabled = it))
@@ -884,7 +887,6 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             localizedText(ModuleText.SHORT_AUTO_LYRICS_SUMMARY),
             settings.automaticLyricsEnabled,
             enabled = settings.customLyricsEnabled,
-            iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.AutomaticLyrics, activity),
             compactWidePadding = true,
         ) {
             onSettingsChanged(settings.copy(automaticLyricsEnabled = it))
@@ -896,7 +898,6 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             activity = activity,
             title = localizedText(ModuleText.LLM_LYRICS_FALLBACK),
             summary = localizedText(ModuleText.SHORT_LLM_LYRICS_SUMMARY),
-            iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Translation, activity),
             compactWidePadding = true,
             chevronTint = EmbeddedSettingsPalette.Light.accent,
             onClick = onOpenLlmLyrics,
@@ -1101,7 +1102,6 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         ),
         settings.llmLyricsEnabled,
         enabled = llmFallbackActive,
-        iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Translation, activity),
         compactWidePadding = true,
     ) {
         onSettingsChanged(settings.copy(llmLyricsEnabled = it))
@@ -1113,7 +1113,6 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         title = localizedText(ModuleText.LLM_LYRICS_BASE_URL),
         value = settings.llmLyricsBaseUrl,
         emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.ApiEndpoint, activity),
         hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_BASE_URL),
         maxLength = ModuleSettings.MAX_LLM_LYRICS_BASE_URL_LENGTH,
         notice = localizedText(ModuleText.LLM_LYRICS_BASE_URL_SUMMARY),
@@ -1127,7 +1126,6 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         title = localizedText(ModuleText.LLM_LYRICS_API_KEY),
         value = settings.llmLyricsApiKey,
         emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.ApiKey, activity),
         hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_API_KEY),
         maxLength = ModuleSettings.MAX_LLM_LYRICS_API_KEY_LENGTH,
         notice = localizedText(ModuleText.LLM_LYRICS_API_KEY_SUMMARY),
@@ -1143,7 +1141,6 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         title = localizedText(ModuleText.LLM_LYRICS_MODEL),
         value = settings.llmLyricsModel,
         emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Model, activity),
         hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_MODEL),
         maxLength = ModuleSettings.MAX_LLM_LYRICS_MODEL_LENGTH,
         notice = localizedText(ModuleText.LLM_LYRICS_MODEL_SUMMARY),
@@ -1157,7 +1154,6 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         localizedText(ModuleText.LLM_LYRICS_THINKING),
         localizedText(ModuleText.LLM_LYRICS_THINKING_SUMMARY),
         settings.llmLyricsThinkingEnabled,
-        iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Thinking, activity),
         compactWidePadding = true,
     ) {
         onSettingsChanged(settings.copy(llmLyricsThinkingEnabled = it))
@@ -1182,8 +1178,7 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
         val entry = group.primary
         val contentInset = dp(activity, if (isEmbeddedPhone(activity)) 12 else 8)
         val moreIconSize = dp(activity, 28)
-        // MoreVertical's visible stroke ends at x=13.41 in the 24-unit SVG viewport.
-        val moreIconEndSpace = moreIconSize * (24f - 13.41f) / 24f
+        val moreIconEndSpace = EmbeddedSettingsSvgAssets.endInset(EmbeddedSvgIcon.MoreVertical, moreIconSize)
         orientation = LinearLayout.VERTICAL
         clipChildren = false
         clipToPadding = false
@@ -1199,8 +1194,6 @@ internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
             ?.takeIf { it.appleMusicId == entry.appleMusicId }
             ?.artist
             ?.takeIf(String::isNotBlank)
-        // Keep the legacy source contract (`主 ID：${entry.appleMusicId} · 共 ${group.entries.size} 个 ID`) while the rendered row uses the more
-        // useful artist/Apple Music ID summary below.
         val secondary = buildString {
             artist?.let {
                 append(it)

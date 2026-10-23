@@ -636,11 +636,9 @@ private class EmbeddedSettingsReturnMotion(
     }
 }
 
-@Suppress("UNUSED_PARAMETER")
 internal fun View.bindEmbeddedClickFeedback(
     activity: Activity,
     cornerRadiusDp: Int = 12,
-    pressedScale: Float = 0.98f,
 ) {
     stateListAnimator = null
     bindEmbeddedTheme(activity) { colors ->
@@ -678,7 +676,11 @@ internal fun Button.bindEmbeddedButtonTheme(activity: Activity, tintBackground: 
 }
 
 /** Compact footer actions share the editor's visual size without shrinking the touch target. */
-internal fun Button.bindEmbeddedDialogActionTheme(activity: Activity, emphasized: Boolean = false) {
+internal fun Button.bindEmbeddedDialogActionTheme(
+    activity: Activity,
+    emphasized: Boolean = false,
+    accentText: Boolean = false,
+) {
     val density = activity.resources.displayMetrics.density
     fun px(value: Int): Int = (value * density).toInt()
     isAllCaps = false
@@ -696,7 +698,12 @@ internal fun Button.bindEmbeddedDialogActionTheme(activity: Activity, emphasized
     stateListAnimator = null
     foreground = null
     bindEmbeddedTheme(activity) { colors ->
-        setTextColor(embeddedControlColors(if (emphasized) colors.onPrimary else colors.secondary, colors.disabledText))
+        val textColor = when {
+            emphasized -> colors.onFilledAccent
+            accentText -> colors.accent
+            else -> colors.secondary
+        }
+        setTextColor(embeddedControlColors(textColor, colors.disabledText))
         val radius = px(10).toFloat()
         val ripple = RippleDrawable(
             ColorStateList.valueOf(if (emphasized) 0x26FFFFFF else (colors.primary and 0x00FFFFFF) or 0x18000000),
@@ -886,8 +893,10 @@ internal fun EmbeddedSettingsHost.configureEmbeddedDialogWindow(
                 intArrayOf(AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_POSITIVE)
                     .forEach { which ->
                         dialog.getButton(which)?.takeIf { it.getTag(R.id.ampp_embedded_theme_binding) == null }?.apply {
-                            bindEmbeddedDialogActionTheme(activity)
-                            if (which == AlertDialog.BUTTON_POSITIVE) setEmbeddedTextColor(activity) { it.primary }
+                            bindEmbeddedDialogActionTheme(
+                                activity,
+                                accentText = which == AlertDialog.BUTTON_POSITIVE,
+                            )
                         }
                     }
             }

@@ -204,18 +204,14 @@ internal fun EmbeddedSettingsHost.embeddedSettingRow(
         checked: Boolean,
         badge: String? = null,
         badgeAtToggle: Boolean = false,
-        iconRes: Int? = null,
-        iconTint: Int = EmbeddedSettingsPalette.Light.accent,
-        iconDrawable: Drawable? = null,
         compactWidePadding: Boolean = false,
         enabled: Boolean = true,
         onEnableConfirmation: ((onConfirmed: () -> Unit) -> Unit)? = null,
-        showIcon: Boolean = false,
         onChanged: (Boolean) -> Unit,
     ): View = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = embeddedSettingRowHeight(activity, compactWidePadding)
+        minimumHeight = embeddedSettingRowHeight(activity)
         isEnabled = enabled
         alpha = if (enabled) 1f else 0.58f
         val horizontalPadding = when {
@@ -229,14 +225,6 @@ internal fun EmbeddedSettingsHost.embeddedSettingRow(
             dp(activity, if (isEmbeddedPhone(activity)) 8 else 8),
             dp(activity, if (isEmbeddedPhone(activity)) 6 else 4),
         )
-        if (showIcon) {
-            val resolvedIcon = iconDrawable
-                ?: iconRes?.let { activity.getDrawable(it) }
-                ?: embeddedSvgDrawable(EmbeddedSvgIcon.Settings, activity)
-            addView(embeddedFeatureIcon(activity, resolvedIcon, iconTint), LinearLayout.LayoutParams(embeddedFeatureIconSize(activity), embeddedFeatureIconSize(activity)).apply {
-                marginEnd = dp(activity, if (isEmbeddedPhone(activity)) 8 else 12)
-            })
-        }
         val labels = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             addView(LinearLayout(activity).apply {
@@ -623,20 +611,18 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
         activity: Activity,
         title: String,
         summary: String,
-        iconRes: Int? = null,
-        iconTint: Int = EmbeddedSettingsPalette.Light.accent,
-        iconDrawable: Drawable? = null,
+        icon: EmbeddedSvgIcon? = null,
         clickable: Boolean = true,
         inlineSummary: Boolean = false,
         compactWidePadding: Boolean = false,
         chevronTint: Int = EmbeddedSettingsPalette.Light.muted,
         summaryMaxLines: Int = 2,
-        showIcon: Boolean = false,
         onClick: () -> Unit,
     ): View = LinearLayout(activity).apply {
+        val showIcon = icon != null
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = embeddedNavigationRowHeight(activity, compactWidePadding, showIcon)
+        minimumHeight = embeddedNavigationRowHeight(activity, showIcon)
         val horizontalPadding = when {
             isEmbeddedPhone(activity) -> 12
             compactWidePadding -> 8
@@ -667,11 +653,8 @@ internal fun EmbeddedSettingsHost.embeddedNavigationRow(
             }
             setOnClickListener { fromEmbeddedSettingsView(this) { onClick() } }
         }
-        if (showIcon) {
-            val resolvedIcon = iconDrawable
-                ?: iconRes?.let { activity.getDrawable(it) }
-                ?: embeddedSvgDrawable(EmbeddedSvgIcon.Settings, activity)
-            addView(embeddedFeatureIcon(activity, resolvedIcon, iconTint), LinearLayout.LayoutParams(embeddedFeatureIconSize(activity), embeddedFeatureIconSize(activity)).apply {
+        if (icon != null) {
+            addView(embeddedFeatureIcon(activity, embeddedSvgDrawable(icon, activity), EmbeddedSettingsPalette.Light.accent), LinearLayout.LayoutParams(embeddedFeatureIconSize(activity), embeddedFeatureIconSize(activity)).apply {
                 marginEnd = dp(activity, if (isEmbeddedPhone(activity)) 8 else 12)
             })
         }
@@ -960,7 +943,6 @@ internal fun EmbeddedSettingsHost.embeddedTextValueRow(
         title: String,
         value: String,
         emptySummary: String,
-        iconDrawable: Drawable?,
         hint: String,
         notice: String? = null,
         password: Boolean = false,
@@ -975,7 +957,6 @@ internal fun EmbeddedSettingsHost.embeddedTextValueRow(
             masked -> "••••••"
             else -> value
         },
-        iconDrawable = iconDrawable,
         // Long endpoint/model values must not consume the title's weighted width.
         inlineSummary = false,
         summaryMaxLines = 1,
@@ -1099,7 +1080,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             icon = embeddedSvgDrawable(EmbeddedSvgIcon.AddLyrics, activity) ?: EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.AddCircle,
                 EmbeddedSettingsPalette.Light.accent,
-                strokeWidthFraction = 0.055f,
             ),
             onClick = { onAdd() },
         )
@@ -1109,7 +1089,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             icon = embeddedSvgDrawable(EmbeddedSvgIcon.ImportTtml, activity) ?: EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.TtmlDocument,
                 EmbeddedSettingsPalette.Light.accent,
-                strokeWidthFraction = 0.055f,
             ),
             onClick = { onTtml() },
         )
@@ -1128,7 +1107,6 @@ internal fun EmbeddedSettingsHost.embeddedCompactLyricsActionBar(
             icon = embeddedSvgDrawable(EmbeddedSvgIcon.BackupRestore, activity) ?: EmbeddedGlyphDrawable(
                 EmbeddedGlyphKind.CloudBackup,
                 EmbeddedSettingsPalette.Light.accent,
-                strokeWidthFraction = 0.055f,
             ),
             onClick = { anchor -> onBackup(anchor) },
         )
@@ -1692,15 +1670,12 @@ internal fun EmbeddedSettingsHost.embeddedFeatureIconSize(activity: Activity): I
         dp(activity, if (isEmbeddedPhone(activity)) 40 else 36)
 
 
-@Suppress("UNUSED_PARAMETER")
-internal fun EmbeddedSettingsHost.embeddedSettingRowHeight(activity: Activity, compactWide: Boolean = false): Int =
+internal fun EmbeddedSettingsHost.embeddedSettingRowHeight(activity: Activity): Int =
         dp(activity, if (isEmbeddedPhone(activity)) 64 else 56)
 
 
-@Suppress("UNUSED_PARAMETER")
 internal fun EmbeddedSettingsHost.embeddedNavigationRowHeight(
         activity: Activity,
-        compactWide: Boolean = false,
         showIcon: Boolean = false,
 ): Int = dp(
         activity,

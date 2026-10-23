@@ -105,12 +105,10 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
                                 setSingleLine(false)
                                 setPadding(0, 0, 0, dp(activity, 12))
                             }, matchWidthWrapContent())
-                            addView(embeddedSettingRow(activity, localizedText(ModuleText.ENABLE_NEXT_START), if (status.pendingRestart) localizedText(ModuleText.RESTART_PENDING) else "", status.installed.enabled,
-                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Power, activity)) { enabled ->
+                            addView(embeddedSettingRow(activity, localizedText(ModuleText.ENABLE_NEXT_START), if (status.pendingRestart) localizedText(ModuleText.RESTART_PENDING) else "", status.installed.enabled) { enabled ->
                                 action { manager.store.setEnabled(manifest.id, enabled) }
                             })
-                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, localizedText(ModuleText.CONFLICT_DETAILS), localizedText(ModuleText.ITEM_COUNT, status.conflicts.size),
-                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Conflict, activity)) {
+                            if (status.conflicts.isNotEmpty()) addView(embeddedNavigationRow(activity, localizedText(ModuleText.CONFLICT_DETAILS), localizedText(ModuleText.ITEM_COUNT, status.conflicts.size)) {
                                 val details = status.conflicts.joinToString("\n\n") {
                                     localizedText(ModuleText.PLUGIN_CONFLICT_DETAILS,
                                         localizedText(if (it.blocking) ModuleText.CONFLICT_BLOCKING else ModuleText.CONFLICT_WARNING),
@@ -119,8 +117,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
                                 val info = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.CONFLICT_DETAILS)).setMessage(details).setPositiveButton(localizedText(ModuleText.CLOSE), null).create()
                                 pluginDialogs += WeakReference(info); info.show()
                             })
-                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "",
-                                iconDrawable = embeddedSvgDrawable(EmbeddedSvgIcon.Settings, activity)) { openPluginSettings(activity, manifest.id) })
+                            if (status.state == PluginRunState.ACTIVE) addView(embeddedNavigationRow(activity, localizedText(ModuleText.PLUGIN_SETTINGS), "") { openPluginSettings(activity, manifest.id) })
                             addView(embeddedSpacer(activity, 8))
                             addView(embeddedActionButton(activity, localizedText(ModuleText.DELETE)) {
                                 val confirm = embeddedDialogBuilder(activity).setTitle(localizedText(ModuleText.DELETE_NAMED_ITEM, manifest.name))
@@ -141,7 +138,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
         }
     }
     parent.addView(
-        embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)),
+        embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_LOADING)),
         matchWidthWrapContent(),
     )
     mainHandler.post(refresh)

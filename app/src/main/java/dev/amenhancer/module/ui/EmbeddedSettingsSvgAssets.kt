@@ -5,6 +5,7 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import androidx.core.graphics.PathParser
 
@@ -78,7 +79,23 @@ private data class EmbeddedSvgSpec(
     val fillColor: Int = EmbeddedSettingsPalette.Light.primary,
     val viewport: Float = 24f,
     val strokeWidth: Float = DEFAULT_STROKE,
-)
+) {
+    fun strokePaint(): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        strokeWidth = this@EmbeddedSvgSpec.strokeWidth
+    }
+
+    val endInsetFraction: Float by lazy {
+        val path = checkNotNull(PathParser.createPathFromPathData(pathData))
+        val stroke = Path()
+        strokePaint().getFillPath(path, stroke)
+        val bounds = RectF()
+        stroke.computeBounds(bounds, true)
+        ((viewport - bounds.right) / viewport).coerceIn(0f, 1f)
+    }
+}
 
 private const val DEFAULT_STROKE = 1.75f
 
@@ -335,6 +352,10 @@ internal object EmbeddedSettingsSvgAssets {
             followsPalette = false,
         )
     }.getOrNull()
+
+    /** Optical whitespace comes from the same stroked path used for drawing. */
+    fun endInset(icon: EmbeddedSvgIcon, iconSize: Int): Float =
+        specs.getValue(icon).endInsetFraction * iconSize
 }
 
 internal fun EmbeddedGlyphKind.toSvgIcon(): EmbeddedSvgIcon = when (this) {
@@ -372,12 +393,7 @@ private class EmbeddedSvgPathDrawable(
     private val path = checkNotNull(PathParser.createPathFromPathData(spec.pathData)) {
         "Invalid SVG path for $icon"
     }
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        strokeWidth = spec.strokeWidth
-    }
+    private val paint = spec.strokePaint()
     private var alphaValue = 255
     private var colorFilterValue: ColorFilter? = null
 

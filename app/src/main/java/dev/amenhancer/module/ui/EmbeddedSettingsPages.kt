@@ -54,6 +54,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         val pageScrollPositions = mutableMapOf<EmbeddedSettingsPage, Int>()
         var stopPageTransition: (() -> Unit)? = null
         var cancelPageReady: (() -> Unit)? = null
+        var cancelPagePreparation: (() -> Unit)? = null
         var disposePage: (() -> Unit)? = null
         var pageTransitionActive = false
         var pendingNavigation: (() -> Unit)? = null
@@ -122,6 +123,8 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             text = localizedText(ModuleText.SETTINGS_DETAILS_ACTION)
             bindEmbeddedDialogActionTheme(activity)
             setOnClickListener {
+                cancelPagePreparation?.invoke()
+                cancelPagePreparation = null
                 if (page == EmbeddedSettingsPage.PLUGINS) {
                     launchSafPicker(activity, EmbeddedSafOperation.PluginZip, "*/*",
                         arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
@@ -273,46 +276,22 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         }
 
         fun renderPage(nextPage: EmbeddedSettingsPage = page) {
+            cancelPagePreparation?.invoke()
+            cancelPagePreparation = null
             val changingPage = nextPage != page
             if (pageTransitionActive) {
                 if (changingPage) pendingNavigation = { renderPage(nextPage) }
                 else refreshAfterTransition = true
                 return
             }
-            val previousScroll = pageContent.getChildAt(0) as? ScrollView
-            previousScroll?.let { pageScrollPositions[page] = it.scrollY }
-            cancelPageReady?.invoke()
-            cancelPageReady = null
-            stopPageTransition?.invoke()
-            stopPageTransition = null
-            clearOutgoingPage()
-            val startBounds = RectF(panelBounds)
-            val snapshot = if (dialogReady) pageHost.captureEmbeddedSettingsBackdrop() else null
-            val outgoing = snapshot?.let { backdrop ->
-                ImageView(activity).apply {
-                    setImageDrawable(backdrop)
-                    scaleType = ImageView.ScaleType.FIT_XY
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }.also { view ->
-                    root.addView(view, 0, FrameLayout.LayoutParams(
-                        pageHost.width, pageHost.height, Gravity.CENTER))
-                    outgoingPage = view
-                }
-            }
-            pageTransitionActive = outgoing != null
-            pageHost.alpha = if (pageTransitionActive) 0f else 1f
-            disposePage?.invoke()
-            disposePage = null
-            page = nextPage
-            val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
-            val llmLyricsPage = page == EmbeddedSettingsPage.LLM_LYRICS
+            val customLyricsPage = nextPage == EmbeddedSettingsPage.CUSTOM_LYRICS
+            val llmLyricsPage = nextPage == EmbeddedSettingsPage.LLM_LYRICS
             val lyricsPage = customLyricsPage || llmLyricsPage
             val bottomInset = dp(activity, when {
-                page == EmbeddedSettingsPage.MAIN -> 0
+                nextPage == EmbeddedSettingsPage.MAIN -> 0
                 lyricsPage -> 8
                 else -> 12
             })
-            pageContent.removeAllViews()
             val scroll = ScrollView(activity).apply {
                 isFillViewport = false
                 clipChildren = !customLyricsPage
@@ -322,7 +301,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 setFadingEdgeLength(dp(activity, 18))
                 setEmbeddedBackgroundColor(activity) { colors -> colors.surface }
                 val horizontalInset = when {
-                    page == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> 0
+                    nextPage == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> 0
                     customLyricsPage -> 16
                     else -> 8
                 }
@@ -341,27 +320,106 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 setPadding(0, 0, 0, bottomInset)
             }
             scroll.addView(content)
-            pageContent.addView(scroll, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ))
-
-            val childPage = page != EmbeddedSettingsPage.MAIN
-            pageTitle.text = when (page) {
-                EmbeddedSettingsPage.MAIN -> "AM++"
-                EmbeddedSettingsPage.CUSTOM_LYRICS -> localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT)
-                EmbeddedSettingsPage.LYRICS_EFFECTS -> localizedText(ModuleText.CATEGORY_LYRICS_EFFECTS)
-                EmbeddedSettingsPage.INTERFACE -> localizedText(ModuleText.CATEGORY_INTERFACE)
-                EmbeddedSettingsPage.TITLE_REGION -> localizedText(ModuleText.CATEGORY_TITLE_REGION)
-                EmbeddedSettingsPage.ADVANCED -> localizedText(ModuleText.ADVANCED_SETTINGS)
-                EmbeddedSettingsPage.PLUGINS -> localizedText(ModuleText.PLUGINS)
-                EmbeddedSettingsPage.LLM_LYRICS -> localizedText(ModuleText.LLM_LYRICS_FALLBACK)
-                EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS)
+            var preparationCancelled = false
+            var disposePreparedPage: (() -> Unit)? = null
+            cancelPagePreparation = {
+                preparationCancelled = true
+                disposePreparedPage?.invoke()
+                disposePreparedPage = null
             }
-            backButton.visibility = if (childPage) View.VISIBLE else View.GONE
-            moduleIcon.visibility = if (childPage) View.GONE else View.VISIBLE
-            pageAction.text = localizedText(if (page == EmbeddedSettingsPage.PLUGINS) ModuleText.IMPORT_ZIP else ModuleText.SETTINGS_DETAILS_ACTION)
-            pageAction.isEnabled = page != EmbeddedSettingsPage.PLUGINS || plugins != null
+
+            fun showPreparedPage() {
+                if (preparationCancelled || (dialogReady && !dialog.isShowing)) return
+                cancelPagePreparation = null
+                val previousScroll = pageContent.getChildAt(0) as? ScrollView
+                previousScroll?.let { pageScrollPositions[page] = it.scrollY }
+                cancelPageReady?.invoke()
+                cancelPageReady = null
+                stopPageTransition?.invoke()
+                stopPageTransition = null
+                clearOutgoingPage()
+                val startBounds = RectF(panelBounds)
+                val snapshot = if (dialogReady) pageHost.captureEmbeddedSettingsBackdrop() else null
+                val outgoing = snapshot?.let { backdrop ->
+                    ImageView(activity).apply {
+                        setImageDrawable(backdrop)
+                        scaleType = ImageView.ScaleType.FIT_XY
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }.also { view ->
+                        root.addView(view, 0, FrameLayout.LayoutParams(
+                            pageHost.width, pageHost.height, Gravity.CENTER))
+                        outgoingPage = view
+                    }
+                }
+                pageTransitionActive = outgoing != null
+                pageHost.alpha = if (pageTransitionActive) 0f else 1f
+                disposePage?.invoke()
+                disposePage = disposePreparedPage
+                disposePreparedPage = null
+                page = nextPage
+                pageContent.removeAllViews()
+                pageContent.addView(scroll, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ))
+                val childPage = page != EmbeddedSettingsPage.MAIN
+                pageTitle.text = when (page) {
+                    EmbeddedSettingsPage.MAIN -> "AM++"
+                    EmbeddedSettingsPage.CUSTOM_LYRICS -> localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT)
+                    EmbeddedSettingsPage.LYRICS_EFFECTS -> localizedText(ModuleText.CATEGORY_LYRICS_EFFECTS)
+                    EmbeddedSettingsPage.INTERFACE -> localizedText(ModuleText.CATEGORY_INTERFACE)
+                    EmbeddedSettingsPage.TITLE_REGION -> localizedText(ModuleText.CATEGORY_TITLE_REGION)
+                    EmbeddedSettingsPage.ADVANCED -> localizedText(ModuleText.ADVANCED_SETTINGS)
+                    EmbeddedSettingsPage.PLUGINS -> localizedText(ModuleText.PLUGINS)
+                    EmbeddedSettingsPage.LLM_LYRICS -> localizedText(ModuleText.LLM_LYRICS_FALLBACK)
+                    EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS)
+                }
+                backButton.visibility = if (childPage) View.VISIBLE else View.GONE
+                moduleIcon.visibility = if (childPage) View.GONE else View.VISIBLE
+                pageAction.text = localizedText(if (page == EmbeddedSettingsPage.PLUGINS) ModuleText.IMPORT_ZIP else ModuleText.SETTINGS_DETAILS_ACTION)
+                pageAction.isEnabled = page != EmbeddedSettingsPage.PLUGINS || plugins != null
+                syncBottomCloseButton()
+                refreshEmbeddedTheme(activity)
+                val restoredScrollY = pageScrollPositions[page] ?: 0
+                val ready = object : android.view.ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        if (pageContent.getChildAt(0) !== scroll) {
+                            if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
+                            return true
+                        }
+                        if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
+                        if (pageContent.getChildAt(0) !== scroll) return true
+                        cancelPageReady = null
+                        if (!dialogReady || !dialog.isShowing) {
+                            pageHost.alpha = 1f
+                            pageTransitionActive = false
+                            clearOutgoingPage()
+                            return true
+                        }
+                        scroll.scrollTo(0, restoredScrollY)
+                        val endBounds = RectF(pageHost.left.toFloat(), pageHost.top.toFloat(),
+                            pageHost.right.toFloat(), pageHost.bottom.toFloat())
+                        if (pageTransitionActive) {
+                            val stop = pageHost.morphEmbeddedSettingsPage(outgoing, startBounds, endBounds, onBoundsChanged = { bounds ->
+                                panelBounds.set(bounds)
+                                root.invalidate()
+                            }) {
+                                onTransitionFinished?.invoke()
+                            }
+                            if (pageTransitionActive) stopPageTransition = stop
+                        } else {
+                            panelBounds.set(endBounds)
+                            root.invalidate()
+                        }
+                        return true
+                    }
+                }
+                scroll.viewTreeObserver.addOnPreDrawListener(ready)
+                cancelPageReady = {
+                    if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(ready)
+                }
+            }
+
             if (customLyricsPage) {
                 renderEmbeddedCustomLyricsPage(
                     activity = activity,
@@ -380,17 +438,20 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     settings = draft.settings,
                     onSettingsChanged = ::updateDraft,
                 )
-            } else if (page == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION) {
+            } else if (nextPage == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION) {
                 renderEmbeddedAnimationSettingsPage(
                     activity = activity,
                     parent = content,
                     currentSettings = { draft.settings },
                     onSettingsChanged = ::updateDraft,
                 )
-            } else if (page == EmbeddedSettingsPage.PLUGINS) {
-                disposePage = renderEmbeddedPluginManagementPage(activity, content, scroll,
-                    initialScrollY = pageScrollPositions[page] ?: 0)
-            } else if (page == EmbeddedSettingsPage.MAIN) {
+            } else if (nextPage == EmbeddedSettingsPage.PLUGINS) {
+                // Prepare off-screen. The current page stays interactive until
+                // the first result supplies the one real transition height.
+                disposePreparedPage = renderEmbeddedPluginManagementPage(activity, content, scroll,
+                    onInitialContentReady = { root.post { showPreparedPage() } })
+                return
+            } else if (nextPage == EmbeddedSettingsPage.MAIN) {
                 renderEmbeddedMainPage(
                     activity = activity,
                     parent = content,
@@ -402,7 +463,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 renderEmbeddedCategoryPage(
                     activity = activity,
                     parent = content,
-                    page = page,
+                    page = nextPage,
                     currentSettings = { draft.settings },
                     onSettingsChanged = ::updateDraft,
                     onCellularDataEntryChanged = { enabled ->
@@ -424,53 +485,14 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     onClearFont = { runAsync(activity, controller::clearFont) },
                 )
             }
-            syncBottomCloseButton()
-            refreshEmbeddedTheme(activity)
-            val restoredScrollY = pageScrollPositions[page] ?: 0
-            val ready = object : android.view.ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    if (pageContent.getChildAt(0) !== scroll) {
-                        if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
-                        return true
-                    }
-                    if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
-                    if (pageContent.getChildAt(0) !== scroll) return true
-                    cancelPageReady = null
-                    if (!dialogReady || !dialog.isShowing) {
-                        pageHost.alpha = 1f
-                        pageTransitionActive = false
-                        clearOutgoingPage()
-                        return true
-                    }
-                    scroll.scrollTo(0, restoredScrollY)
-                    val endBounds = RectF(pageHost.left.toFloat(), pageHost.top.toFloat(),
-                        pageHost.right.toFloat(), pageHost.bottom.toFloat())
-                    if (pageTransitionActive) {
-                        val stop = pageHost.morphEmbeddedSettingsPage(outgoing, startBounds, endBounds, onBoundsChanged = { bounds ->
-                            panelBounds.set(bounds)
-                            root.invalidate()
-                        }) {
-                            onTransitionFinished?.invoke()
-                        }
-                        if (pageTransitionActive) stopPageTransition = stop
-                    } else {
-                        panelBounds.set(endBounds)
-                        root.invalidate()
-                    }
-                    return true
-                }
-            }
-            scroll.viewTreeObserver.addOnPreDrawListener(ready)
-            cancelPageReady = {
-                if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(ready)
-            }
+            showPreparedPage()
         }
 
         onTransitionFinished = {
             stopPageTransition = null
             pageTransitionActive = false
             clearOutgoingPage()
-            // Plugin data may arrive during the short entrance motion. Remeasure
+            // Plugin refreshes may arrive during the short entrance motion. Remeasure
             // after it finishes so a changed content height gets its own morph.
             root.requestLayout()
             val nextNavigation = pendingNavigation
@@ -568,6 +590,8 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         }
         val weakDialog = WeakReference<Dialog>(dialog)
         dialog.setOnDismissListener {
+            cancelPagePreparation?.invoke()
+            cancelPagePreparation = null
             cancelPageReady?.invoke()
             cancelPageReady = null
             pendingNavigation = null

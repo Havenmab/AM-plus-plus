@@ -23,7 +23,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
     activity: Activity,
     parent: LinearLayout,
     scroll: ScrollView,
-    initialScrollY: Int = 0,
+    onInitialContentReady: () -> Unit,
 ): () -> Unit {
     parent.removeAllViews()
     val manager = plugins
@@ -32,12 +32,13 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
             embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE)),
             matchWidthWrapContent(),
         )
+        onInitialContentReady()
         return {}
     }
 
     val active = AtomicBoolean(true)
     val refreshing = AtomicBoolean()
-    var restoreInitialScroll = true
+    var initialContentReady = false
     fun action(block: () -> Unit) {
         manager.execute {
             val result = runCatching(block)
@@ -55,8 +56,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
                 mainHandler.post {
                     if (!active.get() || activity.isFinishing || activity.isDestroyed) return@post
                     refreshing.set(false)
-                    val scrollPosition = if (restoreInitialScroll) initialScrollY else scroll.scrollY
-                    restoreInitialScroll = false
+                    val scrollPosition = scroll.scrollY
                     parent.removeAllViews()
                     parent.addView(
                         embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RESTART_NOTICE)),
@@ -124,16 +124,15 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
                             }, matchWidthWrapContent())
                         }, matchWidthWrapContent())
                     }
+                    if (!initialContentReady) {
+                        initialContentReady = true
+                        onInitialContentReady()
+                    } else scroll.post { if (active.get()) scroll.scrollTo(0, scrollPosition) }
                     mainHandler.postDelayed(this, 1500)
-                    scroll.post { if (active.get()) scroll.scrollTo(0, scrollPosition) }
                 }
             }
         }
     }
-    parent.addView(
-        embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_LOADING)),
-        matchWidthWrapContent(),
-    )
     mainHandler.post(refresh)
     return {
         if (active.compareAndSet(true, false)) {

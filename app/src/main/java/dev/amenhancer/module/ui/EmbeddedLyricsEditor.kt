@@ -274,6 +274,21 @@ private class EmbeddedLyricsEditorDialog(
 ) : AlertDialog(embeddedThemedContext(activity, dialog = true)), Application.ActivityLifecycleCallbacks {
     private val scrim = ColorDrawable(Color.BLACK).apply { alpha = 0 }
     private val motionStage = object : FrameLayout(context) {
+        private val panelShadow = EmbeddedPanelShadow(resources.displayMetrics.density)
+        private val shadowBounds = RectF()
+
+        override fun dispatchDraw(canvas: Canvas) {
+            if (editorRoot.visibility == View.VISIBLE && editorRoot.alpha > 0f) {
+                shadowBounds.set(0f, 0f, editorRoot.width.toFloat(), editorRoot.height.toFloat())
+                val save = canvas.save()
+                canvas.translate((editorRoot.left - scrollX).toFloat(), (editorRoot.top - scrollY).toFloat())
+                canvas.concat(editorRoot.matrix)
+                panelShadow.draw(canvas, shadowBounds, host.dp(activity, 24).toFloat(), editorRoot.alpha)
+                canvas.restoreToCount(save)
+            }
+            super.dispatchDraw(canvas)
+        }
+
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val availableWidth = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
                 editorWidth
@@ -363,6 +378,7 @@ private class EmbeddedLyricsEditorDialog(
     private fun updateScrimAlpha(alpha: Int) {
         val next = alpha.coerceIn(0, 255)
         scrim.alpha = next
+        motionStage.invalidate()
         // Decor still fits the system bars; carry the same animated scrim into
         // the navigation region without resizing the editor or its IME viewport.
         window?.navigationBarColor = Color.argb(next, 0, 0, 0)

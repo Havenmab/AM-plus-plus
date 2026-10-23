@@ -119,6 +119,46 @@ internal fun Path.setEmbeddedG3Rect(rect: RectF, cornerRadius: Float) {
     close()
 }
 
+/** Soft contact shadow outside the same G3 outline used by the moving panel. */
+internal class EmbeddedPanelShadow(private val density: Float) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+    }
+    private val path = Path()
+    private val localBounds = RectF()
+    private var cachedRadius = -1f
+    private val layerAlphas = IntArray(16) { index ->
+        fun opacity(distance: Float): Float {
+            val remaining = 1f - distance / 16f
+            return 0.24f * remaining * remaining * remaining
+        }
+        val near = opacity(index.toFloat())
+        val far = opacity(index + 1f)
+        ((near - far) / (1f - far) * 255f + 0.5f).toInt()
+    }
+
+    fun draw(canvas: Canvas, bounds: RectF, radius: Float, opacity: Float = 1f) {
+        if (bounds.isEmpty || opacity <= 0f) return
+        if (localBounds.width() != bounds.width() || localBounds.height() != bounds.height() || cachedRadius != radius) {
+            localBounds.set(0f, 0f, bounds.width(), bounds.height())
+            cachedRadius = radius
+            path.setEmbeddedG3Rect(localBounds, radius)
+        }
+        val save = canvas.save()
+        canvas.translate(bounds.left, bounds.top)
+        // Keep the shadow outside even while a translucent panel is animating.
+        canvas.clipOutPath(path)
+        for (index in layerAlphas.indices.reversed()) {
+            paint.alpha = (layerAlphas[index] * opacity.coerceIn(0f, 1f)).toInt()
+            if (paint.alpha == 0) continue
+            paint.strokeWidth = (index + 1) * density * 2f
+            canvas.drawPath(path, paint)
+        }
+        canvas.restoreToCount(save)
+    }
+}
+
 /** Solid native View surface; geometry is cached until its bounds or radius change. */
 internal class EmbeddedG3Drawable : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)

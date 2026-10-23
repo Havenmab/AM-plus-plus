@@ -488,6 +488,7 @@ private class EmbeddedSettingsReturnMotion(
     private val onProgress: ((Float) -> Unit)?,
 ) : Drawable(), View.OnAttachStateChangeListener {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val panelShadow = EmbeddedPanelShadow(density)
     private val clip = Path()
     private val imageBounds = RectF()
     private val containerBounds = RectF()
@@ -563,10 +564,11 @@ private class EmbeddedSettingsReturnMotion(
         val radiusStart = 24f * density
         val radiusEnd = minOf(radiusStart / 2f, endBounds.width() / 2f, endBounds.height() / 2f)
         val radius = lerp(radiusStart, radiusEnd, progress)
+        val plateAlpha = 1f - smooth((progress - 0.62f) / 0.38f)
+        panelShadow.draw(canvas, containerBounds, radius, plateAlpha * drawableAlpha / 255f)
         clip.setEmbeddedG3Rect(containerBounds, radius)
         val save = canvas.save()
         canvas.clipPath(clip)
-        val plateAlpha = 1f - smooth((progress - 0.62f) / 0.38f)
         paint.color = plateColor
         paint.alpha = (drawableAlpha * plateAlpha).toInt().coerceIn(0, 255)
         if (paint.alpha > 0) canvas.drawPath(clip, paint)

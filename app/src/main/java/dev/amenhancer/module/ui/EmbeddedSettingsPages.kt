@@ -61,6 +61,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         val panelBounds = RectF()
         val panelClip = Path()
         val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val panelShadow = EmbeddedPanelShadow(activity.resources.displayMetrics.density)
         var onViewportChanged: (() -> Unit)? = null
         var onPluginBoundsChanged: ((RectF) -> Unit)? = null
         var onTransitionFinished: (() -> Unit)? = null
@@ -224,6 +225,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             override fun dispatchDraw(canvas: Canvas) {
                 if (panelBounds.isEmpty) return
                 val radius = dp(activity, 24).toFloat()
+                panelShadow.draw(canvas, panelBounds, radius)
                 panelClip.setEmbeddedG3Rect(panelBounds, radius)
                 val save = canvas.save()
                 canvas.clipPath(panelClip)
@@ -303,6 +305,11 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
             val llmLyricsPage = page == EmbeddedSettingsPage.LLM_LYRICS
             val lyricsPage = customLyricsPage || llmLyricsPage
+            val bottomInset = dp(activity, when {
+                page == EmbeddedSettingsPage.MAIN -> 0
+                lyricsPage -> 8
+                else -> 12
+            })
             pageContent.removeAllViews()
             val scroll = ScrollView(activity).apply {
                 isFillViewport = false
@@ -321,16 +328,15 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     dp(activity, horizontalInset),
                     0,
                     dp(activity, horizontalInset),
-                    dp(activity, when {
-                        page == EmbeddedSettingsPage.MAIN -> 0
-                        lyricsPage -> 8
-                        else -> 12
-                    }),
+                    0,
                 )
             }
             val content = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 clipChildren = !customLyricsPage
+                // Keep both fading edges at the viewport edges. A ScrollView's
+                // own bottom padding leaves unfaded ink when clipToPadding=false.
+                setPadding(0, 0, 0, bottomInset)
             }
             scroll.addView(content)
             pageContent.addView(scroll, FrameLayout.LayoutParams(

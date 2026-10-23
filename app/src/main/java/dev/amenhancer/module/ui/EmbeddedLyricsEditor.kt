@@ -45,7 +45,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         val horizontalInset = dp(activity, 18)
         val fields = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(horizontalInset, dp(activity, 4), horizontalInset, dp(activity, 4))
+            setPadding(horizontalInset, dp(activity, 4), horizontalInset, 0)
         }
         val idInput = embeddedLyricsEditorInput(
             activity = activity,
@@ -63,7 +63,10 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             hint = localizedText(ModuleText.TTML_CONTENT),
             initial = entry?.let { controller.readLyrics(it.appleMusicId) }.orEmpty(),
             multiline = true,
-        )
+        ).apply {
+            minLines = 1
+            maxLines = Int.MAX_VALUE
+        }
         val sourceLabel = TextView(activity).apply {
             textSize = embeddedTextSize(activity, 14f, 13f)
             setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
@@ -139,15 +142,50 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             ),
             matchWidthWrapContent(),
         )
-        fields.addView(ttmlInput, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            // Keep a normal-height viewport independent of TTML length.
-            ttmlInput.lineHeight * ttmlInput.minLines + ttmlInput.compoundPaddingTop + ttmlInput.compoundPaddingBottom,
-        ).apply { topMargin = dp(activity, 8) })
-        val scroll = ScrollView(activity).apply {
-            isFillViewport = true
+        val fieldsScroll = ScrollView(activity).apply {
+            isFillViewport = false
             isVerticalScrollBarEnabled = false
             addView(fields)
+        }
+        val ttmlTopMargin = dp(activity, 8)
+        val ttmlBottomMargin = dp(activity, 4)
+        val editorBody = object : LinearLayout(activity) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val fieldsParams = fieldsScroll.layoutParams
+                fieldsParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+                    // Only metadata may scroll in a small window or above the
+                    // keyboard. TTML is a sibling and never enlarges that range.
+                    val availableHeight = (MeasureSpec.getSize(heightMeasureSpec) -
+                        ttmlTopMargin - ttmlBottomMargin).coerceAtLeast(0)
+                    val textReserve = minOf(
+                        ttmlInput.lineHeight * 3 + ttmlInput.compoundPaddingTop + ttmlInput.compoundPaddingBottom,
+                        availableHeight / 2,
+                    )
+                    val fieldsLimit = availableHeight - textReserve
+                    fieldsScroll.measure(
+                        ViewGroup.getChildMeasureSpec(widthMeasureSpec, 0, ViewGroup.LayoutParams.MATCH_PARENT),
+                        MeasureSpec.makeMeasureSpec(fieldsLimit, MeasureSpec.AT_MOST),
+                    )
+                    fieldsParams.height = fieldsScroll.measuredHeight
+                }
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            }
+        }.apply {
+            orientation = LinearLayout.VERTICAL
+            addView(fieldsScroll, matchWidthWrapContent())
+            // The native text editor scrolls within the remaining viewport;
+            // neither its line count nor content participates in outer sizing.
+            addView(ttmlInput, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ).apply {
+                marginStart = horizontalInset
+                marginEnd = horizontalInset
+                topMargin = ttmlTopMargin
+                bottomMargin = ttmlBottomMargin
+            })
         }
         lateinit var dialog: EmbeddedLyricsEditorDialog
         var saveSubmitted = false
@@ -240,7 +278,7 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 embeddedTopBarHeight(activity),
             ))
-            addView(scroll, LinearLayout.LayoutParams(
+            addView(editorBody, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f,
@@ -299,8 +337,8 @@ private class EmbeddedLyricsEditorDialog(
             val availableHeight = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) {
                 editorRoot.minimumHeight
             } else MeasureSpec.getSize(heightMeasureSpec)
-            // Keep the original panel size, but let the scrollable form shrink
-            // when the IME or a smaller host window reduces the available area.
+            // Keep the original panel size and resize its editor viewport when
+            // the IME or a smaller host window reduces the available area.
             editorRoot.layoutParams.width = minOf(editorWidth, availableWidth)
             editorRoot.layoutParams.height = minOf(editorRoot.minimumHeight, availableHeight)
             super.onMeasure(widthMeasureSpec, heightMeasureSpec)

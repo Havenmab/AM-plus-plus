@@ -145,7 +145,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 24`() {
+    fun `keeps the glass configuration keys under the current schema`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -167,9 +167,10 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 25 adds the two lyrics typography sliders on top of the merged 24
+        // Schema 25 added the two lyrics typography sliders on top of the merged 24
         // (this fork's 16..23 plus upstream 1.6.6's LLM lyrics fallback and optional
-        // dual-pane status-bar hiding). Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 25"))
+        // dual-pane status-bar hiding); 26 adds the four lyric line motion keys.
+        // Glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 26"))
     }
 }

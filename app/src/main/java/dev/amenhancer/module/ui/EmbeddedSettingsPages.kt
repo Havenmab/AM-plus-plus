@@ -315,6 +315,9 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             val content = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 clipChildren = !customLyricsPage
+                // Bottom-only padding also clips the side edges by default.
+                // Let the lyrics ripple reach the ScrollView's side inset.
+                clipToPadding = !customLyricsPage
                 // Keep both fading edges at the viewport edges. A ScrollView's
                 // own bottom padding leaves unfaded ink when clipToPadding=false.
                 setPadding(0, 0, 0, bottomInset)

@@ -1324,7 +1324,9 @@ internal fun EmbeddedSettingsHost.showEmbeddedActionMenu(
             row.measure(widthSpec, heightSpec)
             contentWidth = maxOf(contentWidth, row.measuredWidth)
         }
-        val popup = ListPopupWindow(embeddedThemedContext(activity)).apply {
+        val popup = ListPopupWindow(
+            embeddedThemedContext(activity), null, 0, R.style.Widget_AppleMusicEnhancer_ActionMenu,
+        ).apply {
             anchorView = anchor
             isModal = true
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED

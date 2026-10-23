@@ -1,3 +1,7 @@
 <resources>
     <style name="Theme.AppleMusicEnhancer" parent="android:style/Theme.Material.Light.NoActionBar" />
+
+    <style name="Widget.AppleMusicEnhancer.ActionMenu" parent="android:style/Widget.Material.ListPopupWindow">
+        <item name="android:popupElevation">2dp</item>
+    </style>
 </resources>

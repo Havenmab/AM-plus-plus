@@ -132,7 +132,7 @@ internal class EmbeddedPanelShadow(private val density: Float) {
     private var tile: Bitmap? = null
     private var tileRadius = -1f
     private var tileCorner = 0
-    private val tileOutset = kotlin.math.ceil(16f * density).toInt() + 1
+    private val tileOutset = kotlin.math.ceil(4f * density).toInt() + 1
     private val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val sourceStops = IntArray(4)
     private val targetX = FloatArray(4)
@@ -140,12 +140,12 @@ internal class EmbeddedPanelShadow(private val density: Float) {
     private val sourceRect = Rect()
     private val targetRect = RectF()
     private val layerAlphas = IntArray(16) { index ->
-        fun opacity(distance: Float): Float {
-            val remaining = 1f - distance / 16f
+        fun opacity(progress: Float): Float {
+            val remaining = 1f - progress
             return 0.24f * remaining * remaining * remaining
         }
-        val near = opacity(index.toFloat())
-        val far = opacity(index + 1f)
+        val near = opacity(index / 16f)
+        val far = opacity((index + 1) / 16f)
         ((near - far) / (1f - far) * 255f + 0.5f).toInt()
     }
 
@@ -213,7 +213,7 @@ internal class EmbeddedPanelShadow(private val density: Float) {
         for (index in layerAlphas.indices.reversed()) {
             paint.alpha = (layerAlphas[index] * opacity.coerceIn(0f, 1f)).toInt()
             if (paint.alpha == 0) continue
-            paint.strokeWidth = (index + 1) * density * 2f
+            paint.strokeWidth = (index + 1) * density * 0.5f
             canvas.drawPath(path, paint)
         }
         canvas.restoreToCount(save)

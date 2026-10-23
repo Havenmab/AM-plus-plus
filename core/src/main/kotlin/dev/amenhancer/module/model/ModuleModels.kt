@@ -82,6 +82,31 @@ data class ModuleSettings(
      * live.
      */
     val lyricsLineSpacingScalePercent: Int = DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+    /**
+     * 「歌词换行动画」: replaces Apple Music's own instant re-anchor + 750 ms row
+     * translation with the spring-driven motion iOS Apple Music uses (line-change
+     * spring mass 1.0 / stiffness 100 / damping 18, 50 ms per-row stagger, selected
+     * row scaling up to 1.14). Off by default so an upgraded store keeps the exact
+     * stock animation; read live.
+     */
+    val lyricLineMotionEnabled: Boolean = false,
+    /**
+     * Duration of the spring row motion, as a percentage of Apple Music iOS's own
+     * timing (100 = 0.628 s response). Only meaningful while
+     * [lyricLineMotionEnabled] is on.
+     */
+    val lyricLineMotionDurationPercent: Int = DEFAULT_LYRIC_LINE_MOTION_DURATION_PERCENT,
+    /**
+     * Per-row stagger, i.e. iOS's `lineDelay`. 0 starts every row together, 50 ms is
+     * Apple's own value. Only meaningful while [lyricLineMotionEnabled] is on.
+     */
+    val lyricLineMotionStaggerMs: Int = DEFAULT_LYRIC_LINE_MOTION_STAGGER_MS,
+    /**
+     * Scale the highlighted row grows to, in percent, i.e. iOS's
+     * `emphasizingScaleRange` upper bound (114 = 1.14). Only meaningful while
+     * [lyricLineMotionEnabled] is on.
+     */
+    val lyricLineMotionEmphasisPercent: Int = DEFAULT_LYRIC_LINE_MOTION_EMPHASIS_PERCENT,
     /** Fixed logical density for Apple Music; 0 follows the system density. */
     val appleMusicDpiOverrideDpi: Int = FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
     /**
@@ -233,6 +258,21 @@ data class ModuleSettings(
         const val MAX_LYRICS_FONT_SCALE_PERCENT = 130
         const val MIN_LYRICS_LINE_SPACING_SCALE_PERCENT = 40
         const val MAX_LYRICS_LINE_SPACING_SCALE_PERCENT = 160
+
+        /** 100 % = iOS Apple Music's own line-change spring duration (0.628 s response). */
+        const val DEFAULT_LYRIC_LINE_MOTION_DURATION_PERCENT = 100
+        const val MIN_LYRIC_LINE_MOTION_DURATION_PERCENT = 40
+        const val MAX_LYRIC_LINE_MOTION_DURATION_PERCENT = 160
+
+        /** 50 ms = iOS `lineDelay`. */
+        const val DEFAULT_LYRIC_LINE_MOTION_STAGGER_MS = 50
+        const val MIN_LYRIC_LINE_MOTION_STAGGER_MS = 0
+        const val MAX_LYRIC_LINE_MOTION_STAGGER_MS = 120
+
+        /** 114 % = iOS `emphasizingScaleRange` upper bound (1.14). */
+        const val DEFAULT_LYRIC_LINE_MOTION_EMPHASIS_PERCENT = 114
+        const val MIN_LYRIC_LINE_MOTION_EMPHASIS_PERCENT = 100
+        const val MAX_LYRIC_LINE_MOTION_EMPHASIS_PERCENT = 114
         const val FOLLOW_SYSTEM_APPLE_MUSIC_DPI = 0
         const val MIN_APPLE_MUSIC_DPI = 160
         const val MAX_APPLE_MUSIC_DPI = 640

@@ -124,6 +124,7 @@ object AppleMusicHostFactory {
                 profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
                 AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            lyricLineMotion = AppleMusicLyricLineMotionTarget(profile, classLoader) { config.settings() },
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

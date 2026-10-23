@@ -45,6 +45,9 @@ data class TargetAdaptation(
     val lyricWrapSweep: LyricWrapSweepTarget = LyricWrapSweepTarget {
         TargetCapabilityInstall.Unsupported("Wrapped lyric sweep has no exact host contract")
     },
+    val lyricLineMotion: LyricLineMotionTarget = LyricLineMotionTarget {
+        TargetCapabilityInstall.Unsupported("Spring lyric line motion has no exact host contract")
+    },
     val startupPagePrewarm: StartupPagePrewarmTarget = StartupPagePrewarmTarget {
         TargetCapabilityInstall.Unsupported("Startup page prewarming has no exact host contract")
     },
@@ -68,6 +71,10 @@ fun interface CjkKaraokeAnimationTarget {
 }
 
 fun interface LyricWrapSweepTarget {
+    fun install(): TargetCapabilityInstall
+}
+
+fun interface LyricLineMotionTarget {
     fun install(): TargetCapabilityInstall
 }
 

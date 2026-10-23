@@ -51,8 +51,13 @@ object ModuleConstants {
      * `lyrics_line_spacing_scale_percent`).  Both are new defaulted keys: 100 keeps
      * Apple Music's own font size and line spacing, so an upgrading store renders
      * exactly what it rendered before and no migration step is needed.
+     *
+     * 26 adds the four 「歌词换行动画」 keys (`lyric_line_motion_enabled` plus the
+     * duration / stagger / emphasis sliders).  The switch defaults off and every
+     * slider defaults to Apple Music iOS's own value, so an upgrading store keeps the
+     * stock Android animation until the switch is turned on; no migration needed.
      */
-    const val CONFIG_SCHEMA_VERSION = 25
+    const val CONFIG_SCHEMA_VERSION = 26
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"
@@ -60,6 +65,7 @@ object ModuleConstants {
     const val FEATURE_FUTURE_BLUR = "future_blur"
     const val FEATURE_CJK_KARAOKE_ANIMATION = "cjk_karaoke_animation"
     const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
+    const val FEATURE_LYRIC_LINE_MOTION = "lyric_line_motion"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
@@ -69,7 +75,7 @@ object ModuleConstants {
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-23-1.6.6-lyrics-typography-1609"
+    const val BUILD_TAG = "2026-10-23-1.6.6-lyric-line-motion-1609"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

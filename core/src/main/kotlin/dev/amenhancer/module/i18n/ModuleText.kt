@@ -257,6 +257,26 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "40–160%% · 100%% keeps Apple Music's spacing · default 80%%",
         "40–160%% · 100%% 为 Apple Music 原行距 · 默认 80%%",
     ),
+    LYRIC_LINE_MOTION("Lyric line change animation", "歌词换行动画"),
+    LYRIC_LINE_MOTION_SUMMARY(
+        "iOS-style spring line change · off keeps Apple Music's own animation",
+        "iOS 同款弹簧换行 · 关闭则保留 Apple Music 原动画",
+    ),
+    LYRIC_LINE_MOTION_DURATION("Line change duration", "换行时长"),
+    LYRIC_LINE_MOTION_DURATION_SUMMARY(
+        "40–160%% · 100%% = iOS Apple Music timing · default 100%%",
+        "40–160%% · 100%% 为 iOS Apple Music 原时长 · 默认 100%%",
+    ),
+    LYRIC_LINE_MOTION_STAGGER("Per-row stagger", "逐行错峰"),
+    LYRIC_LINE_MOTION_STAGGER_SUMMARY(
+        "0–120 ms · 50 ms = iOS lineDelay · default 50 ms",
+        "0–120 毫秒 · 50 毫秒为 iOS lineDelay · 默认 50 毫秒",
+    ),
+    LYRIC_LINE_MOTION_EMPHASIS("Highlighted row scale", "高亮行缩放"),
+    LYRIC_LINE_MOTION_EMPHASIS_SUMMARY(
+        "100–114%% · 114%% = iOS emphasizingScaleRange · default 114%%",
+        "100–114%% · 114%% 为 iOS emphasizingScaleRange · 默认 114%%",
+    ),
     RESET_DEFAULT("Reset to default", "恢复默认"),
     /**
      * The module's "this has never run on a device" marker, shown as a badge on the row.

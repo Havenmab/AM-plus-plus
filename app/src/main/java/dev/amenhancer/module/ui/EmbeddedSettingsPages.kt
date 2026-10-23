@@ -658,6 +658,46 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 unit = "%",
             ) { onSettingsChanged(currentSettings().copy(lyricsLineSpacingScalePercent = it)) })
             addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
+                localizedText(ModuleText.LYRIC_LINE_MOTION),
+                localizedText(ModuleText.LYRIC_LINE_MOTION_SUMMARY),
+                settings.lyricLineMotionEnabled,
+            ) { onSettingsChanged(currentSettings().copy(lyricLineMotionEnabled = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRIC_LINE_MOTION_DURATION),
+                value = settings.lyricLineMotionDurationPercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRIC_LINE_MOTION_DURATION_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRIC_LINE_MOTION_DURATION_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRIC_LINE_MOTION_DURATION_PERCENT,
+                suffix = localizedText(ModuleText.LYRIC_LINE_MOTION_DURATION_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricLineMotionDurationPercent = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRIC_LINE_MOTION_STAGGER),
+                value = settings.lyricLineMotionStaggerMs,
+                defaultValue = ModuleSettings.DEFAULT_LYRIC_LINE_MOTION_STAGGER_MS,
+                rangeMin = ModuleSettings.MIN_LYRIC_LINE_MOTION_STAGGER_MS,
+                rangeMax = ModuleSettings.MAX_LYRIC_LINE_MOTION_STAGGER_MS,
+                suffix = localizedText(ModuleText.LYRIC_LINE_MOTION_STAGGER_SUMMARY),
+                unit = "ms",
+            ) { onSettingsChanged(currentSettings().copy(lyricLineMotionStaggerMs = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRIC_LINE_MOTION_EMPHASIS),
+                value = settings.lyricLineMotionEmphasisPercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRIC_LINE_MOTION_EMPHASIS_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRIC_LINE_MOTION_EMPHASIS_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRIC_LINE_MOTION_EMPHASIS_PERCENT,
+                suffix = localizedText(ModuleText.LYRIC_LINE_MOTION_EMPHASIS_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricLineMotionEmphasisPercent = it)) })
+            addView(embeddedDivider(activity))
             addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
                 onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))
                 pageRefresh?.invoke()

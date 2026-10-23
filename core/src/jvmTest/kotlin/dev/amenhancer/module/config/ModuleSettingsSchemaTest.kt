@@ -115,6 +115,10 @@ class ModuleSettingsSchemaTest {
                 "lyric_blur_radius_offset_px" to 6,
                 "lyrics_font_scale_percent" to 85,
                 "lyrics_line_spacing_scale_percent" to 80,
+                "lyric_line_motion_enabled" to false,
+                "lyric_line_motion_duration_percent" to 100,
+                "lyric_line_motion_stagger_ms" to 50,
+                "lyric_line_motion_emphasis_percent" to 114,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -182,6 +186,10 @@ class ModuleSettingsSchemaTest {
                 "lyric_blur_radius_offset_px" to 0,
                 "lyrics_font_scale_percent" to 85,
                 "lyrics_line_spacing_scale_percent" to 80,
+                "lyric_line_motion_enabled" to false,
+                "lyric_line_motion_duration_percent" to 100,
+                "lyric_line_motion_stagger_ms" to 50,
+                "lyric_line_motion_emphasis_percent" to 114,
                 "apple_music_dpi_override_dpi" to 0,
                 "region_selection" to "none",
                 "override_account_language" to false,
@@ -371,6 +379,57 @@ class ModuleSettingsSchemaTest {
         assertEquals(
             ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
             clamped["lyrics_line_spacing_scale_percent"],
+        )
+    }
+
+    @Test
+    fun `lyric line motion defaults off and round trips`() {
+        val defaults = ModuleSettingsSchema.decode(emptyMap<String, Any?>())
+        assertFalse(defaults.lyricLineMotionEnabled)
+        assertEquals(100, defaults.lyricLineMotionDurationPercent)
+        assertEquals(50, defaults.lyricLineMotionStaggerMs)
+        assertEquals(114, defaults.lyricLineMotionEmphasisPercent)
+        // A stored truthy-looking string is not a switch, same rule as every other toggle.
+        assertFalse(ModuleSettingsSchema.decode(
+            mapOf("lyric_line_motion_enabled" to "true"),
+        ).lyricLineMotionEnabled)
+
+        val values = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(
+                lyricLineMotionEnabled = true,
+                lyricLineMotionDurationPercent = 140,
+                lyricLineMotionStaggerMs = 20,
+                lyricLineMotionEmphasisPercent = 106,
+            ),
+        )
+        assertEquals(true, values["lyric_line_motion_enabled"])
+        assertEquals(140, values["lyric_line_motion_duration_percent"])
+        assertEquals(20, values["lyric_line_motion_stagger_ms"])
+        assertEquals(106, values["lyric_line_motion_emphasis_percent"])
+        val decoded = ModuleSettingsSchema.decode(values)
+        assertTrue(decoded.lyricLineMotionEnabled)
+        assertEquals(140, decoded.lyricLineMotionDurationPercent)
+        assertEquals(20, decoded.lyricLineMotionStaggerMs)
+        assertEquals(106, decoded.lyricLineMotionEmphasisPercent)
+
+        // Out-of-range values clamp on both the read and the write path.
+        assertEquals(
+            ModuleSettings.MAX_LYRIC_LINE_MOTION_DURATION_PERCENT,
+            ModuleSettingsSchema.decode(
+                mapOf("lyric_line_motion_duration_percent" to 999),
+            ).lyricLineMotionDurationPercent,
+        )
+        assertEquals(
+            ModuleSettings.MIN_LYRIC_LINE_MOTION_STAGGER_MS,
+            ModuleSettingsSchema.decode(
+                mapOf("lyric_line_motion_stagger_ms" to -20),
+            ).lyricLineMotionStaggerMs,
+        )
+        assertEquals(
+            ModuleSettings.MIN_LYRIC_LINE_MOTION_EMPHASIS_PERCENT,
+            ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(lyricLineMotionEmphasisPercent = 10),
+            )["lyric_line_motion_emphasis_percent"],
         )
     }
 

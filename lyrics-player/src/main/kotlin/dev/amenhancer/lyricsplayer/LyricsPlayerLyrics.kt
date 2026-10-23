@@ -271,7 +271,12 @@ private fun DrawScope.drawLyrics(
     val currentLine = lines[currentIndex]
     val currentHighlight = LyricsPlayerTimeline.wordHighlight(currentLine, positionMs)
     val currentProgress = LyricsPlayerTimeline.lineProgress(currentLine, positionMs)
-    val currentWordLit = wordLightProgress(currentLine, currentHighlight, positionMs, wordSpringCache)
+    // rev-eng (B level): x is the time gap between adjacent lines, not the word duration
+    // (word durations are 0.1–0.4 s and would clamp p to 0, losing the whole adaptive half).
+    val currentGapSeconds = lineGapSeconds(lines, currentIndex)
+    val currentWordLit = wordLightProgress(
+        currentLine, currentHighlight, positionMs, currentGapSeconds, wordSpringCache,
+    )
     val range = layout.visibleLineRange(runtime.displayedIndex, lineCount)
 
     for (index in range) {
@@ -478,30 +483,47 @@ private class WordSpringCache {
     private var cachedDurationSeconds = -1f
     private var cachedSpring = LyricsPlayerMotion.wordSpring(0f)
 
-    fun springFor(wordDurationSeconds: Float): SpringTiming {
-        if (wordDurationSeconds != cachedDurationSeconds) {
-            cachedDurationSeconds = wordDurationSeconds
-            cachedSpring = LyricsPlayerMotion.wordSpring(wordDurationSeconds)
+    fun springFor(durationSeconds: Float): SpringTiming {
+        if (durationSeconds != cachedDurationSeconds) {
+            cachedDurationSeconds = durationSeconds
+            cachedSpring = LyricsPlayerMotion.wordSpring(durationSeconds)
         }
         return cachedSpring
     }
 }
 
 /**
- * Lit progress (0–1) of the current word, sampled from the binary's adaptive per-word spring
- * (x = the word's duration in seconds). Only the word being sung uses it; the line-change
- * motion always comes from the fixed line spring.
+ * Time gap between [index] and the next line, in seconds — the input of the binary's
+ * adaptive spring (rev-eng B level; the last line falls back to its own duration).
+ */
+private fun lineGapSeconds(lines: List<PlayerLine>, index: Int): Float {
+    val line = lines.getOrNull(index) ?: return 0f
+    val nextStart = lines.getOrNull(index + 1)?.startMs
+    val gapMs = if (nextStart != null && nextStart > line.startMs) {
+        nextStart - line.startMs
+    } else {
+        line.durationMs
+    }
+    return gapMs.coerceAtLeast(0L) / 1000f
+}
+
+/**
+ * Lit progress (0–1) of the current word, sampled from the binary's adaptive spring with
+ * x = the gap between adjacent lines (seconds). Only the word being sung uses it; the
+ * line-change motion always comes from the fixed line spring, so this is an appearance
+ * detail, never a scheduling input.
  */
 private fun wordLightProgress(
     line: PlayerLine,
     highlight: WordHighlight,
     positionMs: Long,
+    gapSeconds: Float,
     cache: WordSpringCache,
 ): Float {
     val index = highlight.wordIndex
     if (index < 0 || index >= line.words.size) return 0f
     val word = line.words[index]
-    val spring = cache.springFor(word.durationMs / 1000f)
+    val spring = cache.springFor(gapSeconds)
     val elapsedSeconds = ((positionMs - word.startMs).coerceAtLeast(0L)) / 1000.0
     return spring.value(elapsedSeconds).toFloat().coerceIn(0f, 1f)
 }

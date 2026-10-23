@@ -119,23 +119,25 @@ object LyricsPlayerMotion {
     //   zeta     = 0.90 - 0.12p   (0.90…0.78)
     // Round 3 found the dispatcher (0x29d2198): it picks adaptive / fixed 1.0/100/18 /
     // fixed 2.0/260/50 per line-render flag, so the original app itself falls back to the
-    // fixed line spring. We keep that fixed spring everywhere and use the adaptive one only
-    // for the per-word lighting, with x = the word's duration in seconds (Lead's call).
-    // The physical meaning of x is still C level — candidates are line progress, normalized
-    // distance to the current line, or syllable duration; the parameters above are A level.
+    // fixed line spring; we keep that fixed spring everywhere.
+    // x is a duration in seconds; rev-eng's final reading (B level) is the time gap between
+    // adjacent lines, which is what LyricsPlayerLyrics feeds. Word durations (0.1–0.4 s)
+    // would clamp p to 0 and lose the whole adaptive half (response below 0.48), so they are
+    // explicitly not used as x.
     const val WORD_RESPONSE_MIN_S = 0.48f
     const val WORD_RESPONSE_MAX_S = 0.75f
     const val WORD_ZETA_MAX = 0.90f
     const val WORD_ZETA_MIN = 0.78f
 
     /**
-     * Spring of the per-word lighting emphasis for a word that lasts [wordDurationSeconds]
-     * **in seconds** (callers divide `PlayerWord.durationMs` by 1000; the mapping was
-     * calibrated against syllable durations of 0.2–0.75 s). Only the current word's scale and
-     * glow may use it; line changes always use [lineChange].
+     * Adaptive spring of the per-word lighting emphasis for an input duration [seconds].
+     * RE: B level — x is the time gap between adjacent lines in seconds (fitting the
+     * 0.2–0.75 s mapping range); the Lead's earlier "word duration" guess would clamp to the
+     * bottom of the range. Only the current word's scale and glow may use this spring; line
+     * changes always use [lineChange].
      */
-    fun wordSpring(wordDurationSeconds: Float): SpringTiming {
-        val p = ((wordDurationSeconds - WORD_X_MIN_S) / WORD_X_SPAN_S).coerceIn(0f, 1f)
+    fun wordSpring(seconds: Float): SpringTiming {
+        val p = ((seconds - WORD_X_MIN_S) / WORD_X_SPAN_S).coerceIn(0f, 1f)
         val response = WORD_RESPONSE_MIN_S + (WORD_RESPONSE_MAX_S - WORD_RESPONSE_MIN_S) * p
         val zeta = WORD_ZETA_MAX - (WORD_ZETA_MAX - WORD_ZETA_MIN) * p
         val omega = TWO_PI / response.toDouble()

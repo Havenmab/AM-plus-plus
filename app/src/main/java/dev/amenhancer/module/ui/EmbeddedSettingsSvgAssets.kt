@@ -80,6 +80,10 @@ private data class EmbeddedSvgSpec(
     val viewport: Float = 24f,
     val strokeWidth: Float = DEFAULT_STROKE,
 ) {
+    val path: Path by lazy {
+        checkNotNull(PathParser.createPathFromPathData(pathData)) { "Invalid embedded SVG path" }
+    }
+
     fun strokePaint(): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -88,7 +92,6 @@ private data class EmbeddedSvgSpec(
     }
 
     val endInsetFraction: Float by lazy {
-        val path = checkNotNull(PathParser.createPathFromPathData(pathData))
         val stroke = Path()
         strokePaint().getFillPath(path, stroke)
         val bounds = RectF()
@@ -390,9 +393,7 @@ private class EmbeddedSvgPathDrawable(
     private val followsPalette: Boolean,
 ) : Drawable(), EmbeddedOwnColorDrawable, EmbeddedPaletteDrawable {
     private var fillColor = initialFillColor ?: spec.fillColor
-    private val path = checkNotNull(PathParser.createPathFromPathData(spec.pathData)) {
-        "Invalid SVG path for $icon"
-    }
+    private val path = spec.path
     private val paint = spec.strokePaint()
     private var alphaValue = 255
     private var colorFilterValue: ColorFilter? = null

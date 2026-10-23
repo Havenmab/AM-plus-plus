@@ -282,6 +282,12 @@ internal fun View.morphEmbeddedSettingsPage(
     var active = true
     var animator: ValueAnimator? = null
     lateinit var attachListener: View.OnAttachStateChangeListener
+    val cacheIncoming = outgoing != null && incoming.isHardwareAccelerated &&
+        incoming.layerType == View.LAYER_TYPE_NONE && ValueAnimator.areAnimatorsEnabled()
+
+    fun releaseIncomingLayer() {
+        if (cacheIncoming) incoming.setLayerType(View.LAYER_TYPE_NONE, null)
+    }
 
     fun finishCancelled() {
         if (!active) return
@@ -293,6 +299,7 @@ internal fun View.morphEmbeddedSettingsPage(
         if (motion?.isStarted == true) motion.cancel()
         incoming.removeOnAttachStateChangeListener(attachListener)
         outgoing?.removeOnAttachStateChangeListener(attachListener)
+        releaseIncomingLayer()
         incoming.alpha = 1f
         incoming.translationX = 0f
         incoming.translationY = 0f
@@ -312,6 +319,7 @@ internal fun View.morphEmbeddedSettingsPage(
             animator = null
             incoming.removeOnAttachStateChangeListener(attachListener)
             outgoing?.removeOnAttachStateChangeListener(attachListener)
+            releaseIncomingLayer()
             applyState(1f)
             onFinished()
         }
@@ -333,6 +341,9 @@ internal fun View.morphEmbeddedSettingsPage(
         })
     }
     animator = motion
+    // Fade the cached page as one texture instead of compositing every lyrics
+    // row into a fresh alpha layer on every frame. Release it on all exit paths.
+    if (cacheIncoming) incoming.setLayerType(View.LAYER_TYPE_HARDWARE, null)
     incoming.addOnAttachStateChangeListener(attachListener)
     outgoing?.addOnAttachStateChangeListener(attachListener)
     applyState(0f)

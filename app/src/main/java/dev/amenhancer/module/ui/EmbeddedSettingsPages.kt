@@ -56,7 +56,6 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
         var cancelPageReady: (() -> Unit)? = null
         var disposePage: (() -> Unit)? = null
         var pageTransitionActive = false
-        var pageContentReady = true
         var pendingNavigation: (() -> Unit)? = null
         var refreshAfterTransition = false
         val panelBounds = RectF()
@@ -193,11 +192,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     (if (closeBar.visibility == View.VISIBLE) closeBar.measuredHeight else 0)
                 // Every page follows its actual content height and scrolls only
                 // when that content exceeds the available viewport.
-                // Retain the current size while plugin I/O runs; loading must
-                // not hold the navigation lock or briefly shrink the panel.
-                val panelHeight = (animatedHeight ?: if (!pageContentReady && !panelBounds.isEmpty) {
-                    panelBounds.height().toInt()
-                } else contentHeight).coerceIn(1, panelMaxHeight)
+                val panelHeight = (animatedHeight ?: contentHeight).coerceIn(1, panelMaxHeight)
                 if (panelHeight != panelMaxHeight) {
                     pageHost.measure(exactWidth, MeasureSpec.makeMeasureSpec(panelHeight, MeasureSpec.EXACTLY))
                 }
@@ -309,7 +304,6 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             disposePage?.invoke()
             disposePage = null
             page = nextPage
-            pageContentReady = page != EmbeddedSettingsPage.PLUGINS
             val customLyricsPage = page == EmbeddedSettingsPage.CUSTOM_LYRICS
             val llmLyricsPage = page == EmbeddedSettingsPage.LLM_LYRICS
             val lyricsPage = customLyricsPage || llmLyricsPage
@@ -395,11 +389,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 )
             } else if (page == EmbeddedSettingsPage.PLUGINS) {
                 disposePage = renderEmbeddedPluginManagementPage(activity, content, scroll,
-                    initialScrollY = pageScrollPositions[page] ?: 0,
-                    onContentReady = {
-                        pageContentReady = true
-                        root.requestLayout()
-                    })
+                    initialScrollY = pageScrollPositions[page] ?: 0)
             } else if (page == EmbeddedSettingsPage.MAIN) {
                 renderEmbeddedMainPage(
                     activity = activity,

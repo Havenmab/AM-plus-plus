@@ -24,7 +24,6 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
     parent: LinearLayout,
     scroll: ScrollView,
     initialScrollY: Int = 0,
-    onContentReady: () -> Unit = {},
 ): () -> Unit {
     parent.removeAllViews()
     val manager = plugins
@@ -33,14 +32,12 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
             embeddedInfoCard(activity, localizedText(ModuleText.PLUGIN_RUNTIME_UNAVAILABLE)),
             matchWidthWrapContent(),
         )
-        onContentReady()
         return {}
     }
 
     val active = AtomicBoolean(true)
     val refreshing = AtomicBoolean()
     var restoreInitialScroll = true
-    var contentReady = false
     fun action(block: () -> Unit) {
         manager.execute {
             val result = runCatching(block)
@@ -126,10 +123,6 @@ internal fun EmbeddedSettingsHost.renderEmbeddedPluginManagementPage(
                                 pluginDialogs += WeakReference(confirm); confirm.show()
                             }, matchWidthWrapContent())
                         }, matchWidthWrapContent())
-                    }
-                    if (!contentReady) {
-                        contentReady = true
-                        onContentReady()
                     }
                     mainHandler.postDelayed(this, 1500)
                     scroll.post { if (active.get()) scroll.scrollTo(0, scrollPosition) }

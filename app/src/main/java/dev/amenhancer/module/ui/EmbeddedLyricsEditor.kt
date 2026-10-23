@@ -141,7 +141,9 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         )
         fields.addView(ttmlInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            // A line count alone still measures the text layout (including
+            // fallback font metrics). Keep the viewport independent of content.
+            ttmlInput.lineHeight * ttmlInput.minLines + ttmlInput.compoundPaddingTop + ttmlInput.compoundPaddingBottom,
         ).apply { topMargin = dp(activity, 8) })
         val scroll = ScrollView(activity).apply {
             isFillViewport = true

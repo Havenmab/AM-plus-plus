@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
@@ -39,6 +40,8 @@ internal class LyricsPlayerPortImpl(
     private val contract: LyricsPlayerContract,
     /** Spec §7.3 second source: the module's own document for this song, or null. */
     private val fallback: (() -> PlayerDocument?)? = null,
+    /** User-imported lyric font (lyrics_font_* slot), resolved by the typeface session. */
+    private val typeface: (() -> Typeface?)? = null,
 ) : LyricsPlayerPort {
     private var fragmentRef: WeakReference<Any>? = null
     private var viewRef: WeakReference<View>? = null
@@ -211,6 +214,12 @@ internal class LyricsPlayerPortImpl(
     }
 
     override fun more(): Boolean = false
+
+    /**
+     * The Typeface the lyrics-font slot already loaded for Apple's own rows. The page derives
+     * its Regular/Medium/Semibold/Bold roles from this single face; null keeps the system font.
+     */
+    override fun importedTypeface(): Typeface? = runCatching { typeface?.invoke() }.getOrNull()
 
     override fun preferences(): LyricsPlayerConfig = try {
         val settings = TargetConfigClient.currentSettings()

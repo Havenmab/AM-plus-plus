@@ -32,6 +32,8 @@ internal class AppleMusicLyricPlayerTarget(
     },
     /** Spec §7.3 second source (module-owned document); null keeps the host model as the only source. */
     private val fallback: (() -> dev.amenhancer.module.lyrics.player.PlayerDocument?)? = null,
+    /** Imported lyric font (lyrics_font_* slot); null keeps the page on the system font. */
+    private val typeface: (() -> android.graphics.Typeface?)? = null,
 ) : LyricsPlayerTarget {
     private val lock = Any()
     private var registration: HookRegistrationScope? = null
@@ -49,7 +51,7 @@ internal class AppleMusicLyricPlayerTarget(
         val scope = HookRegistrationScope()
         return try {
             val contract = LyricsPlayerContract(profile, loader)
-            val port = LyricsPlayerPortImpl(contract, fallback)
+            val port = LyricsPlayerPortImpl(contract, fallback, typeface)
             val session = LyricsPlayerHostSession(port, enabled)
             fun hook(method: Method, callback: ModernMethodHook) {
                 check(ModernXposedRuntime.hookMethod(method, callback, scope)) {

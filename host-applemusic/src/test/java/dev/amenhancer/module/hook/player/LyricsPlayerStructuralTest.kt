@@ -81,7 +81,8 @@ class LyricsPlayerStructuralTest {
         listOf("override fun document", "override fun positionMs", "override fun isPlaying",
             "override fun geometry", "override fun seekTo", "override fun track", "override fun artwork",
             "override fun playPause", "override fun skipNext", "override fun skipPrevious",
-            "override fun closePage", "override fun more", "override fun preferences").forEach { member ->
+            "override fun closePage", "override fun more", "override fun preferences",
+            "override fun importedTypeface").forEach { member ->
             assertTrue("missing $member", port.contains(member))
         }
         assertTrue(port.contains("override fun skipNext(): Boolean = contract.skipNext(controller())"))
@@ -120,6 +121,19 @@ class LyricsPlayerStructuralTest {
         // One instance, built at compose() time, so the fallback's per-song cache survives polling.
         assertTrue(factory.contains("LyricsFallbackDocument(config, currentSong)"))
         assertEquals(1, Regex("LyricsFallbackDocument\\(").findAll(factory).count())
+    }
+
+    @Test
+    fun `the imported lyric font is shared through the typeface session`() {
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        val session = moduleSource("LyricsTypefaceSession.kt")
+        val port = source("LyricsPlayerPortImpl.kt")
+        // The session owns the one parsed Typeface; the player page must not load the font again.
+        assertTrue(session.contains("internal fun loadedTypeface(): Typeface? = loadController.readyValue()"))
+        assertTrue(factory.contains("typeface = {"))
+        assertTrue(factory.contains("loadedTypeface()"))
+        assertTrue(port.contains("override fun importedTypeface(): Typeface?"))
+        assertTrue(port.contains("runCatching { typeface?.invoke() }.getOrNull()"))
     }
 
     private fun moduleSource(relative: String): String = listOf(

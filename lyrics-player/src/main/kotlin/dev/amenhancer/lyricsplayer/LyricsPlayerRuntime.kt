@@ -4,7 +4,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.amenhancer.module.lyrics.player.LyricsPlayerClock
-import dev.amenhancer.module.lyrics.player.LyricsPlayerLayout
+import dev.amenhancer.module.lyrics.player.LyricsPlayerColumns
 import dev.amenhancer.module.lyrics.player.LyricsPlayerMotion
 import dev.amenhancer.module.lyrics.player.LyricsPlayerTimeline
 import dev.amenhancer.module.lyrics.player.PlayerDocument
@@ -27,6 +27,14 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
 
     /** Bumped once per frame; readers in the draw phase only invalidate drawing. */
     val tick = mutableStateOf(0L)
+
+    /** Per-frame scroll position (line units), read from graphicsLayer blocks only. */
+    val displayedIndexState = mutableStateOf(0f)
+
+    /** Observable current/previous line for the per-line composables (rare updates). */
+    val currentIndexState = mutableStateOf(0)
+    val previousIndexState = mutableStateOf(0)
+    val lineChangeNanosState = mutableStateOf(0L)
 
     val documentState = mutableStateOf<PlayerDocument?>(null)
     val trackState = mutableStateOf<PlayerTrackInfo?>(null)
@@ -89,8 +97,12 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 currentIndex = 0
                 previousIndex = 0
                 displayedIndex = 0f
+                displayedIndexState.value = 0f
+                currentIndexState.value = 0
+                previousIndexState.value = 0
                 scroll.snap(0f)
                 lineChangeNanos = nowNanos
+                lineChangeNanosState.value = nowNanos
             }
         } else {
             missingDocumentFrames = 0
@@ -103,8 +115,12 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 currentIndex = index
                 previousIndex = index
                 displayedIndex = index.toFloat()
+                displayedIndexState.value = displayedIndex
+                currentIndexState.value = index
+                previousIndexState.value = index
                 scroll.snap(displayedIndex)
                 lineChangeNanos = nowNanos
+                lineChangeNanosState.value = nowNanos
             }
         }
 
@@ -120,6 +136,12 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             }
         }
         if (!dragging) displayedIndex = scroll.valueAt(nowNanos)
+        displayedIndexState.value = displayedIndex
+        if (currentIndexState.value != currentIndex) {
+            currentIndexState.value = currentIndex
+            previousIndexState.value = previousIndex
+            lineChangeNanosState.value = lineChangeNanos
+        }
 
         val seconds = position / 1000L
         if (elapsedSecondsState.value != seconds) elapsedSecondsState.value = seconds
@@ -162,21 +184,21 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         followBlockedUntilNanos = nowNanos + LyricsPlayerMotion.DRAG_RESUME_DELAY_MS * 1_000_000L
     }
 
-    fun cancelDrag(nowNanos: Long) {
+    fun cancelDrag(nowNanos: Long, linePitchPx: Float) {
         if (!dragging) return
         dragging = false
         scroll.snap(displayedIndex)
         val lineCount = document?.lines?.size ?: 0
-        val target = LyricsPlayerMotion.releaseTargetIndex(displayedIndex, 0f, 1f, lineCount)
+        val target = LyricsPlayerMotion.releaseTargetIndex(displayedIndex, 0f, linePitchPx, lineCount)
         scroll.timing = LyricsPlayerMotion.lineChange
         scroll.animateTo(target.toFloat(), nowNanos, config.motionPercent)
         followBlockedUntilNanos = nowNanos + LyricsPlayerMotion.DRAG_RESUME_DELAY_MS * 1_000_000L
     }
 
-    /** Tap: seek to the tapped line and start the emphasise feedback. */
-    fun tapAt(yPx: Float, layout: LyricsPlayerLayout, nowNanos: Long) {
+    /** Tap: seek to the tapped line and start the emphasise feedback. [yPx] is local to the column. */
+    fun tapAt(yPx: Float, columns: LyricsPlayerColumns, nowNanos: Long) {
         val lines = document?.lines.orEmpty()
-        val index = layout.lineIndexAt(yPx, displayedIndex, lines.size) ?: return
+        val index = columns.lineIndexAt(yPx + columns.lyricsTopPx, displayedIndex, lines.size) ?: return
         tapIndex = index
         tapStartNanos = nowNanos
         val line = lines.getOrNull(index) ?: return

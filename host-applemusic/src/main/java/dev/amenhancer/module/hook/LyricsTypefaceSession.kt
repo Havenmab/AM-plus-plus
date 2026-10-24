@@ -128,6 +128,13 @@ internal class LyricsTypefaceSession : LyricsTypefaceResourceBinding {
         }
     }
 
+    /**
+     * The imported lyric font once the one-shot background load has parsed it; null while the
+     * slot is disabled, still loading or failed. Read-only and guarded by the controller's own
+     * lock, so the self-drawn player page can share the exact Typeface the native rows use.
+     */
+    internal fun loadedTypeface(): Typeface? = loadController.readyValue()
+
     /** Marks the feature installed; applies stay gated on a ready load. */
     fun activate() {
         active = true

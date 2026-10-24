@@ -37,6 +37,14 @@ interface LyricsPlayerPort : PlayerHostPort {
     fun more(): Boolean = false
 
     /**
+     * The user-imported lyric font (module settings "lyrics font" slot, lyrics_font_*), or
+     * null when nothing is imported / it cannot be opened. The host opens it through
+     * TargetConfigClient.openFileDescriptor and returns the Typeface; the page derives the
+     * Regular/Medium/Semibold/Bold roles from that single base face.
+     */
+    fun importedTypeface(): android.graphics.Typeface? = null
+
+    /**
      * Live user settings (settings spec §8). The page polls this about twice per second and
      * clamps every value again, so a host may map the raw settings without validating them.
      * The default keeps Apple's own timing.

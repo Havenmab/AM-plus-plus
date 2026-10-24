@@ -1,57 +1,66 @@
 package dev.amenhancer.lyricsplayer
 
+import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import dev.amenhancer.module.lyrics.motion.SpringTiming
-import dev.amenhancer.module.lyrics.player.LyricsPlayerLayout
-import dev.amenhancer.module.lyrics.player.LyricsPlayerMotion
+import androidx.compose.ui.zIndex
+import dev.amenhancer.module.lyrics.player.LyricsPlayerColumns
 import dev.amenhancer.module.lyrics.player.LyricsPlayerTimeline
 import dev.amenhancer.module.lyrics.player.PlayerDocument
 import dev.amenhancer.module.lyrics.player.PlayerLine
 import dev.amenhancer.module.lyrics.player.WordHighlight
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Text layouts of one lyric line, measured exactly once per document/width/font change. */
+/** Two text layouts per line: bold/current and regular/neighbour, plus the translation. */
 private class MeasuredRow(
-    val main: TextLayoutResult,
+    val current: TextLayoutResult,
+    val other: TextLayoutResult,
     val translation: TextLayoutResult?,
-    val harmony: TextLayoutResult?,
     val wordStartX: FloatArray,
     val wordEndX: FloatArray,
 ) {
-    /** Pixel x of the karaoke fill edge inside the line's text layout. */
+    fun wordStart(index: Int): Float =
+        if (index < 0 || index >= wordStartX.size) 0f else wordStartX[index]
+
+    fun wordEnd(index: Int): Float =
+        if (index < 0 || index >= wordEndX.size) 0f else wordEndX[index]
+
+    /** Pixel x of the karaoke fill edge inside the line's layout. */
     fun fillX(highlight: WordHighlight): Float {
         val index = highlight.wordIndex
         if (index < 0 || index >= wordStartX.size) return 0f
@@ -60,401 +69,293 @@ private class MeasuredRow(
         return start + (end - start) * highlight.wordProgress.coerceIn(0f, 1f)
     }
 
-    /** Left edge of word [index] inside the line's text layout. */
-    fun wordStart(index: Int): Float =
-        if (index < 0 || index >= wordStartX.size) 0f else wordStartX[index]
-
-    /** Right edge of word [index] inside the line's text layout. */
-    fun wordEnd(index: Int): Float =
-        if (index < 0 || index >= wordEndX.size) 0f else wordEndX[index]
-
-    /**
-     * Bright text up to the fill edge, feathered over [featherPx], dim afterwards. Created
-     * once per frame for the current line only; everything else is drawn with a plain colour.
-     */
+    /** Bright text up to the fill edge, feathered over [featherPx], dim afterwards. */
     fun gradientBrush(widthPx: Float, fillX: Float, featherPx: Float): Brush {
         val width = widthPx.coerceAtLeast(1f)
-        val edge = (fillX - featherPx).coerceAtLeast(0f) / width
-        val edgeStop = edge.coerceIn(0f, 1f)
+        val edgeStop = ((fillX - featherPx).coerceAtLeast(0f) / width).coerceIn(0f, 1f)
         val fillStop = (fillX / width).coerceIn(edgeStop, 1f)
         return Brush.linearGradient(
-            edgeStop to BRIGHT_WHITE,
-            fillStop to DIM_WHITE,
+            edgeStop to Color.White,
+            fillStop to Color.White.copy(alpha = 0.30f),
             start = Offset.Zero,
             end = Offset(width, 0f),
         )
     }
 }
 
-private class MeasuredLyrics(val rows: List<MeasuredRow>) {
-    companion object {
-        val EMPTY = MeasuredLyrics(emptyList())
-    }
-}
+private class LyricsStyles(
+    val current: TextStyle,
+    val other: TextStyle,
+    val translation: TextStyle,
+)
 
 /**
- * Self-drawn lyrics area: vertical scroll with 1:1 drag, fling, settle and tap-to-seek.
- *
- * Text is measured once per document identity / width / font size; the frame loop only
- * moves numbers. Nothing in the draw path allocates a text layout.
+ * Self-drawn lyrics column (v2): every line is its own composable so the neighbours can
+ * carry a real Gaussian blur layer (RE: VISUAL-SPEC - the fade comes from the blur, the
+ * painted alpha stays constant at 0.50). Only the lines around the current one are composed;
+ * their vertical position is animated through graphicsLayer translations, so scrolling does
+ * not recompose or re-measure anything.
  */
 @Composable
 internal fun LyricsPlayerLyrics(
     runtime: LyricsPlayerRuntime,
-    windowHeightPx: Float,
+    columns: LyricsPlayerColumns,
+    fonts: LyricsPlayerFonts,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val isTablet = LocalConfiguration.current.screenWidthDp >= TABLET_MIN_WIDTH_DP
     val textMeasurer = rememberTextMeasurer()
-    val config = runtime.configState.value
     val document = runtime.documentState.value
-    val geometry = runtime.geometryState.value
+    val styles = remember(columns.currentFontPx, columns.otherFontPx, columns.translationFontPx, fonts) {
+        buildStyles(columns, fonts, density)
+    }
+    val rows = remember(document?.identity, columns.lyricsWidthPx, styles) {
+        measureDocument(document, textMeasurer, columns, styles)
+    }
+    val currentIndex = runtime.currentIndexState.value
+    val lineCount = min(rows.size, document?.lines?.size ?: 0)
+    val emptyLayout = remember(textMeasurer, styles, density) {
+        textMeasurer.measure(AnnotatedString(EMPTY_TEXT), styles.other, TextOverflow.Clip, true, 1)
+    }
+    // One blur layer per distance tier, created once (never per frame). The current line has none.
+    val blurEffects = remember(columns) {
+        val effects = arrayOfNulls<BlurEffect>(BLUR_TIERS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            for (distance in 1 until BLUR_TIERS) {
+                val sigma = columns.blurSigmaPx(distance)
+                if (sigma > 0f) effects[distance] = BlurEffect(sigma, sigma, TileMode.Clamp)
+            }
+        }
+        effects
+    }
+    val featherPx = columns.currentFontPx * FEATHER_RATIO
 
-    BoxWithConstraints(modifier) {
-        val widthPx = constraints.maxWidth.toFloat()
-        val heightPx = constraints.maxHeight.toFloat()
-        val layout = remember(
-            widthPx,
-            heightPx,
-            windowHeightPx,
-            density,
-            config.fontScalePercent,
-            isTablet,
-            geometry,
-        ) {
-            LyricsPlayerLayout(
-                viewportWidthPx = widthPx,
-                viewportHeightPx = heightPx,
-                windowHeightPx = windowHeightPx,
-                density = density.density,
-                isTablet = isTablet,
-                fontScalePercent = config.fontScalePercent,
-                // Host hints are pixels in the overlay space; zero means "not measured".
-                hostTextSizePx = geometry?.textSizePx ?: 0f,
-                hostLineSpacingPx = geometry?.lineSpacingPx ?: 0f,
-                hostHorizontalInsetPx = geometry?.horizontalInsetPx ?: 0f,
-                hostContentWidthPx = geometry?.widthPx ?: 0f,
-            )
-        }
-        val mainStyle = remember(layout.fontSizePx, layout.lineHeightPx, density) {
-            TextStyle(
-                fontSize = with(density) { layout.fontSizePx.toSp() },
-                lineHeight = with(density) { layout.lineHeightPx.toSp() },
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-            )
-        }
-        val secondarySize = with(density) { (layout.fontSizePx * SECONDARY_TEXT_RATIO).toSp() }
-        val translationStyle = remember(secondarySize) {
-            TextStyle(fontSize = secondarySize, textAlign = TextAlign.Center)
-        }
-        val harmonySize = with(density) { (layout.fontSizePx * SECONDARY_TEXT_RATIO * 0.9f).toSp() }
-        val harmonyStyle = remember(harmonySize) {
-            TextStyle(fontSize = harmonySize, textAlign = TextAlign.Center)
-        }
-        val measured = remember(
-            document?.identity,
-            layout.contentWidthPx,
-            layout.fontSizePx,
-            textMeasurer,
-            mainStyle,
-            translationStyle,
-            harmonyStyle,
-        ) {
-            measureDocument(document, textMeasurer, layout, mainStyle, translationStyle, harmonyStyle)
-        }
-        val emptyText = remember(textMeasurer, layout.fontSizePx, density) {
-            textMeasurer.measure(
-                text = AnnotatedString(EMPTY_TEXT),
-                style = TextStyle(
-                    fontSize = LyricsPlayerChromeSpec.EMPTY_TEXT_SIZE,
-                    textAlign = TextAlign.Center,
-                ),
-                maxLines = 1,
-            )
-        }
-        val glowShadow = remember(density) {
-            Shadow(
-                color = Color.White.copy(alpha = GLOW_ALPHA),
-                blurRadius = with(density) { LyricsPlayerMotion.GLOW_DP.dp.toPx() },
-            )
-        }
-        // RE: A level — Specs +0x54 = 40.0 (the iOS notes said 30).
-        val featherPx = with(density) { LyricsPlayerMotion.FEATHER_DP.dp.toPx() }
-        val syllableLiftPx = with(density) { LyricsPlayerMotion.SYLLABLE_LIFT_DP.dp.toPx() }
-        // One cached adaptive spring for the word currently being lit (no per-frame allocation).
-        val wordSpringCache = remember { WordSpringCache() }
-
-        Canvas(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(layout, runtime, document?.identity) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var totalDragY = 0f
-                        var dragging = false
-                        val velocityTracker = VelocityTracker()
-                        velocityTracker.addPosition(down.uptimeMillis, down.position)
-                        down.consume()
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) {
-                                if (dragging) {
-                                    runtime.endDrag(
-                                        velocityY = velocityTracker.calculateVelocity().y,
-                                        linePitchPx = layout.linePitchPx,
-                                        nowNanos = runtime.lastFrameNanos,
-                                    )
-                                } else {
-                                    runtime.tapAt(down.position.y, layout, runtime.lastFrameNanos)
-                                }
-                                change.consume()
-                                break
-                            }
-                            val delta = change.positionChange()
-                            totalDragY += delta.y
-                            if (!dragging && abs(totalDragY) > viewConfiguration.touchSlop) {
-                                dragging = true
-                                runtime.beginDrag()
-                            }
+    Box(
+        modifier
+            .clipToBounds()
+            .pointerInput(columns, runtime, document?.identity) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var totalDragY = 0f
+                    var dragging = false
+                    val velocityTracker = VelocityTracker()
+                    velocityTracker.addPosition(down.uptimeMillis, down.position)
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.changedToUpIgnoreConsumed()) {
                             if (dragging) {
-                                runtime.dragBy(delta.y, layout.linePitchPx)
-                                velocityTracker.addPosition(change.uptimeMillis, change.position)
-                                change.consume()
+                                runtime.endDrag(
+                                    velocityY = velocityTracker.calculateVelocity().y,
+                                    linePitchPx = columns.linePitchPx,
+                                    nowNanos = runtime.lastFrameNanos,
+                                )
+                            } else {
+                                runtime.tapAt(down.position.y, columns, runtime.lastFrameNanos)
                             }
+                            change.consume()
+                            break
+                        }
+                        val delta = change.positionChange()
+                        totalDragY += delta.y
+                        if (!dragging && abs(totalDragY) > viewConfiguration.touchSlop) {
+                            dragging = true
+                            runtime.beginDrag()
+                        }
+                        if (dragging) {
+                            runtime.dragBy(delta.y, columns.linePitchPx)
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            change.consume()
                         }
                     }
-                },
-        ) {
-            val nowNanos = runtime.tick.value
-            if (measured.rows.isEmpty()) {
-                val breath = 0.30f + 0.18f * sin(nowNanos / 1_000_000_000.0 * BREATH_SPEED).toFloat()
-                drawEmptyLyrics(emptyText, layout, breath)
-                return@Canvas
+                }
+            },
+    ) {
+        if (lineCount == 0) {
+            Canvas(Modifier.fillMaxSize()) {
+                val breath = 0.32f + 0.16f * sin(runtime.tick.value / 1_000_000_000.0 * BREATH_SPEED).toFloat()
+                drawText(
+                    emptyLayout,
+                    Color.White.copy(alpha = breath),
+                    Offset(0f, columns.anchorYPx - columns.lyricsTopPx - emptyLayout.size.height * 0.5f),
+                )
             }
-            drawLyrics(
-                measured, layout, runtime, nowNanos, featherPx, glowShadow, syllableLiftPx, wordSpringCache,
+            return@Box
+        }
+        val first = (currentIndex - LINE_OVERSCAN).coerceIn(0, lineCount - 1)
+        val last = (currentIndex + LINE_OVERSCAN).coerceIn(0, lineCount - 1)
+        for (index in first..last) {
+            val line = document?.lines?.getOrNull(index) ?: continue
+            LyricLineView(
+                index = index,
+                row = rows[index],
+                line = line,
+                currentIndex = currentIndex,
+                runtime = runtime,
+                columns = columns,
+                styles = styles,
+                blurEffect = blurEffects[abs(index - currentIndex).coerceAtMost(BLUR_TIERS - 1)],
+                featherPx = featherPx,
+                density = density,
             )
         }
     }
 }
 
-private fun DrawScope.drawEmptyLyrics(emptyText: TextLayoutResult, layout: LyricsPlayerLayout, alpha: Float) {
-    val topLeft = Offset(
-        x = (size.width - emptyText.size.width) * 0.5f,
-        y = layout.anchorYPx - emptyText.size.height * 0.5f,
-    )
-    drawText(emptyText, Color.White.copy(alpha = alpha), topLeft)
-}
-
-private fun DrawScope.drawLyrics(
-    measured: MeasuredLyrics,
-    layout: LyricsPlayerLayout,
-    runtime: LyricsPlayerRuntime,
-    nowNanos: Long,
-    featherPx: Float,
-    glowShadow: Shadow,
-    syllableLiftPx: Float,
-    wordSpringCache: WordSpringCache,
-) {
-    val lines = runtime.document?.lines.orEmpty()
-    // A document can change between the frame loop and the next recomposition; the measured
-    // rows and the line list are only guaranteed to agree up to the smaller of the two.
-    val lineCount = minOf(lines.size, measured.rows.size)
-    if (lineCount == 0) return
-    val currentIndex = runtime.currentIndex.coerceIn(0, lineCount - 1)
-    val positionMs = runtime.clock.visualPositionMs()
-    val elapsedMs = ((nowNanos - runtime.lineChangeNanos) / 1_000_000L).coerceAtLeast(0L)
-    val config = runtime.config
-    val currentLine = lines[currentIndex]
-    val currentHighlight = LyricsPlayerTimeline.wordHighlight(currentLine, positionMs)
-    val currentProgress = LyricsPlayerTimeline.lineProgress(currentLine, positionMs)
-    // rev-eng (B level): x is the time gap between adjacent lines, not the word duration
-    // (word durations are 0.1–0.4 s and would clamp p to 0, losing the whole adaptive half).
-    val currentGapSeconds = lineGapSeconds(lines, currentIndex)
-    val currentWordLit = wordLightProgress(
-        currentLine, currentHighlight, positionMs, currentGapSeconds, wordSpringCache,
-    )
-    val range = layout.visibleLineRange(runtime.displayedIndex, lineCount)
-
-    for (index in range) {
-        if (index == currentIndex) continue
-        drawLine(
-            index, measured.rows[index], layout, runtime, config, elapsedMs,
-            isCurrent = false, highlight = WordHighlight.NONE, lineProgress = 0f,
-            featherPx = featherPx, glowShadow = glowShadow, syllableLiftPx = syllableLiftPx,
-            wordLit = 0f,
-        )
-    }
-    // The current line is painted last so its glow sits above its neighbours.
-    drawLine(
-        currentIndex, measured.rows[currentIndex], layout, runtime, config, elapsedMs,
-        isCurrent = true, highlight = currentHighlight, lineProgress = currentProgress,
-        featherPx = featherPx, glowShadow = glowShadow, syllableLiftPx = syllableLiftPx,
-        wordLit = currentWordLit,
-    )
-}
-
-private fun DrawScope.drawLine(
+@Composable
+private fun LyricLineView(
     index: Int,
     row: MeasuredRow,
-    layout: LyricsPlayerLayout,
+    line: PlayerLine,
+    currentIndex: Int,
     runtime: LyricsPlayerRuntime,
-    config: LyricsPlayerConfig,
-    elapsedMs: Long,
-    isCurrent: Boolean,
-    highlight: WordHighlight,
-    lineProgress: Float,
+    columns: LyricsPlayerColumns,
+    styles: LyricsStyles,
+    blurEffect: BlurEffect?,
     featherPx: Float,
-    glowShadow: Shadow,
-    syllableLiftPx: Float,
-    wordLit: Float,
+    density: Density,
 ) {
-    val centerY = layout.lineCenterY(index, runtime.displayedIndex)
-    if (centerY < -layout.lineHeightPx || centerY > size.height + layout.lineHeightPx) return
-    val emphasis = LyricsPlayerMotion.lineEmphasis(
-        elapsedMs = elapsedMs,
-        lineIndex = index,
-        currentIndex = runtime.currentIndex,
-        previousIndex = runtime.previousIndex,
-        staggerMs = config.staggerMs,
-        motionPercent = config.motionPercent,
-    )
-    val progress = when {
-        isCurrent -> lineProgress
-        index < runtime.currentIndex -> 1f
-        else -> 0f
-    }
-    val scale = LyricsPlayerMotion.lineScale(emphasis, progress, config.emphasisPercent) *
-        runtime.tapBoost(index, runtime.lastFrameNanos)
-    val main = row.main
-    val textWidth = main.size.width.toFloat()
-    val textHeight = main.size.height.toFloat()
-    val topLeft = Offset((size.width - textWidth) * 0.5f, centerY - textHeight * 0.5f)
-    withTransform({ scale(scale, scale, Offset(size.width * 0.5f, centerY)) }) {
-        if (isCurrent && highlight.hasWords) {
-            val fillX = row.fillX(highlight).coerceIn(0f, textWidth)
-            if (fillX > 0f) {
-                // The shadow makes the sung part glow; the dim, not-yet-sung tail keeps none.
-                // The adaptive per-word spring drives how strongly the current word glows.
-                val glowAlpha = GLOW_TEXT_ALPHA * (0.35f + 0.65f * wordLit.coerceIn(0f, 1f))
-                clipRect(right = fillX, top = 0f, bottom = size.height) {
-                    drawText(main, Color.White.copy(alpha = glowAlpha), topLeft, shadow = glowShadow)
-                }
-                val brush = row.gradientBrush(textWidth, fillX, featherPx)
-                val liftedStart = row.wordStart(highlight.wordIndex)
-                val liftedEnd = fillX
-                if (liftedEnd - liftedStart <= 0.5f) {
-                    // Nothing sung inside the current word yet: the whole line stays put.
-                    drawText(main, brush, topLeft)
-                } else {
-                    // Everything except the syllable being sung stays on the baseline…
-                    if (liftedStart > 0.5f) {
-                        clipRect(right = liftedStart, top = 0f, bottom = size.height) {
-                            drawText(main, brush, topLeft)
-                        }
-                    }
-                    if (fillX < textWidth - 0.5f) {
-                        clipRect(left = fillX, top = 0f, bottom = size.height) {
-                            drawText(main, brush, topLeft)
-                        }
-                    }
-                    // …and the sung part of the current word floats up by the syllable lift,
-                    // eased by the adaptive per-word spring (§5.2 + rev-eng round 2).
-                    val lift = syllableLiftPx * wordLit.coerceIn(0f, 1f)
-                    clipRect(
-                        left = liftedStart,
-                        top = -lift,
-                        right = liftedEnd,
-                        bottom = size.height,
-                    ) {
-                        drawText(main, brush, topLeft + Offset(0f, -lift))
-                    }
-                }
-            } else {
-                drawText(main, DIM_WHITE, topLeft)
-            }
+    val distance = abs(index - currentIndex)
+    val sung = index < currentIndex
+    val layerAlpha = columns.lineAlpha(distance, sung)
+    val scale = columns.lineScale(distance)
+    val slotHeightPx = columns.linePitchPx * SLOT_RATIO
+    val slotHeightDp = with(density) { slotHeightPx.toDp() }
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(slotHeightDp)
+            .zIndex(if (distance == 0) 1f else 0f)
+            .graphicsLayer {
+                val displayed = runtime.displayedIndexState.value
+                val center = columns.lineCenterY(index, displayed) - columns.lyricsTopPx
+                translationY = center - slotHeightPx * 0.5f
+                scaleX = scale
+                scaleY = scale
+                alpha = layerAlpha
+                renderEffect = blurEffect
+            },
+    ) {
+        // Only the current line changes inside the canvas (word fill); neighbours repaint
+        // only when the frame clock or the composition says so.
+        if (distance == 0) runtime.tick.value
+        val mainTop = slotHeightPx * 0.5f - row.current.size.height * 0.5f
+        if (distance == 0) {
+            drawCurrentLine(
+                row = row,
+                line = line,
+                topLeft = Offset(0f, mainTop),
+                widthPx = columns.lyricsWidthPx,
+                featherPx = featherPx,
+                positionMs = runtime.clock.visualPositionMs(),
+            )
         } else {
-            val alpha = if (isCurrent) CURRENT_LINE_NO_WORDS_ALPHA
-            else LyricsPlayerMotion.lineWhite(index, runtime.currentIndex)
-            drawText(main, Color.White.copy(alpha = alpha), topLeft)
+            drawText(row.other, Color.White, Offset(0f, mainTop))
+        }
+        row.translation?.let { translation ->
+            val translationTop = slotHeightPx * 0.5f +
+                columns.translationCenterOffsetPx - translation.size.height * 0.5f
+            drawText(
+                translation,
+                Color.White.copy(alpha = columns.translationAlpha),
+                Offset(0f, translationTop),
+            )
         }
     }
-    val secondaryTop = centerY + textHeight * 0.5f
-    row.translation?.let { translation ->
-        drawText(
-            translation,
-            Color.White.copy(alpha = TRANSLATION_ALPHA),
-            Offset((size.width - translation.size.width) * 0.5f, secondaryTop),
-        )
+}
+
+private fun DrawScope.drawCurrentLine(
+    row: MeasuredRow,
+    line: PlayerLine,
+    topLeft: Offset,
+    widthPx: Float,
+    featherPx: Float,
+    positionMs: Long,
+) {
+    val highlight = LyricsPlayerTimeline.wordHighlight(line, positionMs)
+    if (!highlight.hasWords) {
+        drawText(row.current, Color.White, topLeft)
+        return
     }
-    row.harmony?.let { harmony ->
-        drawText(
-            harmony,
-            Color.White.copy(alpha = HARMONY_ALPHA),
-            Offset(
-                (size.width - harmony.size.width) * 0.5f,
-                secondaryTop + harmony.size.height * 0.85f,
-            ),
-        )
+    val textWidth = row.current.size.width.toFloat().coerceAtMost(widthPx)
+    val fillX = row.fillX(highlight).coerceIn(0f, textWidth)
+    if (fillX <= 0f) {
+        drawText(row.current, Color.White.copy(alpha = 0.30f), topLeft)
+        return
     }
+    // Unsung remainder stays dim, the sung part is pure white with a feathered edge.
+    drawText(row.current, Color.White.copy(alpha = 0.30f), topLeft)
+    drawText(row.current, row.gradientBrush(textWidth, fillX, featherPx), topLeft)
+}
+
+private fun buildStyles(
+    columns: LyricsPlayerColumns,
+    fonts: LyricsPlayerFonts,
+    density: Density,
+): LyricsStyles {
+    fun style(px: Float, family: androidx.compose.ui.text.font.FontFamily, alpha: Float = 1f): TextStyle =
+        TextStyle(
+            color = Color.White.copy(alpha = alpha),
+            fontSize = with(density) { px.toSp() },
+            lineHeight = with(density) { (px * 1.2f).toSp() },
+            fontFamily = family,
+            textAlign = TextAlign.Start,
+        )
+    return LyricsStyles(
+        current = style(columns.currentFontPx, fonts.bold),
+        other = style(columns.otherFontPx, fonts.regular),
+        translation = style(columns.translationFontPx, fonts.medium, alpha = columns.translationAlpha),
+    )
 }
 
 private fun measureDocument(
     document: PlayerDocument?,
     textMeasurer: TextMeasurer,
-    layout: LyricsPlayerLayout,
-    mainStyle: TextStyle,
-    translationStyle: TextStyle,
-    harmonyStyle: TextStyle,
-): MeasuredLyrics {
-    val lines = document?.lines ?: return MeasuredLyrics.EMPTY
-    if (lines.isEmpty()) return MeasuredLyrics.EMPTY
-    val constraints = Constraints(maxWidth = layout.contentWidthPx.roundToInt())
+    columns: LyricsPlayerColumns,
+    styles: LyricsStyles,
+): List<MeasuredRow> {
+    val lines = document?.lines ?: return emptyList()
+    if (lines.isEmpty()) return emptyList()
+    val constraints = Constraints(maxWidth = columns.lyricsWidthPx.roundToInt().coerceAtLeast(1))
     val rows = ArrayList<MeasuredRow>(lines.size)
     for (line in lines) {
-        val main = textMeasurer.measure(
-            text = AnnotatedString(line.text),
-            style = mainStyle,
-            overflow = TextOverflow.Ellipsis,
-            softWrap = true,
-            maxLines = MAX_LINE_ROWS,
-            constraints = constraints,
+        val current = textMeasurer.measure(
+            AnnotatedString(line.text),
+            styles.current,
+            TextOverflow.Ellipsis,
+            true,
+            MAX_LINE_ROWS,
+            emptyList(),
+            constraints,
         )
-        val (wordStarts, wordEnds) = wordEdges(main, line)
+        val other = textMeasurer.measure(
+            AnnotatedString(line.text),
+            styles.other,
+            TextOverflow.Ellipsis,
+            true,
+            MAX_LINE_ROWS,
+            emptyList(),
+            constraints,
+        )
+        val (wordStarts, wordEnds) = wordEdges(current, line)
         val translation = line.translation.trim().takeIf { it.isNotEmpty() }?.let { text ->
             textMeasurer.measure(
-                text = AnnotatedString(text),
-                style = translationStyle,
-                overflow = TextOverflow.Ellipsis,
-                softWrap = true,
-                maxLines = 1,
-                constraints = constraints,
+                AnnotatedString(text),
+                styles.translation,
+                TextOverflow.Ellipsis,
+                true,
+                1,
+                emptyList(),
+                constraints,
             )
         }
-        val harmonyText = line.backgroundWords.joinToString(separator = " ") { word -> word.text }.trim()
-        val harmony = harmonyText.takeIf { it.isNotEmpty() && it != line.text }?.let { text ->
-            textMeasurer.measure(
-                text = AnnotatedString(text),
-                style = harmonyStyle,
-                overflow = TextOverflow.Ellipsis,
-                softWrap = true,
-                maxLines = 1,
-                constraints = constraints,
-            )
-        }
-        rows.add(MeasuredRow(main, translation, harmony, wordStarts, wordEnds))
+        rows.add(MeasuredRow(current, other, translation, wordStarts, wordEnds))
     }
-    return MeasuredLyrics(rows)
+    return rows
 }
 
-/**
- * Horizontal x of every word start/end inside [main]. The host's line text and the timed
- * word breakdown normally concatenate exactly; when they do not, the cursor fallback keeps
- * the fill monotonic instead of jumping backwards.
- */
+/** Horizontal x of every word start/end inside [main]; monotonic by construction. */
 private fun wordEdges(main: TextLayoutResult, line: PlayerLine): Pair<FloatArray, FloatArray> {
     val words = line.words
     if (words.isEmpty()) return EMPTY_EDGES to EMPTY_EDGES
@@ -478,66 +379,19 @@ private fun wordEdges(main: TextLayoutResult, line: PlayerLine): Pair<FloatArray
     return starts to ends
 }
 
-/** Reuses one adaptive word spring across frames instead of allocating one per word. */
-private class WordSpringCache {
-    private var cachedDurationSeconds = -1f
-    private var cachedSpring = LyricsPlayerMotion.wordSpring(0f)
-
-    fun springFor(durationSeconds: Float): SpringTiming {
-        if (durationSeconds != cachedDurationSeconds) {
-            cachedDurationSeconds = durationSeconds
-            cachedSpring = LyricsPlayerMotion.wordSpring(durationSeconds)
-        }
-        return cachedSpring
-    }
-}
-
-/**
- * Time gap between [index] and the next line, in seconds — the input of the binary's
- * adaptive spring (rev-eng B level; the last line falls back to its own duration).
- */
-private fun lineGapSeconds(lines: List<PlayerLine>, index: Int): Float {
-    val line = lines.getOrNull(index) ?: return 0f
-    val nextStart = lines.getOrNull(index + 1)?.startMs
-    val gapMs = if (nextStart != null && nextStart > line.startMs) {
-        nextStart - line.startMs
-    } else {
-        line.durationMs
-    }
-    return gapMs.coerceAtLeast(0L) / 1000f
-}
-
-/**
- * Lit progress (0–1) of the current word, sampled from the binary's adaptive spring with
- * x = the gap between adjacent lines (seconds). Only the word being sung uses it; the
- * line-change motion always comes from the fixed line spring, so this is an appearance
- * detail, never a scheduling input.
- */
-private fun wordLightProgress(
-    line: PlayerLine,
-    highlight: WordHighlight,
-    positionMs: Long,
-    gapSeconds: Float,
-    cache: WordSpringCache,
-): Float {
-    val index = highlight.wordIndex
-    if (index < 0 || index >= line.words.size) return 0f
-    val word = line.words[index]
-    val spring = cache.springFor(gapSeconds)
-    val elapsedSeconds = ((positionMs - word.startMs).coerceAtLeast(0L)) / 1000.0
-    return spring.value(elapsedSeconds).toFloat().coerceIn(0f, 1f)
-}
-
 private val EMPTY_EDGES = FloatArray(0)
-private val BRIGHT_WHITE = Color.White
-private val DIM_WHITE = Color.White.copy(alpha = 0.30f)
-private val GLOW_ALPHA = 0.26f
-private const val GLOW_TEXT_ALPHA = 0.65f
-private const val TRANSLATION_ALPHA = 0.42f
-private const val HARMONY_ALPHA = 0.26f
-private const val CURRENT_LINE_NO_WORDS_ALPHA = 0.90f
-private const val SECONDARY_TEXT_RATIO = 0.40f
-private const val MAX_LINE_ROWS = 2
-private const val TABLET_MIN_WIDTH_DP = 600
-private const val BREATH_SPEED = 2.6
 private const val EMPTY_TEXT = "暂无歌词"
+private const val BREATH_SPEED = 2.2
+private const val MAX_LINE_ROWS = 2
+
+/** How many neighbours to compose on each side (covers any tablet viewport with overscan). */
+private const val LINE_OVERSCAN = 6
+
+/** Blur tiers: 0 (current) plus four distance tiers, matching the measured sigma curve. */
+private const val BLUR_TIERS = 5
+
+/** Slot is a bit taller than the pitch so the translation below the text is never clipped. */
+private const val SLOT_RATIO = 1.8f
+
+/** Karaoke feather as a fraction of the current type size (RE: 40 px at 105 px). */
+private const val FEATHER_RATIO = 0.38f

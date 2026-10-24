@@ -14,6 +14,10 @@ internal enum class PlayerGlyph {
     Pause,
     Previous,
     Next,
+    Shuffle,
+    Repeat,
+    VolumeLow,
+    VolumeHigh,
 }
 
 /**
@@ -97,6 +101,75 @@ internal fun DrawScope.drawGlyph(glyph: PlayerGlyph, color: Color) {
                 close()
             }
             drawPath(path, color)
+        }
+
+        PlayerGlyph.Shuffle -> {
+            val path = Path().apply {
+                // Two crossing arrows: bottom-left -> top-right and top-left -> bottom-right.
+                moveTo(centerX - side * 0.30f, centerY + side * 0.20f)
+                lineTo(centerX + side * 0.22f, centerY - side * 0.20f)
+                moveTo(centerX + side * 0.12f, centerY - side * 0.20f)
+                lineTo(centerX + side * 0.26f, centerY - side * 0.20f)
+                lineTo(centerX + side * 0.26f, centerY - side * 0.06f)
+                moveTo(centerX - side * 0.30f, centerY - side * 0.20f)
+                lineTo(centerX + side * 0.22f, centerY + side * 0.20f)
+                moveTo(centerX + side * 0.12f, centerY + side * 0.20f)
+                lineTo(centerX + side * 0.26f, centerY + side * 0.20f)
+                lineTo(centerX + side * 0.26f, centerY + side * 0.06f)
+            }
+            drawPath(path, color, style = stroke)
+        }
+
+        PlayerGlyph.Repeat -> {
+            val radius = side * 0.26f
+            val path = Path().apply {
+                addArc(
+                    rect = androidx.compose.ui.geometry.Rect(
+                        center = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                        radius = radius,
+                    ),
+                    startAngleDegrees = 200f,
+                    sweepAngleDegrees = 250f,
+                    forceMoveTo = false,
+                )
+            }
+            drawPath(path, color, style = stroke)
+            val head = Path().apply {
+                val tipX = centerX + radius * 0.92f
+                val tipY = centerY - radius * 0.42f
+                moveTo(tipX - side * 0.10f, tipY - side * 0.04f)
+                lineTo(tipX, tipY)
+                lineTo(tipX - side * 0.02f, tipY + side * 0.10f)
+            }
+            drawPath(head, color, style = stroke)
+        }
+
+        PlayerGlyph.VolumeLow, PlayerGlyph.VolumeHigh -> {
+            val body = Path().apply {
+                moveTo(centerX - side * 0.30f, centerY - side * 0.10f)
+                lineTo(centerX - side * 0.18f, centerY - side * 0.10f)
+                lineTo(centerX - side * 0.04f, centerY - side * 0.24f)
+                lineTo(centerX - side * 0.04f, centerY + side * 0.24f)
+                lineTo(centerX - side * 0.18f, centerY + side * 0.10f)
+                lineTo(centerX - side * 0.30f, centerY + side * 0.10f)
+                close()
+            }
+            drawPath(body, color)
+            for (index in 0 until if (glyph == PlayerGlyph.VolumeHigh) 2 else 1) {
+                val waveRadius = side * (0.16f + index * 0.12f)
+                val wave = Path().apply {
+                    addArc(
+                        rect = androidx.compose.ui.geometry.Rect(
+                            center = androidx.compose.ui.geometry.Offset(centerX - side * 0.02f, centerY),
+                            radius = waveRadius,
+                        ),
+                        startAngleDegrees = -55f,
+                        sweepAngleDegrees = 110f,
+                        forceMoveTo = false,
+                    )
+                }
+                drawPath(wave, color, style = Stroke(width = strokeWidth * 0.8f, cap = StrokeCap.Round))
+            }
         }
     }
 }

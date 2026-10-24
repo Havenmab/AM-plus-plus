@@ -131,6 +131,11 @@ object AppleMusicHostFactory {
             lyricsPlayer = AppleMusicLyricPlayerTarget(
                 profile, classLoader,
                 fallback = LyricsFallbackDocument(config, currentSong).let { source -> { source.document() } },
+                // The imported lyric font shares the single Typeface the typeface session loaded
+                // for Apple's own rows; the page derives its weight roles from that one face.
+                typeface = {
+                    runCatching { (lyricsTypefaceSession as LyricsTypefaceSession).loadedTypeface() }.getOrNull()
+                },
             ),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,

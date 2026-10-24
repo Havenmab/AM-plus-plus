@@ -79,12 +79,21 @@ class LyricsPlayerColumns(
     val lyricsRightPx: Float
     val lyricsWidthPx: Float get() = lyricsRightPx - lyricsLeftPx
 
+    /** RE: task-8 §10 — the layout core works in dp, so the page width in dp is the input. */
+    val pageWidthDp: Float get() = viewportWidthPx / density
+
     /**
-     * Width available to one lyric line. RE: task-8 §8 — the line width is the column width
-     * times the per-line ratio 0.95 (subsidiary rows use 0.80 and then divide by spec+0x4c
-     * 0.7). This is what makes long reference lines wrap at ~87.7 % of the screen.
+     * RE: task-8 §10 — the reference device takes the compact branch:
+     * insetX = w/2 − 18 dp, contentW = w − 54 dp, columnW = contentW − insetX, and a main
+     * line takes 95 % of that column. Everything is in dp; the px value is just × display
+     * scale. The inset explains why the lyrics start just past the page centre.
      */
-    val lineWidthPx: Float get() = lyricsWidthPx * LINE_WIDTH_RATIO
+    val columnWidthPx: Float get() = lyricsWidthPx
+
+    val lineWidthPx: Float get() = columnWidthPx * LINE_WIDTH_RATIO
+
+    /** RE: subsidiary rows take 0.80 of the column and then divide by spec+0x4c (0.7). */
+    val subsidiaryLineWidthPx: Float get() = columnWidthPx * SUBSIDIARY_LINE_WIDTH_RATIO / SUBSIDIARY_SPACING_DIVISOR
 
     val lyricsTopPx: Float
     val lyricsBottomPx: Float
@@ -155,8 +164,11 @@ class LyricsPlayerColumns(
             volumeCenterYPx = viewportHeightPx * VOLUME_CENTER_FRACTION
             footerCenterYPx = viewportHeightPx * FOOTER_CENTER_FRACTION
 
-            lyricsLeftPx = viewportWidthPx * LYRICS_LEFT_FRACTION
-            lyricsRightPx = viewportWidthPx * LYRICS_RIGHT_FRACTION
+            // Compact branch in dp (RE §10): insetX = w/2 - 18, contentW = w - 54.
+            val insetX = pageWidthDp * 0.5f - COMPACT_INSET_HALF_DP
+            val columnDp = (pageWidthDp - COMPACT_CONTENT_INSET_DP) - insetX
+            lyricsLeftPx = insetX * density
+            lyricsRightPx = lyricsLeftPx + columnDp * density
             lyricsTopPx = 0f
             lyricsBottomPx = viewportHeightPx
             anchorYPx = viewportHeightPx * ANCHOR_FRACTION
@@ -261,9 +273,10 @@ class LyricsPlayerColumns(
         // The current line itself is painted sharp (sigma 0); every other line is blurred.
         if (distance <= 0) return 0f
         val step = distance.coerceIn(0, MAX_BLUR_DISTANCE)
-        val measured = viewportWidthPx * (BLUR_BASE_PX + BLUR_STEP_PX * step) / REFERENCE_WIDTH_PX
-        // RE: d >= 4 is extrapolated, capped at 0.75 % of the width (~24 px at 3200).
-        return measured.coerceAtMost(viewportWidthPx * MAX_BLUR_WIDTH_FRACTION)
+        // RE §10/§11 - the layout is in dp, so sigma is too: 7+4d px at display scale 2.77
+        // is about 2.5+1.4d dp. The px cap only guards against extreme distances.
+        val sigmaDp = BLUR_BASE_DP + BLUR_STEP_DP * step
+        return (sigmaDp * density).coerceAtMost(viewportWidthPx * MAX_BLUR_WIDTH_FRACTION)
     }
 
     /**
@@ -297,14 +310,16 @@ class LyricsPlayerColumns(
         const val VOLUME_CENTER_FRACTION = 1897f / 2136f
         const val FOOTER_CENTER_FRACTION = 2041f / 2136f
 
-        /** RE: left column ends at 40.6 % of the width; lyrics are left aligned at 48.9 %. */
-        const val LYRICS_LEFT_FRACTION = 1565f / 3200f
-        const val LYRICS_RIGHT_FRACTION = 0.95f
         const val ANCHOR_FRACTION = 780f / 2136f
+
+        /** RE §10 compact branch: insetX = w/2 - 18 dp, contentW = w - 54 dp. */
+        const val COMPACT_INSET_HALF_DP = 18f
+        const val COMPACT_CONTENT_INSET_DP = 54f
 
         /** RE: Specs +0x440 = 0.95 (main line width ratio), +0x444 = 0.80 (subsidiary). */
         const val LINE_WIDTH_RATIO = 0.95f
         const val SUBSIDIARY_LINE_WIDTH_RATIO = 0.80f
+        const val SUBSIDIARY_SPACING_DIVISOR = 0.7f
 
         /**
          * RE: current line em is about 100 px on a 2136 px short side (FreeType comparison
@@ -332,9 +347,9 @@ class LyricsPlayerColumns(
         const val TRANSLATION_ALPHA = 0.30f
         const val DESELECTED_SCALE = 0.98f
 
-        /** RE: sigma(d) = (7 + 4d) px at the 3200 px reference width. */
-        const val BLUR_BASE_PX = 7f
-        const val BLUR_STEP_PX = 4f
+        /** RE §10: sigma(d) = (7 + 4d) px at display scale 2.77, i.e. (2.5 + 1.4d) dp. */
+        const val BLUR_BASE_DP = 2.5f
+        const val BLUR_STEP_DP = 1.4f
         const val MAX_BLUR_DISTANCE = 4
 
         /** RE: extrapolated max blur for d >= 4 is 0.75 % of the viewport width (C level). */

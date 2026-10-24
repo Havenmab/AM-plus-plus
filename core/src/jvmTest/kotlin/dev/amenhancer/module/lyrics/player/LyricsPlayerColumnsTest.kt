@@ -8,7 +8,7 @@ class LyricsPlayerColumnsTest {
     private val tablet = LyricsPlayerColumns(
         viewportWidthPx = 3200f,
         viewportHeightPx = 2136f,
-        density = 2.5f,
+        density = 2.77f,
         mode = LyricsPlayerLayoutMode.TwoPane,
     )
 
@@ -18,35 +18,40 @@ class LyricsPlayerColumnsTest {
         assertEquals(213f, tablet.coverTopPx, 0.3f)
         assertEquals(1165f, tablet.coverSizePx, 0.2f)
         assertEquals(1298f, tablet.leftColumnRightPx, 0.5f)
-        // RE: ~12 px corner radius on the reference, derived from the type size.
         assertEquals(12f, tablet.coverCornerRadiusPx, 0.5f)
     }
 
     @Test
-    fun `tablet lyrics column is left aligned at 48 point 9 percent`() {
-        assertEquals(1565f, tablet.lyricsLeftPx, 0.5f)
-        assertEquals(0.489f, tablet.lyricsLeftPx / tablet.viewportWidthPx, 1e-3f)
-        assertEquals(3040f, tablet.lyricsRightPx, 0.5f)
-        assertEquals(2136f, tablet.lyricsBottomPx, 1e-4f)
-        // Current line centre: 36.5 % of the page height.
-        assertEquals(780f, tablet.anchorYPx, 1f)
-        // Main pitch 284.6 px.
-        assertEquals(284.6f, tablet.linePitchPx, 1f)
-        // RE: line width = column width * 0.95 (Specs +0x440).
-        assertEquals(tablet.lyricsWidthPx * 0.95f, tablet.lineWidthPx, 0.5f)
-        // Translation centre 116.5 px below the main line centre.
-        assertEquals(116.5f, tablet.translationCenterOffsetPx, 1f)
+    fun `tablet page and lyrics column follow the compact dp branch`() {
+        // RE §10: page 1156 x 772 dp at display scale 2.77.
+        assertEquals(1155.2f, tablet.pageWidthDp, 0.5f)
+        // insetX = w/2 - 18 dp -> 559.6 dp = 1550 px (measured text left 1565 px).
+        assertEquals(559.6f, tablet.lyricsLeftPx / tablet.density, 0.5f)
+        assertEquals(1550f, tablet.lyricsLeftPx, 1.5f)
+        // columnW = contentW - insetX = w/2 - 36 = 541.6 dp = 1500 px.
+        assertEquals(541.6f, tablet.columnWidthPx / tablet.density, 0.5f)
+        assertEquals(1500f, tablet.columnWidthPx, 1.5f)
+        assertEquals(3050f, tablet.lyricsRightPx, 1.5f)
+        // Main line width = column * 0.95 = 1425 px.
+        assertEquals(1425f, tablet.lineWidthPx, 2f)
+        assertEquals(tablet.columnWidthPx * 0.80f / 0.7f, tablet.subsidiaryLineWidthPx, 1f)
     }
 
     @Test
-    fun `tablet typography matches the measured glyph heights`() {
+    fun `tablet lyrics anchor and typography keep the measured values`() {
+        // Current line centre: 36.5 % of the page height.
+        assertEquals(780f, tablet.anchorYPx, 1f)
+        // Main pitch: measured 284.6 px = 102.7 dp.
+        assertEquals(284.6f, tablet.linePitchPx, 1f)
+        assertEquals(102.7f, tablet.linePitchPx / tablet.density, 0.5f)
+        // Translation centre 116.5 px below the main line centre.
+        assertEquals(116.5f, tablet.translationCenterOffsetPx, 1f)
         // ~100 px em at the reference size; the current line is not enlarged.
         assertEquals(100f, tablet.currentFontPx, 0.5f)
-        // Neighbours use the same size - the 8 % difference is W7 vs W5 weight, not scale.
         assertEquals(100f, tablet.otherFontPx, 0.5f)
         assertEquals(54f, tablet.translationFontPx, 0.5f)
         assertEquals(0.3f, tablet.translationAlpha, 1e-4f)
-        val scaled = LyricsPlayerColumns(3200f, 2136f, 2.5f, LyricsPlayerLayoutMode.TwoPane, 120)
+        val scaled = LyricsPlayerColumns(3200f, 2136f, 2.77f, LyricsPlayerLayoutMode.TwoPane, 120)
         assertEquals(120f, scaled.currentFontPx, 0.6f)
         assertEquals(120f * (284.6f / 100f), scaled.linePitchPx, 1f)
     }
@@ -81,17 +86,14 @@ class LyricsPlayerColumnsTest {
     }
 
     @Test
-    fun `blur follows the measured sigma curve and alpha stays constant`() {
-        // RE: sigma(d) = (7 + 4d) px at the 3200 px reference.
+    fun `blur follows the dp sigma curve and alpha stays constant`() {
+        // RE: sigma(d) = (2.5 + 1.4d) dp (7+4d px at display scale 2.77).
         assertEquals(0f, tablet.blurSigmaPx(0), 1e-4f)
-        assertEquals(11f, tablet.blurSigmaPx(1), 1e-3f)
-        assertEquals(15f, tablet.blurSigmaPx(2), 1e-3f)
-        assertEquals(19f, tablet.blurSigmaPx(3), 1e-3f)
-        // Distances beyond the measured range keep the last (capped) sigma.
+        assertEquals(3.9f * 2.77f, tablet.blurSigmaPx(1), 1e-2f)
+        assertEquals(5.3f * 2.77f, tablet.blurSigmaPx(2), 1e-2f)
+        assertEquals(6.7f * 2.77f, tablet.blurSigmaPx(3), 1e-2f)
+        // Distances beyond the measured range keep the last sigma.
         assertEquals(tablet.blurSigmaPx(4), tablet.blurSigmaPx(9), 1e-4f)
-        // RE: d >= 4 is extrapolated and capped at 0.75 % of the width (24 px at the
-        // reference); the d = 4 formula value (23 px) stays below that cap.
-        assertEquals(23f, tablet.blurSigmaPx(9), 1e-3f)
         // Neighbouring lines share one alpha; blur does the fading.
         assertEquals(0.50f, tablet.lineAlpha(1, sung = false), 1e-4f)
         assertEquals(0.50f, tablet.lineAlpha(3, sung = false), 1e-4f)

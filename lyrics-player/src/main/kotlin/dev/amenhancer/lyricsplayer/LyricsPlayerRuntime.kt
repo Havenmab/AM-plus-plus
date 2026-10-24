@@ -36,6 +36,14 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     private var alphaChannels: Array<SpringChannel> = emptyArray()
     private var alphaValues: FloatArray = FloatArray(0)
 
+    /**
+     * One scale spring per line. RE: A/B level (task-8 §12) — the line state carries a scale
+     * spring whose current/target start at spec+0x4B0 = 0.98 (deselected); the current line
+     * targets 1.0. The spring is the same 1/100/18 curve as the position spring.
+     */
+    private var scaleChannels: Array<SpringChannel> = emptyArray()
+    private var scaleValues: FloatArray = FloatArray(0)
+
     /** Bumped once per frame; readers in draw/layer phases only invalidate drawing. */
     val tick = mutableStateOf(0L)
 
@@ -92,6 +100,10 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     /** Animated paint alpha of line [index] (RE: clamp(progress, 0, 1)). */
     fun lineAlpha(index: Int): Float =
         if (index >= 0 && index < alphaValues.size) alphaValues[index] else 0f
+
+    /** Animated scale of line [index] (RE: 0.98 deselected -> 1.0 current). */
+    fun lineScale(index: Int): Float =
+        if (index >= 0 && index < scaleValues.size) scaleValues[index] else DESELECTED_SCALE
 
     fun onFrame(nowNanos: Long) {
         lastFrameNanos = nowNanos
@@ -163,6 +175,9 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             }
             for (index in alphaValues.indices) {
                 alphaValues[index] = alphaChannels[index].valueAt(nowNanos)
+            }
+            for (index in scaleValues.indices) {
+                scaleValues[index] = scaleChannels[index].valueAt(nowNanos)
             }
             if (currentIndex in lineValues.indices) {
                 displayedIndex = lineValues[currentIndex]
@@ -270,6 +285,10 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         alphaChannels = alphas
         alphaValues = FloatArray(count) { alphaTarget(it, index) }
         for (i in alphas.indices) alphas[i].snap(alphaValues[i])
+        val scales = Array(count) { SpringChannel(LyricsPlayerMotion.lineChange) }
+        scaleChannels = scales
+        scaleValues = FloatArray(count) { scaleTarget(it, index) }
+        for (i in scales.indices) scales[i].snap(scaleValues[i])
         displayedIndex = index.toFloat()
         followTargetIndex = index
     }
@@ -289,6 +308,11 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             channel.timing = LyricsPlayerMotion.lineChange
             channel.animateTo(alphaTarget(index, currentIndex), nowNanos, config.motionPercent)
         }
+        for (index in scaleChannels.indices) {
+            val channel = scaleChannels[index]
+            channel.timing = LyricsPlayerMotion.lineChange
+            channel.animateTo(scaleTarget(index, currentIndex), nowNanos, config.motionPercent)
+        }
         followTargetIndex = currentIndex
     }
 
@@ -298,6 +322,10 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         lineIndex < current -> SUNGLINE_ALPHA
         else -> NEIGHBOUR_ALPHA
     }
+
+    /** RE §12: the scale spring starts at 0.98 (spec+0x4B0) and the current line goes to 1.0. */
+    private fun scaleTarget(lineIndex: Int, current: Int): Float =
+        if (lineIndex == current) 1f else DESELECTED_SCALE
 
     private fun pollHostMetadata() {
         val preferences = runCatching { port.preferences() }.getOrDefault(LyricsPlayerConfig())

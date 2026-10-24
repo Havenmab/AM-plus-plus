@@ -284,6 +284,9 @@ private fun productionFeatureInstallationModule(
             FeatureInstallationPlan(feature = TitleCorrectionFeature()),
             FeatureInstallationPlan(feature = NativeLyricsFeature()),
             FeatureInstallationPlan(feature = CustomLyricsFeature()),
+            // The LyricsBlossom-style full-page player is a whole-page replacement, so it is
+            // installed after every lyrics data path it consumes and never before them.
+            FeatureInstallationPlan(feature = LyricsPlayerFeature()),
             // The actual resource hook is installed during the Application
             // before-hook; this plan records its final health alongside the
             // regular post-Application features.

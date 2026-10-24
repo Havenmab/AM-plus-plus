@@ -657,6 +657,64 @@ internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
                 suffix = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY),
                 unit = "%",
             ) { onSettingsChanged(currentSettings().copy(lyricsLineSpacingScalePercent = it)) })
+            // LyricsBlossom-style full-page player: the master switch plus its four
+            // motion/typography sliders, directly after the host lyrics typography.
+            addView(embeddedDivider(activity))
+            addView(embeddedSettingRow(
+                activity,
+                localizedText(ModuleText.LYRICS_PLAYER),
+                localizedText(ModuleText.LYRICS_PLAYER_SUMMARY),
+                settings.lyricsPlayerEnabled,
+                iconTint = EmbeddedSettingsPalette.Light.accent,
+                iconDrawable = EmbeddedGlyphDrawable(
+                    EmbeddedGlyphKind.Music,
+                    EmbeddedSettingsPalette.Light.accent,
+                ),
+            ) { onSettingsChanged(currentSettings().copy(lyricsPlayerEnabled = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_PLAYER_MOTION),
+                value = settings.lyricsPlayerMotionPercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_PLAYER_MOTION_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRICS_PLAYER_MOTION_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRICS_PLAYER_MOTION_PERCENT,
+                suffix = localizedText(ModuleText.LYRICS_PLAYER_MOTION_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricsPlayerMotionPercent = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_PLAYER_STAGGER),
+                value = settings.lyricsPlayerStaggerMs,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_PLAYER_STAGGER_MS,
+                rangeMin = ModuleSettings.MIN_LYRICS_PLAYER_STAGGER_MS,
+                rangeMax = ModuleSettings.MAX_LYRICS_PLAYER_STAGGER_MS,
+                suffix = localizedText(ModuleText.LYRICS_PLAYER_STAGGER_SUMMARY),
+                unit = "ms",
+            ) { onSettingsChanged(currentSettings().copy(lyricsPlayerStaggerMs = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_PLAYER_EMPHASIS),
+                value = settings.lyricsPlayerEmphasisPercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRICS_PLAYER_EMPHASIS_PERCENT,
+                suffix = localizedText(ModuleText.LYRICS_PLAYER_EMPHASIS_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricsPlayerEmphasisPercent = it)) })
+            addView(embeddedDivider(activity))
+            addView(embeddedGlassRangeRow(
+                activity = activity,
+                title = localizedText(ModuleText.LYRICS_PLAYER_FONT_SCALE),
+                value = settings.lyricsPlayerFontScalePercent,
+                defaultValue = ModuleSettings.DEFAULT_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                rangeMin = ModuleSettings.MIN_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                rangeMax = ModuleSettings.MAX_LYRICS_PLAYER_FONT_SCALE_PERCENT,
+                suffix = localizedText(ModuleText.LYRICS_PLAYER_FONT_SCALE_SUMMARY),
+                unit = "%",
+            ) { onSettingsChanged(currentSettings().copy(lyricsPlayerFontScalePercent = it)) })
             addView(embeddedDivider(activity))
             addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
                 onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))

@@ -257,6 +257,31 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "40–160%% · 100%% keeps Apple Music's spacing · default 80%%",
         "40–160%% · 100%% 为 Apple Music 原行距 · 默认 80%%",
     ),
+    LYRICS_PLAYER("LyricsBlossom-style lyrics player", "LyricsBlossom 风格歌词播放器"),
+    LYRICS_PLAYER_SUMMARY(
+        "AM++ draws the whole lyrics page itself and the host page keeps running underneath · Off keeps Apple Music's own page · Restart Apple Music to apply",
+        "由 AM++ 自绘整个歌词页，宿主歌词页在下面继续运行 · 关闭时保持 Apple Music 原样 · 重开 Apple Music 后生效",
+    ),
+    LYRICS_PLAYER_MOTION("Player motion speed", "播放器动画速度"),
+    LYRICS_PLAYER_MOTION_SUMMARY(
+        "40–160%% · 100%% is LyricsBlossom's own timing · default 100%%",
+        "40–160%% · 100%% 为 LyricsBlossom 原始节奏 · 默认 100%%",
+    ),
+    LYRICS_PLAYER_STAGGER("Player line stagger", "播放器逐行错峰"),
+    LYRICS_PLAYER_STAGGER_SUMMARY(
+        "0–120 ms per line, at most three lines · default 50 ms",
+        "每行 0–120 毫秒，最多错开三行 · 默认 50 毫秒",
+    ),
+    LYRICS_PLAYER_EMPHASIS("Player current-line scale", "播放器当前行缩放"),
+    LYRICS_PLAYER_EMPHASIS_SUMMARY(
+        "100–114%% · 100%% matches the original player (selected line 1.0) · default 100%%",
+        "100–114%% · 100%% 与原版一致（选中行就是 1.0）· 默认 100%%",
+    ),
+    LYRICS_PLAYER_FONT_SCALE("Player font size", "播放器字号"),
+    LYRICS_PLAYER_FONT_SCALE_SUMMARY(
+        "80–140%% · 100%% keeps the player's own size (34 sp / 48 sp) · default 100%%",
+        "80–140%% · 100%% 为播放器原始字号（手机 34 sp / 平板 48 sp）· 默认 100%%",
+    ),
     RESET_DEFAULT("Reset to default", "恢复默认"),
     /**
      * The module's "this has never run on a device" marker, shown as a badge on the row.

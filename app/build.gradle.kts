@@ -85,6 +85,8 @@ dependencies {
     implementation(project(":hook-runtime"))
     implementation(project(":host-applemusic"))
     implementation(project(":glass"))
+    // The LyricsBlossom-style full-page player: Compose page + its Android-side port.
+    implementation(project(":lyrics-player"))
     compileOnly("io.github.libxposed:api:102.0.0")
     compileOnly("io.github.libxposed:service:102.0.0")
     testCompileOnly("io.github.libxposed:service:102.0.0")

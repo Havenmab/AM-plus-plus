@@ -1,0 +1,213 @@
+package dev.amenhancer.module.hook.player
+
+import java.io.File
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Structural and pure unit coverage of the host bridge (spec §7).
+ *
+ * The reflection layer can only be exercised on a device, so these tests lock the parts that
+ * decide *whether* it is allowed to run at all: the profile contract stays in sync with the
+ * code, the degradation path is preserved, and the pure text mapper behaves like the host's
+ * own `Html.fromHtml(...).toString()` conversion.
+ */
+class LyricsPlayerStructuralTest {
+    @Test
+    fun `profile section declares every role the contract resolves`() {
+        val section = profile().getJSONObject("lyricsPlayer")
+        assertEquals(1, section.getInt("contractVersion"))
+        val methods = section.getJSONObject("methods")
+        val fields = section.getJSONObject("fields")
+        REQUIRED_METHODS.forEach { role ->
+            assertTrue("missing method role $role", methods.has(role))
+            val descriptor = methods.getJSONObject(role)
+            assertTrue(descriptor.getString("owner").isNotEmpty())
+            assertTrue(descriptor.getString("name").isNotEmpty())
+            assertTrue(descriptor.getString("returns").isNotEmpty())
+            assertFalse(descriptor.getBoolean("static"))
+        }
+        REQUIRED_FIELDS.forEach { role ->
+            assertTrue("missing field role $role", fields.has(role))
+            val descriptor = fields.getJSONObject(role)
+            assertTrue(descriptor.getString("type").isNotEmpty())
+        }
+        val classes = section.getJSONObject("classes")
+        listOf("fragment", "lineAdapter", "wordAdapter", "binding", "recycler", "mediaController",
+            "mediaMetadata", "reader", "timing", "artworkLayer", "activity").forEach { role ->
+            assertTrue("missing class role $role", classes.has(role))
+        }
+    }
+
+    @Test
+    fun `the contract requires exactly the roles the profile declares`() {
+        val source = source("LyricsPlayerContract.kt")
+        REQUIRED_METHODS.forEach { role -> assertTrue("contract does not require $role", source.contains("\"$role\"")) }
+        REQUIRED_FIELDS.forEach { role -> assertTrue("contract does not require $role", source.contains("\"$role\"")) }
+    }
+
+    @Test
+    fun `a missing contract degrades instead of mounting anything`() {
+        val target = source("AppleMusicLyricPlayerTarget.kt")
+        assertTrue(target.contains("optJSONObject(SECTION) == null"))
+        assertTrue(target.contains("TargetCapabilityInstall.Unsupported"))
+        assertTrue(target.contains("TargetCapabilityInstall.Degraded"))
+        assertTrue(target.contains("lyrics player"))
+        // A failed install closes its registration scope and reports the diagnostic.
+        assertTrue(target.contains("scope.close()"))
+    }
+
+    @Test
+    fun `the page is only mounted when the host actually has a document`() {
+        val session = source("LyricsPlayerHostSession.kt")
+        assertTrue(session.contains("val document = port.document()"))
+        assertTrue(session.contains("lyrics document unavailable"))
+        // Not-yet-bound is logged separately so a healthy page never reads as a degradation.
+        assertTrue(session.contains("lyrics player waiting: "))
+        assertTrue(session.contains("hostDocumentAvailable()"))
+        // The document check runs before the decor addView, so a blank page cannot appear.
+        assertTrue(session.indexOf("port.document()") < session.indexOf("decor.addView"))
+        assertTrue(session.contains("\"lyrics player degraded: "))
+        assertTrue(session.contains("removeView"))
+        assertTrue(session.contains("setSafeInsets"))
+    }
+
+    @Test
+    fun `the port implements every page-facing member and reports unsupported ones`() {
+        val port = source("LyricsPlayerPortImpl.kt")
+        listOf("override fun document", "override fun positionMs", "override fun isPlaying",
+            "override fun geometry", "override fun seekTo", "override fun track", "override fun artwork",
+            "override fun playPause", "override fun skipNext", "override fun skipPrevious",
+            "override fun closePage", "override fun more", "override fun preferences",
+            "override fun importedTypeface").forEach { member ->
+            assertTrue("missing $member", port.contains(member))
+        }
+        assertTrue(port.contains("override fun skipNext(): Boolean = contract.skipNext(controller())"))
+        assertTrue(port.contains("override fun skipPrevious(): Boolean = contract.skipPrevious(controller())"))
+        assertTrue(port.contains("override fun more(): Boolean = false"))
+        // Live settings read: no install-time snapshot of the five sliders.
+        assertTrue(port.contains("TargetConfigClient.currentSettings()"))
+        assertTrue(port.contains("lyricsPlayerMotionPercent"))
+    }
+
+    @Test
+    fun `html line text is converted like the host renderer`() {
+        assertEquals("hello world", LyricsPlaybackText.plainText("hello <b>world</b>"))
+        assertEquals("a & b", LyricsPlaybackText.plainText("a &amp; b"))
+        assertEquals("\"quoted\"", LyricsPlaybackText.plainText("&quot;quoted&quot;"))
+        assertEquals("line one line two", LyricsPlaybackText.plainText("line one<br/>line two"))
+        assertEquals("\u4f60\u597d", LyricsPlaybackText.plainText("&#20320;&#22909;"))
+        assertEquals("\u2026", LyricsPlaybackText.plainText("&hellip;"))
+        assertEquals("&unknown;", LyricsPlaybackText.plainText("&unknown;"))
+        assertEquals("", LyricsPlaybackText.plainText(null))
+    }
+
+    @Test
+    fun `word text keeps its own spacing while lines collapse it`() {
+        // Apple's word vector carries the separator inside the word text; the karaoke width relies on it.
+        assertEquals("hello ", LyricsPlaybackText.plainText("hello ", trim = false))
+        assertEquals("hello", LyricsPlaybackText.plainText("  hello   "))
+        assertEquals("a b", LyricsPlaybackText.plainText("a\u00A0 b"))
+    }
+
+    @Test
+    fun `the factory wires the target and its fallback source exactly once`() {
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        assertTrue(factory.contains("import dev.amenhancer.module.hook.player.LyricsFallbackDocument"))
+        assertTrue(factory.contains("lyricsPlayer = AppleMusicLyricPlayerTarget("))
+        // One instance, built at compose() time, so the fallback's per-song cache survives polling.
+        assertTrue(factory.contains("LyricsFallbackDocument(config, currentSong)"))
+        assertEquals(1, Regex("LyricsFallbackDocument\\(").findAll(factory).count())
+    }
+
+    @Test
+    fun `the sharpest available cover is preferred over the host backdrop`() {
+        val port = source("LyricsPlayerPortImpl.kt")
+        val contract = source("LyricsPlayerContract.kt")
+        // media3 MediaMetadata.artworkData is the full-resolution cover; the host layer may be a
+        // downsampled backdrop, so both are offered and the larger one wins.
+        assertTrue(contract.contains("\"metadataArtworkData\""))
+        assertTrue(contract.contains("metadataArtworkData.type == ByteArray::class.java"))
+        assertTrue(port.contains("BitmapFactory.decodeByteArray(data, 0, data.size)"))
+        assertTrue(port.contains("original.width * original.height > host.width * host.height"))
+        assertTrue(port.contains("lyrics player artwork: host="))
+    }
+
+    @Test
+    fun `the translation row never shows a transliteration as a translation`() {
+        val port = source("LyricsPlayerPortImpl.kt")
+        val target = source("AppleMusicLyricPlayerTarget.kt")
+        val contract = source("LyricsPlayerContract.kt")
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        // Both lanes are read, and the document language decides whether "translation" is one.
+        assertTrue(contract.contains("\"linePronunciation\""))
+        assertTrue(contract.contains("\"songTranslationLanguage\""))
+        assertTrue(port.contains("string(contract.linePronunciation, line)"))
+        assertTrue(port.contains("LATIN_TRANSLITERATION_SUFFIX"))
+        assertTrue(port.contains("translationLanguageTag"))
+        // The install seam captures the document's translation language from the pointer.
+        assertTrue(target.contains("contract.translationLanguage(pointer)"))
+        assertTrue(target.contains("port.onDocumentInstalled("))
+        // The module's own online lane is the fallback for a transliteration-only document.
+        assertTrue(factory.contains("nativeLyricOverlay.translation("))
+        assertTrue(port.contains("translationLookup?.invoke(begin, end, lineText)"))
+        // A device log must prove which branch a song took.
+        assertTrue(port.contains("lyrics player translation lane: "))
+    }
+
+    @Test
+    fun `the imported lyric font is shared through the typeface session`() {
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        val session = moduleSource("LyricsTypefaceSession.kt")
+        val port = source("LyricsPlayerPortImpl.kt")
+        // The session owns the one parsed Typeface; the player page must not load the font again.
+        assertTrue(session.contains("internal fun loadedTypeface(): Typeface? = loadController.readyValue()"))
+        assertTrue(factory.contains("typeface = {"))
+        assertTrue(factory.contains("loadedTypeface()"))
+        assertTrue(port.contains("override fun importedTypeface(): Typeface?"))
+        assertTrue(port.contains("runCatching { typeface?.invoke() }.getOrNull()"))
+    }
+
+    private fun moduleSource(relative: String): String = listOf(
+        File("src/main/java/dev/amenhancer/module/hook/$relative"),
+        File("../host-applemusic/src/main/java/dev/amenhancer/module/hook/$relative"),
+    ).firstOrNull(File::isFile)?.readText() ?: error("$relative was not found")
+
+    private fun source(relative: String): String = listOf(
+        File("src/main/java/dev/amenhancer/module/hook/player/$relative"),
+        File("../host-applemusic/src/main/java/dev/amenhancer/module/hook/player/$relative"),
+    ).firstOrNull(File::isFile)?.readText() ?: error("$relative was not found")
+
+    private fun profile(): JSONObject = JSONObject(
+        listOf(
+            File("src/main/resources/host-profiles/7.0.0-beta-1609.json"),
+            File("../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1609.json"),
+        ).firstOrNull(File::isFile)?.readText() ?: error("1609 profile was not found"),
+    )
+
+    private companion object {
+        val REQUIRED_METHODS = listOf(
+            "fragmentCreateView", "fragmentResume", "fragmentPause", "fragmentDestroyView",
+            "fragmentInstallDocument", "fragmentPresentDocument",
+            "activityStop",
+            "mediaBrowser", "mediaPosition", "mediaPlaying", "mediaPlaybackState",
+            "mediaDuration", "mediaSeekTo", "mediaPlay", "mediaPause",
+            "mediaSkipNext", "mediaSkipPrevious",
+            "mediaMetadataPrimary", "mediaMetadataAlternate",
+            "lineAdapterReader", "wordAdapterReader", "readerCount", "readerLine",
+            "lineResolve", "lineText", "lineTranslation", "linePronunciation", "lineBackgroundText",
+            "lineWords", "lineBackgroundWords", "lineId", "lineBegin", "lineEnd",
+            "wordSize", "wordGet", "wordResolve", "wordText", "wordBegin", "wordEnd",
+            "wordWhitespace",
+            "pointerResolve", "songTranslationLanguage",
+            "artworkSet", "artworkDetach",
+        )
+        val REQUIRED_FIELDS = listOf(
+            "fragmentAdapter", "fragmentBinding", "bindingRecycler",
+            "metadataTitle", "metadataArtist", "metadataBundle", "metadataArtworkData",
+        )
+    }
+}

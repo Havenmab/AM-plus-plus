@@ -3,6 +3,8 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.hook.player.AppleMusicLyricPlayerTarget
+import dev.amenhancer.module.hook.player.LyricsFallbackDocument
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
@@ -124,6 +126,26 @@ object AppleMusicHostFactory {
                 profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
                 AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            // Spec §7.3: the host native model first, this module's own stored document second.
+            // One instance is built here so its per-song cache survives the page polling it twice a second.
+            lyricsPlayer = AppleMusicLyricPlayerTarget(
+                profile, classLoader,
+                fallback = LyricsFallbackDocument(config, currentSong).let { source -> { source.document() } },
+                // The imported lyric font shares the single Typeface the typeface session loaded
+                // for Apple's own rows; the page derives its weight roles from that one face.
+                typeface = {
+                    runCatching { (lyricsTypefaceSession as LyricsTypefaceSession).loadedTypeface() }.getOrNull()
+                },
+                // The module's own online translation lane, consulted only when the host's
+                // "translation" getter answers a transliteration track (ja-Latn/ko-Latn/zh-Latn).
+                translationLookup = { begin, end, text ->
+                    currentSong.current()?.details?.appleMusicId?.takeIf { it > 0L }?.let { id ->
+                        runCatching {
+                            nativeLyricOverlay.translation(id.toString(), begin, end, text)
+                        }.getOrNull()
+                    }
+                },
+            ),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

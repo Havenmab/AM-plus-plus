@@ -5,10 +5,18 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {
-    'app': {'core','host-api','hook-runtime','host-applemusic','glass','plugin-api','plugin-runtime'},
+    'app': {'core','host-api','hook-runtime','host-applemusic','glass','lyrics-player','plugin-api','plugin-runtime'},
     'plugin-api': set(), 'plugin-runtime': {'plugin-api','hook-runtime'},
     'core': set(), 'host-api': {'core'}, 'hook-runtime': {'core'},
-    'host-applemusic': {'core','host-api','hook-runtime'}, 'glass': {'core','backdrop'}, 'backdrop': set(),
+    # host-applemusic instantiates LyricsPlayerHostView and implements the Android-side
+    # LyricsPlayerPort that live in :lyrics-player, so the host depends on the page's view
+    # container one way only (host -> UI, no cycle). host-api still depends on nothing but
+    # :core, so the capability bit stays implementation-free.
+    'host-applemusic': {'core','host-api','hook-runtime','lyrics-player'},
+    'glass': {'core','backdrop'}, 'backdrop': set(),
+    # The self-drawn lyrics page: the pure policy contracts from :core plus the backdrop
+    # rendering engine. Anything host-specific stays in :host-applemusic.
+    'lyrics-player': {'core','backdrop'},
 }
 
 def check():

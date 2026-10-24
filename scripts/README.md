@@ -51,6 +51,26 @@ reuses between builds: the direct catalog query (only one method may satisfy the
 `(String, Map, Continuation)` shape, and it must be the verified name for that version) and the
 obfuscated `androidx.lifecycle.LiveData` alias that `COMPOSE_OBSERVE_AS_STATE` accepts.
 
+## Offline `:core` compile and test (no Gradle)
+
+`check-core-offline.sh` compiles `:core` and runs its whole JVM test suite with a single
+`kotlinc` JVM (~210 MiB) instead of Gradle, for machines where the Gradle/Kotlin daemons are
+OOM-killed. It is a development tool and is **not** part of CI: CI still owns the authoritative
+build, tests, Lint and APK. It reads the Kotlin compiler and test jars from the existing Gradle
+cache, so run one Gradle build first on a fresh machine.
+
+```bash
+bash scripts/check-core-offline.sh                # compile main + tests, run every test
+bash scripts/check-core-offline.sh --compile-only # compile `:core` only
+```
+
+Three pitfalls the script already handles: the test compilation needs
+`-Xfriend-paths=<main output>` (otherwise every `internal` member looks inaccessible); the
+embedded compiler needs `kotlin-reflect`, `kotlinx-coroutines-core`, `annotations`,
+`kotlin-daemon-embeddable` and `kotlin-script-runtime` on its own classpath; and jars must be
+resolved by group path, because the same Gradle cache also holds `org.robolectric:junit`
+(file `junit-4.17.jar`), which must never replace `junit:junit` on the test classpath.
+
 ## Independent plugin build and CI caching
 
 `build-plugin-example.py` exports the SDK JAR, then builds the example in a temporary

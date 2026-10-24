@@ -217,7 +217,6 @@ private fun LyricLineView(
     density: Density,
 ) {
     val distance = abs(index - currentIndex)
-    val scale = columns.lineScale(distance)
     val slotHeightPx = columns.linePitchPx * SLOT_RATIO
     val slotHeightDp = with(density) { slotHeightPx.toDp() }
     Canvas(
@@ -232,8 +231,10 @@ private fun LyricLineView(
                 val displayed = runtime.lineShift(index)
                 val center = columns.lineCenterY(index, displayed) - columns.lyricsTopPx
                 translationY = center - slotHeightPx * 0.5f
-                scaleX = scale
-                scaleY = scale
+                // RE §12: the per-line scale spring (0.98 deselected -> 1.0 current).
+                val lineScale = runtime.lineScale(index)
+                scaleX = lineScale
+                scaleY = lineScale
                 // RE: task-8 §6 — renderLine paints with clamp(progress, 0, 1) and culls
                 // below 2/255 (0.007843); progress is not used for y/scale.
                 val progress = runtime.lineAlpha(index).coerceIn(0f, 1f)

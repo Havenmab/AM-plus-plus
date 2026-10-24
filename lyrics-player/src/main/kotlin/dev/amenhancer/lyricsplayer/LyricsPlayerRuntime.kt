@@ -130,6 +130,8 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 lineValues = FloatArray(0)
                 alphaChannels = emptyArray()
                 alphaValues = FloatArray(0)
+                scaleChannels = emptyArray()
+                scaleValues = FloatArray(0)
                 followTargetIndex = -1
                 currentIndexState.value = 0
                 previousIndexState.value = 0
@@ -363,5 +365,8 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         /** RE: VISUAL-SPEC — de-blurred neighbours paint at a constant alpha. */
         private const val NEIGHBOUR_ALPHA = 0.50f
         private const val SUNGLINE_ALPHA = 0.45f
+
+        /** RE: spec+0x4B0 = 0.98, the resting scale of every unselected line. */
+        private const val DESELECTED_SCALE = 0.98f
     }
 }

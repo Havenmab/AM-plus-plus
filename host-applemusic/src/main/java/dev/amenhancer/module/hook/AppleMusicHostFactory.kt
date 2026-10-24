@@ -90,9 +90,14 @@ object AppleMusicHostFactory {
                 enabled = { config.settings().forceCellularDataEntryEnabled },
             ),
             bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(profile, classLoader),
-            cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(resolver,
-                profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
-                AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
+            cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(
+                symbols = resolver,
+                foregroundTextField = profile.document.optJSONObject("cjk")
+                    ?.optString("foregroundTextField", "U") ?: "U",
+                terminalGradient = AppleMusicCjkTerminalGradientTarget(profile, classLoader),
+                maxSpanGlowCharacters = profile.document.optJSONObject("cjk")
+                    ?.optInt("maxSpanGlowCharacters", 1) ?: 1,
+            ),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
             lyricBackgroundHighlight = AppleMusicLyricBackgroundHighlightTarget(profile, classLoader,
                 onFailure = { message -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(

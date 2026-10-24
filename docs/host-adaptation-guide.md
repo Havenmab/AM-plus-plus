@@ -22,7 +22,7 @@
 生产准入、能力可用和人工通过分别判断：
 
 1. 精确 `versionName`+`versionCode` 组合已登记且生产入口启用，才允许模块接入。
-2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光依赖自己的顶层契约，LLM 则复用已有歌词通道。
+2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光虽由“歌词效果优化”设置门禁，仍依赖自己的顶层契约，LLM 则复用已有歌词通道。
 3. 成员解析与 Hook 安装成功只说明该阶段就绪，不能代替页面完成、显示结果或人工验收。`productionEnabled` 与 `runtimeVerified` 各自依据实际证据维护，局部反馈不扩展为整个构建通过。
 
 页面族按实际入口、生命周期和布局识别：`legacy-activity` 与 `fragment-content` 分别使用自己的接入。相邻构建、版本号大小和主版本号均不能代替该判断；新页面族先建立有证据的能力工厂。
@@ -163,8 +163,8 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 |---|---|---|
 | [共用歌词结果提交](#lyrics-result-submission) | `indexed`、`lyricResultSubmission`、原生安装与 item 更新 | [结果提交](feature-preservation.md#lyrics-result-submission) |
 | [歌词来源](#lyrics-sources)、[LLM](#llm-lyrics-fallback) | 原生 TTML 观察、指针/歌曲身份及共用结果通道 | [来源](feature-preservation.md#lyrics-sources)、[LLM](feature-preservation.md#llm-lyrics-fallback) |
-| [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[跨行](#lyric-wrap-sweep)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[跨行](feature-preservation.md#lyric-wrap-sweep)、[字体](feature-preservation.md#lyrics-typeface) |
-| [歌词效果优化](#lyric-background-highlight) | `lyricBackgroundHighlight`、活动行过滤、词 ID 与焦点 | [歌词效果](feature-preservation.md#lyric-background-highlight) |
+| [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[字体](feature-preservation.md#lyrics-typeface) |
+| [歌词效果优化](#lyric-background-highlight)：[跨行扫光](#lyric-wrap-sweep)与活动行高亮 | 共享设置门禁；`lyricWrapSweep` / `lyricBackgroundHighlight` 独立契约、安装状态和验收 | [跨行](feature-preservation.md#lyric-wrap-sweep)、[活动行](feature-preservation.md#lyric-background-highlight) |
 | [玻璃导航](#chrome-glass)、[收缩](#glass-collapse-rendering) | `chrome` / `fragmentChrome`、独立能力位、滚动与 sheet 端口 | [玻璃](feature-preservation.md#chrome-glass)、[收缩](feature-preservation.md#glass-collapse-rendering) |
 | [启动预热](#startup-page-prewarm) | 独立能力、`startupPagePrewarm` 与形态导航资源 | [预热](feature-preservation.md#startup-page-prewarm) |
 | [平板布局、视频与恢复](#tablet-layout) | 双栏、binding、资源、视频/恢复与布局变体 | [平板](feature-preservation.md#tablet-layout) |
@@ -337,7 +337,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 ### 5.5 CJK 辉光与末词补偿
 
-**生效与接缝。** `cjkKaraokeAnimationEnabled` 控制辉光与末词羽化补偿，按原安装方式重启宿主生效，关闭时均不安装。辉光保留单个未合并 CJK 词的原生门槛、前景绑定与结束清理；`cjk.foregroundTextField` 和 bindingOwners 独立核对。可选 `cjk.terminalGradient` 由 [AppleMusicCjkTerminalGradientTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) 的 Contract 解析，角色以代码为准，描述符只维护在精确 profile。
+**生效与接缝。** `cjkKaraokeAnimationEnabled` 控制辉光与末词羽化补偿，按原安装方式重启宿主生效，关闭时均不安装。辉光资格由 profile 的 `cjk.maxSpanGlowCharacters` 限定：缺省 `1`，只放行单个未合并 CJK 词；精确 profile 显式设为 `3` 时，另放行 2～3 字的单个原始未合并 CJK span。前景绑定与结束清理、`cjk.foregroundTextField` 和 bindingOwners 独立核对。可选 `cjk.terminalGradient` 由 [AppleMusicCjkTerminalGradientTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) 的 Contract 解析，角色以代码为准，描述符只维护在精确 profile。
 
 | 角色组 | 新构建复核的含义 |
 |---|---|
@@ -346,13 +346,15 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 | 词 ID / 文本 / 时间 | 尾词判定所用对象与当前扫光词一致 |
 | animationTag | 接口 getter 和原生延迟补亮标签的语义，接口仅按 invocationOnly 调用 |
 
+**多字 span。** 放行前须 `trim` 后全部属于现有六个 CJK 区块，字数为 `2..min(cjk.maxSpanGlowCharacters, 3)`，原生 span 总时长至少为字数 × 1000ms（即平均每字 ≥1000ms）。累计时长须等于原生 span 时长，累计文本长度须等于字数，`splitBindingCount` 须在 `0..字数`，且只接受前景。不得把宿主合并的多个原始 span 当作一个 span 按时长放行；原生时长、文本、词分组和长度 g 均保持不变。单字回落子动画延迟修正只作用于原单字分支，多字保留宿主错峰。
+
 **通用维护。** [CjkTerminalGradientPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/CjkTerminalGradientPolicy.kt) 对合法 CJK 尾词取 `max(original, feather)`，只接受有限值与 `0 < feather <= 1`。原余量更大时保留，无效几何透传；尾词不额外要求触发长尾辉光。
 
 当前 reader 的原文与发音向量分别选合法 end 最大的词 ID，同 end 取后出现词。向量大小须在 2..4096，时间 begin 非负且 end 大于 begin；两路结果按 reader 弱身份与行 ID 缓存。补偿只影响当前扫光对应 CJK 词；现有协议的build第八参（零基索引7）为true时走原生分支，Latin文本也保持原生。margin词对象须与当前扫光词一致，嵌套/异常退出恢复线程作用域。
 
-有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复，[跨行能力](#lyric-wrap-sweep)独立安装。
+有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复；[跨行能力](#lyric-wrap-sweep)由“歌词效果优化”开关控制，CJK 辉光开关不控制该能力。
 
-**变更与降级。** 辉光安装后再安装末词补偿，两者合并能力状态；末词契约缺失时保留辉光并报告末词不支持，声明契约但解析/注册失败时报告降级且辉光继续。新增两个 Hook 共用独立 scope，全部成功才 activate。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
+**变更与降级。** 辉光安装后再安装末词补偿，两者合并能力状态；末词契约缺失时保留辉光并报告末词不支持，声明契约但解析/注册失败时报告降级且辉光继续。新增两个 Hook 共用独立 scope，全部成功才 activate。新增宿主构建须独立确认原生 span 元数据、前后景绑定和 split binding 语义后，才能在精确 profile 显式启用多字放行；默认值不继承前版本。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
 
 [证据清单](host-adaptation-checklist.md#cjk-animation-checks) · [人工场景](feature-preservation.md#cjk-animation)
 
@@ -360,7 +362,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 ### 5.6 跨行歌词扫光
 
-**生效与接缝。** 独立 `LyricWrapSweepTarget`，能力键为 `FEATURE_LYRIC_WRAP_SWEEP`，无独立设置项。精确 profile 声明解析器支持的 `lyricWrapSweep` 契约才默认安装；不读取 CJK 开关，不依赖末词补偿。未声明报告不支持，已声明但解析/注册失败报告降级，均保留原生渲染。
+**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）是跨行扫光与活动行高亮共用的唯一开关，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricWrapSweepFeature` 与 `LyricBackgroundHighlightFeature` 都返回 `DISABLED`，且不调用各自 `target.install`。开启后仍分别按精确 profile 的 `lyricWrapSweep` 与 `lyricBackgroundHighlight` 契约安装和核对，各自报告支持、降级或失败；任一能力未声明或安装失败不阻止另一项。跨行扫光的 `LyricWrapSweepTarget` 使用能力键 `FEATURE_LYRIC_WRAP_SWEEP`，不新增独立设置。CJK 辉光开关不控制这两个 Feature。
 
 入口为 [LyricWrapSweepContract](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepContract.kt)、[Geometry](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepGeometry.kt)、[AppleMusicLyricWrapSweepTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricWrapSweepTarget.kt) 和 core 的 [LyricWrapSweepPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricWrapSweepPolicy.kt)。Contract 的必需清单与关系校验是协议依据，不另写混淆名或支持版本表。
 
@@ -406,11 +408,11 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 
 <a id="lyric-background-highlight"></a>
 
-#### 5.6.1 歌词效果优化
+#### 5.6.1 歌词效果优化：活动行高亮
 
-**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled` 对应普通配置键 `lyric_effects_optimization_enabled`，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricBackgroundHighlightFeature` 返回 `DISABLED`，不调用宿主安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖其他歌词能力的开关或安装结果。
+**生效与接缝。** 本能力与跨行扫光共用前述“歌词效果优化”开关及重启门禁；开关开启后，本能力仍按自己的精确契约单独安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖跨行扫光的安装结果；跨行不支持或失败不影响本能力，反之亦然。
 
-启用要求精确 profile 声明 `lyricBackgroundHighlight`、`contractVersion: 4`，通过全部成员及关系校验，并成功对活动行提交方法 `O` 执行 `deoptimize` 后注册、激活 Hook。`lineSubset` 为 `f1.D(TreeSet,Collection)boolean static`，去优化确保此内部调用可被拦截。当前仅 [7.0.0-beta / 1609 档案](../host-applemusic/src/main/resources/host-profiles/7.0.0-beta-1609.json) 声明此契约；未声明报告不支持，解析、去优化或注册失败关闭本次注册 scope 并报告降级。
+启用要求精确 profile 声明 `lyricBackgroundHighlight`、`contractVersion: 4`，通过全部成员及关系校验，并成功对活动行提交方法 `O` 执行 `deoptimize` 后注册、激活 Hook。`lineSubset` 为 `f1.D(TreeSet,Collection)boolean static`，去优化确保此内部调用可被拦截。支持范围以精确 profile 的契约声明为准；开关开启后未声明契约报告不支持，解析、去优化或注册失败关闭本次注册 scope 并报告降级。
 
 **活动行与词状态。** 1609 的 `A.k` 将背景行登记到 `q`，`O` 可在原始输入仍含父行时将其过滤掉。父行候选来自当前集合、原始输入和已保留行；输入中较旧或已经退出输入的行，只要仍在背景保留窗口内就参与保留。只在本次 `O`、`f1.D` 第一参数与当前 `r` 为同一实例时处理首次过滤结果：合并未结束父行，并在集合变化为真子集时放行更新；其余调用保持原生。结束时以该过滤结果判断应释放哪些模块父行，保留原生仍需要的成员及间奏、分组逻辑。
 

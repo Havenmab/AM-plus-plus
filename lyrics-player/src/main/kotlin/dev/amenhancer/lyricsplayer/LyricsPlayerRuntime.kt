@@ -9,7 +9,6 @@ import dev.amenhancer.module.lyrics.player.LyricsPlayerMotion
 import dev.amenhancer.module.lyrics.player.LyricsPlayerTimeline
 import dev.amenhancer.module.lyrics.player.PlayerDocument
 import dev.amenhancer.module.lyrics.player.PlayerGeometry
-import dev.amenhancer.module.lyrics.player.PlayerLine
 import dev.amenhancer.module.lyrics.player.PlayerTrackInfo
 import dev.amenhancer.module.lyrics.player.SpringChannel
 
@@ -25,9 +24,17 @@ import dev.amenhancer.module.lyrics.player.SpringChannel
 internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     val clock = LyricsPlayerClock()
 
-    /** One spring per lyric line; created/retargeted only when the document or line changes. */
+    /** One position spring per lyric line; created/retargeted only on document/line changes. */
     private var lineChannels: Array<SpringChannel> = emptyArray()
     private var lineValues: FloatArray = FloatArray(0)
+
+    /**
+     * One alpha spring per line. RE: A level (task-8 §6) — renderLine paints with
+     * `alpha = clamp(progress, 0, 1)` and culls below 0.007843 (2/255); the progress is not
+     * used for y/scale. Current line -> 1.0, neighbours -> the constant VISUAL-SPEC alpha.
+     */
+    private var alphaChannels: Array<SpringChannel> = emptyArray()
+    private var alphaValues: FloatArray = FloatArray(0)
 
     /** Bumped once per frame; readers in draw/layer phases only invalidate drawing. */
     val tick = mutableStateOf(0L)
@@ -82,6 +89,10 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     fun lineShift(index: Int): Float =
         if (index >= 0 && index < lineValues.size) lineValues[index] else displayedIndex
 
+    /** Animated paint alpha of line [index] (RE: clamp(progress, 0, 1)). */
+    fun lineAlpha(index: Int): Float =
+        if (index >= 0 && index < alphaValues.size) alphaValues[index] else 0f
+
     fun onFrame(nowNanos: Long) {
         lastFrameNanos = nowNanos
         // Every host read is defensive: a host-side surprise must dim one frame, never kill
@@ -105,6 +116,8 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 displayedIndex = 0f
                 lineChannels = emptyArray()
                 lineValues = FloatArray(0)
+                alphaChannels = emptyArray()
+                alphaValues = FloatArray(0)
                 followTargetIndex = -1
                 currentIndexState.value = 0
                 previousIndexState.value = 0
@@ -147,6 +160,9 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         if (!dragging) {
             for (index in lineValues.indices) {
                 lineValues[index] = lineChannels[index].valueAt(nowNanos)
+            }
+            for (index in alphaValues.indices) {
+                alphaValues[index] = alphaChannels[index].valueAt(nowNanos)
             }
             if (currentIndex in lineValues.indices) {
                 displayedIndex = lineValues[currentIndex]
@@ -250,6 +266,10 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         for (channel in channels) channel.snap(index.toFloat())
         lineChannels = channels
         lineValues = FloatArray(count) { index.toFloat() }
+        val alphas = Array(count) { SpringChannel(LyricsPlayerMotion.lineChange) }
+        alphaChannels = alphas
+        alphaValues = FloatArray(count) { alphaTarget(it, index) }
+        for (i in alphas.indices) alphas[i].snap(alphaValues[i])
         displayedIndex = index.toFloat()
         followTargetIndex = index
     }
@@ -259,18 +279,24 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         if (lineChannels.size != lines.size) return
         for (index in lineChannels.indices) {
             val channel = lineChannels[index]
-            // RE: the transition spring is selected by the gap before that line, so every
-            // line eases with its own response/zeta (no global stagger delay).
-            channel.timing = LyricsPlayerMotion.gapSpring(gapSeconds(lines, index))
+            // RE: 0x454 == 0 in the shipping build -> fixed transition timing; the adaptive
+            // gap spring (gapSpring) is only used when a future setting flips that byte.
+            channel.timing = LyricsPlayerMotion.lineChange
             channel.animateTo(currentIndex.toFloat(), nowNanos, config.motionPercent)
+        }
+        for (index in alphaChannels.indices) {
+            val channel = alphaChannels[index]
+            channel.timing = LyricsPlayerMotion.lineChange
+            channel.animateTo(alphaTarget(index, currentIndex), nowNanos, config.motionPercent)
         }
         followTargetIndex = currentIndex
     }
 
-    private fun gapSeconds(lines: List<PlayerLine>, index: Int): Float {
-        if (index <= 0 || index >= lines.size) return 0f
-        val gapMs = lines[index].startMs - lines[index - 1].endMs
-        return gapMs.coerceAtLeast(0L) / 1000f
+    /** RE: current line paints at 1.0; neighbours keep the constant VISUAL-SPEC alpha. */
+    private fun alphaTarget(lineIndex: Int, current: Int): Float = when {
+        lineIndex == current -> 1f
+        lineIndex < current -> SUNGLINE_ALPHA
+        else -> NEIGHBOUR_ALPHA
     }
 
     private fun pollHostMetadata() {
@@ -305,5 +331,9 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         /** Extra scale of a tapped line: it dips to the A-level pressed scale (Specs +0x5c = 0.95). */
         private val TAP_EXTRA_SCALE = 1f - LyricsPlayerMotion.PRESSED_SCALE
         private const val LOG_TAG = "lyrics player"
+
+        /** RE: VISUAL-SPEC — de-blurred neighbours paint at a constant alpha. */
+        private const val NEIGHBOUR_ALPHA = 0.50f
+        private const val SUNGLINE_ALPHA = 0.45f
     }
 }

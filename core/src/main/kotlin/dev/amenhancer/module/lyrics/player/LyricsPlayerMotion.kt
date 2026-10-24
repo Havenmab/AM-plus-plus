@@ -115,9 +115,11 @@ object LyricsPlayerMotion {
     // fixed 2.0/260/50 per line-render flag, so the original app itself falls back to the
     // fixed line spring; we keep that fixed spring everywhere.
     // x = gap between the current line's start and the previous line's end, in seconds.
-    // RE: task-8 A level — the state machine (0x29f20ec) feeds that gap into the adaptive
-    // formula; whether a transition uses it or the fixed 100/18 spring is a per-line flag
-    // (dispatcher 0x29d2198). We instantiate one spring per line from the gap.
+    // RE: task-8 A level — the state machine (0x29f20ec) can feed that gap into the adaptive
+    // formula, but the shipping build has 0x454 == 0 (strh wzr in the ctor): the fixed timing
+    // path (the 0.89475907 s fallback) is what actually ships, and the adaptive branch only
+    // runs if something sets that byte at runtime. The page therefore uses [lineChange] per
+    // line by default; [gapSpring] is the optional adaptive mode.
     const val GAP_RESPONSE_MIN_S = 0.48f
     const val GAP_RESPONSE_MAX_S = 0.75f
     const val GAP_ZETA_MAX = 0.90f
@@ -138,7 +140,11 @@ object LyricsPlayerMotion {
         return SpringTiming(mass = 1.0, stiffness = stiffness, damping = damping)
     }
 
-    /** The binary's fallback transition offset (this+0x454 == 0 -> 0.89475907 s). */
+    /**
+     * The binary's fixed timing-path value (0x454 == 0 in the shipping build, set by the
+     * ctor). The transition scheduler receives this instead of an adaptive response, i.e.
+     * the default transition timing is fixed, not gap driven.
+     */
     const val FALLBACK_TRANSITION_OFFSET_S = 0.89475907f
 
     private const val GAP_X_MIN_S = 0.2f

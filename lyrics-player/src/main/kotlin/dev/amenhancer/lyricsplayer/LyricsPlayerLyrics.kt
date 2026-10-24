@@ -217,10 +217,6 @@ private fun LyricLineView(
     density: Density,
 ) {
     val distance = abs(index - currentIndex)
-    val sung = index < currentIndex
-    // Alpha is baked into the painted colours instead of the layer: an extra layer alpha on
-    // top of the blur RenderEffect showed up as faint seams between rows.
-    val layerAlpha = columns.lineAlpha(distance, sung)
     val scale = columns.lineScale(distance)
     val slotHeightPx = columns.linePitchPx * SLOT_RATIO
     val slotHeightDp = with(density) { slotHeightPx.toDp() }
@@ -238,6 +234,10 @@ private fun LyricLineView(
                 translationY = center - slotHeightPx * 0.5f
                 scaleX = scale
                 scaleY = scale
+                // RE: task-8 §6 — renderLine paints with clamp(progress, 0, 1) and culls
+                // below 2/255 (0.007843); progress is not used for y/scale.
+                val progress = runtime.lineAlpha(index).coerceIn(0f, 1f)
+                alpha = if (progress < MIN_LINE_ALPHA) 0f else progress
                 clip = false
                 renderEffect = blurEffect
             },
@@ -256,14 +256,15 @@ private fun LyricLineView(
                 positionMs = runtime.clock.visualPositionMs(),
             )
         } else {
-            drawText(row.other, Color.White.copy(alpha = layerAlpha), Offset(0f, mainTop))
+            drawText(row.other, Color.White, Offset(0f, mainTop))
         }
         row.translation?.let { translation ->
             val translationTop = slotHeightPx * 0.5f +
                 columns.translationCenterOffsetPx - translation.size.height * 0.5f
+            // The layer alpha is the line progress; the translation keeps its relative 0.30.
             drawText(
                 translation,
-                Color.White.copy(alpha = columns.translationAlpha * layerAlpha),
+                Color.White.copy(alpha = columns.translationAlpha),
                 Offset(0f, translationTop),
             )
         }
@@ -403,3 +404,6 @@ private const val SLOT_RATIO = 2.4f
 
 /** Karaoke feather as a fraction of the current type size (RE: 40 px at 105 px). */
 private const val FEATHER_RATIO = 0.38f
+
+/** RE: renderLine's early-out threshold, 0x3C008081 ≈ 2/255. */
+private const val MIN_LINE_ALPHA = 0.007843f

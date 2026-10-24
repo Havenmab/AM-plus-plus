@@ -176,8 +176,11 @@ class LyricsPlayerColumns(
             currentFontPx = min(viewportWidthPx, viewportHeightPx) * TABLET_FONT_SHORT_SIDE_RATIO * fontScale
             otherFontPx = currentFontPx * OTHER_FONT_RATIO
             translationFontPx = currentFontPx * TRANSLATION_FONT_RATIO
-            linePitchPx = currentFontPx * LINE_PITCH_RATIO
-            translationCenterOffsetPx = currentFontPx * TRANSLATION_CENTER_RATIO
+            // RE: C-level fallback (task-8 closing summary) — the real pitch is hidden behind
+            // a runtime function pointer, so use the measured 102.7 dp; the user font setting
+            // still scales it so a larger lyric does not overlap.
+            linePitchPx = LINE_PITCH_DP * density * fontScale
+            translationCenterOffsetPx = TRANSLATION_CENTER_DP * density * fontScale
             translationAlpha = TRANSLATION_ALPHA
 
             titleFontPx = currentFontPx * TITLE_FONT_RATIO
@@ -229,8 +232,9 @@ class LyricsPlayerColumns(
             currentFontPx = PHONE_CURRENT_FONT_SP * fontScale * density
             otherFontPx = currentFontPx * OTHER_FONT_RATIO
             translationFontPx = currentFontPx * TRANSLATION_FONT_RATIO
-            linePitchPx = currentFontPx * LINE_PITCH_RATIO
-            translationCenterOffsetPx = currentFontPx * TRANSLATION_CENTER_RATIO
+            // Phone keeps the proportional spacing (the reference screenshot is a tablet).
+            linePitchPx = currentFontPx * PHONE_LINE_PITCH_RATIO
+            translationCenterOffsetPx = currentFontPx * PHONE_TRANSLATION_CENTER_RATIO
             translationAlpha = TRANSLATION_ALPHA
 
             titleFontPx = PHONE_TITLE_SP * density
@@ -329,8 +333,12 @@ class LyricsPlayerColumns(
         const val TABLET_FONT_SHORT_SIDE_RATIO = 100f / 2136f
         const val OTHER_FONT_RATIO = 1.0f
         const val TRANSLATION_FONT_RATIO = 0.54f
-        const val LINE_PITCH_RATIO = 284.6f / 100f
-        const val TRANSLATION_CENTER_RATIO = 116.5f / 100f
+
+        /** RE: measured main pitch 284.6 px at display scale 2.77 = 102.7 dp (C level). */
+        const val LINE_PITCH_DP = 102.7f
+
+        /** RE: translation centre 116.5 px below the main line at scale 2.77 = 42.06 dp. */
+        const val TRANSLATION_CENTER_DP = 42.06f
 
         const val TITLE_FONT_RATIO = 0.46f
         const val ARTIST_FONT_RATIO = 0.46f
@@ -374,6 +382,8 @@ class LyricsPlayerColumns(
         const val PHONE_PLAY_ICON_DP = 32f
         const val PHONE_BAR_HEIGHT_DP = 3f
         const val PHONE_THUMB_DP = 5f
+        const val PHONE_LINE_PITCH_RATIO = 284.6f / 100f
+        const val PHONE_TRANSLATION_CENTER_RATIO = 116.5f / 100f
 
         const val MIN_FONT_SCALE_PERCENT = 80
         const val MAX_FONT_SCALE_PERCENT = 140

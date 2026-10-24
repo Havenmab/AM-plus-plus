@@ -124,13 +124,12 @@ internal fun DrawScope.drawGlyph(glyph: PlayerGlyph, color: Color) {
             val radius = side * 0.26f
             val path = Path().apply {
                 addArc(
-                    rect = androidx.compose.ui.geometry.Rect(
+                    oval = androidx.compose.ui.geometry.Rect(
                         center = androidx.compose.ui.geometry.Offset(centerX, centerY),
                         radius = radius,
                     ),
                     startAngleDegrees = 200f,
                     sweepAngleDegrees = 250f,
-                    forceMoveTo = false,
                 )
             }
             drawPath(path, color, style = stroke)
@@ -159,13 +158,12 @@ internal fun DrawScope.drawGlyph(glyph: PlayerGlyph, color: Color) {
                 val waveRadius = side * (0.16f + index * 0.12f)
                 val wave = Path().apply {
                     addArc(
-                        rect = androidx.compose.ui.geometry.Rect(
+                        oval = androidx.compose.ui.geometry.Rect(
                             center = androidx.compose.ui.geometry.Offset(centerX - side * 0.02f, centerY),
                             radius = waveRadius,
                         ),
                         startAngleDegrees = -55f,
                         sweepAngleDegrees = 110f,
-                        forceMoveTo = false,
                     )
                 }
                 drawPath(wave, color, style = Stroke(width = strokeWidth * 0.8f, cap = StrokeCap.Round))

@@ -251,6 +251,8 @@ class LyricsPlayerColumns(
      * blur survives any device size.
      */
     fun blurSigmaPx(distance: Int): Float {
+        // The current line itself is painted sharp (sigma 0); every other line is blurred.
+        if (distance <= 0) return 0f
         val step = distance.coerceIn(0, MAX_BLUR_DISTANCE)
         val measured = viewportWidthPx * (BLUR_BASE_PX + BLUR_STEP_PX * step) / REFERENCE_WIDTH_PX
         // RE: d >= 4 is extrapolated, capped at 0.75 % of the width (~24 px at 3200).

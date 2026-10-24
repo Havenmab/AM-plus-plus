@@ -136,6 +136,15 @@ object AppleMusicHostFactory {
                 typeface = {
                     runCatching { (lyricsTypefaceSession as LyricsTypefaceSession).loadedTypeface() }.getOrNull()
                 },
+                // The module's own online translation lane, consulted only when the host's
+                // "translation" getter answers a transliteration track (ja-Latn/ko-Latn/zh-Latn).
+                translationLookup = { begin, end, text ->
+                    currentSong.current()?.details?.appleMusicId?.takeIf { it > 0L }?.let { id ->
+                        runCatching {
+                            nativeLyricOverlay.translation(id.toString(), begin, end, text)
+                        }.getOrNull()
+                    }
+                },
             ),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,

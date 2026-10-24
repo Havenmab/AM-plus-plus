@@ -34,6 +34,8 @@ internal class AppleMusicLyricPlayerTarget(
     private val fallback: (() -> dev.amenhancer.module.lyrics.player.PlayerDocument?)? = null,
     /** Imported lyric font (lyrics_font_* slot); null keeps the page on the system font. */
     private val typeface: (() -> android.graphics.Typeface?)? = null,
+    /** Module online translation lane for the current document, or null when unavailable. */
+    private val translationLookup: ((begin: Long, end: Long, text: String) -> String?)? = null,
 ) : LyricsPlayerTarget {
     private val lock = Any()
     private var registration: HookRegistrationScope? = null
@@ -51,7 +53,7 @@ internal class AppleMusicLyricPlayerTarget(
         val scope = HookRegistrationScope()
         return try {
             val contract = LyricsPlayerContract(profile, loader)
-            val port = LyricsPlayerPortImpl(contract, fallback, typeface)
+            val port = LyricsPlayerPortImpl(contract, fallback, typeface, translationLookup)
             val session = LyricsPlayerHostSession(port, enabled)
             fun hook(method: Method, callback: ModernMethodHook) {
                 check(ModernXposedRuntime.hookMethod(method, callback, scope)) {
@@ -96,7 +98,12 @@ internal class AppleMusicLyricPlayerTarget(
                     override fun afterHookedMethod(param: MethodHookParam) {
                         if (param.throwable != null) return
                         val fragment = param.thisObject ?: return
-                        guarded("installDocument") { session.onDocumentInstalled(fragment) }
+                        // The pointer is only dereferenced for its language tag; it is never retained.
+                        val pointer = param.args.firstOrNull()
+                        guarded("installDocument") {
+                            port.onDocumentInstalled(contract.translationLanguage(pointer))
+                            session.onDocumentInstalled(fragment)
+                        }
                     }
                 })
             }

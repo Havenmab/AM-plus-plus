@@ -6048,7 +6048,9 @@
       "reader": "com.apple.android.music.ttml.j",
       "timing": "com.apple.android.music.ttml.javanative.model.LyricsTiming",
       "artworkLayer": "com.apple.android.music.player.LyricsBackgroundLayerView",
-      "activity": "com.apple.android.music.common.MainActivity"
+      "activity": "com.apple.android.music.common.MainActivity",
+      "songInfoPtr": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
+      "songInfo": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative"
     },
     "methods": {
       "fragmentCreateView": {
@@ -6354,6 +6356,27 @@
         "parameters": [],
         "returns": "void",
         "static": false
+      },
+      "linePronunciation": {
+        "owner": "com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLineNative",
+        "name": "getHtmlPronunciationLineText",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
+      },
+      "pointerResolve": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
+        "name": "get",
+        "parameters": [],
+        "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "static": false
+      },
+      "songTranslationLanguage": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "getTranslation",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
       }
     },
     "fields": {
@@ -6388,6 +6411,6 @@
         "type": "android.os.Bundle"
       }
     },
-    "evidence": "Full-page lyrics player data bridge (spec §7). Every descriptor re-derived from the 1609 base.apk DEX (.work/am1609/base_x) and recorded with its evidence in .prep/lb-player-host-data.md. Document lane: PlayerLyricsViewFragment#n0 (adapter f1) -> R0#x()/A#x() = ttml.j reader -> b()/a(int) -> LyricsLinePtr#get() -> LyricsLineNative getHtmlLineText/getHtmlTranslationLineText/getHtmlBackgroundVocalsLineText/getWords/getBackgroundWords/getLineId + LyricsTiming getBegin/getEnd; words via LyricsWordVector#size()/get(long) -> LyricsWordPtr#get() -> LyricsWordNative getHtmlLineText/isWhitespace. Playback lane: ia.a$c#getMediaBrowser() returns the media3 MediaBrowser J4.w (extends MediaController J4.B, both relocated androidx.media3 names) and keeps the retained method names getCurrentPosition/isPlaying/getPlaybackState/getDuration/seekTo/play/pause; isPlaying falls back to getPlaybackState()==3. Track lane: z3.y is the relocated media3 MediaMetadata; its title/artist fields a/b and extras bundle J are the same runtime member names the frozen IN_APP_QUEUE_ADAPTER_SUBMIT target already uses (MEDIA3_METADATA_TITLE_FIELD=a, MEDIA3_METADATA_ARTIST_FIELD=b, MEDIA3_METADATA_BUNDLE_FIELD=J); J4.B#i0() is the getMediaMetadata the host itself uses (19 call sites: PlayerActivity#onBrowserConnected/onStart, PlayerSongViewFragment#D1, CastControllerDialogFragment#updateMediaInfo, ...) while J4.B#X() is never invoked, so i0() is declared as the primary and X() kept as a probed alternate. Artwork lane: LyricsBackgroundLayerView#setArtwork(Bitmap) is the bitmap the host itself paints behind the lyrics page (indexed.methodContracts player-background-artwork, frozen baseline) - no new artwork symbol. Lifecycle: onCreateView/onResume/onPause/onDestroyView of the lyrics fragment plus MainActivity#onStop; LYRICS_UI_ON_CREATE_VIEW/LYRICS_UI_ON_DESTROY_VIEW and lyricBlur.resume carry the same methods in the existing frozen data. Skip transport: PlayerLyricsViewFragment chrome handlers com.apple.android.music.player.a1#C0 (skip +30s, ClickActionType.SKIP) and #E0 (-30s, BACK) each fall back to a no-arg controller call when their N0() gate says the item is not 30s-skippable: C0 -> J4.B.y(), E0 -> J4.B.w(); the cast dialog previous button also calls J4.B.w(). So y()=seekToNext and w()=seekToPrevious are registered as mediaSkipNext/mediaSkipPrevious (dotted evidence: dexdump -d of player.a1 C0/E0 bodies at 0x5022e0/0x50241c)."
+    "evidence": "Full-page lyrics player data bridge (spec §7). Every descriptor re-derived from the 1609 base.apk DEX (.work/am1609/base_x) and recorded with its evidence in .prep/lb-player-host-data.md. Document lane: PlayerLyricsViewFragment#n0 (adapter f1) -> R0#x()/A#x() = ttml.j reader -> b()/a(int) -> LyricsLinePtr#get() -> LyricsLineNative getHtmlLineText/getHtmlTranslationLineText/getHtmlBackgroundVocalsLineText/getWords/getBackgroundWords/getLineId + LyricsTiming getBegin/getEnd; words via LyricsWordVector#size()/get(long) -> LyricsWordPtr#get() -> LyricsWordNative getHtmlLineText/isWhitespace. Playback lane: ia.a$c#getMediaBrowser() returns the media3 MediaBrowser J4.w (extends MediaController J4.B, both relocated androidx.media3 names) and keeps the retained method names getCurrentPosition/isPlaying/getPlaybackState/getDuration/seekTo/play/pause; isPlaying falls back to getPlaybackState()==3. Track lane: z3.y is the relocated media3 MediaMetadata; its title/artist fields a/b and extras bundle J are the same runtime member names the frozen IN_APP_QUEUE_ADAPTER_SUBMIT target already uses (MEDIA3_METADATA_TITLE_FIELD=a, MEDIA3_METADATA_ARTIST_FIELD=b, MEDIA3_METADATA_BUNDLE_FIELD=J); J4.B#i0() is the getMediaMetadata the host itself uses (19 call sites: PlayerActivity#onBrowserConnected/onStart, PlayerSongViewFragment#D1, CastControllerDialogFragment#updateMediaInfo, ...) while J4.B#X() is never invoked, so i0() is declared as the primary and X() kept as a probed alternate. Translation lane: the host serves the ttml translation through LyricsLineNative getHtmlTranslationLineText, but the app can select a Latin transliteration as the \"translation\" language (the transliterations track is ja-Latn/ko-Latn/zh-Latn, see core AppleRomanizationLanguage), in which case that getter answers the romanization - the same string the pronunciation lane carries. The bridge therefore also reads getHtmlPronunciationLineText and the document language SongInfoNative#getTranslation(), and consults the module online translation lane (NativeLyricOverlayStore#translation) before it would show a transliteration in the translation row. Artwork lane: LyricsBackgroundLayerView#setArtwork(Bitmap) is the bitmap the host itself paints behind the lyrics page (indexed.methodContracts player-background-artwork, frozen baseline) - no new artwork symbol. Lifecycle: onCreateView/onResume/onPause/onDestroyView of the lyrics fragment plus MainActivity#onStop; LYRICS_UI_ON_CREATE_VIEW/LYRICS_UI_ON_DESTROY_VIEW and lyricBlur.resume carry the same methods in the existing frozen data. Skip transport: PlayerLyricsViewFragment chrome handlers com.apple.android.music.player.a1#C0 (skip +30s, ClickActionType.SKIP) and #E0 (-30s, BACK) each fall back to a no-arg controller call when their N0() gate says the item is not 30s-skippable: C0 -> J4.B.y(), E0 -> J4.B.w(); the cast dialog previous button also calls J4.B.w(). So y()=seekToNext and w()=seekToPrevious are registered as mediaSkipNext/mediaSkipPrevious (dotted evidence: dexdump -d of player.a1 C0/E0 bodies at 0x5022e0/0x50241c)."
   }
 }

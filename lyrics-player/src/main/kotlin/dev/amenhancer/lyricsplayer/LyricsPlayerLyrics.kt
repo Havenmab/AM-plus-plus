@@ -218,6 +218,8 @@ private fun LyricLineView(
 ) {
     val distance = abs(index - currentIndex)
     val sung = index < currentIndex
+    // Alpha is baked into the painted colours instead of the layer: an extra layer alpha on
+    // top of the blur RenderEffect showed up as faint seams between rows.
     val layerAlpha = columns.lineAlpha(distance, sung)
     val scale = columns.lineScale(distance)
     val slotHeightPx = columns.linePitchPx * SLOT_RATIO
@@ -233,7 +235,7 @@ private fun LyricLineView(
                 translationY = center - slotHeightPx * 0.5f
                 scaleX = scale
                 scaleY = scale
-                alpha = layerAlpha
+                clip = false
                 renderEffect = blurEffect
             },
     ) {
@@ -251,14 +253,14 @@ private fun LyricLineView(
                 positionMs = runtime.clock.visualPositionMs(),
             )
         } else {
-            drawText(row.other, Color.White, Offset(0f, mainTop))
+            drawText(row.other, Color.White.copy(alpha = layerAlpha), Offset(0f, mainTop))
         }
         row.translation?.let { translation ->
             val translationTop = slotHeightPx * 0.5f +
                 columns.translationCenterOffsetPx - translation.size.height * 0.5f
             drawText(
                 translation,
-                Color.White.copy(alpha = columns.translationAlpha),
+                Color.White.copy(alpha = columns.translationAlpha * layerAlpha),
                 Offset(0f, translationTop),
             )
         }
@@ -390,8 +392,11 @@ private const val LINE_OVERSCAN = 6
 /** Blur tiers: 0 (current) plus four distance tiers, matching the measured sigma curve. */
 private const val BLUR_TIERS = 5
 
-/** Slot is a bit taller than the pitch so the translation below the text is never clipped. */
-private const val SLOT_RATIO = 1.8f
+/**
+ * Slot is taller than the pitch so neither the translation nor the blur bleed can reach the
+ * layer bounds, where RenderEffect clipping may leave a faint horizontal seam.
+ */
+private const val SLOT_RATIO = 2.4f
 
 /** Karaoke feather as a fraction of the current type size (RE: 40 px at 105 px). */
 private const val FEATHER_RATIO = 0.38f

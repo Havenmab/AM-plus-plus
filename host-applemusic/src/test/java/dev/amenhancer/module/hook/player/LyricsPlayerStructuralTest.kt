@@ -124,6 +124,28 @@ class LyricsPlayerStructuralTest {
     }
 
     @Test
+    fun `the translation row never shows a transliteration as a translation`() {
+        val port = source("LyricsPlayerPortImpl.kt")
+        val target = source("AppleMusicLyricPlayerTarget.kt")
+        val contract = source("LyricsPlayerContract.kt")
+        val factory = moduleSource("AppleMusicHostFactory.kt")
+        // Both lanes are read, and the document language decides whether "translation" is one.
+        assertTrue(contract.contains("\"linePronunciation\""))
+        assertTrue(contract.contains("\"songTranslationLanguage\""))
+        assertTrue(port.contains("string(contract.linePronunciation, line)"))
+        assertTrue(port.contains("LATIN_TRANSLITERATION_SUFFIX"))
+        assertTrue(port.contains("translationLanguageTag"))
+        // The install seam captures the document's translation language from the pointer.
+        assertTrue(target.contains("contract.translationLanguage(pointer)"))
+        assertTrue(target.contains("port.onDocumentInstalled("))
+        // The module's own online lane is the fallback for a transliteration-only document.
+        assertTrue(factory.contains("nativeLyricOverlay.translation("))
+        assertTrue(port.contains("translationLookup?.invoke(begin, end, lineText)"))
+        // A device log must prove which branch a song took.
+        assertTrue(port.contains("lyrics player translation lane: "))
+    }
+
+    @Test
     fun `the imported lyric font is shared through the typeface session`() {
         val factory = moduleSource("AppleMusicHostFactory.kt")
         val session = moduleSource("LyricsTypefaceSession.kt")
@@ -163,10 +185,11 @@ class LyricsPlayerStructuralTest {
             "mediaSkipNext", "mediaSkipPrevious",
             "mediaMetadataPrimary", "mediaMetadataAlternate",
             "lineAdapterReader", "wordAdapterReader", "readerCount", "readerLine",
-            "lineResolve", "lineText", "lineTranslation", "lineBackgroundText",
+            "lineResolve", "lineText", "lineTranslation", "linePronunciation", "lineBackgroundText",
             "lineWords", "lineBackgroundWords", "lineId", "lineBegin", "lineEnd",
             "wordSize", "wordGet", "wordResolve", "wordText", "wordBegin", "wordEnd",
             "wordWhitespace",
+            "pointerResolve", "songTranslationLanguage",
             "artworkSet", "artworkDetach",
         )
         val REQUIRED_FIELDS = listOf(

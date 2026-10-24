@@ -44,10 +44,11 @@ internal class LyricsPlayerContract(
                 "mediaSkipNext", "mediaSkipPrevious",
                 "mediaMetadataPrimary", "mediaMetadataAlternate",
                 "lineAdapterReader", "wordAdapterReader", "readerCount", "readerLine",
-                "lineResolve", "lineText", "lineTranslation", "lineBackgroundText",
+                "lineResolve", "lineText", "lineTranslation", "linePronunciation", "lineBackgroundText",
                 "lineWords", "lineBackgroundWords", "lineId", "lineBegin", "lineEnd",
                 "wordSize", "wordGet", "wordResolve", "wordText", "wordBegin", "wordEnd",
                 "wordWhitespace",
+                "pointerResolve", "songTranslationLanguage",
                 "artworkSet", "artworkDetach",
             ),
             fields = setOf(
@@ -66,6 +67,7 @@ internal class LyricsPlayerContract(
     val mediaMetadata: Class<*> = type("mediaMetadata")
     val reader: Class<*> = type("reader")
     val timing: Class<*> = type("timing")
+    val songInfo: Class<*> = type("songInfo")
     val artworkLayer: Class<*> = type("artworkLayer")
     val activity: Class<*> = type("activity")
 
@@ -97,6 +99,7 @@ internal class LyricsPlayerContract(
     val lineResolve: Method = method("lineResolve")
     val lineText: Method = method("lineText")
     val lineTranslation: Method = method("lineTranslation")
+    val linePronunciation: Method = method("linePronunciation")
     val lineBackgroundText: Method = method("lineBackgroundText")
     val lineWords: Method = method("lineWords")
     val lineBackgroundWords: Method = method("lineBackgroundWords")
@@ -111,6 +114,9 @@ internal class LyricsPlayerContract(
     val wordBegin: Method = method("wordBegin")
     val wordEnd: Method = method("wordEnd")
     val wordWhitespace: Method = method("wordWhitespace")
+
+    val pointerResolve: Method = method("pointerResolve")
+    val songTranslationLanguage: Method = method("songTranslationLanguage")
 
     val artworkSet: Method = method("artworkSet")
     val artworkDetach: Method = method("artworkDetach")
@@ -138,6 +144,7 @@ internal class LyricsPlayerContract(
         check(lineResolve.declaringClass == readerLine.returnType)
         check(lineText.declaringClass == lineResolve.returnType &&
             lineTranslation.declaringClass == lineText.declaringClass &&
+            linePronunciation.declaringClass == lineText.declaringClass &&
             lineBackgroundText.declaringClass == lineText.declaringClass &&
             lineId.declaringClass == lineText.declaringClass)
         check(timing.isAssignableFrom(lineResolve.returnType) && timing.isAssignableFrom(wordResolve.returnType))
@@ -147,6 +154,8 @@ internal class LyricsPlayerContract(
         check(wordResolve.declaringClass == wordGet.returnType)
         check(wordText.declaringClass == wordResolve.returnType && wordWhitespace.declaringClass == wordText.declaringClass)
         check(wordBegin.declaringClass == timing && wordEnd.declaringClass == timing)
+        // Document language + song id come from the pointer the install seams receive.
+        check(pointerResolve.returnType == songInfo && songTranslationLanguage.declaringClass == songInfo)
         // Playback lives on the media3 controller the lyrics fragment already owns; the browser
         // getter must be callable on the fragment itself (same check lyricWrapSweep uses).
         check(mediaController.isAssignableFrom(mediaBrowser.returnType))
@@ -187,6 +196,12 @@ internal class LyricsPlayerContract(
     }.getOrNull()
 
     fun browser(fragment: Any): Any? = runCatching { mediaBrowser.invoke(fragment) }.getOrNull()
+
+    /** Translation language of the document behind [pointer] (e.g. "zh-Hans" or "ja-Latn"). */
+    fun translationLanguage(pointer: Any?): String? = runCatching {
+        val native = pointerResolve.invoke(pointer) ?: return@runCatching null
+        (songTranslationLanguage.invoke(native) as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
 
     fun position(controller: Any?): Long? =
         runCatching { (mediaPosition.invoke(controller) as? Number)?.toLong()?.takeIf { it >= 0L } }.getOrNull()

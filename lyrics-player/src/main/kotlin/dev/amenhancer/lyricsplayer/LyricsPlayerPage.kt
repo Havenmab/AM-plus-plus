@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -43,6 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -272,18 +274,6 @@ private fun TwoPaneContent(
                 }
                 .width(pxToDp(columns.leftColumnWidthPx, density)),
         )
-        FooterRow(
-            columns = columns,
-            fonts = fonts,
-            modifier = Modifier
-                .offset {
-                    IntOffset(
-                        columns.coverLeftPx.roundToInt(),
-                        (columns.footerCenterYPx - columns.footerFontPx * 0.7f).roundToInt(),
-                    )
-                }
-                .width(pxToDp(columns.leftColumnWidthPx, density)),
-        )
         LyricsPlayerLyrics(
             runtime = runtime,
             columns = columns,
@@ -417,6 +407,7 @@ private fun CoverArt(
                 bitmap = artwork,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -777,27 +768,6 @@ private fun VolumeRow(columns: LyricsPlayerColumns, modifier: Modifier) {
     }
 }
 
-@Composable
-private fun FooterRow(columns: LyricsPlayerColumns, fonts: LyricsPlayerFonts, modifier: Modifier) {
-    val density = LocalDensity.current
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.size(pxToDp(columns.footerFontPx, density))) {
-            drawCircle(Color.White.copy(alpha = 0.35f), radius = size.minDimension * 0.5f, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
-            drawCircle(Color.White.copy(alpha = 0.35f), radius = size.minDimension * 0.18f)
-        }
-        Spacer(Modifier.width(pxToDp(columns.footerFontPx * 0.55f, density)))
-        BasicText(
-            text = "LyricsBlossom by Eplor with ♡",
-            style = TextStyle(
-                color = Color.White.copy(alpha = 0.42f),
-                fontSize = with(density) { columns.footerFontPx.toSp() },
-                fontFamily = fonts.regular,
-            ),
-            maxLines = 1,
-        )
-    }
-}
-
 // ---------------------------------------------------------------------------------------
 // Background
 // ---------------------------------------------------------------------------------------
@@ -822,6 +792,7 @@ private fun LyricsPlayerBackground(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
+                    .alpha(BACKGROUND_MESH_ALPHA)
                     .blur(blurRadius),
             )
         }
@@ -862,5 +833,8 @@ private const val SPEAKER_LEFT_DP = 2f
 /** RE: background is a 6-10 block colour field, upscaled and blurred by ~2.4 % of the width. */
 private const val MESH_SIZE = 8
 private const val BACKGROUND_BLUR_WIDTH_FRACTION = 0.024f
-private const val BACKGROUND_SCRIM_ALPHA = 0.30f
+private const val BACKGROUND_SCRIM_ALPHA = 0.42f
+
+/** The mesh is drawn well under its natural brightness before the black scrim. */
+private const val BACKGROUND_MESH_ALPHA = 0.72f
 private val FALLBACK_BOTTOM = Color(0xFF05060A.toInt())

@@ -42,6 +42,11 @@ internal class LyricsPlayerPortImpl(
     private val fallback: (() -> PlayerDocument?)? = null,
     /** User-imported lyric font (lyrics_font_* slot), resolved by the typeface session. */
     private val typeface: (() -> Typeface?)? = null,
+    /**
+     * The module's online translation lane for this document (`NativeLyricOverlayStore#translation`).
+     * Used only when the host's translation getter would answer a transliteration instead.
+     */
+    private val translationLookup: ((begin: Long, end: Long, text: String) -> String?)? = null,
 ) : LyricsPlayerPort {
     private var fragmentRef: WeakReference<Any>? = null
     private var viewRef: WeakReference<View>? = null
@@ -52,6 +57,8 @@ internal class LyricsPlayerPortImpl(
     private var metadataProbeLogged = false
     private var artworkBitmap: Bitmap? = null
     private var lastReportedReason: String? = null
+    private var translationLanguageTag: String? = null
+    private var reportedTranslationLane: String? = null
 
     /** The lyrics fragment currently on screen; a different fragment drops the cached document. */
     fun attach(fragment: Any?, view: View?) {
@@ -67,6 +74,15 @@ internal class LyricsPlayerPortImpl(
     fun invalidateDocument() {
         documentCache = null
         lastDocumentAttemptMs = 0L
+    }
+
+    /**
+     * The translation language the installed document carries (`SongInfoNative#getTranslation`).
+     * A Latin tag (`ja-Latn`/`ko-Latn`/`zh-Latn`) means the host's "translation" getter answers
+     * the transliteration track, so the translation row must not show it as a translation.
+     */
+    fun onDocumentInstalled(language: String?) {
+        translationLanguageTag = language
     }
 
     /**
@@ -271,11 +287,59 @@ internal class LyricsPlayerPortImpl(
                 text = text,
                 words = words,
                 backgroundWords = backgroundWords,
-                translation = LyricsPlaybackText.plainText(string(contract.lineTranslation, line)),
+                translation = translation(line, begin, end, text),
             )
         }
         if (lines.isEmpty()) return null
         return PlayerDocument(lines = lines, identity = documentIdentity(lines, firstLineId, lastLineId))
+    }
+
+    /**
+     * The secondary row of a line: translation first, never a transliteration dressed as one.
+     *
+     * The host can select a Latin transliteration as its "translation" language, in which case
+     * `getHtmlTranslationLineText` answers the romanization (the same string the pronunciation
+     * lane carries). The module's own online lane is then used, because it holds the real
+     * translation the reference page shows; pronunciation is only the last fallback (spec §5.2).
+     */
+    private fun translation(line: Any, begin: Long, end: Long, lineText: String): String {
+        val apple = LyricsPlaybackText.plainText(string(contract.lineTranslation, line))
+        val pronunciation = LyricsPlaybackText.plainText(string(contract.linePronunciation, line))
+        val stored = runCatching { translationLookup?.invoke(begin, end, lineText) }
+            .getOrNull()
+            ?.let { LyricsPlaybackText.plainText(it) }
+            ?.takeIf { it.isNotEmpty() }
+        val transliterationTag = translationLanguageTag
+            ?.endsWith(LATIN_TRANSLITERATION_SUFFIX, ignoreCase = true) == true
+        val chosen = when {
+            // The "translation" slot is a transliteration track: prefer the real translation.
+            transliterationTag -> stored ?: apple
+            apple.isEmpty() -> stored ?: pronunciation
+            pronunciation.isNotEmpty() && apple == pronunciation -> stored ?: apple
+            else -> apple
+        }
+        reportTranslationLane(apple, pronunciation, stored, chosen, transliterationTag)
+        return chosen
+    }
+
+    /** One line per lane combination, so a device log proves which branch the song took. */
+    private fun reportTranslationLane(
+        apple: String,
+        pronunciation: String,
+        stored: String?,
+        chosen: String,
+        transliterationTag: Boolean,
+    ) {
+        val source = when {
+            chosen.isEmpty() -> "none"
+            stored != null && chosen == stored -> "store"
+            apple.isNotEmpty() && chosen == apple -> "apple"
+            else -> "pronunciation"
+        }
+        val key = "${translationLanguageTag ?: "-"}|$transliterationTag|${apple.isNotEmpty()}|${pronunciation.isNotEmpty()}|${stored != null}|$source"
+        if (reportedTranslationLane == key) return
+        reportedTranslationLane = key
+        ModernXposedRuntime.log("lyrics player translation lane: $key")
     }
 
     private fun readWords(vector: Any?, text: String, lineBegin: Long, lineEnd: Long): List<PlayerWord> {
@@ -405,6 +469,7 @@ internal class LyricsPlayerPortImpl(
         const val MAX_WORDS = 512
         const val WORD_CAPACITY = 16
         const val DOCUMENT_RETRY_MS = 250L
+        const val LATIN_TRANSLITERATION_SUFFIX = "-Latn"
         const val ROW_PROBE_LIMIT = 4
         const val TEXT_PROBE_DEPTH = 4
     }

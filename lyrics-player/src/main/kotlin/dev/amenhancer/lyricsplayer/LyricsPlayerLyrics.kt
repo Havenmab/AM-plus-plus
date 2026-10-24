@@ -230,7 +230,10 @@ private fun LyricLineView(
             .height(slotHeightDp)
             .zIndex(if (distance == 0) 1f else 0f)
             .graphicsLayer {
-                val displayed = runtime.displayedIndexState.value
+                // One tick read per line keeps the layer updating while every line runs its
+                // own spring; the values themselves are plain floats (no recomposition).
+                runtime.tick.value
+                val displayed = runtime.lineShift(index)
                 val center = columns.lineCenterY(index, displayed) - columns.lyricsTopPx
                 translationY = center - slotHeightPx * 0.5f
                 scaleX = scale

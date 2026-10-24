@@ -6,8 +6,9 @@ import kotlin.math.ln
 import kotlin.math.roundToInt
 
 /**
- * Motion model of the lyrics page: the four springs the iOS preset uses, the per-line
- * stagger, the scale/alpha hierarchy and the release-to-nearest-line target.
+ * Motion model of the lyrics page: the four springs the iOS preset uses, the adaptive
+ * per-line spring that the line gap selects, the scale/alpha hierarchy and the
+ * release-to-nearest-line target.
  *
  * Everything here is a pure function of time (or of a drag), so the unit tests can pin the
  * curve values and the renderer can sample once per frame without keeping animation objects.
@@ -52,19 +53,12 @@ object LyricsPlayerMotion {
      */
     val release: SpringTiming = secondSpring
 
-    const val DEFAULT_STAGGER_MS = 50
-
     /**
-     * RE: A level (round 3 correction) — the state machine (0x29f20ec) writes g ∈ {1,2,3,4}
-     * and `applyTransitionUpdate` (0x29e45bc) returns `lane = 4 - g`, so the lanes are 0..3.
-     * `lineDelay` (0.05 s) is the lane step: the current line starts first, each lane further
-     * away waits one more step, and the farthest waits 3 steps (150 ms) — equivalent to the
-     * old `50 ms × min(|i − now|, 3)` rule. We use that distance mapping directly.
+     * RE: A level (task-8 correction) — the value applyTransitionUpdate returns (the old
+     * "lane") is discarded by its only caller (0x29cdbac -> 0x29cdbb0), so there is NO
+     * lane/50 ms stagger in this build. Transitions are per line: every line owns its own
+     * progress and spring (see gapSpring); the old stagger helpers were removed.
      */
-    const val STAGGER_LANES = 4
-
-    /** Highest lane index, i.e. the longest stagger (3 × step = 150 ms). */
-    const val MAX_STAGGER_LANE = STAGGER_LANES - 1
 
     /** A jump farther than this many lines uses the soft lift spring. */
     const val LIFT_JUMP_LINES = 3
@@ -109,7 +103,7 @@ object LyricsPlayerMotion {
     const val MIN_EMPHASIS_PERCENT = 100
     const val MAX_EMPHASIS_PERCENT = 114
 
-    // ---- adaptive per-word spring (RE: A parameters, C input meaning) --------------------
+    // ---- adaptive per-line spring (RE: A parameters, A/B input meaning) ------------------
     //
     // The binary contains the "adaptive spring" the iOS author redacted: fn 0x29d30b4,
     // called from 0x29d2238 / 0x29d45dc, with the fallback branch bool=false equal to the
@@ -120,34 +114,35 @@ object LyricsPlayerMotion {
     // Round 3 found the dispatcher (0x29d2198): it picks adaptive / fixed 1.0/100/18 /
     // fixed 2.0/260/50 per line-render flag, so the original app itself falls back to the
     // fixed line spring; we keep that fixed spring everywhere.
-    // x is a duration in seconds; rev-eng's final reading (B level) is the time gap between
-    // adjacent lines, which is what LyricsPlayerLyrics feeds. Word durations (0.1–0.4 s)
-    // would clamp p to 0 and lose the whole adaptive half (response below 0.48), so they are
-    // explicitly not used as x.
-    const val WORD_RESPONSE_MIN_S = 0.48f
-    const val WORD_RESPONSE_MAX_S = 0.75f
-    const val WORD_ZETA_MAX = 0.90f
-    const val WORD_ZETA_MIN = 0.78f
+    // x = gap between the current line's start and the previous line's end, in seconds.
+    // RE: task-8 A level — the state machine (0x29f20ec) feeds that gap into the adaptive
+    // formula; whether a transition uses it or the fixed 100/18 spring is a per-line flag
+    // (dispatcher 0x29d2198). We instantiate one spring per line from the gap.
+    const val GAP_RESPONSE_MIN_S = 0.48f
+    const val GAP_RESPONSE_MAX_S = 0.75f
+    const val GAP_ZETA_MAX = 0.90f
+    const val GAP_ZETA_MIN = 0.78f
 
     /**
-     * Adaptive spring of the per-word lighting emphasis for an input duration [seconds].
-     * RE: B level — x is the time gap between adjacent lines in seconds (fitting the
-     * 0.2–0.75 s mapping range); the Lead's earlier "word duration" guess would clamp to the
-     * bottom of the range. Only the current word's scale and glow may use this spring; line
-     * changes always use [lineChange].
+     * Adaptive spring for one line's transition, selected by the gap before that line.
+     * RE: A level parameters — p = clamp((gap - 0.2)/0.55, 0, 1), response 0.48 to 0.75 s,
+     * zeta 0.90 to 0.78; longer gaps animate slower with slightly more bounce.
      */
-    fun wordSpring(seconds: Float): SpringTiming {
-        val p = ((seconds - WORD_X_MIN_S) / WORD_X_SPAN_S).coerceIn(0f, 1f)
-        val response = WORD_RESPONSE_MIN_S + (WORD_RESPONSE_MAX_S - WORD_RESPONSE_MIN_S) * p
-        val zeta = WORD_ZETA_MAX - (WORD_ZETA_MAX - WORD_ZETA_MIN) * p
+    fun gapSpring(gapSeconds: Float): SpringTiming {
+        val p = ((gapSeconds - GAP_X_MIN_S) / GAP_X_SPAN_S).coerceIn(0f, 1f)
+        val response = GAP_RESPONSE_MIN_S + (GAP_RESPONSE_MAX_S - GAP_RESPONSE_MIN_S) * p
+        val zeta = GAP_ZETA_MAX - (GAP_ZETA_MAX - GAP_ZETA_MIN) * p
         val omega = TWO_PI / response.toDouble()
         val stiffness = omega * omega
         val damping = 2.0 * zeta.toDouble() * omega
         return SpringTiming(mass = 1.0, stiffness = stiffness, damping = damping)
     }
 
-    private const val WORD_X_MIN_S = 0.2f
-    private const val WORD_X_SPAN_S = 0.55f
+    /** The binary's fallback transition offset (this+0x454 == 0 -> 0.89475907 s). */
+    const val FALLBACK_TRANSITION_OFFSET_S = 0.89475907f
+
+    private const val GAP_X_MIN_S = 0.2f
+    private const val GAP_X_SPAN_S = 0.55f
     private const val TWO_PI = 2.0 * Math.PI
 
     /** Resting scale of every line that is not the current one. RE: A level — Specs +0x40 = 0.98. */
@@ -171,21 +166,6 @@ object LyricsPlayerMotion {
      * (the line-change spring itself is not used for distance, only for the settle).
      */
     const val FLING_PROJECTION_SECONDS = 0.25f
-
-    /**
-     * Transition lane of [lineIndex] when [currentIndex] becomes current: 0 (starts first)
-     * to [MAX_STAGGER_LANE] (starts last). RE: A level model, C level mapping (we use the
-     * line distance instead of the binary's group index `g`).
-     */
-    fun staggerLane(lineIndex: Int, currentIndex: Int): Int =
-        abs(lineIndex - currentIndex).coerceAtMost(MAX_STAGGER_LANE)
-
-    /** Stagger of one line: lane × step, where the settings slider scales the step. */
-    fun staggerDelayMs(
-        lineIndex: Int,
-        currentIndex: Int,
-        staggerMs: Int = DEFAULT_STAGGER_MS,
-    ): Long = staggerLane(lineIndex, currentIndex).toLong() * staggerMs.coerceAtLeast(0).toLong()
 
     /** Duration multiplier of the motion setting; 100 % is Apple's own timing. */
     fun timeScale(motionPercent: Int = DEFAULT_MOTION_PERCENT): Float =
@@ -216,30 +196,6 @@ object LyricsPlayerMotion {
         // The critical/over-damped curve carries a (1 + ωt) factor, so its 1 % point is past
         // the decay constant; the binary only ever needs the nominal duration for those.
         return nominalDurationSeconds(timing)
-    }
-
-    /**
-     * Emphasis of one line, 0 at rest and 1 when the line is fully the current one.
-     *
-     * [elapsedMs] is measured from the moment the current line changed. The line entering
-     * and the line it replaced are staggered by [staggerDelayMs]; every other line is at
-     * rest, so a jump of ten lines does not flash the nine lines in between.
-     */
-    fun lineEmphasis(
-        elapsedMs: Long,
-        lineIndex: Int,
-        currentIndex: Int,
-        previousIndex: Int,
-        staggerMs: Int = DEFAULT_STAGGER_MS,
-        motionPercent: Int = DEFAULT_MOTION_PERCENT,
-    ): Float {
-        val entering = lineIndex == currentIndex
-        val leaving = !entering && lineIndex == previousIndex
-        if (!entering && !leaving) return 0f
-        val delay = staggerDelayMs(lineIndex, currentIndex, staggerMs)
-        val seconds = (elapsedMs - delay).coerceAtLeast(0L) / 1000.0
-        val progress = lineChange.value(seconds / timeScale(motionPercent)).coerceIn(0.0, 1.0)
-        return (if (entering) progress else 1.0 - progress).toFloat()
     }
 
     /**

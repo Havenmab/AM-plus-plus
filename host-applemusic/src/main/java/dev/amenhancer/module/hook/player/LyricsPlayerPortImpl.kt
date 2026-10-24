@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.SystemClock
@@ -59,6 +60,9 @@ internal class LyricsPlayerPortImpl(
     private var lastReportedReason: String? = null
     private var translationLanguageTag: String? = null
     private var reportedTranslationLane: String? = null
+    private var artworkDecodeKey: String? = null
+    private var artworkDecoded: Bitmap? = null
+    private var reportedArtwork: String? = null
 
     /** The lyrics fragment currently on screen; a different fragment drops the cached document. */
     fun attach(fragment: Any?, view: View?) {
@@ -198,7 +202,26 @@ internal class LyricsPlayerPortImpl(
         null
     }
 
-    override fun artwork(): Bitmap? = artworkBitmap?.takeIf { !it.isRecycled }
+    /**
+     * The sharpest cover the host exposes.
+     *
+     * `LyricsBackgroundLayerView#setArtwork` carries whatever bitmap the host paints behind its
+     * own lyrics page — in practice a softened/downsampled backdrop. The media3 metadata item
+     * carries the original `artworkData` bytes, so both are offered and the larger one wins;
+     * the host backdrop stays as the fallback (and for builds whose metadata has no artwork).
+     */
+    override fun artwork(): Bitmap? {
+        val host = artworkBitmap?.takeIf { !it.isRecycled }
+        val original = metadataArtwork()
+        val chosen = when {
+            original == null -> host
+            host == null -> original
+            original.width * original.height > host.width * host.height -> original
+            else -> host
+        }
+        reportArtwork(host, original, chosen)
+        return chosen
+    }
 
     override fun playPause(): Boolean = try {
         val controller = controller() ?: return false
@@ -247,6 +270,42 @@ internal class LyricsPlayerPortImpl(
         )
     } catch (_: Throwable) {
         LyricsPlayerConfig()
+    }
+
+    // ---- artwork -------------------------------------------------------------------------
+
+    /** Decodes `MediaMetadata.artworkData` once per track; never throws. */
+    private fun metadataArtwork(): Bitmap? = try {
+        val controller = controller() ?: return null
+        val metadata = metadata(controller) ?: return null
+        val data = contract.metadataArtworkData.get(metadata) as? ByteArray ?: return null
+        // Below the floor it is a thumbnail/tint; above the ceiling decoding would cost more
+        // memory than the page can use (a single ARGB bitmap of that byte size).
+        if (data.size !in ARTWORK_MIN_BYTES..ARTWORK_MAX_BYTES) return null
+        val key = "${data.size}:${metadataText(contract.metadataTitle, metadata).orEmpty()}"
+        if (artworkDecodeKey != key) {
+            artworkDecodeKey = key
+            artworkDecoded = runCatching { BitmapFactory.decodeByteArray(data, 0, data.size) }.getOrNull()
+        }
+        artworkDecoded?.takeIf { !it.isRecycled }
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** One line per size combination, so a device log proves which source the page received. */
+    private fun reportArtwork(host: Bitmap?, original: Bitmap?, chosen: Bitmap?) {
+        fun size(bitmap: Bitmap?) = bitmap?.let { "${it.width}x${it.height}" } ?: "none"
+        val source = when {
+            chosen == null -> "none"
+            original != null && chosen === original -> "metadata"
+            else -> "host"
+        }
+        val key = "${size(host)}|${size(original)}|$source"
+        if (reportedArtwork == key) return
+        reportedArtwork = key
+        ModernXposedRuntime.log(
+            "lyrics player artwork: host=${size(host)} metadata=${size(original)} chosen=$source",
+        )
     }
 
     // ---- document ------------------------------------------------------------------------
@@ -390,7 +449,11 @@ internal class LyricsPlayerPortImpl(
         }
         for (candidate in listOf(contract.mediaMetadataPrimary, contract.mediaMetadataAlternate)) {
             val value = runCatching { candidate.invoke(controller) }.getOrNull() ?: continue
-            if (metadataText(contract.metadataTitle, value) != null) {
+            // A metadata object proves itself by carrying a title or the cover bytes.
+            val hasArtwork = runCatching {
+                (contract.metadataArtworkData.get(value) as? ByteArray)?.size?.let { it >= ARTWORK_MIN_BYTES }
+            }.getOrNull() == true
+            if (metadataText(contract.metadataTitle, value) != null || hasArtwork) {
                 metadataAccessor = candidate
                 if (!metadataProbeLogged) {
                     metadataProbeLogged = true
@@ -470,6 +533,10 @@ internal class LyricsPlayerPortImpl(
         const val WORD_CAPACITY = 16
         const val DOCUMENT_RETRY_MS = 250L
         const val LATIN_TRANSLITERATION_SUFFIX = "-Latn"
+        /** Smaller payloads are thumbnails/tints, not a cover worth decoding. */
+        const val ARTWORK_MIN_BYTES = 4096
+        /** Larger payloads are not worth the decoded-bitmap memory on a low-RAM device. */
+        const val ARTWORK_MAX_BYTES = 8 * 1024 * 1024
         const val ROW_PROBE_LIMIT = 4
         const val TEXT_PROBE_DEPTH = 4
     }

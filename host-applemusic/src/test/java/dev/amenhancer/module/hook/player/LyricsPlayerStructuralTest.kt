@@ -124,6 +124,19 @@ class LyricsPlayerStructuralTest {
     }
 
     @Test
+    fun `the sharpest available cover is preferred over the host backdrop`() {
+        val port = source("LyricsPlayerPortImpl.kt")
+        val contract = source("LyricsPlayerContract.kt")
+        // media3 MediaMetadata.artworkData is the full-resolution cover; the host layer may be a
+        // downsampled backdrop, so both are offered and the larger one wins.
+        assertTrue(contract.contains("\"metadataArtworkData\""))
+        assertTrue(contract.contains("metadataArtworkData.type == ByteArray::class.java"))
+        assertTrue(port.contains("BitmapFactory.decodeByteArray(data, 0, data.size)"))
+        assertTrue(port.contains("original.width * original.height > host.width * host.height"))
+        assertTrue(port.contains("lyrics player artwork: host="))
+    }
+
+    @Test
     fun `the translation row never shows a transliteration as a translation`() {
         val port = source("LyricsPlayerPortImpl.kt")
         val target = source("AppleMusicLyricPlayerTarget.kt")
@@ -194,7 +207,7 @@ class LyricsPlayerStructuralTest {
         )
         val REQUIRED_FIELDS = listOf(
             "fragmentAdapter", "fragmentBinding", "bindingRecycler",
-            "metadataTitle", "metadataArtist", "metadataBundle",
+            "metadataTitle", "metadataArtist", "metadataBundle", "metadataArtworkData",
         )
     }
 }

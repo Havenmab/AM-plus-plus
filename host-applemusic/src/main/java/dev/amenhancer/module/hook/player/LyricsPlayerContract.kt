@@ -53,7 +53,7 @@ internal class LyricsPlayerContract(
             ),
             fields = setOf(
                 "fragmentAdapter", "fragmentBinding", "bindingRecycler",
-                "metadataTitle", "metadataArtist", "metadataBundle",
+                "metadataTitle", "metadataArtist", "metadataBundle", "metadataArtworkData",
             ),
         ),
     )
@@ -127,6 +127,7 @@ internal class LyricsPlayerContract(
     val metadataTitle: Field = field("metadataTitle")
     val metadataArtist: Field = field("metadataArtist")
     val metadataBundle: Field = field("metadataBundle")
+    val metadataArtworkData: Field = field("metadataArtworkData")
 
     init {
         check(profile.productionEnabled && names.getInt("contractVersion") == 1)
@@ -167,6 +168,9 @@ internal class LyricsPlayerContract(
         check(mediaMetadataPrimary.returnType == mediaMetadata && mediaMetadataAlternate.returnType == mediaMetadata)
         check(metadataTitle.declaringClass == mediaMetadata && metadataArtist.declaringClass == mediaMetadata &&
             metadataBundle.declaringClass == mediaMetadata)
+        // artworkData is the only byte[] on media3's MediaMetadata: the full-resolution cover.
+        check(metadataArtworkData.declaringClass == mediaMetadata &&
+            metadataArtworkData.type == ByteArray::class.java)
         // Artwork is the bitmap the host itself hands to its lyrics background layer.
         check(artworkSet.declaringClass == artworkLayer && artworkDetach.declaringClass == artworkLayer)
         check(artworkSet.parameterTypes.contentEquals(arrayOf(Bitmap::class.java)))

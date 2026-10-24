@@ -9,27 +9,28 @@ import dev.amenhancer.module.lyrics.player.LyricsPlayerMotion
 import dev.amenhancer.module.lyrics.player.LyricsPlayerTimeline
 import dev.amenhancer.module.lyrics.player.PlayerDocument
 import dev.amenhancer.module.lyrics.player.PlayerGeometry
+import dev.amenhancer.module.lyrics.player.PlayerLine
 import dev.amenhancer.module.lyrics.player.PlayerTrackInfo
 import dev.amenhancer.module.lyrics.player.SpringChannel
 
 /**
  * Per-frame state machine between the host port and the composition.
  *
- * The frame loop samples the host once per display frame (the contract asks for exactly
- * that), advances the position clock and the line-change spring, and only writes Compose
- * state when something a composable actually reads has changed. Everything the canvas reads
- * directly is a plain field: the canvas invalidates itself through [tick], so a running
- * spring never triggers recomposition.
+ * RE: task-8 — transitions are **per line**: every line owns one [SpringChannel] and is
+ * eased by the adaptive spring selected by the gap before it (longer gap -> slower, a little
+ * bouncier). There is no global stagger/lane delay: the binary's applyTransitionUpdate return
+ * value is discarded by its caller. Line positions are read from [lineShift] inside
+ * graphicsLayer blocks; only [tick] is Compose state, so a running spring never recomposes.
  */
 internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     val clock = LyricsPlayerClock()
-    private val scroll = SpringChannel(LyricsPlayerMotion.lineChange)
 
-    /** Bumped once per frame; readers in the draw phase only invalidate drawing. */
+    /** One spring per lyric line; created/retargeted only when the document or line changes. */
+    private var lineChannels: Array<SpringChannel> = emptyArray()
+    private var lineValues: FloatArray = FloatArray(0)
+
+    /** Bumped once per frame; readers in draw/layer phases only invalidate drawing. */
     val tick = mutableStateOf(0L)
-
-    /** Per-frame scroll position (line units), read from graphicsLayer blocks only. */
-    val displayedIndexState = mutableStateOf(0f)
 
     /** Observable current/previous line for the per-line composables (rare updates). */
     val currentIndexState = mutableStateOf(0)
@@ -50,7 +51,7 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     var document: PlayerDocument? = null
         private set
 
-    /** Spring-driven scroll position in line units. */
+    /** Animated scroll position (line units) used for hit testing / drag. */
     var displayedIndex: Float = 0f
         private set
     var currentIndex: Int = 0
@@ -58,7 +59,7 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     var previousIndex: Int = 0
         private set
 
-    /** Moment the current line changed, the origin of the stagger/emphasis clock. */
+    /** Moment the current line changed (kept for the tap feedback / future render mapping). */
     var lineChangeNanos: Long = 0L
         private set
 
@@ -71,15 +72,20 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
     private var dragAnchorIndex = 0f
     private var dragOffsetPx = 0f
     private var followBlockedUntilNanos = 0L
+    private var followTargetIndex = -1
     private var lastDocumentIdentity: String? = null
     private var lastTrackIdentity: String? = null
     private var frameCount = 0
     private var missingDocumentFrames = 0
 
+    /** Animated shift of line [index] (line units); falls back to the current position. */
+    fun lineShift(index: Int): Float =
+        if (index >= 0 && index < lineValues.size) lineValues[index] else displayedIndex
+
     fun onFrame(nowNanos: Long) {
         lastFrameNanos = nowNanos
         // Every host read is defensive: a host-side surprise must dim one frame, never kill
-        // the page (spec §1 D7). runCatching is inline and allocates nothing.
+        // the page. runCatching is inline and allocates nothing.
         val playing = runCatching { port.isPlaying() }.getOrDefault(false)
         clock.update(runCatching { port.positionMs() }.getOrNull(), playing, nowNanos)
         if (playingState.value != clock.isPlaying) playingState.value = clock.isPlaying
@@ -97,10 +103,11 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 currentIndex = 0
                 previousIndex = 0
                 displayedIndex = 0f
-                displayedIndexState.value = 0f
+                lineChannels = emptyArray()
+                lineValues = FloatArray(0)
+                followTargetIndex = -1
                 currentIndexState.value = 0
                 previousIndexState.value = 0
-                scroll.snap(0f)
                 lineChangeNanos = nowNanos
                 lineChangeNanosState.value = nowNanos
             }
@@ -114,11 +121,9 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                     .coerceAtLeast(0)
                 currentIndex = index
                 previousIndex = index
-                displayedIndex = index.toFloat()
-                displayedIndexState.value = displayedIndex
+                resetLineAnimations(index)
                 currentIndexState.value = index
                 previousIndexState.value = index
-                scroll.snap(displayedIndex)
                 lineChangeNanos = nowNanos
                 lineChangeNanosState.value = nowNanos
             }
@@ -131,12 +136,22 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
                 previousIndex = currentIndex
                 currentIndex = target
                 lineChangeNanos = nowNanos
-                scroll.timing = LyricsPlayerMotion.lineChange
-                scroll.animateTo(target.toFloat(), nowNanos, config.motionPercent)
+                // Per-line springs are retargeted below; their response/zeta depend on the
+                // gap before each line, not on a global delay.
+                retargetLineAnimations(nowNanos)
+            } else if (followTargetIndex != currentIndex) {
+                // Coming back from a drag: settle onto the current line.
+                retargetLineAnimations(nowNanos)
             }
         }
-        if (!dragging) displayedIndex = scroll.valueAt(nowNanos)
-        displayedIndexState.value = displayedIndex
+        if (!dragging) {
+            for (index in lineValues.indices) {
+                lineValues[index] = lineChannels[index].valueAt(nowNanos)
+            }
+            if (currentIndex in lineValues.indices) {
+                displayedIndex = lineValues[currentIndex]
+            }
+        }
         if (currentIndexState.value != currentIndex) {
             currentIndexState.value = currentIndex
             previousIndexState.value = previousIndex
@@ -150,28 +165,30 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         tick.value = nowNanos
     }
 
-    /** Drag starts: freeze the spring on the current position and follow the finger. */
+    /** Drag starts: freeze every line on the current position and follow the finger. */
     fun beginDrag() {
         dragging = true
         dragAnchorIndex = displayedIndex
         dragOffsetPx = 0f
-        scroll.snap(displayedIndex)
+        for (channel in lineChannels) channel.snap(displayedIndex)
+        for (index in lineValues.indices) lineValues[index] = displayedIndex
+        followTargetIndex = -1
     }
 
     fun dragBy(distancePx: Float, linePitchPx: Float) {
         if (!dragging || linePitchPx <= 0f) return
         dragOffsetPx += distancePx
         displayedIndex = dragAnchorIndex - dragOffsetPx / linePitchPx
+        for (index in lineValues.indices) lineValues[index] = displayedIndex
     }
 
     /**
-     * Drag ends: project the fling onto a line and spring there. Auto-follow stays paused
-     * for [LyricsPlayerMotion.DRAG_RESUME_DELAY_MS] so the view does not fight the finger.
+     * Drag ends: project the fling onto a line and settle there. Auto-follow stays paused for
+     * [LyricsPlayerMotion.DRAG_RESUME_DELAY_MS] so the view does not fight the finger.
      */
     fun endDrag(velocityY: Float, linePitchPx: Float, nowNanos: Long) {
         if (!dragging) return
         dragging = false
-        scroll.snap(displayedIndex)
         val lineCount = document?.lines?.size ?: 0
         val target = LyricsPlayerMotion.releaseTargetIndex(
             displayedIndex = displayedIndex,
@@ -179,19 +196,26 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             linePitchPx = linePitchPx,
             lineCount = lineCount,
         )
-        scroll.timing = LyricsPlayerMotion.springForJump(target - displayedIndex)
-        scroll.animateTo(target.toFloat(), nowNanos, config.motionPercent)
+        for (channel in lineChannels) {
+            channel.snap(displayedIndex)
+            channel.timing = LyricsPlayerMotion.springForJump(target - displayedIndex)
+            channel.animateTo(target.toFloat(), nowNanos, config.motionPercent)
+        }
+        followTargetIndex = -1
         followBlockedUntilNanos = nowNanos + LyricsPlayerMotion.DRAG_RESUME_DELAY_MS * 1_000_000L
     }
 
     fun cancelDrag(nowNanos: Long, linePitchPx: Float) {
         if (!dragging) return
         dragging = false
-        scroll.snap(displayedIndex)
         val lineCount = document?.lines?.size ?: 0
         val target = LyricsPlayerMotion.releaseTargetIndex(displayedIndex, 0f, linePitchPx, lineCount)
-        scroll.timing = LyricsPlayerMotion.lineChange
-        scroll.animateTo(target.toFloat(), nowNanos, config.motionPercent)
+        for (channel in lineChannels) {
+            channel.snap(displayedIndex)
+            channel.timing = LyricsPlayerMotion.lineChange
+            channel.animateTo(target.toFloat(), nowNanos, config.motionPercent)
+        }
+        followTargetIndex = -1
         followBlockedUntilNanos = nowNanos + LyricsPlayerMotion.DRAG_RESUME_DELAY_MS * 1_000_000L
     }
 
@@ -206,10 +230,7 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         if (!seeked) android.util.Log.w(LOG_TAG, "seek to line " + index + " refused by host")
     }
 
-    /**
-     * Extra scale of a tapped line: the press spring pulls it down, the release spring lets
-     * it settle back, so the tap is visible even when the seek lands instantly.
-     */
+    /** Extra scale of a tapped line: the press spring pulls it down, the release lets it settle. */
     fun tapBoost(lineIndex: Int, nowNanos: Long): Float {
         if (lineIndex != tapIndex) return 1f
         val elapsedMs = ((nowNanos - tapStartNanos) / 1_000_000L).coerceAtLeast(0L)
@@ -221,14 +242,45 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         return 1f - TAP_EXTRA_SCALE * progress.coerceIn(0f, 1f)
     }
 
+    // ---- per-line animation ------------------------------------------------------------
+
+    private fun resetLineAnimations(index: Int) {
+        val count = document?.lines?.size ?: 0
+        val channels = Array(count) { SpringChannel(LyricsPlayerMotion.lineChange) }
+        for (channel in channels) channel.snap(index.toFloat())
+        lineChannels = channels
+        lineValues = FloatArray(count) { index.toFloat() }
+        displayedIndex = index.toFloat()
+        followTargetIndex = index
+    }
+
+    private fun retargetLineAnimations(nowNanos: Long) {
+        val lines = document?.lines.orEmpty()
+        if (lineChannels.size != lines.size) return
+        for (index in lineChannels.indices) {
+            val channel = lineChannels[index]
+            // RE: the transition spring is selected by the gap before that line, so every
+            // line eases with its own response/zeta (no global stagger delay).
+            channel.timing = LyricsPlayerMotion.gapSpring(gapSeconds(lines, index))
+            channel.animateTo(currentIndex.toFloat(), nowNanos, config.motionPercent)
+        }
+        followTargetIndex = currentIndex
+    }
+
+    private fun gapSeconds(lines: List<PlayerLine>, index: Int): Float {
+        if (index <= 0 || index >= lines.size) return 0f
+        val gapMs = lines[index].startMs - lines[index - 1].endMs
+        return gapMs.coerceAtLeast(0L) / 1000f
+    }
+
     private fun pollHostMetadata() {
         val preferences = runCatching { port.preferences() }.getOrDefault(LyricsPlayerConfig())
         if (preferences != configState.value) {
             configState.value = preferences
             config = preferences
         }
-        // Geometry is a hint from the host lyric window; it only changes on rotation/relayout,
-        // and structural equality keeps an unchanged hint from invalidating the layout.
+        // Geometry is a hint from the host lyric window; structural equality keeps an
+        // unchanged hint from invalidating the layout.
         geometryState.value = runCatching { port.geometry() }.getOrNull()
         val track = runCatching { port.track() }.getOrNull()
         if (track?.identity != lastTrackIdentity) {
@@ -237,8 +289,6 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
             durationMsState.value = track?.durationMs ?: 0L
             artworkState.value = null
         }
-        // The host hands the cover to its own background layer after the metadata is ready, so
-        // keep retrying while we have none: one decode per poll, never per frame (spec §5.1).
         if (artworkState.value == null && track != null) {
             artworkState.value = runCatching { port.artwork() }.getOrNull()?.asImageBitmap()
         }
@@ -253,7 +303,7 @@ internal class LyricsPlayerRuntime(private val port: LyricsPlayerPort) {
         private const val TAP_PRESS_MS = 180L
 
         /** Extra scale of a tapped line: it dips to the A-level pressed scale (Specs +0x5c = 0.95). */
-        private val TAP_EXTRA_SCALE = 1f - dev.amenhancer.module.lyrics.player.LyricsPlayerMotion.PRESSED_SCALE
+        private val TAP_EXTRA_SCALE = 1f - LyricsPlayerMotion.PRESSED_SCALE
         private const val LOG_TAG = "lyrics player"
     }
 }

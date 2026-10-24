@@ -21,9 +21,10 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
     private val symbols: TargetSymbolResolver,
     private val foregroundTextField: String = "U",
     private val terminalGradient: AppleMusicCjkTerminalGradientTarget? = null,
+    private val maxSpanGlowCharacters: Int = 1,
 ) : CjkKaraokeAnimationTarget {
     private val a0Depth: ThreadLocal<Int> = ThreadLocal.withInitial { 0 }
-    private val a0SingleWordStack: ThreadLocal<MutableList<CjkEntryState?>> =
+    private val a0EntryStack: ThreadLocal<MutableList<CjkEntryState?>> =
         ThreadLocal.withInitial { mutableListOf() }
     private val fieldCache = Collections.synchronizedMap(
         WeakHashMap<Class<*>, kotlin.collections.Map<String, Field>>(),
@@ -127,7 +128,8 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
             )
         }
 
-        val glowMessage = "Installed exact single-unmerged-CJK glow end cleanup: ${a0.toGenericString()}"
+        val glowMessage = "Installed unmerged-CJK glow end cleanup " +
+            "(max span characters=${maxSpanGlowCharacters.coerceIn(1, 3)}): ${a0.toGenericString()}"
         val terminalResult = terminalGradient?.install()
         return when (terminalResult) {
             is TargetCapabilityInstall.Degraded -> TargetCapabilityInstall.Degraded(
@@ -189,7 +191,7 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val animator = param.thisObject as? ValueAnimator ?: return
                     val listener = param.args.getOrNull(0) ?: return
-                    if (!isSingleWordScope()) return
+                    if (!isEligibleWordScope() || a0Stack().lastOrNull()?.singleWord != true) return
                     if (listener.javaClass.name != "${a0.declaringClass.name}\$f") return
                     runCatching {
                         val duration = animator.duration
@@ -355,7 +357,7 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
     private fun rewriteCjkClassifierResult(param: ModernMethodHook.MethodHookParam) {
         val text = param.args.getOrNull(0) as? CharSequence ?: return
         val languageSet = param.args.getOrNull(1) as? Set<*> ?: return
-        if (isSingleWordScope()) {
+        if (isEligibleWordScope()) {
             rewriteCjkAnimationResult(param, text, languageSet)
         }
     }
@@ -418,7 +420,7 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
         if (!hooksReady) return
         runCatching {
             a0Depth.set((a0Depth.get() ?: 0) + 1)
-            val candidate = readSingleWordGateEntry(param)
+            val candidate = readGlowGateEntry(param)
             a0Stack().add(candidate)
         }
             .onFailure { error -> ModernXposedRuntime.log("CJK karaoke a0 depth enter failed open", error) }
@@ -426,7 +428,7 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
 
     /**
      * Commit a baseline only after the host has added a new special-path
-     * Animator to the entry.  A single-word candidate can still be rejected by
+     * Animator to the entry.  An eligible candidate can still be rejected by
      * Apple's duration/length gates, in which case its recycled View must not
      * remain globally classified as a CJK glow target.
      */
@@ -460,23 +462,23 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
             }
             val stack = a0Stack()
             if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)
-            if (stack.isEmpty()) a0SingleWordStack.remove()
+            if (stack.isEmpty()) a0EntryStack.remove()
         }.onFailure { error -> ModernXposedRuntime.log("CJK karaoke a0 depth cleanup failed open", error) }
     }
 
-    private fun isSingleWordScope(): Boolean = runCatching {
+    private fun isEligibleWordScope(): Boolean = runCatching {
         hooksReady && (a0Depth.get() ?: 0) > 0 && a0Stack().lastOrNull() != null
     }
         .getOrElse { error ->
-            ModernXposedRuntime.log("CJK karaoke single-word gate read failed open", error)
+            ModernXposedRuntime.log("CJK karaoke glow gate read failed open", error)
             false
         }
 
     private fun a0Stack(): MutableList<CjkEntryState?> =
-        a0SingleWordStack.get() ?: mutableListOf<CjkEntryState?>().also(a0SingleWordStack::set)
+        a0EntryStack.get() ?: mutableListOf<CjkEntryState?>().also(a0EntryStack::set)
 
-    /** Reads only the host's grouping metadata; Apple retains all trigger gates. */
-    private fun readSingleWordGateEntry(param: ModernMethodHook.MethodHookParam): CjkEntryState? =
+    /** Reads grouping metadata without changing Apple's native timings or lengths. */
+    private fun readGlowGateEntry(param: ModernMethodHook.MethodHookParam): CjkEntryState? =
         runCatching {
             val holder = param.args.getOrNull(0) ?: return@runCatching null
             val wordId = (param.args.getOrNull(2) as? Number)?.toInt()
@@ -514,14 +516,16 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
                 },
                 isBackground = background,
             )
-            if (!isSingleUnmergedCjkWord(timing)) return@runCatching null
+            val singleWord = isSingleUnmergedCjkWord(timing)
+            if (!singleWord && !isUnmergedCjkSpan(timing, maxSpanGlowCharacters)) return@runCatching null
             CjkEntryState(
                 entry = entry,
                 views = foregroundEntryViews(entry),
                 specialAnimatorsBefore = specialAnimatorSnapshot(entry),
+                singleWord = singleWord,
             )
         }.getOrElse { error ->
-            ModernXposedRuntime.log("CJK single-word gate failed closed: ${error.cjkShortMessage()}")
+            ModernXposedRuntime.log("CJK glow gate failed closed: ${error.cjkShortMessage()}")
             null
         }
 
@@ -570,6 +574,7 @@ internal class AppleMusicCjkKaraokeAnimationTarget(
         val entry: Any,
         val views: List<Any>,
         val specialAnimatorsBefore: List<Any>,
+        val singleWord: Boolean,
     )
 
     private data class CjkGlowBaseline(

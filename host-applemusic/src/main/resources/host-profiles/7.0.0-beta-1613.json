@@ -2729,7 +2729,7 @@
     }
   },
   "knownDegradations": [],
-  "profileRevision": 6,
+  "profileRevision": 7,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -2878,6 +2878,7 @@
   "legacyFirstMatchExceptions": [],
   "cjk": {
     "foregroundTextField": "X",
+    "maxSpanGlowCharacters": 3,
     "bindingOwners": [
       "q8.H9",
       "q8.F9",

@@ -323,7 +323,9 @@ private fun measureDocument(
 ): List<MeasuredRow> {
     val lines = document?.lines ?: return emptyList()
     if (lines.isEmpty()) return emptyList()
-    val constraints = Constraints(maxWidth = columns.lyricsWidthPx.roundToInt().coerceAtLeast(1))
+    // RE: line width = column width * 0.95 (subsidiary rows 0.80 / 0.7); the reference's
+    // long lines therefore wrap before the column edge.
+    val constraints = Constraints(maxWidth = columns.lineWidthPx.roundToInt().coerceAtLeast(1))
     val rows = ArrayList<MeasuredRow>(lines.size)
     for (line in lines) {
         val current = textMeasurer.measure(

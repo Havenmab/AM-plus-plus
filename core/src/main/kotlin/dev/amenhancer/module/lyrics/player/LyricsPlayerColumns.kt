@@ -79,6 +79,13 @@ class LyricsPlayerColumns(
     val lyricsRightPx: Float
     val lyricsWidthPx: Float get() = lyricsRightPx - lyricsLeftPx
 
+    /**
+     * Width available to one lyric line. RE: task-8 §8 — the line width is the column width
+     * times the per-line ratio 0.95 (subsidiary rows use 0.80 and then divide by spec+0x4c
+     * 0.7). This is what makes long reference lines wrap at ~87.7 % of the screen.
+     */
+    val lineWidthPx: Float get() = lyricsWidthPx * LINE_WIDTH_RATIO
+
     val lyricsTopPx: Float
     val lyricsBottomPx: Float
     val lyricsHeightPx: Float get() = lyricsBottomPx - lyricsTopPx
@@ -294,6 +301,10 @@ class LyricsPlayerColumns(
         const val LYRICS_LEFT_FRACTION = 1565f / 3200f
         const val LYRICS_RIGHT_FRACTION = 0.95f
         const val ANCHOR_FRACTION = 780f / 2136f
+
+        /** RE: Specs +0x440 = 0.95 (main line width ratio), +0x444 = 0.80 (subsidiary). */
+        const val LINE_WIDTH_RATIO = 0.95f
+        const val SUBSIDIARY_LINE_WIDTH_RATIO = 0.80f
 
         /**
          * RE: current line em is about 100 px on a 2136 px short side (FreeType comparison

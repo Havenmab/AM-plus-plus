@@ -32,6 +32,8 @@ class LyricsPlayerColumnsTest {
         assertEquals(780f, tablet.anchorYPx, 1f)
         // Main pitch 284.6 px.
         assertEquals(284.6f, tablet.linePitchPx, 1f)
+        // RE: line width = column width * 0.95 (Specs +0x440).
+        assertEquals(tablet.lyricsWidthPx * 0.95f, tablet.lineWidthPx, 0.5f)
         // Translation centre 116.5 px below the main line centre.
         assertEquals(116.5f, tablet.translationCenterOffsetPx, 1f)
     }

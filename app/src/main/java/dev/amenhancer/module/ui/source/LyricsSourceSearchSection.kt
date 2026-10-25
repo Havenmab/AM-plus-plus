@@ -63,6 +63,8 @@ internal class LyricsSourceSearchSection(
     private val statusContainer: LinearLayout
     private val resultsContainer: LinearLayout
     private var syncingInputs = false
+    private var lastRenderedSearchState: LyricsSourceSearchState? = null
+    private var lastRenderedPreviewState: LyricsSourcePreviewState? = null
 
     val root: LinearLayout
 
@@ -241,6 +243,17 @@ internal class LyricsSourceSearchSection(
     }
 
     private fun renderResults() {
+        // Only a new search result or a preview change can alter this list; an
+        // unrelated render (a lane switch, a failed write) leaves it untouched so
+        // the list keeps its scroll position.
+        if (lastRenderedSearchState === controller.searchState &&
+            lastRenderedPreviewState === controller.previewState &&
+            resultsContainer.childCount > 0
+        ) {
+            return
+        }
+        lastRenderedSearchState = controller.searchState
+        lastRenderedPreviewState = controller.previewState
         resultsContainer.removeAllViews()
         val options = (controller.searchState as? LyricsSourceSearchState.Loaded)?.options.orEmpty()
         if (options.isEmpty()) return

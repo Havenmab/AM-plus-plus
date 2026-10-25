@@ -18,6 +18,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
 import dev.amenhancer.module.ui.EmbeddedG3Drawable
 import dev.amenhancer.module.ui.EmbeddedPanelShadow
 import dev.amenhancer.module.ui.EmbeddedSettingsHost
@@ -72,6 +74,14 @@ internal class LyricsSourceSheetDialog(
     private val bottomDivider: View
     private var revealStop: (() -> Unit)? = null
     private var disposed = false
+    private var songCardRendered = false
+    private var lastSongSnapshot: LyricsSourceSnapshot? = null
+    private var lastSongPhase: LyricsSourceSheetPhase? = null
+    private var lastSongFailure: String? = null
+    private var laneCardsRendered = false
+    private var lastLaneSnapshot: LyricsSourceSnapshot? = null
+    private var lastLaneBusy: LyricsSourceBusy? = null
+    private var lastExpandedLane: LyricLane? = null
 
     private val stage = object : FrameLayout(activity) {
         private val shadowBounds = RectF()
@@ -299,10 +309,46 @@ internal class LyricsSourceSheetDialog(
 
     override fun render() {
         if (disposed) return
-        host.renderLyricsSourceSongCard(activity, songSection, controller)
-        host.renderLyricsSourceLaneCards(activity, laneSection, controller)
+        // Cards are rebuilt only when something they show actually changed: a
+        // search that completes or a preview that expands must not throw away
+        // and re-create the lane cards (which would also reset their press
+        // state and the scroll position inside a long candidate list).
+        if (songCardChanged()) {
+            host.renderLyricsSourceSongCard(activity, songSection, controller)
+        }
+        if (laneCardsChanged()) {
+            host.renderLyricsSourceLaneCards(activity, laneSection, controller)
+        }
         searchSection.render()
         renderFooter()
+    }
+
+    private fun songCardChanged(): Boolean {
+        val snapshot = controller.snapshot
+        val phase = controller.phase
+        val failure = controller.failureMessage
+        if (songCardRendered && lastSongSnapshot === snapshot && lastSongPhase == phase && lastSongFailure == failure) {
+            return false
+        }
+        songCardRendered = true
+        lastSongSnapshot = snapshot
+        lastSongPhase = phase
+        lastSongFailure = failure
+        return true
+    }
+
+    private fun laneCardsChanged(): Boolean {
+        val snapshot = controller.snapshot
+        val busy = controller.busy
+        val expanded = controller.expandedLane
+        if (laneCardsRendered && lastLaneSnapshot === snapshot && lastLaneBusy === busy && lastExpandedLane == expanded) {
+            return false
+        }
+        laneCardsRendered = true
+        lastLaneSnapshot = snapshot
+        lastLaneBusy = busy
+        lastExpandedLane = expanded
+        return true
     }
 
     private fun renderFooter() {

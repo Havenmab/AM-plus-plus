@@ -62,7 +62,7 @@ internal sealed interface LyricsSourcePreviewState {
 internal object LyricsSourceSearchPolicy {
 
     /** How long the sheet waits after the last keystroke before searching. */
-    const val DEBOUNCE_MS = 400L
+    const val DEBOUNCE_MS = 350L
 
     /** How many preview lines the sheet shows (spec 3.3). */
     const val PREVIEW_LINES = 3

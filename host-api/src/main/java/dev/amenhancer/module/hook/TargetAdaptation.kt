@@ -51,6 +51,14 @@ data class TargetAdaptation(
     val startupPagePrewarm: StartupPagePrewarmTarget = StartupPagePrewarmTarget {
         TargetCapabilityInstall.Unsupported("Startup page prewarming has no exact host contract")
     },
+    /**
+     * The 「歌词源…」 entry inside Apple Music's own lyrics "more" popup plus the
+     * controller behind the sheet. Independent of every other lyrics capability:
+     * a missing menu contract only degrades this entry, never the native rows.
+     */
+    val lyricsSource: LyricsSourceTarget = LyricsSourceTarget {
+        TargetCapabilityInstall.Unsupported("Lyrics source sheet has no exact host contract")
+    },
 ) {
 }
 

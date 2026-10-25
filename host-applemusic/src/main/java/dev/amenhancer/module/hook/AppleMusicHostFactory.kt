@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.app.Application
 import android.view.View
 import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.hook.lyricsource.createLyricsSourceTarget
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
@@ -147,6 +148,35 @@ object AppleMusicHostFactory {
                 autoLyricsRuntime = autoLyricsRuntime,
                 timingObservations = timingObservations,
                 nativeLyricDelivery = nativeLyricsTarget,
+            ),
+            // Lyrics-source sheet: the 「歌词源…」 row inside Apple Music's own lyrics "more"
+            // popup. Assembled by the feature's own wiring helper so the selection store,
+            // the provider transport and the refresh seams stay inside that package.
+            lyricsSource = createLyricsSourceTarget(
+                application = application,
+                classLoader = classLoader,
+                profile = profile,
+                config = config,
+                currentSong = currentSong,
+                overlay = nativeLyricOverlay,
+                timing = timingObservations,
+                runtime = autoLyricsRuntime,
+                nativeLyrics = { nativeLyricsTarget },
+                nativeResolver = nativeLyricResolver,
+                // This release adds no settings key: the sheet is a per-song action, not a
+                // mode. The target reports Unsupported when the popup seam is absent and
+                // withholds its row while the app-side sheet lambda is unregistered.
+                enabled = { true },
+                onFailure = { message ->
+                    config.reportHealth(
+                        dev.amenhancer.module.model.FeatureHealth(
+                            dev.amenhancer.module.ModuleConstants.FEATURE_LYRICS_SOURCE_SHEET,
+                            dev.amenhancer.module.model.FeatureState.DEGRADED,
+                            message,
+                            build.displayName,
+                        ),
+                    )
+                },
             ),
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,

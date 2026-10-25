@@ -1795,7 +1795,29 @@
         "resolutionPolicy": "exact-required"
       }
     ],
-    "LYRICS_SOURCE_MENU_CLICK_LISTENER": [],
+    "LYRICS_SOURCE_MENU_CLICK_LISTENER": [
+      {
+        "parameterTypeNames": [
+          "android.view.View"
+        ],
+        "isStatic": false,
+        "includeSynthetic": false,
+        "requiredInvokedMethodNames": [],
+        "parameterCount": 1,
+        "returnTypeName": "void",
+        "allowFirstMatch": false,
+        "methodName": "onClick",
+        "requiredInvokedMethodDescriptors": [],
+        "className": "com.apple.android.music.player.fragment.d0",
+        "runtimeMemberNames": {
+          "LYRICS_SOURCE_MENU_FRAGMENT_CLASS": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+          "LYRICS_SOURCE_MENU_FRAGMENT_FIELD": "a"
+        },
+        "requiredCallerMethodNames": [],
+        "contractId": "LYRICS_SOURCE_MENU_CLICK_LISTENER",
+        "resolutionPolicy": "exact-required"
+      }
+    ],
     "LYRICS_GRADIENT_MASK_UPDATE": [],
     "LOCAL_MEDIA_PLAYER_METADATA_UPDATED": [
       {
@@ -2883,6 +2905,9 @@
       "Lcom/apple/android/music/ttml/j;": [
         "a(I)Lcom/apple/android/music/ttml/javanative/model/LyricsLine$LyricsLinePtr;",
         "b()I"
+      ],
+      "Lcom/apple/android/music/player/fragment/d0;": [
+        "onClick(Landroid/view/View;)V"
       ]
     },
     "fields": {
@@ -2936,6 +2961,9 @@
       "Lja/h0;": [
         "s",
         "k"
+      ],
+      "Lcom/apple/android/music/player/fragment/d0;": [
+        "a"
       ]
     },
     "aliases": {},
@@ -3056,6 +3084,9 @@
         "d": "Z",
         "e": "Z",
         "f": "Z"
+      },
+      "Lcom/apple/android/music/player/fragment/d0;": {
+        "a": "Lcom/apple/android/music/player/fragment/PlayerLyricsViewFragment;"
       }
     }
   },

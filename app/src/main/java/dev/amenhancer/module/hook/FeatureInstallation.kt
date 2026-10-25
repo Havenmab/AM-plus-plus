@@ -285,6 +285,9 @@ private fun productionFeatureInstallationModule(
             FeatureInstallationPlan(feature = TitleCorrectionFeature()),
             FeatureInstallationPlan(feature = NativeLyricsFeature()),
             FeatureInstallationPlan(feature = CustomLyricsFeature()),
+            // The lyrics-source sheet writes into the same custom-lyrics index that
+            // CustomLyricsFeature owns, so it is planned directly after it.
+            FeatureInstallationPlan(feature = LyricsSourceFeature()),
             // The actual resource hook is installed during the Application
             // before-hook; this plan records its final health alongside the
             // regular post-Application features.

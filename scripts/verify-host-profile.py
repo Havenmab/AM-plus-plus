@@ -150,6 +150,37 @@ def verify_fragment_contracts(document, classes, failures):
     sections = {name: document.get(name) for name in (
         'fragmentDualPane', 'fragmentLyricsRuntime', 'fragmentKaraokeWidth', 'fragmentTabletVideoHandoff')}
     sections['fragmentChrome.members'] = (document.get('fragmentChrome') or {}).get('members')
+    settings = document.get('settings') or {}
+    presentation = document.get('metadataPresentation')
+    if presentation is not None:
+        required = {'methods': {'createState', 'readState', 'writeState', 'entityType', 'lockup', 'roomPrepare', 'pagedRow', 'pagedRebuild'},
+                    'fields': {'searchSongRow', 'searchGridRow'}}
+        if not isinstance(presentation, dict) or presentation.get('contractVersion') != 1:
+            failures.append('metadataPresentation: missing versioned contract')
+        else:
+            for group, roles in required.items():
+                entries = presentation.get(group, {})
+                if not isinstance(entries, dict):
+                    failures.append(f'metadataPresentation.{group}: invalid inventory')
+                    continue
+                for role in sorted(roles - entries.keys()):
+                    failures.append(f'metadataPresentation.{group}.{role}: missing required role')
+            sections['metadataPresentation'] = presentation
+    settings_members = settings.get('members')
+    if settings_members is not None:
+        if not isinstance(settings_members, dict) or settings_members.get('contractVersion') != 1:
+            failures.append('settings.members: missing versioned contract')
+        else:
+            methods = settings_members.get('methods', {})
+            for role, owner_key, name_key, returns in (
+                    ('preferenceItems', 'viewModelClass', 'preferenceItemsMethod', 'java.util.List'),
+                    ('compose', 'fragmentClass', 'composeMethod', 'void')):
+                contract = methods.get(role, {})
+                if (contract.get('owner') != settings.get(owner_key) or
+                        contract.get('name') != settings.get(name_key) or
+                        contract.get('returns') != returns or contract.get('static') is not False):
+                    failures.append(f'settings.members.methods.{role}: invalid required role')
+            sections['settings.members'] = settings_members
     # Optional independent renderer correction. Missing roles cannot silently pass as an empty inventory.
     wrap = document.get('lyricWrapSweep')
     if wrap is not None:
@@ -170,6 +201,29 @@ def verify_fragment_contracts(document, classes, failures):
                 for role in sorted(roles - wrap.get(group, {}).keys()):
                     failures.append(f'lyricWrapSweep.{group}.{role}: missing required role')
             sections['lyricWrapSweep'] = wrap
+    # Independent native active-row retention; an absent section leaves the capability unsupported.
+    background = document.get('lyricBackgroundHighlight')
+    if background is not None:
+        if not isinstance(background, dict) or background.get('contractVersion') != 4:
+            failures.append('lyricBackgroundHighlight: missing versioned contract')
+        else:
+            required = {
+                'methods': {'commit', 'lineSubset', 'notifyRow', 'mapPosition', 'focus', 'payloadKind', 'document', 'detach',
+                            'lineCount', 'lineAt', 'lineGet', 'lineId', 'backgroundWords',
+                            'pronunciationBackgroundWords', 'vectorSize', 'vectorGet', 'wordGet',
+                            'timingBegin', 'timingEnd', 'mediaBrowser', 'mediaPosition', 'seek',
+                            'pause', 'pauseRequested', 'resume', 'destroyView'},
+                'fields': {'reader', 'currentLines', 'previousLines', 'wordHighlightIds', 'backgroundHighlightIds',
+                           'adapterCallback', 'callbackFragment', 'focusStart', 'focusEnd'},
+            }
+            for group, roles in required.items():
+                entries = background.get(group, {})
+                if not isinstance(entries, dict):
+                    failures.append(f'lyricBackgroundHighlight.{group}: invalid inventory')
+                    continue
+                for role in sorted(roles - entries.keys()):
+                    failures.append(f'lyricBackgroundHighlight.{group}.{role}: missing required role')
+            sections['lyricBackgroundHighlight'] = background
     # Optional navigation startup prewarm. A declared capability needs its exact contract.
     prewarm = document.get('startupPagePrewarm')
     capability = (document.get('capabilities') or {}).get('startupPagePrewarm') is True
@@ -214,7 +268,8 @@ def verify_fragment_contracts(document, classes, failures):
             failures.append(f'fragmentDualPane.layoutReview.{role}: missing comparison evidence')
     checks = 0
     for section, data in sections.items():
-        if not isinstance(data, dict) or not data.get('methods') or not data.get('fields'):
+        if (not isinstance(data, dict) or not data.get('methods') or
+                (section != 'settings.members' and not data.get('fields'))):
             failures.append(f'{section}: missing complete member inventory')
             continue
         for group in ('methods', 'fields', 'constructors'):

@@ -41,7 +41,7 @@ class TargetConfigClient private constructor(
         active = this
     }
     /** Ordinary feature settings only; never opens the potentially large lyrics index. */
-    fun settings(): ModuleSettings = ModuleSettingsSchema.decode(valuesProvider())
+    fun settings(): ModuleSettings = ModuleSettingsSchema.decodeOrdinarySettings(valuesProvider())
 
     /**
      * Cheap single-key read of the one-shot 「清空检索库」 signal.  The metadata

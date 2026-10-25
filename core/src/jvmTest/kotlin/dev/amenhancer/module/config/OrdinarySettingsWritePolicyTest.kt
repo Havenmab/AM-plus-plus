@@ -115,6 +115,7 @@ class OrdinarySettingsWritePolicyTest {
                 "phone_liquid_glass_mini_sink_bounce_dp" to 4,
                 "future_blur_enabled" to false,
                 "cjk_karaoke_animation_enabled" to true,
+                "lyric_effects_optimization_enabled" to false,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,

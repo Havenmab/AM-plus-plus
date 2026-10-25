@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
+import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.host.OwnedHostProperty
 import java.util.IdentityHashMap
 
@@ -15,9 +16,10 @@ internal class FragmentPhoneChromeBinding(
     private val contract: FragmentChromeContract,
 ) : FragmentPhoneChromePort {
     private val names = contract.names.getJSONObject("phone")
+    private val offsetCollapsedPeekUpdates = names.getJSONObject("behavior").optString("collapsedPeekMode") == "offset"
     private val resources = names.getJSONObject("resources")
     private val ids = ChromeResource.entries.associateWith { role -> resources.optJSONObject(role.name)?.let {
-        activity.resources.getIdentifier(it.getString("name"), it.getString("type"), activity.packageName)
+        activity.resources.getIdentifier(it.getString("name"), it.getString("type"), ModuleConstants.TARGET_PACKAGE)
     } ?: 0 }
     private val views = HashMap<ChromeResource, View?>()
     private val types = names.getJSONObject("views")
@@ -35,9 +37,9 @@ internal class FragmentPhoneChromeBinding(
     private val menu = contract.navigationMenu
     private val selected = contract.navigationSelected
     private val select = contract.navigationSelect
-    private val drawerId = activity.resources.getIdentifier(names.getString("drawerQualifier"), "bool", activity.packageName)
+    private val drawerId = activity.resources.getIdentifier(names.getString("drawerQualifier"), "bool", ModuleConstants.TARGET_PACKAGE)
     private val blurViews = listOf("bottomNavigationBlur", "miniBlur").mapNotNull { role ->
-        activity.resources.getIdentifier(contract.resources.getString(role), "id", activity.packageName)
+        activity.resources.getIdentifier(contract.resources.getString(role), "id", ModuleConstants.TARGET_PACKAGE)
             .takeIf { it != 0 }?.let { contentRoot.findViewById<View>(it) }
     }
     private var callbacks: FragmentPhoneGlassCallbacks? = null
@@ -57,7 +59,7 @@ internal class FragmentPhoneChromeBinding(
     private var collapseSheet: View? = null
     private var collapseTarget = 0
     private fun extra(role: String): View? = names.getJSONObject("presentation").optString(role).takeIf { it.isNotEmpty() }
-        ?.let { activity.resources.getIdentifier(it, "id", activity.packageName) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
+        ?.let { activity.resources.getIdentifier(it, "id", ModuleConstants.TARGET_PACKAGE) }?.takeIf { it != 0 }?.let { contentRoot.findViewById(it) }
 
     override val pageFamily = HostPageFamily.FRAGMENT_VIEW
     override val supportsScrollCollapse: Boolean
@@ -75,13 +77,49 @@ internal class FragmentPhoneChromeBinding(
     }
     override fun dimension(role: ChromeResource): Int = resourceId(role).takeIf { it != 0 }
         ?.let(activity.resources::getDimensionPixelSize) ?: 0
+    override fun drawContentBackdrop(source: View, canvas: android.graphics.Canvas): Boolean {
+        if (closed || android.os.Build.VERSION.SDK_INT < 29 || !canvas.isHardwareAccelerated) return false
+        val field = contract.contentBackdropNode ?: return false
+        val target = source.parent as? ViewGroup ?: return false
+        // The host records this sole child during its normal draw, before RenderThread
+        // consumes either reference. Reuse the live node without owning or discarding it.
+        if (!source.isShown || target.javaClass != field.declaringClass || target.childCount != 1 || target.getChildAt(0) !== source ||
+            source.left != 0 || source.top != 0 || !source.matrix.isIdentity || source.alpha != 1f || source.z != 0f ||
+            target.width != source.width || target.height != source.height || target.alpha != 1f ||
+            target.scrollX != 0 || target.scrollY != 0 || target.paddingLeft != 0 || target.paddingTop != 0 ||
+            target.paddingRight != 0 || target.paddingBottom != 0) return false
+        val node = field.get(target) as? android.graphics.RenderNode ?: return false
+        if (!node.hasDisplayList() || node.width != source.width || node.height != source.height) return false
+        canvas.drawRenderNode(node)
+        return true
+    }
     override fun invalidateViews() { views.clear() }
     override fun playerBehavior(preferPlayerRuntime: Boolean): Any? = contract.playerOf.invoke(owner)?.let(contract.playerBehavior::get)
     override fun sheetSnapshot(owner: Any) = NativeSheetSnapshot(contract.behaviorState.getInt(owner), collapsed.getInt(owner), (expanded.invoke(owner) as Number).toInt())
     override fun nativePeekBaseline(owner: Any): Int = if (autoPeek.getBoolean(owner)) -1 else peek.getInt(owner)
     override fun writePeek(owner: Any, height: Int) {
+        if (offsetCollapsedPeek(owner, height)) return
         peekWrites++
         try { writePeek.invoke(owner, height, false) } finally { peekWrites-- }
+    }
+    private fun offsetCollapsedPeek(owner: Any, height: Int): Boolean {
+        // Opt-in requires a profiled setter that only updates peek/offset and requests
+        // layout in the collapsed state. Gestures, native settling and restoration
+        // continue through that setter; never translate a moving native sheet.
+        if (!offsetCollapsedPeekUpdates || closed || callbacks?.replacing != true || height < 0 ||
+            autoPeek.getBoolean(owner) || contract.behaviorState.getInt(owner) != 4 ||
+            owner !== playerBehavior(false)) return false
+        val sheet = find(ChromeResource.PLAYER_SHEET_CONTAINER) ?: return false
+        val parent = sheet.parent as? View ?: return false
+        if (!sheet.isAttachedToWindow || !sheet.isLaidOut || sheet.isLayoutRequested || parent.isLayoutRequested ||
+            kotlin.math.abs(sheet.top - collapsed.getInt(owner)) > 1) return false
+        if (peek.getInt(owner) == height) return true
+        peek.setInt(owner, height)
+        contract.refreshCollapsedOffset.invoke(owner)
+        val target = collapsed.getInt(owner)
+        if (target in 0..parent.height) sheet.offsetTopAndBottom(target - sheet.top)
+        else sheet.requestLayout()
+        return true
     }
     fun prepareSheetSettle(owner: Any, sheet: View, targetState: Int) {
         if (closed || sheet !== find(ChromeResource.PLAYER_SHEET_CONTAINER) || owner !== playerBehavior(false)) return

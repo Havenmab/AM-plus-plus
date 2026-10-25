@@ -41,7 +41,7 @@ object ModuleConstants {
      * fallback: enabled + OpenAI-compatible base URL / API key / model / thinking
      * toggle) and 17 (`dual_pane_hide_status_bar`, so hiding the status bar in the
      * dual-pane player is optional).  Both sides are additive and defaulted, so
-     * the merged tree publishes the single combined version 24: every key is a
+     * the merged tree published the single combined version 24: every key is a
      * new defaulted key, and the only migration is the existing region/lyrics one
      * which re-encodes decoded values and therefore never rewrites a stored
      * setting.  A store written by either line (17 or 23) upgrades to 24 with its
@@ -51,8 +51,19 @@ object ModuleConstants {
      * `lyrics_line_spacing_scale_percent`).  Both are new defaulted keys: 100 keeps
      * Apple Music's own font size and line spacing, so an upgrading store renders
      * exactly what it rendered before and no migration step is needed.
+     *
+     * 28 is the 1.6.7 / AM 1613 integration.  Upstream numbered its own addition
+     * 18 (`lyric_effects_optimization_enabled`, the opt-in lyric effects
+     * optimisation); this fork's line had already reached 25, and the sibling
+     * release line carrying the embedded-player work had reached 27, so the
+     * merged tree publishes max(18, 25, 27) + 1 = 28 and every one of those
+     * stores upgrades forward with its values intact.  Like the earlier merges
+     * every new key is additive and defaulted (the lyric effects optimisation
+     * stays off), and no key is renamed, so 28 needs no migration step of its
+     * own; the region/lyrics migration above still re-encodes decoded values and
+     * therefore never rewrites a stored setting.
      */
-    const val CONFIG_SCHEMA_VERSION = 25
+    const val CONFIG_SCHEMA_VERSION = 28
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"
@@ -60,6 +71,7 @@ object ModuleConstants {
     const val FEATURE_FUTURE_BLUR = "future_blur"
     const val FEATURE_CJK_KARAOKE_ANIMATION = "cjk_karaoke_animation"
     const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
+    const val FEATURE_LYRIC_BACKGROUND_HIGHLIGHT = "lyric_background_highlight"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
@@ -69,7 +81,7 @@ object ModuleConstants {
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-23-1.6.6-lyrics-typography-1609"
+    const val BUILD_TAG = "2026-10-25-1.6.7-integ-1613"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

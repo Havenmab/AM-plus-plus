@@ -36,6 +36,8 @@ internal interface AppleDataBindingMetadataHost {
 
     fun originalResolutionMode(binding: Any): InAppOriginalResolutionMode
 
+    fun tracksRenderedAlias(binding: Any, mediaId: String): Boolean = true
+
     fun shouldInvalidateAppliedAlias(
         binding: Any,
         mediaId: String,
@@ -213,6 +215,8 @@ internal class AppleDataBindingMetadataHooks(
             WeakHashMap<Any, PendingVisibleDataBindingResolution>()
         )
     private val bindingContentFields = ConcurrentHashMap<Class<*>, List<Field>>()
+    private val holderViewFields = ConcurrentHashMap<Class<*>, List<Field>>()
+    private val recyclerOwnerFields = ConcurrentHashMap<Class<*>, List<Field>>()
 
     @Volatile
     private var bindingBaseClass: Class<*>? = null
@@ -621,8 +625,10 @@ internal class AppleDataBindingMetadataHooks(
         }
         val bindingCandidates = host.boundModelCandidates(mediaId)
         val targets = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
+        val directBindings = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
         bindingRefs[mediaId]?.forEach { ref ->
             val binding = ref.get()
+            if (binding != null && bindingMediaIds[binding] == mediaId) directBindings.add(binding)
             if (binding == null) {
                 bindingRefs[mediaId]?.remove(ref)
             } else if (
@@ -643,8 +649,9 @@ internal class AppleDataBindingMetadataHooks(
             // Build the identity candidate set once; the old helper rebuilt it per binding.
             val candidateSet = identityCandidateSet(bindingCandidates)
             bindingInstances.keys().forEach { binding ->
+                if (binding in directBindings || binding in targets) return@forEach
                 if (bindingReferencesAny(binding, candidateSet)) {
-                    bindingMediaIds[binding] = mediaId
+                    register(mediaId, binding)
                     if (
                         shouldRefreshExactBoundTarget(
                             surfaceRelevant,
@@ -854,6 +861,8 @@ internal class AppleDataBindingMetadataHooks(
         pendingRefreshes.clear()
         bindGenerations.clear()
         recyclerRootVisibleResolutionIds.clear()
+        visibleResolutionPosts.clear()
+        refreshQueue?.cancelTarget(this)
     }
 
     private fun clearPendingRefresh(binding: Any, expected: PendingDataBindingRefresh) {
@@ -907,16 +916,13 @@ internal class AppleDataBindingMetadataHooks(
                 resolveVisible(binding, mediaId, pending.originalResolutionMode)
             }
         } else {
-            queue.enqueueAction(
-                kind = AppleMetadataRefreshKind.VISIBLE_RESOLUTION,
-                mediaIds = listOf(mediaId),
-                priority = AppleInternalCatalogResolver.RequestPriority.VISIBLE,
-            ) { drainQueuedVisibleResolutions() }
+            enqueueVisibleResolutionDrain()
         }
     }
 
     private fun invalidateOverwrittenAlias(binding: Any, mediaId: String, root: View) {
         val appliedAlias = appliedAliases[binding] ?: return
+        if (!host.tracksRenderedAlias(binding, mediaId)) return
         val pendingAlias = pendingRefreshes[binding]?.alias
         val renderedTexts = dataBindingRenderedTexts(root)
         if (!host.shouldInvalidateAppliedAlias(
@@ -972,30 +978,44 @@ internal class AppleDataBindingMetadataHooks(
 
     private fun drainQueuedVisibleResolutions() {
         val resolved = LinkedHashMap<String, InAppOriginalResolutionMode>()
-        val pendingEntries = synchronized(visibleResolutionPosts) {
-            visibleResolutionPosts.entries.toList().also { entries ->
-                entries.forEach { (binding, pending) ->
-                    visibleResolutionPosts.remove(binding)
-                    val root = bindingRootViews[binding]?.get()
-                    if (
-                        bindingMediaIds[binding] == pending.mediaId &&
-                        generation(binding) == pending.bindGeneration &&
-                        root != null &&
-                        isRootVisible(root)
-                    ) {
-                        val previous = resolved[pending.mediaId]
-                        resolved[pending.mediaId] = if (
-                            previous == null ||
-                            previous.ordinal < pending.originalResolutionMode.ordinal
-                        ) pending.originalResolutionMode else previous
-                    }
-                }
+        val batch = synchronized(visibleResolutionPosts) {
+            visibleResolutionPosts.entries.take(8).map { it.key to it.value }.also { entries ->
+                entries.forEach { (binding, _) -> visibleResolutionPosts.remove(binding) }
             }
         }
-        // Keep the local snapshot referenced so the synchronized iteration above remains
-        // explicit and easy to audit; all accepted requests have already been grouped by ID.
-        if (pendingEntries.isEmpty()) return
-        resolved.forEach { (mediaId, mode) -> resolveVisibleMediaId(mediaId, mode) }
+        batch.forEach { (binding, pending) ->
+            val root = bindingRootViews[binding]?.get()
+            if (bindingMediaIds[binding] == pending.mediaId && generation(binding) == pending.bindGeneration &&
+                root != null && isRootVisible(root)) {
+                val previous = resolved[pending.mediaId]
+                resolved[pending.mediaId] = if (previous == null || previous.ordinal < pending.originalResolutionMode.ordinal)
+                    pending.originalResolutionMode else previous
+            }
+        }
+        // Each ID is its own action: the frame queue can yield between expensive resolutions.
+        resolved.forEach { (mediaId, mode) ->
+            refreshQueue?.enqueueAction(
+                kind = AppleMetadataRefreshKind.VISIBLE_RESOLUTION,
+                mediaId = mediaId,
+                target = this,
+                slot = 1 + mode.ordinal,
+                originalResolutionMode = mode,
+            ) {
+                val current = batch.any { (binding, pending) ->
+                    pending.mediaId == mediaId && bindingMediaIds[binding] == mediaId &&
+                        generation(binding) == pending.bindGeneration &&
+                        bindingRootViews[binding]?.get()?.let(::isRootVisible) == true
+                }
+                if (current) resolveVisibleMediaId(mediaId, mode)
+            }
+        }
+        if (synchronized(visibleResolutionPosts) { visibleResolutionPosts.isNotEmpty() }) enqueueVisibleResolutionDrain()
+    }
+
+    private fun enqueueVisibleResolutionDrain() {
+        refreshQueue?.enqueueAction(kind = AppleMetadataRefreshKind.VISIBLE_RESOLUTION, target = this) {
+            drainQueuedVisibleResolutions()
+        }
     }
 
     private fun resolvedMediaId(binding: Any): String? {
@@ -1087,12 +1107,13 @@ internal class AppleDataBindingMetadataHooks(
         mediaId in recyclerRootMediaIds[root].orEmpty()
 
     private fun recyclerViewHolderItemView(holder: Any): View? =
-        AppleReflection.hierarchyFields(holder.javaClass)
-            .asSequence()
-            .firstOrNull { field -> View::class.java.isAssignableFrom(field.type) }
-            ?.let { field ->
+        holderViewFields.computeIfAbsent(holder.javaClass) { type ->
+            generateSequence(type) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }
+            .filter { field -> !Modifier.isStatic(field.modifiers) && View::class.java.isAssignableFrom(field.type) }
+            .take(1).onEach { it.isAccessible = true }.toList()
+        }.firstOrNull()?.let { field ->
                 runCatching {
-                    field.isAccessible = true
                     field.get(holder) as? View
                 }.getOrNull()
             }
@@ -1100,12 +1121,13 @@ internal class AppleDataBindingMetadataHooks(
     private fun recyclerViewFromRecycler(recycler: Any?): Any? {
         recycler ?: return null
         val recyclerClass = recyclerViewClass ?: return null
-        return AppleReflection.hierarchyFields(recycler.javaClass)
-            .asSequence()
-            .firstOrNull { field -> recyclerClass.isAssignableFrom(field.type) }
-            ?.let { field ->
+        return recyclerOwnerFields.computeIfAbsent(recycler.javaClass) { type ->
+            generateSequence(type) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }
+            .filter { field -> !Modifier.isStatic(field.modifiers) && recyclerClass.isAssignableFrom(field.type) }
+            .take(1).onEach { it.isAccessible = true }.toList()
+        }.firstOrNull()?.let { field ->
                 runCatching {
-                    field.isAccessible = true
                     field.get(recycler)
                 }.getOrNull()
             }

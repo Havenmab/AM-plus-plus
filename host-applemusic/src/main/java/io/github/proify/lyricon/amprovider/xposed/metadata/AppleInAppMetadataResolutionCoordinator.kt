@@ -170,14 +170,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
             }
     }
 
-    /**
-     * Re-arm original-region probing for a visible profile surface.  Generic
-     * artist profiles can build their rows before the entity has usable
-     * attributes, which leaves a previous negative cache result (or an
-     * artist-only localized alias) suppressing the normal request gate.  The
-     * HLE surface still owns de-duplication; this only clears negative state
-     * for rows that do not already have a confirmed original title.
-     */
+    /** Request a visible profile probe while preserving negative-result backoff. */
     fun retryOriginalMetadata(
         mediaIds: Collection<String>,
         priority: AppleInternalCatalogResolver.RequestPriority,
@@ -190,7 +183,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
             .distinct()
             .toList()
         if (normalizedIds.isEmpty()) return
-        normalizedIds.forEach(metadataStore::resetOriginalResolutionState)
+        // Identity/language enrichment owns invalidation. A bind must not reset the retry budget.
         schedule(
             mediaIds = normalizedIds,
             priority = priority,
@@ -925,14 +918,15 @@ internal class AppleInAppMetadataResolutionCoordinator(
             id = mediaId,
             title = account.title,
             artist = account.artist,
-            genre = null,
+            genre = metadataStore.sourceGenre(mediaId)
+                ?: MediaMetadataCache.getMetadataById(mediaId, catalogResolver.cacheNamespace)?.genre,
             duration = 0L,
             queueId = 0L,
         )
-        ProviderLogger.info(
+        ProviderLogger.debug {
             "Apple App 原地区歌曲解析开始: id=$mediaId, " +
                 "title=${account.title}, artist=${account.artist}, preBind=$preBind"
-        )
+        }
         var bindingPhase = true
         catalogResolver.resolveOriginalMetadata(
             metadata = metadata,
@@ -1010,6 +1004,8 @@ internal class AppleInAppMetadataResolutionCoordinator(
                         rememberOriginalLanguageForArtist(mediaId, language)
                     }
                     if (safeAlias != null) {
+                        metadataStore.clearOriginalPending(mediaId)
+                        metadataStore.clearOriginalCacheMiss(mediaId)
                         host.applyPlaybackMetadataOverride(
                             mediaId = mediaId,
                             alias = safeAlias,
@@ -1019,6 +1015,9 @@ internal class AppleInAppMetadataResolutionCoordinator(
                             originalMetadataConfirmed = true,
                         )
                     } else {
+                        // A completed request is not evidence that the original region is known.
+                        // Retry on a later visible bind, with capped backoff instead of a terminal miss.
+                        metadataStore.recordOriginalSongMiss(mediaId, SystemClock.uptimeMillis())
                         ensureLocalizedInAppMetadataOverrides(
                             mediaIds = listOf(mediaId),
                             preBind = false,
@@ -1145,7 +1144,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
             .toList()
         if (readyIds.isNotEmpty() || associatedMediaIds.isNotEmpty()) {
             runtime.mainHandler.post {
-                readyIds.forEach(metadataStore::clearOriginalPending)
+                readyIds.forEach(metadataStore::resetOriginalResolutionState)
                 if (readyIds.isNotEmpty()) {
                     ensureOriginalInAppMetadataOverrides(readyIds, preBind = false)
                 }
@@ -1322,6 +1321,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
     }
 
     private fun shouldRetryOriginalMetadataCacheProbe(mediaId: String): Boolean =
+        metadataStore.shouldRetryOriginalSong(mediaId, SystemClock.uptimeMillis()) ?:
         io.github.proify.lyricon.amprovider.xposed.shouldRetryOriginalMetadataCacheProbe(
             originalResolved = metadataStore.isOriginalResolved(mediaId),
             lastMissUptimeMillis = metadataStore.originalCacheMissUptimeMillis(mediaId),

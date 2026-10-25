@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
-import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.ui.EmbeddedHostActivityRole
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -27,15 +26,21 @@ internal object FragmentSettingsNativeFactory {
     }
 
     @Synchronized
-    private fun runtime(loader: ClassLoader, names: FragmentSettingsContract): FragmentSettingsRuntime =
-        runtimes.getOrPut(loader) { FragmentSettingsRuntime(loader, names) }
+    private fun runtime(
+        loader: ClassLoader,
+        names: FragmentSettingsContract,
+        hostPackageName: String,
+    ): FragmentSettingsRuntime =
+        runtimes.getOrPut(loader) { FragmentSettingsRuntime(loader, names, hostPackageName) }
 
-    fun activityMatcher(context: Context): SettingsActivityMatcher = FragmentSettingsActivityMatcher(names(context).mainActivity)
+    fun activityMatcher(context: Context): SettingsActivityMatcher =
+        FragmentSettingsActivityMatcher(names(context).mainActivity, context.packageName)
 
     fun viewBridge(context: Context, onOpen: (Activity) -> Unit): SettingsViewBridge {
         val names = names(context)
         val loader = context.classLoader
-        runtime(loader, names).onOpen = onOpen
+        val hostPackageName = context.packageName
+        runtime(loader, names, hostPackageName).onOpen = onOpen
         return object : SettingsViewBridge {
             override val supportsViewFallback = false
             override fun supportsStartupPagePrewarm(activity: Activity): Boolean =
@@ -51,8 +56,8 @@ internal object FragmentSettingsNativeFactory {
             }.getOrNull()
 
             override fun injectNativeSettingsPreference(fragment: Any, activity: Activity): Boolean {
-                if (activity.packageName != ModuleConstants.TARGET_PACKAGE) return false
-                val current = runtime(fragment.javaClass.classLoader ?: loader, names)
+                if (activity.packageName != hostPackageName) return false
+                val current = runtime(fragment.javaClass.classLoader ?: loader, names, hostPackageName)
                 current.onOpen = onOpen
                 return current.bind(fragment)
             }
@@ -65,15 +70,18 @@ internal object FragmentSettingsNativeFactory {
     }
 
     fun install(context: Context, loader: ClassLoader, observer: SettingsEntryObserver): TargetCapabilityInstall =
-        runtime(loader, names(context)).install(observer).also {
+        runtime(loader, names(context), context.packageName).install(observer).also {
             ModernXposedRuntime.log(it.message)
         }
 }
 
 /** MainActivity hosts the player and settings Fragments; it must never receive the old floating player button. */
-internal class FragmentSettingsActivityMatcher(private val mainActivity: String) : SettingsActivityMatcher {
+internal class FragmentSettingsActivityMatcher(
+    private val mainActivity: String,
+    private val hostPackageName: String,
+) : SettingsActivityMatcher {
     override fun roleFor(activity: Activity): EmbeddedHostActivityRole? =
-        if (activity.packageName == ModuleConstants.TARGET_PACKAGE && isMainContentActivity(activity)) {
+        if (activity.packageName == hostPackageName && isMainContentActivity(activity)) {
             EmbeddedHostActivityRole.MainContent
         } else null
 
@@ -116,6 +124,7 @@ private object ModernFragmentSettingsHookInstaller : FragmentSettingsHookInstall
 internal class FragmentSettingsRuntime(
     private val loader: ClassLoader,
     private val names: FragmentSettingsContract,
+    private val hostPackageName: String,
     private val hooks: FragmentSettingsHookInstaller = ModernFragmentSettingsHookInstaller,
 ) {
     @Volatile var onOpen: ((Activity) -> Unit)? = null
@@ -144,10 +153,7 @@ internal class FragmentSettingsRuntime(
                 require(Activity::class.java.isAssignableFrom(returnType))
             }
             val view = inherited(fragment, "getView").apply { require(View::class.java.isAssignableFrom(returnType)) }
-            val compose = fragment.getDeclaredMethod(names.composeMethod, loader.loadClass(names.composerClass)).apply {
-                require(!Modifier.isStatic(modifiers) && returnType == Void.TYPE)
-                isAccessible = true
-            }
+            val compose = names.composeMethod(loader)
             val onViewCreated = inherited(fragment, "onViewCreated", View::class.java, Bundle::class.java)
             val onResume = inherited(fragment, "onResume")
             val onDestroyView = inherited(fragment, "onDestroyView")
@@ -189,7 +195,7 @@ internal class FragmentSettingsRuntime(
             })
             hooks.install(activityResult, scope, after = { receiver, args, original ->
                 if (scope.isActive && main.isInstance(receiver) && receiver is Activity &&
-                    receiver.packageName == ModuleConstants.TARGET_PACKAGE) {
+                    isBoundHostActivity(receiver)) {
                     val requestCode = args.getOrNull(0) as? Int
                     val resultCode = args.getOrNull(1) as? Int
                     if (requestCode != null && resultCode != null) {
@@ -222,18 +228,20 @@ internal class FragmentSettingsRuntime(
     private fun notifyFragment(receiver: Any?, notify: (Any, Activity) -> Unit) {
         if (receiver == null || !bind(receiver)) return
         val activity = runCatching { getActivity?.invoke(receiver) as? Activity }.getOrNull() ?: return
-        if (mainClass?.isInstance(activity) != true || activity.packageName != ModuleConstants.TARGET_PACKAGE) return
+        if (mainClass?.isInstance(activity) != true || !isBoundHostActivity(activity)) return
         runCatching { notify(receiver, activity) }
     }
 
     private fun open(fragment: Any) {
         if (!scope.isActive || getView?.invoke(fragment) == null) return
         val activity = getActivity?.invoke(fragment) as? Activity ?: return
-        if (mainClass?.isInstance(activity) != true || activity.packageName != ModuleConstants.TARGET_PACKAGE ||
+        if (mainClass?.isInstance(activity) != true || !isBoundHostActivity(activity) ||
             activity.isFinishing || activity.isDestroyed) return
         // EmbeddedSettingsHost supplies its existing complete controller, dialog and SAF router here.
         onOpen?.invoke(activity)
     }
+
+    private fun isBoundHostActivity(activity: Activity): Boolean = activity.packageName == hostPackageName
 
     companion object {
         internal fun inherited(type: Class<*>, name: String, vararg parameters: Class<*>): Method {

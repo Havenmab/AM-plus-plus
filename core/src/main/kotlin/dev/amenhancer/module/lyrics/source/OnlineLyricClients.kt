@@ -61,7 +61,7 @@ class AutoLyricsSourceResolver(
 
     companion object {
         /**
-         * Wires the fixed AMLL → Lunabeat → user's repository priority.
+         * Wires the fixed AMLL → Lunabeat → AM-Lyrics priority.
          *
          * [leading] is prepended verbatim and [trailing] appended verbatim, both for opt-in search
          * sources; callers pass empty lists when the owning setting is off, so the provider chain is
@@ -89,7 +89,7 @@ class AutoLyricsSourceResolver(
     }
 }
 
-/** User-owned TTML repository indexed by Apple Music Adam ID; settings process only. */
+/** AM-Lyrics TTML repository indexed by Apple Music Adam ID; settings process only. */
 data class AmLyricsIndexEntry(
     val appleMusicId: Long,
     val alternateIds: List<Long>,

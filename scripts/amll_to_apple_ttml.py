@@ -48,10 +48,19 @@ import textwrap
 import urllib.request
 from typing import Callable
 
+TTML_NAMESPACE = "http://www.w3.org/ns/ttml"
+TTML_METADATA_NAMESPACE = "http://www.w3.org/ns/ttml#metadata"
 ITUNES_NAMESPACE = "http://music.apple.com/lyric-ttml-internal"
 ROLE_TRANSLATION = "x-translation"
 ROLE_ROMAN = "x-roman"
+
 ROLE_BACKGROUND = "x-bg"
+
+# The converted background span carries its own namespace declarations, so the
+# role prefix still resolves if the span is moved into a lane body.
+BG_SPAN_OPEN = (
+    f'<span xmlns="{TTML_NAMESPACE}" xmlns:ttm="{TTML_METADATA_NAMESPACE}" ttm:role="{ROLE_BACKGROUND}">'
+)
 
 # Translations keep Apple's subtitle language; the root lyrics language is
 # resolved per song (see ``lyrics_language``), never pinned.
@@ -1105,7 +1114,7 @@ def append_entry_text(entry: TrackEntry) -> str:
         return result
     return (
         result
-        + f'<span ttm:role="{ROLE_BACKGROUND}">'
+        + f'<span xmlns="{TTML_NAMESPACE}" xmlns:ttm="{TTML_METADATA_NAMESPACE}" ttm:role="{ROLE_BACKGROUND}">'
         + parenthesized(entry.background)
         + "</span>"
     )
@@ -1631,7 +1640,8 @@ def _selftest() -> int:
         )
         result = to_apple_format(background_only).ttml
         assert (
-            '<text for="L9"> <span ttm:role="x-bg">(BT)</span></text>' in result
+            '<text for="L9"> <span xmlns="http://www.w3.org/ns/ttml" '
+            'xmlns:ttm="http://www.w3.org/ns/ttml#metadata" ttm:role="x-bg">(BT)</span></text>' in result
         )
         return True
 
@@ -1678,7 +1688,7 @@ def _selftest() -> int:
         )
         result = to_apple_format(split_background_roman).ttml
         assert (
-            '<text for="L1"> <span ttm:role="x-bg">'
+            f'<text for="L1"> {BG_SPAN_OPEN}'
             '(<span begin="1.0" end="1.5">bei</span>'
             '<span begin="1.5" end="2.0">jing</span>)'
             "</span></text>" in result
@@ -1704,7 +1714,7 @@ def _selftest() -> int:
         )
         result = to_apple_format(single_background_roman).ttml
         assert (
-            '<text for="L1"> <span ttm:role="x-bg">(beijing)</span></text>' in result
+            f'<text for="L1"> {BG_SPAN_OPEN}(beijing)</span></text>' in result
         )
         assert "x-roman" not in result.split("<body", 1)[1]
         return True

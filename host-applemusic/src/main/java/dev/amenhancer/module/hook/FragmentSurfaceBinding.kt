@@ -7,6 +7,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.host.OwnedHostProperty
 import java.util.IdentityHashMap
 
@@ -20,7 +21,7 @@ internal class FragmentSurfaceBinding(
 ) : FragmentPlayerSurfacePort, ViewTreeObserver.OnPreDrawListener {
     private val ids = HashMap<String, Int>()
     private fun id(role: String) = ids.getOrPut(role) {
-        root.resources.getIdentifier(contract.resources.getString(role), "id", activity.packageName)
+        root.resources.getIdentifier(contract.resources.getString(role), "id", ModuleConstants.TARGET_PACKAGE)
             .also { check(it != 0) { "Missing Fragment chrome resource $role" } }
     }
     private fun find(role: String): View? = root.findViewById(id(role))
@@ -39,7 +40,7 @@ internal class FragmentSurfaceBinding(
     private var playerBackground: View? = null
     private var playerMotion: View? = null
     private var playerOutline: OwnedHostProperty<Boolean>? = null
-    private val accentId = root.resources.getIdentifier(contract.names.getString("accentColor"), "color", activity.packageName)
+    private val accentId = root.resources.getIdentifier(contract.names.getString("accentColor"), "color", ModuleConstants.TARGET_PACKAGE)
     private val observers = LinkedHashSet<(FragmentPlayerSurfaceSnapshot) -> Unit>()
     override val navigation = FragmentChromeNavigation(owner, nav, placement, contract, callbacks)
     override val pageFamily = HostPageFamily.FRAGMENT_VIEW

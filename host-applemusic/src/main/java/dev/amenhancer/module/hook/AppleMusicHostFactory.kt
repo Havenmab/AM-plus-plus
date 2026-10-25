@@ -25,7 +25,7 @@ object AppleMusicHostFactory {
     fun preservesNativeEditorialVideo(context: android.content.Context): Boolean = fragmentFamily(context)
     fun settingsActivityMatcher(context: android.content.Context, playerClass: Class<*>?): SettingsActivityMatcher =
         if (fragmentFamily(context)) FragmentSettingsNativeFactory.activityMatcher(context)
-        else settingsNames(context).let { LegacySettingsActivityMatcher(playerClass,it.getString("playerActivity"),it.getString("mainActivity")) }
+        else settingsNames(context).let { LegacySettingsActivityMatcher(playerClass,it.getString("playerActivity"),it.getString("mainActivity"),context.packageName) }
     fun settingsViewBridge(context: android.content.Context, onOpen: (android.app.Activity)->Unit): SettingsViewBridge =
         if (fragmentFamily(context)) FragmentSettingsNativeFactory.viewBridge(context,onOpen)
         else LegacySettingsViewBridge(context,onOpen)
@@ -120,10 +120,21 @@ object AppleMusicHostFactory {
                 enabled = { config.settings().forceCellularDataEntryEnabled },
             ),
             bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(profile, classLoader),
-            cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(resolver,
-                profile.document.optJSONObject("cjk")?.optString("foregroundTextField", "U") ?: "U",
-                AppleMusicCjkTerminalGradientTarget(profile, classLoader)),
+            cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(
+                symbols = resolver,
+                foregroundTextField = profile.document.optJSONObject("cjk")
+                    ?.optString("foregroundTextField", "U") ?: "U",
+                terminalGradient = AppleMusicCjkTerminalGradientTarget(profile, classLoader),
+                maxSpanGlowCharacters = profile.document.optJSONObject("cjk")
+                    ?.optInt("maxSpanGlowCharacters", 1) ?: 1,
+            ),
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            lyricBackgroundHighlight = AppleMusicLyricBackgroundHighlightTarget(profile, classLoader,
+                onFailure = { message -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(
+                    dev.amenhancer.module.ModuleConstants.FEATURE_LYRIC_BACKGROUND_HIGHLIGHT,
+                    dev.amenhancer.module.model.FeatureState.DEGRADED, message, build.displayName,
+                )) },
+            ),
             lyricsTypeface = AppleMusicLyricsTypefaceTarget(
                 symbols = resolver,
                 session = lyricsTypefaceSession as LyricsTypefaceSession,

@@ -121,13 +121,13 @@ internal class AppleInAppMetadataApplier(
             if (forceRebind) queueMetadataHooks.refreshAdapters(mediaId) else 0
         val genericRecyclerTargets =
             if (forceRebind) dataBindingHooks.refreshGenericRecyclerItems(mediaId) else 0
-        if (
+        if (BuildConfig.DEBUG && (
             metadataApplied + playbackItemApplied + containerItemApplied +
             libraryEntitiesApplied + playlistRowsApplied + libraryControllers +
             libraryComposeStates + albumComposeMetadata + artistComposeProfiles +
             dataBindingTargets + listenNowDataBindingTargets +
             queueAdapterTargets + genericRecyclerTargets > 0
-        ) {
+        )) {
             ProviderLogger.info(
                 "Apple Music App 内元数据已覆盖: id=$mediaId, " +
                     "title=${alias.title}, artist=${alias.artist}, album=${alias.album}, " +
@@ -159,6 +159,7 @@ internal class AppleInAppMetadataApplier(
         controller: Any,
         strategy: InAppLibraryControllerBuildStrategy,
     ) {
+        if (librarySurfaceHooks.requestPresentationControllerBuild(controller)) return
         if (collectionSurfaceHooks.requestControllerBuild(controller, strategy)) return
         when (strategy) {
             InAppLibraryControllerBuildStrategy.ALBUM_SET_DATA,

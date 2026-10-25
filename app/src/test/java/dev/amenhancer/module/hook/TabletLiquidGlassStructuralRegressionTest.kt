@@ -125,11 +125,16 @@ class TabletLiquidGlassStructuralRegressionTest {
 
     @Test
     fun `hides the compensation row while the glass toggle is on`() {
-        val settings = source("dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
+        val settings = source("dev/amenhancer/module/ui/EmbeddedSettingsPages.kt")
         // The compensation toggle is native-bar-only; showing it while glass
         // owns the geometry would read as a live switch that does nothing.
-        assertTrue(settings.contains("if (!settings.phoneLiquidGlassEnabled)"))
-        assertTrue(settings.contains("ModuleText.TABLET_BOTTOM_BAR_FIX"))
+        val glassGateAt = settings.indexOf("if (settings.phoneLiquidGlassEnabled)")
+        val disabledBranchAt = settings.indexOf("} else {", glassGateAt)
+        val compensationAt = settings.indexOf("ModuleText.TABLET_BOTTOM_BAR_FIX", disabledBranchAt)
+        assertTrue(
+            "the tablet compensation row must remain in the glass-disabled branch",
+            glassGateAt in 1 until disabledBranchAt && disabledBranchAt in 1 until compensationAt,
+        )
     }
 
     @Test
@@ -145,7 +150,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 24`() {
+    fun `keeps the glass configuration keys under schema 28`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -167,9 +172,9 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 25 adds the two lyrics typography sliders on top of the merged 24
-        // (this fork's 16..23 plus upstream 1.6.6's LLM lyrics fallback and optional
-        // dual-pane status-bar hiding). Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 25"))
+        // Schema 28 is the 1.6.7 / AM 1613 integration: upstream's own 18 (lyric effects
+        // optimization) on top of this fork's 25, bumped past the sibling release line's 27
+        // so every store upgrades forward. Glass still reuses its original keys.
+        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 28"))
     }
 }

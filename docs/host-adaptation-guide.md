@@ -1,6 +1,6 @@
 # Apple Music 宿主适配手册
 
-本手册供维护者为具体 Apple Music 构建建立和维护 AM++ 接入。适配对象是包名、versionName、versionCode 组成的精确组合；正式版、beta 和同名不同构建分别处理。
+本手册供维护者为具体 Apple Music 构建建立和维护 AM++ 接入。适配身份取实际宿主 `packageName` 与 `TargetBuild` 的 `versionName`、`versionCode`；正式版、beta 和同名不同构建分别处理。
 
 | 要解决的问题 | 阅读位置 |
 |---|---|
@@ -15,12 +15,14 @@
 
 ## 1. 版本准入与能力资格
 
-[AppleMusicHostProfiles](../host-applemusic/src/main/java/dev/amenhancer/host/applemusic/AppleMusicHostProfiles.kt) 按版本名、版本号定位文件并核对包名，生产入口另检查 `productionEnabled`。文件名为 `<versionName>-<versionCode>.json`，同一组合只登记一次；`index.json` 还决定旧 HLE 的已审核候选顺序，新增档案保留既有条目的相对顺序。
+实际宿主的版本信息由 [TargetBuildLookup.targetBuild](../host-applemusic/src/main/java/dev/amenhancer/module/hook/TargetBuildLookup.kt) 按 `packageName` 查询包信息读取，并以实际 `packageName`、`versionName`、`versionCode` 构造 `TargetBuild`。[AppleMusicHostProfiles](../host-applemusic/src/main/java/dev/amenhancer/host/applemusic/AppleMusicHostProfiles.kt) 只按精确 `versionName`+`versionCode` 选择共享 profile，生产入口另检查 `productionEnabled`。文件名为 `<versionName>-<versionCode>.json`，同一组合只登记一次；`index.json` 还决定旧 HLE 的已审核候选顺序，新增档案保留既有条目的相对顺序。`profile.packageName` 描述原包及内部类、方法、资源命名空间，不是运行时包名白名单。
+
+本规则只覆盖 Android 安装包名（application ID）变化；内部类、方法和资源命名空间保持原包，其他改包行为不获得兼容。实际安装包名只用于身份、版本和组件。
 
 生产准入、能力可用和人工通过分别判断：
 
-1. 精确组合已登记且生产入口启用，才允许模块接入。
-2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光依赖自己的顶层契约，LLM 则复用已有歌词通道。
+1. 精确 `versionName`+`versionCode` 组合已登记且生产入口启用，才允许模块接入。
+2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光虽由“歌词效果优化”设置门禁，仍依赖自己的顶层契约，LLM 则复用已有歌词通道。
 3. 成员解析与 Hook 安装成功只说明该阶段就绪，不能代替页面完成、显示结果或人工验收。`productionEnabled` 与 `runtimeVerified` 各自依据实际证据维护，局部反馈不扩展为整个构建通过。
 
 页面族按实际入口、生命周期和布局识别：`legacy-activity` 与 `fragment-content` 分别使用自己的接入。相邻构建、版本号大小和主版本号均不能代替该判断；新页面族先建立有证据的能力工厂。
@@ -43,7 +45,7 @@
 
 ### 2.1 装配与执行链
 
-[HookEntry](../app/src/main/java/dev/amenhancer/module/hook/HookEntry.kt) 在 Application 资源准备前完成精确版本门禁、配置迁移/绑定与 DPI 接入。[FeatureInstallation](../app/src/main/java/dev/amenhancer/module/hook/FeatureInstallation.kt) 分开资源注册和 Application 后的能力安装；[AppleMusicAssembly](../app/src/main/java/dev/amenhancer/module/hook/AppleMusicAssembly.kt) 装配歌词服务，[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 将当前 profile、ClassLoader 与服务注入 [TargetAdaptation](../host-api/src/main/java/dev/amenhancer/module/hook/TargetAdaptation.kt)。
+[HookEntry](../app/src/main/java/dev/amenhancer/module/hook/HookEntry.kt) 在 Application 资源准备前按实际宿主 `packageName` 完成一致性校验，保留首次加载（`isFirstPackage`）与声明主进程过滤，再完成精确版本门禁、配置迁移/绑定与 DPI 接入。[FeatureInstallation](../app/src/main/java/dev/amenhancer/module/hook/FeatureInstallation.kt) 分开资源注册和 Application 后的能力安装；[AppleMusicAssembly](../app/src/main/java/dev/amenhancer/module/hook/AppleMusicAssembly.kt) 装配歌词服务，[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 将当前 profile、ClassLoader 与服务注入 [TargetAdaptation](../host-api/src/main/java/dev/amenhancer/module/hook/TargetAdaptation.kt)。
 
 工厂按 `family` 选择设置、双栏、蜂窝和视频路径。单项功能只接收自己的能力；chrome、设置、资源和服务还各有辅助入口，完整接入范围不能仅从能力位或工厂字段枚举。每次适配沿实际安装计划及其调用链展开。
 
@@ -67,17 +69,17 @@
 
 | 区域 | 应表达的宿主事实 |
 |---|---|
-| 身份、资格与证据 | `id`、包名/版本组合、`family`、`productionEnabled`、`profileRevision`、`capabilities`、`evidence`、`knownDegradations` |
+| 身份、资格与证据 | `id`、`packageName`（原包）/`versionName`+`versionCode`、`family`、`productionEnabled`、`profileRevision`、`capabilities`、`evidence`、`knownDegradations` |
 | `indexed` | 符号映射及适用的 `methodContracts` / `fieldContracts` |
 | `hookTargets` / `catalogQueryRenames` | HLE 入口、签名/调用方约束、`runtimeMemberNames`、目录查询映射 |
-| `settings` / `chrome` | 设置模型、入口、导航、播放器资源及旧族成员 |
+| `settings` / `chrome` | 设置模型、入口、导航、播放器资源及旧族成员；`settings.members` 保存变化后的完整偏好列表和 Compose 方法契约 |
 | `layoutVariants` / `cjk` | binding、渐变变体、前景文本与可选 `terminalGradient` 契约 |
-| `lyricResultSubmission` / `lyricBlur` / `lyricWrapSweep` | 歌词结果、显示模糊、跨行扫光的独立角色与契约 |
+| `lyricResultSubmission` / `lyricBlur` / `lyricWrapSweep` / `lyricBackgroundHighlight` | 歌词结果、显示模糊、跨行扫光及活动行背景高亮优化的独立角色与契约 |
 | Fragment 专用区域 | `fragmentDualPane`、`fragmentLyricsRuntime`、`fragmentKaraokeWidth`、`fragmentTabletVideoHandoff`、`fragmentChrome`、`playerRecovery` |
 | `startupPagePrewarm` / `artistComposeProfile` | 独立预热、Compose 艺人表面的成员、构造器与语义参数 |
 | `verification` / 匹配策略 | 离线描述符/资源证据、`ambiguityPolicy`、已审核的 `legacyFirstMatchExceptions` |
 
-JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由 Kotlin 实现。profile schema、各独立契约的版本字段和应用配置 schema 分别维护，以当前解析器及 [ModuleConstants](../core/src/main/kotlin/dev/amenhancer/module/ModuleConstants.kt) 为准；普通混淆适配不附带修改配置格式。
+JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由 Kotlin 实现。共享 profile 只按精确 `versionName`+`versionCode` 选择；`profile.packageName` 描述原包及内部类、方法、资源命名空间，不是运行时包名字段，实际运行时包名由 `TargetBuild` 单独记录。profile schema、各独立契约的版本字段和应用配置 schema 分别维护，以当前解析器及 [ModuleConstants](../core/src/main/kotlin/dev/amenhancer/module/ModuleConstants.kt) 为准；普通混淆适配不附带修改配置格式。
 
 ### 3.2 三种接入方式
 
@@ -106,14 +108,16 @@ JSON 保存宿主事实，参数变换、线程、回退和生命周期策略由
 
 Java 反编译用于理解流程，原始 owner 与擦除签名以 DEX/smali 为准。类型推断、命名修复、大小写冲突后的文件名不能作为原始契约。“存在”“参数个数相同”“可以反射调用”均不能替代调用语义证据；数组、primitive、装箱与实例/静态不能互换。
 
+类结构、字段顺序、相似描述符或反编译浏览中的近似签名只能提出结构候选，用于缩小核查范围；在缺少语义闭合前不能据此认定目标版本已适配、授予能力或推定运行时兼容。候选转为已确认映射时，须同时核对当前 split 中的原始 owner 与完整擦除签名或字段类型、实际声明及继承/接口关系、调用方与读写语义、Hook 的具体实现，以及页面生命周期中的实际作用；资源与布局还须按上表确认限定符和运行时父链。
+
 <a id="adaptation-workflow"></a>
 
 ## 4. 每个构建的适配流程
 
 ### 4.1 建立基线
 
-1. 从实际 base APK 的二进制 Manifest 确认精确组合，外层文件名/清单只作辅助。
-2. 清点 base、全部配置/功能 split、各 DEX 与资源来源；DEX 不一定只在 base。
+1. 从实际 base APK 的二进制 Manifest 和运行时宿主确认 `packageName`、`versionName`、`versionCode`，记录 `TargetBuild` 的实际包名；将 `profile.packageName` 单列为原包和内部命名空间。外层文件名/清单只作辅助。
+2. 清点 base、全部配置/功能 split、各 DEX 与资源来源；DEX 不一定只在 base。由原始已适配版直接比较目标版时，先按实际安装计划逐项配对 base 对 base、同类 ABI split 对同 ABI、密度 split 对同密度，其余配置/功能 split 按相同身份与限定符配对；不得以 base 与 split、不同 ABI 或不同密度的产物互相替代。记录各证据的配对来源及目标新增、缺失的 split，再核对对应的 Manifest、DEX、资源和 native 内容。
 3. 保存代码基线、实际页面族、对照宿主和可追溯证据；包哈希仅在明确要求时计算。
 4. 分别确定源码分析、所需检查、构建和人工验收范围，再在任务记录填写[清单](host-adaptation-checklist.md)。
 
@@ -147,7 +151,7 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 
 ### 4.4 登记、交付与回退
 
-按实际阶段记录成员/资源分析、所需检查、构建、能力状态与人工场景。完成接入后登记 `index.json`；为用户测试启用精确组合时，运行时状态仍按已取得证据保存。交付物与执行范围按[验收与回退](#delivery)处理，不授予邻近构建资格。
+按实际阶段记录成员/资源分析、所需检查、构建、能力状态与人工场景。完成接入后登记 `index.json`；为用户测试启用精确 `versionName`+`versionCode` 组合时，运行时状态仍按已取得证据保存。交付物与执行范围按[验收与回退](#delivery)处理，不授予邻近构建资格。
 
 <a id="feature-index"></a>
 
@@ -159,7 +163,8 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 |---|---|---|
 | [共用歌词结果提交](#lyrics-result-submission) | `indexed`、`lyricResultSubmission`、原生安装与 item 更新 | [结果提交](feature-preservation.md#lyrics-result-submission) |
 | [歌词来源](#lyrics-sources)、[LLM](#llm-lyrics-fallback) | 原生 TTML 观察、指针/歌曲身份及共用结果通道 | [来源](feature-preservation.md#lyrics-sources)、[LLM](feature-preservation.md#llm-lyrics-fallback) |
-| [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[跨行](#lyric-wrap-sweep)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[跨行](feature-preservation.md#lyric-wrap-sweep)、[字体](feature-preservation.md#lyrics-typeface) |
+| [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[字体](feature-preservation.md#lyrics-typeface) |
+| [歌词效果优化](#lyric-background-highlight)：[跨行扫光](#lyric-wrap-sweep)与活动行高亮 | 共享设置门禁；`lyricWrapSweep` / `lyricBackgroundHighlight` 独立契约、安装状态和验收 | [跨行](feature-preservation.md#lyric-wrap-sweep)、[活动行](feature-preservation.md#lyric-background-highlight) |
 | [玻璃导航](#chrome-glass)、[收缩](#glass-collapse-rendering) | `chrome` / `fragmentChrome`、独立能力位、滚动与 sheet 端口 | [玻璃](feature-preservation.md#chrome-glass)、[收缩](feature-preservation.md#glass-collapse-rendering) |
 | [启动预热](#startup-page-prewarm) | 独立能力、`startupPagePrewarm` 与形态导航资源 | [预热](feature-preservation.md#startup-page-prewarm) |
 | [平板布局、视频与恢复](#tablet-layout) | 双栏、binding、资源、视频/恢复与布局变体 | [平板](feature-preservation.md#tablet-layout) |
@@ -244,6 +249,8 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 
 TTML 文件有界读取、输入合法性、原生指针存活/ID 检查和来源转换分别保留。自动来源发布自定义条目与临时缓存迁移继续使用已有发布器，刷新只处理允许更新的来源条目；LLM 使用独立缓存，不混入该发布链。TTML 结构与 AMLL 时间轴整理见[格式说明](apple-music-ttml-format.md)。
 
+AMLL 转换器及 `scripts/amll_to_apple_ttml.py` 的译文/音译和声节点须显式绑定 TTML 默认命名空间和 `ttm` 元数据命名空间。`iTunesMetadata`、轨道及 `text` 属于 Apple 命名空间，内部 `x-bg` 的 `span` 属于 TTML，不能让它继承 Apple 默认命名空间；维护 Kotlin 与 CLI 时同步这项输出约定。
+
 仅原生成员变化时更新精确档案；若原生质量/可用性含义、TTML 时间轴或生命周期变化，再调整对应宿主接缝或业务策略。[来源人工场景](feature-preservation.md#lyrics-sources)负责行为要求。
 
 <a id="llm-lyrics-fallback"></a>
@@ -268,11 +275,17 @@ TTML 文件有界读取、输入合法性、原生指针存活/ID 检查和来�
 
 模型只返回等长字符串数组，目标固定简体中文；业务层写入 `translation type="subtitle" xml:lang="zh-Hans"`，不让模型生成 XML 或时间戳。输出副本保留原文、词时间、声部、音译、行序及重复/空白行关系，缺 key 时只在副本补稳定唯一标识，已有 key 原样保留；复用已有空译文容器，输入原文与缓存身份不变。行数、类型、空值或结构不符时保留原歌词。
 
+翻译提示词要求处理外语、方言和俚语，保留已有目标语言句子及重复音节；结合全篇上下文、语气和意象，逐句审校润色，强调信达雅中的“雅”，简单句不过度复杂化。同句及重复段落按语境和中文语感处理，和声须完整翻译，不能复制主唱译文充数；中文译文不使用逗号和句号。维护时同步清理冲突的旧规则和示例，风格要求与返回格式约束分别维护。
+
+每个段落的主唱与各个 `x-bg` 和声分别提取、分别翻译，按段落顺序先主唱后和声建立输入，提示词标明过滤后数组中的和声位置且禁止合并。语言判断在各声部独立进行，声部自身或首个有效子节点的显式语言先于祖先继承，主唱推断语言不传给和声，中文声部原样回填；主唱为空时保留段落占位，仍可翻译和声。写回时每个段落只有一个 `text for="段落key"`，主唱译文为直接文本，和声译文为其内部的 `span ttm:role="x-bg"`，显式声明 `xmlns="http://www.w3.org/ns/ttml"` 和 `xmlns:ttm="http://www.w3.org/ns/ttml#metadata"`。多个和声保留各自对应及顺序，补 key 仅执行一次并由该段所有声部共用，不能给每个和声另建段落译文条目。
+
 #### 通用维护：客户端、缓存与取消
 
 接口使用配置的 OpenAI Compatible Chat Completions，Bearer、非流式、有界响应与 60 秒期限共用客户端，不隐式切换服务。翻译和手动连通测试共用 `encodeRequest`，按“模型思考”布尔在顶层发送 `thinking.type=enabled/disabled`，`stream=false` 单独控制非流式。思考默认及旧配置缺键均关闭，模式进入不可变请求配置和缓存身份；该字段是服务端扩展，拒绝时按失败处理，不移除参数重试、不按地址/模型维护分叉。
 
 缓存为宿主私有 `files/ampp-llm-lyrics`，最多 100 首，命中更新 LRU，每首只保留一项。原文、规范化接口、模型、思考模式或提示词版本变化使旧项失效，旧缓存缺思考字段按关闭匹配；仅成功并被原生解析接受的结果可持久化，密钥不写缓存。不调用 `AutoLyricsPublisher`，不生成自定义条目，不参与自定义歌词备份或在线更新。
+
+主唱/和声提取或输出结构变化影响缓存兼容性时，提升现有 `LlmLyricsClient.PROMPT_VERSION`，使旧格式在下一次合格查询时失效；单纯调整翻译风格时可保留版本并继续复用已有缓存。不增加缓存目录或配置 schema，也不批量改写自定义歌词。
 
 网络/XML 在后台，单播放失败不循环重试。切歌、原文/配置变化、高优先级结果或关闭撤销旧任务，迟到完成仍通过共用通道校验。正常资格跳过保持安静，不保留逐阶段诊断集合、耗时统计或原因回调；原生 TTML 观察属于功能输入，不能随临时日志删除。连通错误通过[设置页](#settings-data-plugins)的手动测试展示。
 
@@ -324,7 +337,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 ### 5.5 CJK 辉光与末词补偿
 
-**生效与接缝。** `cjkKaraokeAnimationEnabled` 控制辉光与末词羽化补偿，按原安装方式重启宿主生效，关闭时均不安装。辉光保留单个未合并 CJK 词的原生门槛、前景绑定与结束清理；`cjk.foregroundTextField` 和 bindingOwners 独立核对。可选 `cjk.terminalGradient` 由 [AppleMusicCjkTerminalGradientTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) 的 Contract 解析，角色以代码为准，描述符只维护在精确 profile。
+**生效与接缝。** `cjkKaraokeAnimationEnabled` 控制辉光与末词羽化补偿，按原安装方式重启宿主生效，关闭时均不安装。辉光资格由 profile 的 `cjk.maxSpanGlowCharacters` 限定：缺省 `1`，只放行单个未合并 CJK 词；精确 profile 显式设为 `3` 时，另放行 2～3 字的单个原始未合并 CJK span。前景绑定与结束清理、`cjk.foregroundTextField` 和 bindingOwners 独立核对。可选 `cjk.terminalGradient` 由 [AppleMusicCjkTerminalGradientTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) 的 Contract 解析，角色以代码为准，描述符只维护在精确 profile。
 
 | 角色组 | 新构建复核的含义 |
 |---|---|
@@ -333,13 +346,15 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 | 词 ID / 文本 / 时间 | 尾词判定所用对象与当前扫光词一致 |
 | animationTag | 接口 getter 和原生延迟补亮标签的语义，接口仅按 invocationOnly 调用 |
 
+**多字 span。** 放行前须 `trim` 后全部属于现有六个 CJK 区块，字数为 `2..min(cjk.maxSpanGlowCharacters, 3)`，原生 span 总时长至少为字数 × 1000ms（即平均每字 ≥1000ms）。累计时长须等于原生 span 时长，累计文本长度须等于字数，`splitBindingCount` 须在 `0..字数`，且只接受前景。不得把宿主合并的多个原始 span 当作一个 span 按时长放行；原生时长、文本、词分组和长度 g 均保持不变。单字回落子动画延迟修正只作用于原单字分支，多字保留宿主错峰。
+
 **通用维护。** [CjkTerminalGradientPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/CjkTerminalGradientPolicy.kt) 对合法 CJK 尾词取 `max(original, feather)`，只接受有限值与 `0 < feather <= 1`。原余量更大时保留，无效几何透传；尾词不额外要求触发长尾辉光。
 
 当前 reader 的原文与发音向量分别选合法 end 最大的词 ID，同 end 取后出现词。向量大小须在 2..4096，时间 begin 非负且 end 大于 begin；两路结果按 reader 弱身份与行 ID 缓存。补偿只影响当前扫光对应 CJK 词；现有协议的build第八参（零基索引7）为true时走原生分支，Latin文本也保持原生。margin词对象须与当前扫光词一致，嵌套/异常退出恢复线程作用域。
 
-有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复，[跨行能力](#lyric-wrap-sweep)独立安装。
+有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复；[跨行能力](#lyric-wrap-sweep)由“歌词效果优化”开关控制，CJK 辉光开关不控制该能力。
 
-**变更与降级。** 辉光安装后再安装末词补偿，两者合并能力状态；末词契约缺失时保留辉光并报告末词不支持，声明契约但解析/注册失败时报告降级且辉光继续。新增两个 Hook 共用独立 scope，全部成功才 activate。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
+**变更与降级。** 辉光安装后再安装末词补偿，两者合并能力状态；末词契约缺失时保留辉光并报告末词不支持，声明契约但解析/注册失败时报告降级且辉光继续。新增两个 Hook 共用独立 scope，全部成功才 activate。新增宿主构建须独立确认原生 span 元数据、前后景绑定和 split binding 语义后，才能在精确 profile 显式启用多字放行；默认值不继承前版本。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
 
 [证据清单](host-adaptation-checklist.md#cjk-animation-checks) · [人工场景](feature-preservation.md#cjk-animation)
 
@@ -347,7 +362,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 ### 5.6 跨行歌词扫光
 
-**生效与接缝。** 独立 `LyricWrapSweepTarget`，能力键为 `FEATURE_LYRIC_WRAP_SWEEP`，无独立设置项。精确 profile 声明解析器支持的 `lyricWrapSweep` 契约才默认安装；不读取 CJK 开关，不依赖末词补偿。未声明报告不支持，已声明但解析/注册失败报告降级，均保留原生渲染。
+**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）是跨行扫光与活动行高亮共用的唯一开关，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricWrapSweepFeature` 与 `LyricBackgroundHighlightFeature` 都返回 `DISABLED`，且不调用各自 `target.install`。开启后仍分别按精确 profile 的 `lyricWrapSweep` 与 `lyricBackgroundHighlight` 契约安装和核对，各自报告支持、降级或失败；任一能力未声明或安装失败不阻止另一项。跨行扫光的 `LyricWrapSweepTarget` 使用能力键 `FEATURE_LYRIC_WRAP_SWEEP`，不新增独立设置。CJK 辉光开关不控制这两个 Feature。
 
 入口为 [LyricWrapSweepContract](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepContract.kt)、[Geometry](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepGeometry.kt)、[AppleMusicLyricWrapSweepTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricWrapSweepTarget.kt) 和 core 的 [LyricWrapSweepPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricWrapSweepPolicy.kt)。Contract 的必需清单与关系校验是协议依据，不另写混淆名或支持版本表。
 
@@ -391,6 +406,26 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 
 [证据清单](host-adaptation-checklist.md#lyric-wrap-sweep-checks) · [人工场景](feature-preservation.md#lyric-wrap-sweep)
 
+<a id="lyric-background-highlight"></a>
+
+#### 5.6.1 歌词效果优化：活动行高亮
+
+**生效与接缝。** 本能力与跨行扫光共用前述“歌词效果优化”开关及重启门禁；开关开启后，本能力仍按自己的精确契约单独安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖跨行扫光的安装结果；跨行不支持或失败不影响本能力，反之亦然。
+
+启用要求精确 profile 声明 `lyricBackgroundHighlight`、`contractVersion: 4`，通过全部成员及关系校验，并成功对活动行提交方法 `O` 执行 `deoptimize` 后注册、激活 Hook。`lineSubset` 为 `f1.D(TreeSet,Collection)boolean static`，去优化确保此内部调用可被拦截。支持范围以精确 profile 的契约声明为准；开关开启后未声明契约报告不支持，解析、去优化或注册失败关闭本次注册 scope 并报告降级。
+
+**活动行与词状态。** 1609 的 `A.k` 将背景行登记到 `q`，`O` 可在原始输入仍含父行时将其过滤掉。父行候选来自当前集合、原始输入和已保留行；输入中较旧或已经退出输入的行，只要仍在背景保留窗口内就参与保留。只在本次 `O`、`f1.D` 第一参数与当前 `r` 为同一实例时处理首次过滤结果：合并未结束父行，并在集合变化为真子集时放行更新；其余调用保持原生。结束时以该过滤结果判断应释放哪些模块父行，保留原生仍需要的成员及间奏、分组逻辑。
+
+普通提交与结束补交都在模块副本中复制合并保留父行的主词和背景词 ID，不改调用方的集合与数组。`A.w/x` 缺行会使 `g0/i0/k` 清除遮罩或收起和声，故词 ID 必须随普通提交保留，释放只清模块旧父行。`O` 返回前校正这些父行在 `r/s` 中的成员关系，必要时经原生 `E/h` 通知重绑；核对 `Fragment.G0/H0` 后，仅在需要时调用原生 `N.b` 恢复焦点。行词动画、和声观察者及模糊共同消费提交后的活动状态，模糊以显示快照为准，滚动继续遵守原生用户交互门槛。
+
+**时间与生命周期。** 保留窗口从父句 `begin` 到原文、发音背景词的最大有效 `end`，多个背景段取最终结束点；TTML 和媒体时钟保持原样。窗口判定及到期轮询读取媒体位置，不能使用含 `suggestedLineOffset` 的行调度载荷 `PLAYBACK_POSITION` 提前判定结束。结束补交按最近原生样本还原行时钟偏移，剩余间奏时长按媒体位置差扣减，补交不再次校准偏移；媒体位置不可读时跳过本次判定。
+
+暂停停止到期轮询，恢复后继续按媒体位置判定。Seek、换文档、适配器脱离和视图销毁先尝试释放旧保留行，再移除对应会话；reader 身份变化不得复用旧窗口和时间基准。普通行重绑与回收沿原生绑定读取当前状态，不清除其他行仍有效的会话。关闭注册 scope 时取消轮询并清状态，多歌词视图按各自 adapter 隔离。
+
+**状态与维护。** 安装健康状态由 Feature 统一报告；首次非主线程提交透传并报告降级。运行异常记录原因、尝试释放保留行并清理会话，后续提交可重新建立会话。正常逐句提交不输出诊断，异常日志不含歌词正文。新构建须重新确认过滤调用、词 ID 消费、焦点/显示快照、媒体与行调度时钟及生命周期语义；所需成员清单由代码契约维护，不能照搬相邻构建的混淆名。
+
+[证据清单](host-adaptation-checklist.md#lyric-background-highlight-checks) · [人工场景](feature-preservation.md#lyric-background-highlight)
+
 <a id="lyrics-typeface"></a>
 
 ### 5.7 歌词字体与显示协作
@@ -418,11 +453,17 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 
 原生收回 settling 中只在同 owner、sheet、目标状态下，目标坐标确实改变时通过原生平滑入口更新剩余终点；拖动/展开/隐藏、新目标或稳定状态清旧记录，不直接改 top/translation，也不因相同目标重启动画。终态 `reconcileCollapsedSheet` 只作兜底：已折叠而实际落点错误时合并布局并在完成前阻止该帧绘制，后续 inset/布局变化同样覆盖。
 
+稳定收起的逐帧 peek 更新可单独声明 `fragmentChrome.phone.behavior.collapsedPeekMode="offset"`，缺省继续调用原生 setter。放行前追踪当前包 setter 及其调用：确认固定 peek 只写已声明字段、重算 collapsed offset，并在 state=4 时请求布局，没有遗漏通知或其他副作用。绑定仅在当前 owner、非自动 peek、sheet/父树无待布局且实际位置已对齐时更新字段、调用原生重算并 `offsetTopAndBottom`；目标越界请求原生布局，拖动/settling/展开/恢复仍走 setter。这不允许直接移动正在运行的原生 sheet 动画。
+
 sheet 校准先于 mini 锚点采样，材质岛尺寸/边距在同轮绘制前完成布局，不依赖多个 pre-draw listener 顺序。底栏收缩弹簧运行时暂停 sheet 落点校准，结束后恢复。
 
 Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding` 创建时启动。先检查一次，条件未就绪每 250ms 再查，最多 40 次；已显示、补调成功或异常即结束。补调要求原生登录且存在当前播放对象；每次确认 owner 当前 root 仍附着，销毁取消全部回调。该接入沿既有玻璃资格，不等同独立播放器恢复能力。
 
 原生内容、材质采样和模块岛按视图会话管理。关闭/失败/视图替换恢复仍拥有的透明度、裁剪、尺寸和原生触摸，旧回调不能影响新树。旧 Activity 保留自己的导航/mini 组合与视频语义。
+
+宿主已维护兼容的内容 RenderNode 时，可在 `fragmentChrome.members.fields.contentBackdropNode` 声明完整 owner/name/type，经既有解析器预解析；未声明保持 View 采样。宿主绑定通过 Canvas 语义端口提供录制，核对直接父类型、唯一内容子树、原点/矩阵/alpha/Z、尺寸、父滚动/padding及 display-list 就绪。宿主本轮正常绘制在 RenderThread 使用引用前更新同一节点；窗口背景、源脏状态与代次仍由 `ViewBackdrop` 处理。首帧未就绪或层级/几何不匹配时返回未绘制并回退 `source.draw`；模块只释放自己的记录，不丢弃宿主节点，也不在材质库发现私有字段。
+
+预绘制中的裁剪和留白更新必须先比较当前值，只在实际变化时调用 setter。不要假设原生控件对同值写入没有副作用：适配原生列表时须追踪其 `setClipToPadding` 等覆写，确认首次布局后是否仍无条件 `requestLayout`。每帧重复写入会形成“预绘制 → 请求布局 → 全局布局通知 → 下帧预绘制”的循环，连带触发层级扫描、背景录制和材质绘制；纯 Compose 场景未进入该分支不能证明原生列表路径正常。保持原值捕获、离开目标/关闭时的恢复，以及宿主真实改值后重新接管的语义；不能用降低动画帧率或冻结背景掩盖布局循环。
 
 **变更触发。** 导航模型、原生落位、资源层级或显示/恢复机制改变时调整绑定/会话，复核当前形态；普通材质修改沿用这些宿主接缝。独立收缩规则见下一节。
 
@@ -438,7 +479,7 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 
 #### 通用维护：方向、触摸与单一动画
 
-`GlassBarCollapseController` 唯一持有目标、启用/外观状态、Animatable、协程及滚动监听，`PhoneGlassSession` 只接入几何；导航、mini、padding 和 peek 读同一进度。输入由 `GlassBarCollapseInput` 独占，`GlassBarTouchRegions` 只做屏幕命中，`GlassBarCollapseLayout.controls` 提供共享几何。
+`GlassBarCollapseController` 唯一持有目标、启用/外观状态、Animatable、协程及滚动监听，`PhoneGlassSession` 只接入几何；导航、mini 和 peek 逐帧读同一进度，内容留白取同一几何并可在下述边界合并布局。输入由 `GlassBarCollapseInput` 独占，`GlassBarTouchRegions` 只做屏幕命中，`GlassBarCollapseLayout.controls` 提供共享几何。
 
 | 输入阶段 | 规则 |
 |---|---|
@@ -449,7 +490,11 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 | 原生惯性 | 只跟踪起点命中的容器，延续最后确认方向；弹簧期间不因 peek、padding、列表估算或回弹位移反判，也不累加多列表 |
 | 导航/配置/会话变化 | `expand()` 清手势与惯性并同步展开，宿主主动选中也处理；重建不沿旧状态，mini start/end 边距随 RTL 交换 |
 
-原生位移缓存实际运行时类的 framework `computeVerticalScrollOffset(): int` 覆写，不用 RecyclerView 的 scrollY 或模块 AndroidX 强转；单类失败只停该类信号，保留页面观察。Compose 外壳不代表可滚动：在 profile 识别场景内找语义 owner，等子树处理 DOWN 后于 MOVE/UP 查询当前位置的 framework 边界。每手势重选目标，层级失效才整树扫描/更新 owner；每帧仅检查已发现场景 isShown/高度，不缓存可见性结论，关闭清类缓存。
+原生位移缓存实际运行时类的 framework `computeVerticalScrollOffset(): int` 覆写，不用 RecyclerView 的 scrollY 或模块 AndroidX 强转；单类失败只停该类信号，保留页面观察。Compose 外壳不代表可滚动：在 profile 识别场景内找语义 owner，等子树处理 DOWN 后于 MOVE/UP 查询当前位置的 framework 边界。每手势重选目标，层级失效才重新发现容器/更新 owner；每帧仅检查已发现场景 isShown/高度，不缓存可见性结论，关闭清类缓存。
+
+列表回收也可能触发 global layout，层级发现用显式栈遍历，在已识别的外层滚动目标或 Compose 场景停止，不逐行展开列表子树；ViewPager 的页面承载 RecyclerView 不作为滚动目标，继续深入页面。隐藏 Compose 场景仍登记，以覆盖不触发布局的显隐切换；目标替换/分离时恢复旧 padding。资格检查、材质初始化和收缩配置共用会话设置快照，沿既有短周期及前台恢复刷新，不在重复接入时重新解码设置。
+
+收缩弹簧运行且播放器稳定收起时，已有留白的长列表若仍可向末尾滚动，保留已应用的底 padding，停稳后提交当前占高，避免每帧让整个列表重新布局；到末尾、短内容、未知边界、新目标及几何变化立即更新，前台恢复丢弃旧值。模块导航/mini材质沿既有隔离容器局部测量，在本轮绘制前刷完。原生 mini 仅在自身与父 FrameLayout 无待布局时局部测量更新边距，其他情形交还正常布局；不重挂原生控件，不抑制滚动输入。
 
 只观察内容根事件，不消费、改写或重新分发。呈现接管后隐藏的原生导航仍可能收触摸：先向该身份发送 ACTION_CANCEL，再按当前 view 呈现状态隔离其子树；撤销/销毁恢复分派。隔离不覆盖内容根、mini、整条玻璃行，也不改菜单启用或程序化选择；未支持收缩的宿主不进入此路径。
 
@@ -469,10 +514,15 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 | mini | hasPresentation、收缩运行且完整播放器进度为零才预留；上界取当前父宽，slot 边距不为负，打开播放器回原材质路径，原生布局/输入保留 |
 | 隐藏节点 | 折射源和分离搜索不可见时保持附着与层/材质资源，挂起子测量/放置及内部录制；门禁翻转后下次绘制前恢复 |
 | 帧阶段 | 连续尺寸在测量、位移/alpha 在 graphicsLayer 读当前不可变几何，组合只读显隐/交互/承载门禁；动态 modifier 逐轴按原顺序收敛约束，背板/折射源保留 required 语义 |
+| 标签排版 | 可见标签继续使用 `BasicText`；当前导航实例按 tab ID 只保存最近一次原始约束与 `TextLayoutResult`，表随菜单/样式/配置/字体 resolver/密度/方向重建，容量限当前菜单。隐藏折射标签仅在文字、样式、字体状态（无 stale）及原始约束匹配时复用该结果，否则由 `BasicText` 独立测量回退 |
 | 交互时效 | 拖拽、索引、按压高亮和补偿读当前几何提供者；标签/水珠沿 clamped resting width，仅背板继承回弹。透明度裁切与原 alpha 一致 |
 | 资源恢复 | 旋转、分屏、密度/配置变化重算预留；移除时释放层/效果，修改本地上游补丁同步维护 `backdrop/UPSTREAM.md` 与源码 pin |
 
 渲染优化保留弹簧参数、共享几何、位移端口、peek、内容留白和 mini 原生输入。不能以整体缩放文字/图标或冻结背景代替承载复用，单设备性能收益不作为所有设备保证。
+
+可见标签仍使用 `BasicText`，并由 `onTextLayout` 捕获真实的 `TextLayoutResult`；当前导航实例按 tab ID 只保存最近一次原始约束与结果，表随菜单、样式、配置、字体 resolver、密度或方向变化重建，容量限于当前菜单。隐藏折射标签仅在文字、样式、字体状态（无 stale）及原始约束匹配时直接使用该结果绘制；不匹配或隐藏层先于可见层测量时，继续由原 `BasicText` 独立测量回退。`LiquidBottomTabs` 的可选 `refractionContent` 默认仍使用原 `content`，只有 `GlassNavigation` 收缩路径传入替代文字绘制。可见与折射两份内容各自的图标、绘制/着色、触摸、图层及原单行省略号、基线、命中、选中和无障碍语义分别保留；原生列表和宿主契约边界不变。该复用是当前实例的最近一次排版结果复用，未命中原 `BasicText` 回退，不承诺固定命中率、统一减半或整页 RecyclerView 布局减少。
+
+折射文字命中复用时，仍须按排版结果的实际尺寸测量、放置独立绘制节点，并保留基线；仅跳过重复 `BasicText` 的测量与放置。不能用空的 placement 块替代文字承载，或依赖未放置子树的绘制 modifier，否则选中指示器采样的源可能缺字。未命中时只测量、放置原 `BasicText`，两条路径都保留原有折射层坐标、颜色滤镜和显隐门禁。
 
 需要测量时沿既有 `AM++/` Trace：collapse/progress（进度×10000）/running、source/record、effects/update、backdrop/record/createLayer 及导航/mini measure/layout/recordView 分段；CPU 区段成对结束，不采样不写标记，CPU 分段不等于 GPU 耗时。操作与视觉标准见[收缩矩阵](feature-preservation.md#glass-collapse-rendering)，[清单](host-adaptation-checklist.md#glass-collapse-rendering-checks)仅登记证据及结果。
 
@@ -485,6 +535,8 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 **生效与接缝。** 独立宿主能力，与玻璃/收缩/双栏无依赖。精确生产档案须授予 `startupPagePrewarm`、提供解析器支持的完整 v1 契约及当前形态导航资源，入口和安装共同限定 schema。普通配置默认由 EnhancementDefaults 与缺键解码共用，已有关闭值保留；默认开启不授予未知构建或形态资格，重开应用生效。
 
 `StartupPagePrewarmContract` 使用 FragmentProfileMembers 解析生命周期、tab 模型、容器构造/参数、原生隐藏事务和共享状态保护；`FragmentStartupPagePrewarmTarget` 安装及隔离失败，`StartupPagePrewarmSession` 持有当前内容 root 的有界任务。原生必须按标签隐藏/显示保留实例，所有导航图、参数键和真实根页面以当前包为证据。
+
+`tabArgumentKey` 与 `titleArgumentKey` 须追溯原生正常创建容器的参数写入点和对应读取点，记录当前包的完整键值与 Bundle 值类型。若键由 `Class.getName()` 与后缀拼接，须确认常量初始化引用的实际类；不能直接沿用旧值或只按类映射推导。成员描述符通过无法证明参数键有效，错误键会使异步 Fragment 事务在原生创建视图时失败。
 
 手机 navigationResource 位于内容根的底部导航；平板可选 tabletNavigationResource 从 Activity 取抽屉菜单并需 tabletMenu 角色，顶部 Compose 不套手机 API。菜单 checked、选中模型及主导航标签一致，不主动开抽屉或选中项；抽屉关闭/玻璃隐藏导航时仍可读取。hostResource 指向一级页面视口，不能预热抽屉/播放器。就绪依据实际视口尺寸与原生菜单/选中状态，不要求平板底部导航具有可见高度。
 
@@ -571,6 +623,10 @@ FragmentTabletVideoHandoff在原生尺寸/resize前通过Coordinator准备当前
 
 接入至少覆盖播放器、队列、历史、操作表、最近搜索、资料库、专辑、歌单、艺术家、主页与封面连续性。每表面展开Epoxy holder、model/binding、LiveData、辅助getter及封面加载，分别安装/报告。原地区/cn/jp、原名/ISRC/ID证据、目录查询、缓存/离线及显示优先级沿现有业务，一个表面成功不代表整项通过；已知子面降级保存在profile。
 
+页面歌曲应保留原生实体提供的 genre，并按歌曲 ID 送入同一原名解析器；不能要求播放后才能取得地区证据。空别名、未知地区或请求失败只代表本次没有可用结果，后续可见绑定采用有上限的退避间隔，不在每次重绑时清除退避。新的 lookup ID、关联艺人 ID、genre 或已确认地区语言可重置负状态；合作艺人、候选身份与原名置信度校验继续保留，地区显示名不充当原名证据。
+
+目录身份阶段与后续批量查询分别限制并发，复用同 ID 在途请求，按当前可见/活动页优先级选取；成功、空结果、同步异常和超时完成均释放容量。身份和艺人语言派生缓存有容量边界，不通过清空已确认原名来减小缓存。绑定登记使用弱身份索引，反射缓存只保存按实际运行类解析的成员；候选集合每次更新复用，文本树扫描先判断适用角色。可见项分批入现有帧队列，每项执行前重查绑定 ID、代次与当前可见性，不能把无界整批塞进一个动作而绕过帧预算。详细逐项日志在调用点门控，保留安装、失败和降级信息。
+
 <a id="artist-compose-profile"></a>
 
 #### Compose 艺人页
@@ -583,6 +639,12 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 
 `ArtistComposeProfileSessions` 弱持有owner/Success/艺人歌曲及pending。新Success、loading/error、非艺人或缺ID/属性关闭旧会话和排队任务；帧队列执行前确认会话和安装组仍活动，关闭只清本组，已出队旧任务也须失活。alias到达/恢复原名按当前entity重建title/header/shelves，保留原生ID/revision；top-songs关联在enrich前，地区判断仍来自歌曲。
 
+原生实体或 shelf 的 `equals` 可能忽略标题，原地修改属性后重建相同列表仍会被 Compose 跳过。先核对真实文字读取链与快照实现；适用构建在 `metadataPresentation` v1 声明 `createState/readState/writeState/entityType/lockup/roomPrepare/pagedRow/pagedRebuild` 完整方法及 `searchSongRow/searchGridRow` 实体字段，沿既有成员解析器一次解析全部必需角色，独立安装 `hle.metadata-presentation`。未声明的旧档案沿用原路径，声明不全或解析失败报告本组降级。
+
+显示状态通过已登记属性的 getter 在实际行组合内读取宿主 SnapshotState，alias 到达后更新该状态，让读取它的行失效；不改原生实体 ID、Success revision、点击和收藏字段。状态按属性弱身份持有，同别名由原生结构判等合并，恢复/关闭时发出恢复通知并清理状态与任务。该路径可用时，歌曲只通知对应显示依赖，艺人标题仍走既有 Success 重建；不要再为每首歌曲重建整页。
+
+“查看全部”应从真实导航动作分别追到 Compose/StateFlow 和分页 Epoxy/PagedList 的实体准备、行构建与最终绑定，不复用资料库 LiveData 的假设。Compose 在原生 lockup 读取前登记当前行实体，分页行保存 model 与实体的弱身份关系，最终绑定再登记精确 binding/ID；有原生 model 缓存时使用声明的分页重建方法清缓存后构建，仍由既有控制器队列合并请求。搜索结果与最近搜索独立确认，歌曲行通过当前构建声明的实体字段识别，不凭标题相似匹配；沿现有查询、帧队列和恢复链提交结果。
+
 **变更触发。** 状态布局、构造器、相等性、发布线程或生命周期变化时重分析Contract/Runtime/Session，名称/别名变化优先改精确档案。覆盖从index遍历，不硬编码版本文件列表。停用的全局目录语言及未启用播放模式UI不会因加档案自动启用。
 
 [证据清单](host-adaptation-checklist.md#artist-compose-profile-checks) · [名称修正场景](feature-preservation.md#metadata) · [Compose场景](feature-preservation.md#artist-compose-profile)
@@ -593,7 +655,9 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 
 **宿主接缝。** 旧设置为PreferenceFragment/PreferenceScreen与Activity结果桥，Fragment设置使用原生ViewModel/分类/action模型及Compose入口。两路均确认行key/分类去重、点击、callback及SAF/文件结果归属；构造器artwork/callback/Unit按当前包类型，不借相邻构建。UI经SettingsViewBridge等接口查询资格，不读profile或发现私有成员。
 
-蜂窝入口要求独立精确能力，保留原生登录、类别、availability与默认关闭；不同页面族使用各自目标。DPI仅宿主范围，配置合法性、冷启动/重建与失败失活走既有AppleMusicDpiOverride，不把密度变化当新宿主资格。
+偏好列表的回调数量、函数接口或 Compose 参数变化时，在当前档案声明 `settings.members`，使用 `contractVersion=1` 及 `methods.preferenceItems`、`methods.compose` 的完整 owner/name/parameters/returns/static。两项由既有成员解析器在注册前完整解析，并分别校验 ViewModel/List 与设置 Fragment/void 的归属；只更新方法名不能适配参数变化。旧档案未声明该区域时保留其已审核签名，不能以目标构建的新参数覆盖旧路径。Compose 入口只观察原生参数，不自行调用或重排偏好列表回调；离线覆盖同步核对该区域的必需角色与完整描述符。
+
+蜂窝入口要求独立精确能力，保留原生登录、类别、availability与默认关闭；不同页面族使用各自目标。DPI仅宿主范围，配置合法性、冷启动/重建与失败失活走既有AppleMusicDpiOverride，不把密度变化当新宿主资格。设置入口与 DPI 的组件过滤使用实际宿主 `packageName`；宿主类、方法和资源继续使用现有原包常量，不以安装包名替换。
 
 #### 通用维护：配置与设置界面
 
@@ -607,6 +671,8 @@ LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/�
 
 配置schema/键、文件ID/目录、迁移marker、SQLite/cache namespace及ZIP格式有明确归属，普通设置保存不覆盖字体/歌词等资产。继续使用既有原子发布、事务恢复、只读迁移重试、导入冲突与取消路径；格式变更单独设计迁移/回退。
 
+宿主普通设置通过 `decodeOrdinarySettings` 解码，跳过独立歌词索引及旧内联歌词 JSON；显示/动画与资格检查不能因读取开关而反复解析歌词资产。歌词查询继续通过 `customLyricsManifest()` 的独立后台读取与缓存，完整 `decode` 保留导入/迁移语义。调整读取路径时核对消费者是否需要资产字段，不能用普通设置快照代替歌词索引。
+
 插件公共SDK与runtime不持有Apple Music私有事实；内置Hook经通用注册记录参与冲突分析，作用域关闭同步释放记录。SDK/生命周期/冲突规则唯一参考[插件开发手册](plugin-development.md)，独立工程操作见[作者教程](plugin-author-guide.md)，不因宿主混淆改公共协议。设置文案/语言维护见[本地化说明](localization.md)。
 
 [人工场景](feature-preservation.md#settings-data-plugins)
@@ -616,6 +682,8 @@ LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/�
 ## 6. 安装、降级与所有权
 
 安装顺序为精确版本识别、配置迁移/绑定、DPI、资源回调、Application后功能与设置入口。资源基础设施失败停止依赖它的安装，单能力失败由该能力报告。Feature状态区分disabled、unsupported、degraded、failed及active，不把局部组成功上报为整功能成功。
+
+仅安装包名改变时，`scope.list` 保留 `com.apple.android.music`，`module.prop` 使用 `staticScope=false`；安装后在 LSPosed 中手动为模块选择改名后的 Apple Music。首次加载与声明主进程过滤仍按实际宿主生效。
 
 新增Hook使用 [HookRegistrationScope](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrationScope.kt)：preparing注册，必需项成功后activate，失败/退出close；关闭后回调原生透传，不依赖框架一定unhook。通用 [HookRegistrations](../hook-runtime/src/main/java/dev/amenhancer/module/hook/HookRegistrations.kt) 保存注册元信息，ModernXposedRuntime与AppleHookRegistrar接入内置记录，插件冲突分析复用同一来源。
 

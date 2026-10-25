@@ -16,7 +16,7 @@ import dev.amenhancer.module.lyrics.source.HttpLyricTransport
 import dev.amenhancer.module.lyrics.source.LunabeatCatalogCache
 import dev.amenhancer.module.lyrics.source.LunabeatCatalogCacheSnapshot
 import dev.amenhancer.module.lyrics.source.LunabeatClient
-import dev.amenhancer.module.lyrics.source.LyricSourceAccess
+import dev.amenhancer.module.lyrics.source.LyricsSourceAccess
 import dev.amenhancer.module.lyrics.source.LyricSourceSelectionStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver

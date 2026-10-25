@@ -251,7 +251,7 @@ internal class LyricsSourceSheetDialog(
         host.configureEmbeddedDialogWindow(
             activity = activity,
             dialog = this,
-            themedContext = context as android.content.ContextThemeWrapper,
+            themedContext = context as android.view.ContextThemeWrapper,
             customPanel = true,
             animateStandardEntrance = false,
         )

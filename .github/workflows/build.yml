@@ -9,6 +9,8 @@ permissions:
 
 jobs:
   android:
+    # 这个 workflow 走 release 签名路径，只属于公开 fork；自用私有仓库用 build-private.yml。
+    if: github.repository == 'Havenmab/AM-plus-plus'
     runs-on: ubuntu-latest
     env:
       AMPP_RELEASE_STORE_FILE: ${{ github.workspace }}/am-plus-plus-release.jks

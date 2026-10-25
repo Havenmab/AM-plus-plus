@@ -452,7 +452,7 @@ class AmllTtmlFormatConverterTest {
 
         assertTrue(
             result.ttml.contains(
-                "<text for=\"L1\"> <span ttm:role=\"x-bg\">" +
+                "<text for=\"L1\"> ${backgroundSpan}" +
                     "(<span begin=\"1.0\" end=\"1.5\">bei</span>" +
                     "<span begin=\"1.5\" end=\"2.0\">jing</span>)" +
                     "</span></text>",
@@ -480,7 +480,7 @@ class AmllTtmlFormatConverterTest {
 
         assertTrue(
             result.ttml.contains(
-                "<text for=\"L1\"> <span ttm:role=\"x-bg\">(beijing)</span></text>",
+                "<text for=\"L1\"> ${backgroundSpan}(beijing)</span></text>",
             ),
         )
         assertFalse(result.ttml.substringAfter("<body").contains("x-roman"))

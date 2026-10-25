@@ -170,9 +170,15 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
                 LyricsTypographyPolicy.isNeutral(spacingPercent)
             val wasAdjusted = synchronized(adjustedRoots) { adjustedRoots.containsKey(root) }
             if (neutral && !wasAdjusted) return
-            // Tablet landscape dual pane keeps TabletLyricTypography's size formula; this session
-            // only applies the spacing half there so row padding follows the slider too.
-            applyTree(root, fontPercent, spacingPercent, applyFont = !dualPane)
+            // Tablet landscape dual pane keeps TabletLyricTypography's size formula (it writes the
+            // absolute type size to the line *and* word views); this session only applies the
+            // spacing half there so the slider is never multiplied twice.
+            applyTree(
+                root,
+                fontPercent,
+                spacingPercent,
+                applyFont = LyricsTypographyPolicy.ownsFontSize(dualPane),
+            )
             logScalesOnce(fontPercent, spacingPercent, dualPane)
             synchronized(adjustedRoots) {
                 if (neutral) adjustedRoots.remove(root) else adjustedRoots[root] = true
@@ -210,7 +216,10 @@ internal class LyricsTypographySession : LyricsTypographyResourceBinding {
         // The policy returns the base value untouched at the neutral percentage, which keeps the
         // stock rendering byte-for-byte identical.
         val karaokeWord = isKaraokeWord(view)
-        if (applyFont || karaokeWord) {
+        // Single-writer rule: karaoke word views are also written by the tablet formula, so the
+        // session must not scale them on top of it (that applied the slider twice and made rows
+        // bound while scrolling visibly smaller than the rows above them).
+        if (applyFont) {
             val targetSize = LyricsTypographyPolicy.scaledTextSize(baseline.textSizePx, fontPercent)
             if (abs(view.textSize - targetSize) > 0.5f) {
                 view.setTextSize(TypedValue.COMPLEX_UNIT_PX, targetSize)

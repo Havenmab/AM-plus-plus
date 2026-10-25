@@ -35,6 +35,15 @@ class LyricsTypographyPolicyTest {
     }
 
     @Test
+    fun theDualPaneKeepsASingleFontWriter() {
+        // The tablet formula writes an absolute type size to the line *and* word views, so the
+        // session must not own the font there; otherwise the slider is applied twice and rows
+        // rebound while scrolling come out smaller than the rows above them.
+        assertFalse(LyricsTypographyPolicy.ownsFontSize(dualPane = true))
+        assertTrue(LyricsTypographyPolicy.ownsFontSize(dualPane = false))
+    }
+
+    @Test
     fun onlyHundredPercentIsNeutral() {
         assertTrue(LyricsTypographyPolicy.isNeutral(100))
         assertFalse(LyricsTypographyPolicy.isNeutral(99))

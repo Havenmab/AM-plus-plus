@@ -1,5 +1,6 @@
 package dev.amenhancer.module.ui.source
 
+import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import org.junit.Assert.assertEquals
@@ -85,6 +86,23 @@ class LyricsSourceSheetPolicyTest {
         val applying = LyricsSourceBusy(LyricLane.ORIGINAL, optionKey = "online:qm:42")
         assertEquals("online:qm:42", applying.optionKey)
         assertFalse(applying.hiding)
+    }
+
+    @Test
+    fun `a host message wins over the sheet fallback`() {
+        assertEquals(
+            "Apple 自带译文暂不支持在面板内隐藏",
+            ApplyResult.failed("not-supported", "Apple 自带译文暂不支持在面板内隐藏")
+                .userMessageOr("无法切换歌词源"),
+        )
+        assertEquals(
+            "无法切换歌词源",
+            ApplyResult.failed("failed", "   ").userMessageOr("无法切换歌词源"),
+        )
+        assertEquals(
+            "无法切换歌词源",
+            ApplyResult(ok = false).userMessageOr("无法切换歌词源"),
+        )
     }
 
     @Test

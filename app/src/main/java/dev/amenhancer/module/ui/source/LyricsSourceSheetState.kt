@@ -1,5 +1,6 @@
 package dev.amenhancer.module.ui.source
 
+import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
@@ -122,3 +123,12 @@ internal data class LyricsSourceBusy(
 
 /** Convenience accessors over the current snapshot used by the view layer. */
 internal fun LyricsSourceSnapshot?.laneState(lane: LyricLane) = this?.lane(lane)
+
+/**
+ * The user-facing text of an [ApplyResult]: the host owns the precise wording
+ * (a rejected lane switch explains why, a successful one names what changed),
+ * so a non-blank message always wins over the sheet's generic fallback. A blank
+ * or missing message is the only case that falls back.
+ */
+internal fun ApplyResult.userMessageOr(fallback: String): String =
+    message?.takeIf { it.isNotBlank() } ?: fallback

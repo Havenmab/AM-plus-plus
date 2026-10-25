@@ -368,7 +368,7 @@ internal class LyricsSourceSheetController(
             view.showMessage(successText(result, LyricsSourceSheetText.applied(locale)), long = true)
             view.closeSheet()
         } else {
-            view.showMessage(result.message.orEmpty().ifBlank { LyricsSourceSheetText.failedFallback(locale) }, long = true)
+            view.showMessage(result.userMessageOr(LyricsSourceSheetText.failedFallback(locale)), long = true)
             refreshSnapshot()
         }
     }
@@ -396,7 +396,7 @@ internal class LyricsSourceSheetController(
             )
             refreshSnapshot()
         } else {
-            view.showMessage(result.message.orEmpty().ifBlank { LyricsSourceSheetText.failedFallback(locale) }, long = true)
+            view.showMessage(result.userMessageOr(LyricsSourceSheetText.failedFallback(locale)), long = true)
             refreshSnapshot()
         }
     }
@@ -419,7 +419,7 @@ internal class LyricsSourceSheetController(
             view.showMessage(successText(result, LyricsSourceSheetText.restored(locale)))
             refreshSnapshot()
         } else {
-            view.showMessage(result.message.orEmpty().ifBlank { LyricsSourceSheetText.failedFallback(locale) }, long = true)
+            view.showMessage(result.userMessageOr(LyricsSourceSheetText.failedFallback(locale)), long = true)
             refreshSnapshot()
         }
     }
@@ -473,8 +473,6 @@ internal class LyricsSourceSheetController(
      * custom-index caveat of a restore, "正在获取该来源…" for an accepted
      * online switch), so its message wins over the sheet's generic fallback.
      */
-    private fun successText(result: ApplyResult, fallback: String): String {
-        result.message?.takeIf { it.isNotBlank() }?.let { return it }
-        return if (result.pending) LyricsSourceSheetText.accepted(locale) else fallback
-    }
+    private fun successText(result: ApplyResult, fallback: String): String =
+        result.userMessageOr(if (result.pending) LyricsSourceSheetText.accepted(locale) else fallback)
 }

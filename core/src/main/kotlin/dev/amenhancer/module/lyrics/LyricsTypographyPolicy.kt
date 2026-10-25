@@ -48,6 +48,17 @@ object LyricsTypographyPolicy {
 
     fun spacingScale(settings: ModuleSettings): Float = spacingScale(settings.lyricsLineSpacingScalePercent)
 
+    /**
+     * True when the host session owns the font size of the lyric text views.
+     *
+     * Tablet landscape dual pane already derives an absolute type size from the viewport
+     * ([dev.amenhancer.module.hook.TabletLyricVisualPolicy]) and writes it to the line *and*
+     * word views on every layout pass. Letting the session scale those same views again would
+     * apply the slider twice (once per writer), so the dual pane keeps a single font writer
+     * and the session only adjusts spacing there.
+     */
+    fun ownsFontSize(dualPane: Boolean): Boolean = !dualPane
+
     /** Apple Music's text size scaled by [fontPercent]; the neutral value is returned untouched. */
     fun scaledTextSize(baseSizePx: Float, fontPercent: Int): Float =
         if (isNeutral(fontPercent) || !baseSizePx.isFinite()) {

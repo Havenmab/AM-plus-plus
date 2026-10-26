@@ -25,8 +25,10 @@ class TextureBlurKernelTest {
             val sum = taps.weights.sum()
             assertEquals("radius=$radius", 1f, sum, 1e-4f)
             assertEquals(taps.pairCount + 1, taps.weights.size)
-            // Large sigmas flatten the kernel until every tap carries the same weight.
-            assertTrue("center is never lighter", taps.weights[0] >= taps.weights[1])
+            // Pair weights fall off monotonically; the centre is a single tap, a pair is two.
+            for (index in 2 until taps.weights.size) {
+                assertTrue("pair weights fall off", taps.weights[index] <= taps.weights[index - 1] + 1e-6f)
+            }
             taps.offsetsPx.forEachIndexed { index, offset ->
                 assertTrue("offsets ascend", index == 0 || offset > taps.offsetsPx[index - 1])
             }

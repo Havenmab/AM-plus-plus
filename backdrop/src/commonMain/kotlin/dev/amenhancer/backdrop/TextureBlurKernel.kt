@@ -68,7 +68,8 @@ object TextureBlurKernel {
         val total = 1f + 2f * pairWeights.sum()
         val weights = FloatArray(reach + 1)
         weights[0] = 1f / total
-        for (i in 0 until reach) weights[i + 1] = pairWeights[i] / total
+        // A pair covers both sides of the centre, so its weight doubles in the normalisation.
+        for (i in 0 until reach) weights[i + 1] = 2f * pairWeights[i] / total
 
         return TextureBlurTaps(
             downscale = grid,

@@ -24,6 +24,14 @@ class LyricsSourceHostStructureTest {
 
     private fun wiring(): String = source("LyricsSourceWiring.kt")
 
+    /** The host-api contract object this feature publishes through. */
+    private fun apiSource(name: String): String =
+        File("../host-api/src/main/java/dev/amenhancer/module/hook/" + name).readText()
+
+    /** The app-module implementation the host calls through that contract. */
+    private fun appSource(path: String): String =
+        File("../app/src/main/java/dev/amenhancer/module/" + path).readText()
+
     /** A sibling hook file that this package talks to through the host-api bridge. */
     private fun hookSource(name: String): String =
         File("src/main/java/dev/amenhancer/module/hook/" + name).readText()
@@ -337,6 +345,49 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `a sheet-written entry is named after the song, not after the platform`() {
+        val api = apiSource("LyricsSourceTarget.kt")
+        // the bridge carries the song name as a fourth argument
+        assertTrue(api.contains("var replace: ((Long, String, String, String) -> String?)? = null"))
+        assertTrue(api.contains("fun replaceLyrics(songId: Long, ttml: String, source: String, displayName: String)"))
+        val writer = appSource("settings/LyricsSourceIndexWriter.kt")
+        // the row is named by the caller's song name; the platform only tags the source
+        assertTrue(writer.contains("displayName = displayName.takeIf { it.isNotBlank() }"))
+        assertTrue(writer.contains("source = customLyricsSource(providerSource)"))
+        assertFalse(
+            "a provider label must never be the entry's display name",
+            writer.contains("displayName = LyricSourceText.providerLabel(providerSource),"),
+        )
+        val text = controller()
+        assertTrue(text.contains("private fun songDisplayName(song: LyricSongContext): String"))
+        assertTrue(text.contains("songDisplayName(envelope.snapshot.song)"))
+        // and the fallback chain ends at the Adam ID, never at a platform name
+        assertTrue(text.contains("\"歌曲 \" + song.songId"))
+    }
+
+    @Test
+    fun `a legacy platform-named entry is repaired once when the sheet opens`() {
+        val api = apiSource("LyricsSourceTarget.kt")
+        assertTrue(api.contains("var rename: ((Long, String) -> Boolean)? = null"))
+        assertTrue(api.contains("fun renameLyrics(songId: Long, displayName: String): Boolean"))
+        val writer = appSource("settings/LyricsSourceIndexWriter.kt")
+        assertTrue(writer.contains("LyricsSourceCustomIndexBridge.rename = {"))
+        assertTrue(writer.contains("private fun rename("))
+        // the repair rewrites the row only: body, source and flags are copied verbatim
+        assertTrue(writer.contains("source = entry.source"))
+        assertTrue(writer.contains("enabled = entry.enabled"))
+        assertTrue(writer.contains("userEdited = entry.userEdited"))
+        assertTrue(writer.contains("replacingAppleMusicId = songId"))
+        val text = controller()
+        assertTrue(text.contains("private fun repairLegacyDisplayName(input: LyricSourceInput)"))
+        // only when the stored name is exactly a provider label
+        assertTrue(text.contains("record.displayName in providerLabels()"))
+        // once per song and process, off the main thread
+        assertTrue(text.contains("if (!renamedSongs.add(songId)) return"))
+        assertTrue(text.contains("LyricsSourceCustomIndexBridge.renameLyrics(songId, target)"))
+    }
+
+    @Test
     fun `apply and restore install their result on the native model immediately`() {
         val text = controller()
         // apply: write the index and then ask the host to install it (no restart)
@@ -416,7 +467,10 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `the custom index bridge is used with provider ids and never silently skipped`() {
         val text = controller()
-        assertTrue(text.contains("LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)"))
+        // provider id + the song's own display name go to the writer
+        assertTrue(text.contains("LyricsSourceCustomIndexBridge.replaceLyrics("))
+        assertTrue(text.contains("option.providerId,"))
+        assertTrue(text.contains("songDisplayName(envelope.snapshot.song),"))
         assertTrue(text.contains("LyricsSourceCustomIndexBridge.canReplace"))
         // every missing-writer branch answers with a code and a Chinese reason
         assertTrue(text.contains("NOT_SUPPORTED"))

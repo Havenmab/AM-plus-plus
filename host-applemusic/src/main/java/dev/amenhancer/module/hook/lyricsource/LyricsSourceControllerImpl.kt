@@ -20,12 +20,15 @@ import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricSourceCatalog
 import dev.amenhancer.module.lyrics.source.LyricSourceDiagnostics
+import dev.amenhancer.module.lyrics.source.LyricSourceInput
 import dev.amenhancer.module.lyrics.source.LyricSourceErrorCodes
 import dev.amenhancer.module.lyrics.source.LyricSourceKeys
 import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceProviders
+import dev.amenhancer.module.lyrics.source.LyricSourceText
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceSelectionStore
+import dev.amenhancer.module.lyrics.source.LyricSongContext
 import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
 import dev.amenhancer.module.lyrics.source.LyricsSourceController
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
@@ -95,6 +98,12 @@ internal class LyricsSourceControllerImpl(
     /** Last time an automatic publish was forwarded to the sheet (dedupe window). */
     private val lastPublishedNotify = AtomicLong(0L)
 
+    /** Songs whose legacy display name has already been repaired in this process. */
+    private val renamedSongs = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
+    /** Cached provider labels an old entry could have been named after. */
+    private val providerLabelCache = java.util.concurrent.atomic.AtomicReference<Set<String>?>(null)
+
     init {
         // The automatic pipeline asks before it replaces a song: a manual choice in
         // the sheet owns the song and must survive the automatic chain.
@@ -137,6 +146,7 @@ internal class LyricsSourceControllerImpl(
                 logger(LyricSourceDiagnostics.degradedLine(songId, lane, key))
             }
         }
+        repairLegacyDisplayName(probed.input)
         logger(LyricSourceDiagnostics.snapshotLine(snapshot))
         return SnapshotEnvelope(snapshot = snapshot, probed = probed)
     }
@@ -145,6 +155,59 @@ internal class LyricsSourceControllerImpl(
         val snapshot: LyricsSourceSnapshot,
         val probed: LyricsSourceProbes.Probed,
     )
+
+    /**
+     * Entries written by an older build were named after the platform ("AMLL",
+     * "QQ 音乐") instead of the song, so the lyrics manager listed them unreadably.
+     * Opening the sheet now renames such an entry in place — once per song and
+     * process, off the main thread, and only when the name is exactly a provider
+     * label (a user-given name is never touched).
+     */
+    private fun repairLegacyDisplayName(input: LyricSourceInput) {
+        val songId = input.song.songId
+        if (songId <= 0L || input.customFiles.isEmpty()) return
+        if (!LyricsSourceCustomIndexBridge.canRename) return
+        val legacy = input.customFiles.firstOrNull { record -> record.displayName in providerLabels() }
+            ?: return
+        if (!renamedSongs.add(songId)) return
+        val target = songDisplayName(input.song)
+        logger(
+            "lyrics-source: renaming legacy entry id=" + songId +
+                " from=" + legacy.displayName + " to=" + target,
+        )
+        runCatching {
+            executor.execute {
+                val renamed = LyricsSourceCustomIndexBridge.renameLyrics(songId, target)
+                logger("lyrics-source: legacy entry renamed id=" + songId + " ok=" + renamed)
+            }
+        }.onFailure { error ->
+            logger("lyrics-source: legacy rename was rejected: " + (error.message ?: "unknown"))
+        }
+    }
+
+    /** Every label an entry could have been named after by an older build. */
+    private fun providerLabels(): Set<String> = providerLabelCache.get() ?: buildSet {
+            LyricSourceProviders.ONLINE_ORDER.forEach { id ->
+                runCatching { LyricSourceText.providerLabel(id) }.getOrNull()?.let(::add)
+            }
+            listOf(
+                LyricSourceProviders.APPLE,
+                LyricSourceProviders.FILE,
+                LyricSourceProviders.CACHE,
+                LyricSourceProviders.OVERLAY,
+            ).forEach { id ->
+                runCatching { LyricSourceText.providerLabel(id) }.getOrNull()?.let(::add)
+            }
+        }.also { providerLabelCache.set(it) }
+
+    /** The name the index row should carry: the song, then "title - artist", then the id. */
+    private fun songDisplayName(song: LyricSongContext): String =
+        song.title.trim().takeIf { it.isNotEmpty() }
+            ?: listOf(song.title.trim(), song.artist.trim())
+                .filter { it.isNotEmpty() }
+                .joinToString(" - ")
+                .takeIf { it.isNotEmpty() }
+            ?: ("歌曲 " + song.songId)
 
     /** Online candidates already seen for one song, pooled across lanes. */
     private data class RecentCandidates(
@@ -564,6 +627,7 @@ internal class LyricsSourceControllerImpl(
             songId,
             document,
             LyricSourceProviders.fromCustomLyricsSource(ttml.originSource),
+            songDisplayName(envelope.snapshot.song),
         )
         if (replaceFailure != null) {
             return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, replaceFailure)
@@ -646,7 +710,12 @@ internal class LyricsSourceControllerImpl(
         // The index bridge speaks provider ids ("qm"/"lb"/...); the publisher below
         // speaks the module's own source tags, which is what a stored entry records.
         if (LyricsSourceCustomIndexBridge.canReplace) {
-            val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)
+            val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(
+                songId,
+                ttml,
+                option.providerId,
+                songDisplayName(envelope.snapshot.song),
+            )
             return if (replaceFailure == null) {
                 // Writing the index only becomes visible after a restart, because the
                 // page keeps the pointer it already has. Install it now.

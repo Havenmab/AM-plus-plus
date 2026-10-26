@@ -79,28 +79,44 @@ object LyricsSourceSheetEntry {
 object LyricsSourceCustomIndexBridge {
 
     /**
-     * `(appleMusicId, ttml, providerSource) -> failure message`.
+     * `(appleMusicId, ttml, providerSource, displayName) -> failure message`.
      *
      * Null means the index accepted the document; a string is the user-facing reason the
      * write failed (an existing entry that could not be replaced, a rejected document, a
      * storage error). Returning the reason instead of a bare boolean is what lets the sheet
      * tell the user *why* a source could not be applied instead of a generic failure.
+     *
+     * [displayName] is the **song's** name, never the provider's: the custom-lyrics index
+     * lists one row per song, so "AMLL" or "QQ 音乐" there describes nothing the user can
+     * recognise (the provider is already in the entry's source field).
      */
     @Volatile
-    var replace: ((Long, String, String) -> String?)? = null
+    var replace: ((Long, String, String, String) -> String?)? = null
 
     /** `(appleMusicId) -> removed`. */
     @Volatile
     var remove: ((Long) -> Boolean)? = null
 
+    /**
+     * `(appleMusicId, displayName) -> renamed`.
+     *
+     * Repairs an entry whose display name is still a provider label — the value every
+     * sheet-written entry used to carry. The writer rewrites the manifest entry in place
+     * (same body, same source, same flags), so the user never has to re-apply the source.
+     */
+    @Volatile
+    var rename: ((Long, String) -> Boolean)? = null
+
     val canReplace: Boolean get() = replace != null
 
     val canRemove: Boolean get() = remove != null
 
+    val canRename: Boolean get() = rename != null
+
     /** Replaces the song's custom-lyrics document; null on success, else the reason. */
-    fun replaceLyrics(songId: Long, ttml: String, source: String): String? {
+    fun replaceLyrics(songId: Long, ttml: String, source: String, displayName: String): String? {
         val writer = replace ?: return "切换自定义歌词需要 app 侧索引写入口（未注册）"
-        return runCatching { writer(songId, ttml, source) }
+        return runCatching { writer(songId, ttml, source, displayName) }
             .getOrElse { error -> (error.javaClass.simpleName + ": " + error.message) }
     }
 
@@ -108,5 +124,12 @@ object LyricsSourceCustomIndexBridge {
     fun removeLyrics(songId: Long): Boolean {
         val writer = remove ?: return false
         return runCatching { writer(songId) }.getOrDefault(false)
+    }
+
+    /** Retitles the song's index entry in place; false when nothing could be renamed. */
+    fun renameLyrics(songId: Long, displayName: String): Boolean {
+        if (displayName.isBlank()) return false
+        val writer = rename ?: return false
+        return runCatching { writer(songId, displayName) }.getOrDefault(false)
     }
 }

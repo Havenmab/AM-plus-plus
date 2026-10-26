@@ -28,19 +28,25 @@ internal object LyricsSourceIndexWriter {
 
     fun register(controller: EmbeddedSettingsController) {
         runCatching {
-            LyricsSourceCustomIndexBridge.replace = { songId, ttml, providerSource ->
-                replace(controller, songId, ttml, providerSource)
+            LyricsSourceCustomIndexBridge.replace = { songId, ttml, providerSource, displayName ->
+                replace(controller, songId, ttml, providerSource, displayName)
             }
         }.onFailure { error -> fail("register replace", error) }
         runCatching {
             LyricsSourceCustomIndexBridge.remove = { songId -> remove(controller, songId) }
         }.onFailure { error -> fail("register remove", error) }
+        runCatching {
+            LyricsSourceCustomIndexBridge.rename = { songId, displayName ->
+                rename(controller, songId, displayName)
+            }
+        }.onFailure { error -> fail("register rename", error) }
     }
 
     /** Mirrors uninstall(): a torn-down host must not leave callable writers behind. */
     fun unregister() {
         LyricsSourceCustomIndexBridge.replace = null
         LyricsSourceCustomIndexBridge.remove = null
+        LyricsSourceCustomIndexBridge.rename = null
     }
 
     private fun replace(
@@ -48,6 +54,7 @@ internal object LyricsSourceIndexWriter {
         songId: Long,
         ttml: String,
         providerSource: String,
+        displayName: String,
     ): String? = runCatching {
         // The index rejects a second entry for a song that already has one unless the caller
         // says which entry it is replacing. A song whose lyrics came from a previous online
@@ -59,7 +66,10 @@ internal object LyricsSourceIndexWriter {
         val result = controller.saveLyrics(
             CustomLyricsDraft(
                 appleMusicId = songId,
-                displayName = LyricSourceText.providerLabel(providerSource),
+                // The index lists one row per song: the row must name the song, not the
+                // platform it came from (the provider is already in [source]).
+                displayName = displayName.takeIf { it.isNotBlank() }
+                    ?: LyricSourceText.providerLabel(providerSource),
                 ttml = ttml,
                 source = customLyricsSource(providerSource),
                 // The sheet stores what the user picked, so the automatic completion
@@ -78,6 +88,40 @@ internal object LyricsSourceIndexWriter {
     }.getOrElse { error ->
         fail("replace", error)
         error.message ?: "写入自定义歌词索引失败"
+    }
+
+    /**
+     * Retitles an entry that still carries a provider label as its display name.
+     *
+     * The body, the source and the flags are copied verbatim: this repairs the *label*
+     * only, so a user who liked the document keeps exactly the same document and does not
+     * have to re-apply the source.
+     */
+    private fun rename(
+        controller: EmbeddedSettingsController,
+        songId: Long,
+        displayName: String,
+    ): Boolean = runCatching {
+        if (displayName.isBlank()) return false
+        val entry = controller.lyricsEntries().firstOrNull { it.appleMusicId == songId }
+            ?: return@runCatching false
+        val ttml = controller.readLyrics(songId)?.takeIf { it.isNotBlank() }
+            ?: return@runCatching false
+        val result = controller.saveLyrics(
+            CustomLyricsDraft(
+                appleMusicId = songId,
+                displayName = displayName,
+                ttml = ttml,
+                source = entry.source,
+                enabled = entry.enabled,
+                userEdited = entry.userEdited,
+            ),
+            replacingAppleMusicId = songId,
+        )
+        result is EmbeddedActionResult.Done
+    }.getOrElse { error ->
+        fail("rename", error)
+        false
     }
 
     private fun remove(controller: EmbeddedSettingsController, songId: Long): Boolean =

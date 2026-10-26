@@ -74,33 +74,35 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
-    fun `the sheet has an entry that does not depend on any native menu`() {
+    fun `the native lyrics more button is kept visible and opens the sheet when a lane is missing`() {
         val text = menu()
-        val floating = source("LyricsSourceFloatingEntry.kt")
-        // it is installed by the same target path, fed by the feature switch
-        assertTrue(text.contains("LyricsSourceFloatingEntry.install("))
-        assertTrue(text.contains("LyricsSourceFloatingEntry.attachFromFragment("))
-        // a real view of our own, added to the decor overlay (Apple's layout untouched)
-        assertTrue(floating.contains("activity.window?.decorView as? ViewGroup"))
-        assertTrue(floating.contains("Gravity.END or Gravity.CENTER_VERTICAL"))
-        assertTrue(floating.contains("const val BUTTON_TAG = \"ampp_lyrics_source_floating_entry\""))
-        assertTrue(floating.contains("tag = BUTTON_TAG"))
-        // dedupe + leave with the page + nothing when the feature is off
-        assertTrue(floating.contains("if (attachedHost?.get() === host && attachedButton?.get()?.isAttachedToWindow == true) return"))
-        assertTrue(floating.contains("host.addOnAttachStateChangeListener("))
-        assertTrue(floating.contains("if (attachedHost?.get() === view) remove(logger)"))
-        assertTrue(floating.contains("if (!enabled()) return"))
-        // low contrast, never a gesture trap
-        assertTrue(floating.contains("alpha = 0.72f"))
-        assertTrue(floating.contains("isClickable = true"))
-        // the long press is attached from the fragment's own view tree now
-        assertTrue(floating.contains("fun attachFromFragment("))
-        assertTrue(floating.contains("getMethod(\"getView\").invoke(fragment)"))
-        assertTrue(floating.contains("firstLyricContainer(root)"))
-        assertTrue(floating.contains("private fun firstLyricContainer(root: View): View?"))
-        // and it still never steals a gesture Apple already owns
-        assertTrue(floating.contains("if (host.isLongClickable)"))
-        assertTrue(floating.contains("if (!enabled()) return@setOnLongClickListener false"))
+        val surface = source("LyricsSourceButtonSurface.kt")
+        // installed by the same target path, reachable from inflation and the fragment
+        assertTrue(text.contains("LyricsSourceButtonSurface.install("))
+        assertTrue(text.contains("LyricsSourceButtonSurface.attachFromFragment("))
+        assertTrue(surface.contains("getMethod(\"getView\").invoke(fragment)"))
+        // force visible ONLY when Apple hid it, after recording the original state
+        assertTrue(surface.contains("visibility = button.visibility"))
+        assertTrue(surface.contains("if (button.visibility != View.VISIBLE)"))
+        assertTrue(surface.contains("button.visibility = View.VISIBLE"))
+        assertTrue(surface.contains("button.isEnabled = true"))
+        assertTrue(surface.contains("button.alpha = 1f"))
+        assertTrue(surface.contains("private fun originalClickListener(view: View)"))
+        // restore when the page goes away
+        assertTrue(surface.contains("fun restore(logger: (String) -> Unit = {})"))
+        assertTrue(surface.contains("button.visibility = original.visibility"))
+        assertTrue(surface.contains("button.setOnClickListener(original.listener)"))
+        assertTrue(surface.contains("if (attachedHosts.containsKey(view))"))
+        // click fallback only without a native lane; otherwise Apple's listener runs
+        assertTrue(surface.contains("private fun hasNativeLane(): Boolean"))
+        assertTrue(surface.contains("if (hasNativeLane()) {"))
+        assertTrue(surface.contains("original?.onClick(view)"))
+        assertTrue(surface.contains("val opened = activity != null && onOpen(activity)"))
+        // the product decision: no long-press entry, and no floating pill either
+        assertFalse("long press is not an entry any more", surface.contains("setOnLongClickListener"))
+        assertFalse("the floating pill must not come back", File(base + "LyricsSourceFloatingEntry.kt").exists())
+        // no other file may reintroduce a long-press entry
+        assertFalse(menu().contains("setOnLongClickListener"))
     }
 
     @Test

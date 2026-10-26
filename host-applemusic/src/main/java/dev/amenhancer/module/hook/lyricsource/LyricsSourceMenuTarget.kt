@@ -121,7 +121,7 @@ internal class LyricsSourceMenuTarget(
         // romanization rows, and the player "..." is a track action menu this feature
         // deliberately leaves alone. A build without the popup seam still gets a
         // working entry through this path.
-        LyricsSourceFloatingEntry.install(
+        LyricsSourceButtonSurface.install(
             enabled = enabled,
             onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
             logger = logger,
@@ -173,7 +173,7 @@ internal class LyricsSourceMenuTarget(
                     if (popup != null) offerMenu(popup, anchor, EXACT_PATH)
                     // The fragment reference is the only place where the lyrics page's
                     // view tree is reachable, so the always-on entry attaches from here.
-                    LyricsSourceFloatingEntry.attachFromFragment(
+                    LyricsSourceButtonSurface.attachFromFragment(
                         fragment = fragment,
                         enabled = enabled,
                         onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
@@ -298,12 +298,12 @@ internal class LyricsSourceMenuTarget(
         if (source == GENERIC_PATH && anchorKind == null && !belongsToLyricsSheet(anchor)) return
         val menu = popup.contentView as? LinearLayout ?: run {
             // An adapter-owned menu (RecyclerView) cannot be appended to without
-            // mutating Apple's adapter, which this feature never does; the long-press
-            // entry covers those screens instead.
+            // mutating Apple's adapter, which this feature never does; the always-visible
+            // "more" button covers those screens instead.
             val container = popup.contentView
             logger(
                 "lyrics-source menu: popup content is " + container?.javaClass?.name +
-                    " (not appendable), relying on the long-press entry",
+                    " (not appendable), relying on the always-visible button",
             )
             return
         }

@@ -128,9 +128,15 @@ internal fun createLyricsSourceTarget(
         // keeps its placeholder until the app-side bridge forwards one.
         metadataArtworkUrl = { null },
     )
+    val amll = LyricsSourceAmllProvider(
+        transport = lyricsTransport,
+        directory = File(directory, AMLL_DIRECTORY),
+        logger = logger,
+    )
     val search = LyricsSourceSearch(
         transport = lyricsTransport,
         lunabeat = lunabeat,
+        amll = amll,
         executor = executor,
         logger = logger,
     )
@@ -210,5 +216,6 @@ private class LunabeatDiskCache(private val directory: File) : LunabeatCatalogCa
 
 private const val STORAGE_DIRECTORY = "ampp-lyrics-source"
 private const val LUNABEAT_DIRECTORY = "lunabeat"
+private const val AMLL_DIRECTORY = "amll"
 private const val REQUEST_TIMEOUT_MS = 4_000
 private const val INDEX_MAX_BYTES = 2 * 1024 * 1024

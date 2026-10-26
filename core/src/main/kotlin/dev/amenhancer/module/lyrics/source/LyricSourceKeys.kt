@@ -59,6 +59,7 @@ object LyricSourceProviders {
         Source.KUWO -> KUWO
         Source.KUGOU -> KUGOU
         Source.LB -> LUNABEAT
+        Source.AMLL -> AMLL
     }
 
     /**
@@ -145,6 +146,17 @@ object LyricSourceProviders {
 object LyricSourceKeys {
     /** Apple's own document. */
     const val APPLE: String = "apple"
+
+    /**
+     * The fixed "Apple Music (AM-Lyrics)" entry pinned to the top of a lane's search
+     * results.
+     *
+     * It is an [LyricSourceKind.APPLE] option, so applying it restores Apple's own
+     * document for the lane (the host clears the song's override); it is never
+     * persisted, because the restore path drops the stored key instead of writing
+     * this one.
+     */
+    const val AM_LYRICS_APPLE: String = "am-lyrics"
 
     /**
      * The persisted marker for "this supplement lane is hidden on purpose".

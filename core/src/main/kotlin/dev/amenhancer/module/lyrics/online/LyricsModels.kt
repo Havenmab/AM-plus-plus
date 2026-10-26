@@ -14,6 +14,13 @@ enum class Source {
     KUWO,
     KUGOU,
     LB,
+
+    /**
+     * AMLL TTML DB: a local catalog of raw TTML files, not a search API. Its hits
+     * carry the corpus file name in [SongSearchResult.id], which is also the name the
+     * fetch path appends to the raw-lyrics directory.
+     */
+    AMLL,
 }
 
 /** One search hit on a provider, before its lyric body has been fetched. */

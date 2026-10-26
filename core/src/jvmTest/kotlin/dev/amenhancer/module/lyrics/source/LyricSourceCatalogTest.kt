@@ -615,6 +615,46 @@ class LyricSourceCatalogTest {
         assertFalse(hidden.selected!!.precisionKnown)
     }
 
+    @Test
+    fun `the search list starts with the fixed Apple Music entry`() {
+        val input = input(onlineCandidates = listOf(candidate(id = "2002")))
+
+        val options = LyricSourceCatalog.searchOptions(input, LyricLane.ORIGINAL, ZH)
+
+        assertEquals(2, options.size)
+        val leading = options.first()
+        assertEquals(LyricSourceKeys.AM_LYRICS_APPLE, leading.key)
+        assertEquals(LyricSourceKind.APPLE, leading.kind)
+        assertEquals(LyricSourceProviders.AM_LYRICS, leading.providerId)
+        assertEquals("Apple Music（AM-Lyrics）", leading.label)
+        assertEquals("恢复 Apple 原生", leading.detail)
+    }
+
+    @Test
+    fun `the fixed entry is offered even when a search finds nothing`() {
+        val options = LyricSourceCatalog.searchOptions(input(), LyricLane.ROMANIZATION, ZH)
+
+        assertEquals(listOf(LyricSourceKeys.AM_LYRICS_APPLE), options.map { it.key })
+    }
+
+    @Test
+    fun `the fixed entry is not a lane option and is never persisted`() {
+        val input = input(apple = AppleLyricsCapability(hasLyrics = true))
+
+        val options = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH)
+
+        assertTrue(options.none { it.key == LyricSourceKeys.AM_LYRICS_APPLE })
+        // A stored key of that name cannot name an option, so the lane degrades.
+        val state = LyricSourceCatalog.laneState(
+            input,
+            LyricLane.ORIGINAL,
+            LyricSourceKeys.AM_LYRICS_APPLE,
+            ZH,
+        )
+        assertEquals(LyricSourceKeys.APPLE, state.selected?.key)
+        assertFalse(state.overridden)
+    }
+
     private fun input(
         songId: Long = 42L,
         apple: AppleLyricsCapability = AppleLyricsCapability(),

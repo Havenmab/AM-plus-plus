@@ -187,6 +187,59 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `AMLL is a real searchable provider with a cached index`() {
+        val amll = source("LyricsSourceAmllProvider.kt")
+        assertTrue(amll.contains("metadata/raw-lyrics-index.jsonl"))
+        assertTrue(amll.contains("raw-lyrics/"))
+        // the repository's dialect is converted before anything is published
+        assertTrue(amll.contains("AmllTtmlFormatConverter.toAppleFormat(raw)"))
+        // conditional refresh, bounded by the TTL, never blocking the sheet
+        assertTrue(amll.contains("getResponse(INDEX_URL, ifNoneMatch = etag)"))
+        assertTrue(amll.contains("INDEX_TTL_MS"))
+        assertTrue(amll.contains("HTTP_NOT_MODIFIED"))
+        // the parsing/tolerance/scoring is core's AmllCatalogIndex (16 JVM tests);
+        // this class only owns the fetch, the ETag policy and the disk copy
+        assertTrue(amll.contains("AmllCatalogIndex.parse(body)"))
+        assertTrue(amll.contains("catalogue.candidates(query, limit)"))
+        assertFalse("the inline parser is gone", amll.contains("private fun parseEntry("))
+        assertFalse("and so is the inline matcher", amll.contains("private fun matches("))
+        // ids are corpus file names, joined onto the raw-lyrics base, never rebuilt
+        assertTrue(amll.contains("FILE_BASE_URL + remoteId"))
+        assertTrue(amll.contains("isSafeCorpusFile(remoteId)"))
+        val search = source("LyricsSourceSearch.kt")
+        assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) results += searchAmll(query)"))
+        assertTrue(search.contains("option.providerId == LyricSourceProviders.AMLL"))
+        // Source.AMLL exists now, so both mappings must be exhaustive and correct
+        assertTrue(search.contains("Source.AMLL -> LyricSourceProviders.AMLL"))
+        assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
+        assertTrue(search.contains("entry.toSearchResult()"))
+        assertTrue(source("LyricsSourceWiring.kt").contains("amll = amll"))
+    }
+
+    @Test
+    fun `the Lunabeat catalogue reports why it produced nothing`() {
+        val search = source("LyricsSourceSearch.kt")
+        assertTrue(search.contains("lunabeat catalogue unavailable"))
+        assertTrue(search.contains("lunabeat catalogue failed"))
+        assertTrue(search.contains("\"lyrics-source search: lunabeat entries=\""))
+        assertTrue(search.contains("tookMs="))
+    }
+
+    @Test
+    fun `the search list starts with Apple's own document and it always restores`() {
+        val text = controller()
+        // the pinned first row comes from core, so the sheet never loses the way back
+        assertTrue(text.contains("LyricSourceCatalog.searchOptions(withCandidates, lane)"))
+        // and applying it is an unconditional restore: no Apple-availability guard may
+        // reject it on a supplement lane Apple does not serve
+        val restoreBranch = text.indexOf("if (option.key == LyricSourceKeys.AM_LYRICS_APPLE)")
+        val kindDispatch = text.indexOf("LyricSourceKind.APPLE -> restoreLane(envelope, lane)")
+        assertTrue("the AM-Lyrics row has its own branch", restoreBranch >= 0)
+        assertTrue("before the kind dispatch", restoreBranch < kindDispatch)
+        assertTrue(text.contains("restored"))
+    }
+
+    @Test
     fun `the custom index bridge is used with provider ids and never silently skipped`() {
         val text = controller()
         assertTrue(text.contains("LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)"))

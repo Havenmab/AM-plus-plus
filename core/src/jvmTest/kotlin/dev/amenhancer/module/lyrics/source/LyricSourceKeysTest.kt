@@ -82,6 +82,7 @@ class LyricSourceKeysTest {
         assertEquals(LyricSourceProviders.KUWO, LyricSourceProviders.fromSource(Source.KUWO))
         assertEquals(LyricSourceProviders.KUGOU, LyricSourceProviders.fromSource(Source.KUGOU))
         assertEquals(LyricSourceProviders.LUNABEAT, LyricSourceProviders.fromSource(Source.LB))
+        assertEquals(LyricSourceProviders.AMLL, LyricSourceProviders.fromSource(Source.AMLL))
 
         assertEquals(LyricSourceProviders.QQ, LyricSourceProviders.fromCustomLyricsSource(CustomLyricsSources.QQ))
         assertEquals(LyricSourceProviders.NETEASE, LyricSourceProviders.fromCustomLyricsSource(CustomLyricsSources.NETEASE))
@@ -285,6 +286,18 @@ class LyricSourceKeysTest {
         assertEquals("已应用的在线歌词", LyricSourceText.appliedOnlineDetail(LyricLane.ORIGINAL, ZH))
         assertEquals("已应用的在线翻译", LyricSourceText.appliedOnlineDetail(LyricLane.TRANSLATION, ZH))
         assertEquals("Applied online source", LyricSourceText.appliedOnlineDetail(LyricLane.ORIGINAL, EN))
+    }
+
+    @Test
+    fun `the fixed AM-Lyrics entry has a valid stable key`() {
+        assertEquals("am-lyrics", LyricSourceKeys.AM_LYRICS_APPLE)
+        assertEquals(
+            LyricSourceKeys.AM_LYRICS_APPLE,
+            LyricSourceKeys.sanitize(LyricSourceKeys.AM_LYRICS_APPLE),
+        )
+        assertFalse(LyricSourceKeys.isHidden(LyricSourceKeys.AM_LYRICS_APPLE))
+        assertNull(LyricSourceKeys.onlineProvider(LyricSourceKeys.AM_LYRICS_APPLE))
+        assertNull(LyricSourceKeys.customFileId(LyricSourceKeys.AM_LYRICS_APPLE))
     }
 
     private fun entry(

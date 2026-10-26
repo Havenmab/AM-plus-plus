@@ -242,6 +242,38 @@ object LyricSourceCatalog {
         .toList()
 
     /**
+     * The fixed "Apple Music (AM-Lyrics)" entry every lane's search results start with.
+     *
+     * It is the one option a search list can always offer: whatever the providers
+     * return, "go back to Apple's own document" stays reachable. Its kind is
+     * [LyricSourceKind.APPLE], so the host applies it through the same restore path as
+     * the lane card's reset (clear this song's override for the lane); its key is
+     * never persisted, because that path drops the stored key instead of writing this
+     * one.
+     */
+    fun appleRestoreOption(locale: Locale = Locale.getDefault()): LyricSourceOption =
+        LyricSourceOption(
+            key = LyricSourceKeys.AM_LYRICS_APPLE,
+            kind = LyricSourceKind.APPLE,
+            providerId = LyricSourceProviders.AM_LYRICS,
+            label = LyricSourceText.appleAmLyricsLabel(locale),
+            detail = LyricSourceText.appleRestoreDetail(locale),
+        )
+
+    /**
+     * One lane's search results: [appleRestoreOption] pinned first, then the provider
+     * hits [onlineOptions] ranks. The sheet renders this list as-is, so the restore
+     * entry can never be pushed out by a long result set, and a UI that forgets to add
+     * it still offers a way back to Apple.
+     */
+    fun searchOptions(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        locale: Locale = Locale.getDefault(),
+    ): List<LyricSourceOption> =
+        listOf(appleRestoreOption(locale)) + onlineOptions(input, lane, locale)
+
+    /**
      * Online candidates for [lane], ranked by [score] descending and then by the
      * module's own provider chain, so the list is deterministic for equal scores.
      * Candidates are listed even below the auto-match threshold: the user asked

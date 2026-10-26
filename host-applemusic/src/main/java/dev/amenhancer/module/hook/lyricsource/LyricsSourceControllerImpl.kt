@@ -160,7 +160,10 @@ internal class LyricsSourceControllerImpl(
                 val withCandidates = probed.input.copy(
                     onlineCandidates = candidates + rememberedCandidates(songId),
                 )
-                LyricSourceCatalog.onlineOptions(withCandidates, lane)
+                // searchOptions pins Apple's own document (the module calls it
+                // AM-Lyrics) as the first row and appends the ranked provider hits,
+                // so "go back to Apple" is always reachable from the search list.
+                LyricSourceCatalog.searchOptions(withCandidates, lane)
             }
             mapped.onSuccess { options ->
                 logger(LyricSourceDiagnostics.searchLine(songId, lane, query, options.size))
@@ -176,6 +179,15 @@ internal class LyricsSourceControllerImpl(
     override fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult {
         val envelope = snapshotOf() ?: return noSong()
         val songId = envelope.snapshot.songId
+        // The pinned search row "Apple Music（AM-Lyrics）" means one thing: drop this
+        // song's override and let Apple's own data serve the lane again. It must
+        // succeed on every lane, including a supplement lane Apple does not serve
+        // (there the lane then shows nothing, which is that lane's default state).
+        if (option.key == LyricSourceKeys.AM_LYRICS_APPLE) {
+            val restored = restoreLane(envelope, lane)
+            logger(LyricSourceDiagnostics.applyLine(songId, lane, option, restored))
+            return restored
+        }
         // The catalog now re-synthesises an applied online option that this round's
         // search did not return, so tapping it again is a real possibility. It is
         // already in effect: re-fetching would pay for a network round trip and

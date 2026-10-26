@@ -49,6 +49,7 @@ import java.util.concurrent.Executor
 internal class LyricsSourceSearch(
     transport: LyricHttpTransport?,
     private val lunabeat: LunabeatClient?,
+    private val amll: LyricsSourceAmllProvider? = null,
     private val executor: Executor,
     private val logger: (String) -> Unit,
 ) {
@@ -98,8 +99,27 @@ internal class LyricsSourceSearch(
         // known after the body is read, so their rows never claim 逐词.
         val results = mutableListOf<OnlineLyricsCandidate>()
         results += searchLunabeat(query)
+        // AMLL serves a whole document only (its TTML carries translation lanes
+        // inside the same body, but this module's translation merge needs a parsed
+        // provider body), so it is offered for the original lane only.
+        if (lane == LyricLane.ORIGINAL) results += searchAmll(query)
         results += searchLineProviders(query, durationMs, lane)
         return results
+    }
+
+    private fun searchAmll(query: String): List<OnlineLyricsCandidate> {
+        val provider = amll ?: return emptyList()
+        return provider.search(query, SEARCH_PAGE_SIZE).map { entry ->
+            OnlineLyricsCandidate(
+                providerId = LyricSourceProviders.AMLL,
+                // The core catalog already scored and ordered the entries; its
+                // transport model carries Source.AMLL and the corpus file name as id.
+                result = entry.toSearchResult(),
+                hasWords = false,
+                hasTranslation = false,
+                hasRomanization = false,
+            )
+        }
     }
 
     private fun searchLineProviders(
@@ -140,14 +160,37 @@ internal class LyricsSourceSearch(
     }
 
     private fun searchLunabeat(query: String): List<OnlineLyricsCandidate> {
-        val client = lunabeat ?: return emptyList()
-        val catalog = runCatching { client.loadCatalog() }.getOrNull() ?: return emptyList()
+        val startedAt = System.currentTimeMillis()
+        val client = lunabeat ?: run {
+            logger("lyrics-source search: lunabeat provider unavailable")
+            return emptyList()
+        }
+        val catalog = runCatching { client.loadCatalog() }
+            .onFailure { error ->
+                logger(
+                    "lyrics-source search: lunabeat catalogue failed: " +
+                        (error.message ?: error.javaClass.simpleName),
+                )
+            }
+            .getOrNull()
+        if (catalog == null) {
+            logger("lyrics-source search: lunabeat catalogue unavailable (manifest/index fetch)")
+            return emptyList()
+        }
         val tokens = tokensOf(query)
         if (tokens.isEmpty()) return emptyList()
-        return catalog.songs
+        val hits = catalog.songs
             .asSequence()
             .filter { song -> matches(song, tokens) }
             .take(SEARCH_PAGE_SIZE)
+            .toList()
+        logger(
+            "lyrics-source search: lunabeat entries=" + catalog.songs.size +
+                " hits=" + hits.size +
+                " tookMs=" + (System.currentTimeMillis() - startedAt),
+        )
+        return hits
+            .asSequence()
             .map { song ->
                 lunabeatHits[song.sha256] = song
                 OnlineLyricsCandidate(
@@ -195,6 +238,12 @@ internal class LyricsSourceSearch(
      */
     fun documentFor(option: LyricSourceOption, durationMs: Long): Document? {
         if (option.kind != LyricSourceKind.ONLINE) return null
+        if (option.providerId == LyricSourceProviders.AMLL) {
+            // AMLL ships its own TTML dialect; the repository's converter rewrites
+            // it into the shape Apple's parser reads before anything is published.
+            val document = amll?.document(remoteIdOf(option)) ?: return null
+            return Document(ttml = document.ttml, hasWords = document.hasWords)
+        }
         if (option.providerId == LyricSourceProviders.LUNABEAT) {
             val ttml = fetchDocument(option) ?: return null
             val hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }.getOrDefault(false)
@@ -215,6 +264,9 @@ internal class LyricsSourceSearch(
     /** The provider's translation lane, for a merge into the displayed document. */
     fun translationLines(option: LyricSourceOption): List<OnlineTranslationLine>? {
         if (option.kind != LyricSourceKind.ONLINE) return null
+        // AMLL is listed for the original lane only, so it has no translation
+        // body to merge here (see searchBlocking).
+        if (option.providerId == LyricSourceProviders.AMLL) return null
         if (option.providerId == LyricSourceProviders.LUNABEAT) {
             // Apple's own document shape: the reader already pairs every line with
             // its translation, so those lanes are reused verbatim.
@@ -287,6 +339,7 @@ internal class LyricsSourceSearch(
         LyricSourceProviders.KUWO -> Source.KUWO
         LyricSourceProviders.KUGOU -> Source.KUGOU
         LyricSourceProviders.LUNABEAT -> Source.LB
+        LyricSourceProviders.AMLL -> Source.AMLL
         else -> null
     }
 
@@ -302,6 +355,9 @@ internal class LyricsSourceSearch(
             Source.KUWO -> LyricSourceProviders.KUWO
             Source.KUGOU -> LyricSourceProviders.KUGOU
             Source.LB -> LyricSourceProviders.LUNABEAT
+            // AMLL is a local corpus rather than a query API, but it is a
+            // first-class provider id in the sheet, so the mapping stays exhaustive.
+            Source.AMLL -> LyricSourceProviders.AMLL
         }
     }
 }

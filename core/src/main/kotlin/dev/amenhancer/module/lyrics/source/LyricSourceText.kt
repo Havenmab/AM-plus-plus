@@ -148,6 +148,17 @@ object LyricSourceText {
         .joinToString(" · ")
         .ifEmpty { pick("Online lyrics", "在线歌词", locale) }
 
+    /**
+     * Label of the fixed "Apple Music (AM-Lyrics)" entry pinned to the top of a
+     * search list: Apple's own document, as catalogued by the AM-Lyrics project.
+     */
+    fun appleAmLyricsLabel(locale: Locale = Locale.getDefault()): String =
+        pick("Apple Music (AM-Lyrics)", "Apple Music（AM-Lyrics）", locale)
+
+    /** What the fixed AM-Lyrics entry does: drop the override and restore Apple. */
+    fun appleRestoreDetail(locale: Locale = Locale.getDefault()): String =
+        pick("Restore Apple Music", "恢复 Apple 原生", locale)
+
     /** Why the preview is unavailable, when the host does not implement it. */
     fun previewUnavailable(locale: Locale = Locale.getDefault()): String =
         pick("Preview is unavailable for this source", "该来源暂不支持预览", locale)

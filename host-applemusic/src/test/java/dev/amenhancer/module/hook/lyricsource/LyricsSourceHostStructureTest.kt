@@ -24,6 +24,10 @@ class LyricsSourceHostStructureTest {
 
     private fun wiring(): String = source("LyricsSourceWiring.kt")
 
+    /** A sibling hook file that this package talks to through the host-api bridge. */
+    private fun hookSource(name: String): String =
+        File("src/main/java/dev/amenhancer/module/hook/" + name).readText()
+
     @Test
     fun `the menu row is only inserted when the sheet is registered`() {
         val text = menu()
@@ -237,6 +241,63 @@ class LyricsSourceHostStructureTest {
         assertTrue("the AM-Lyrics row has its own branch", restoreBranch >= 0)
         assertTrue("before the kind dispatch", restoreBranch < kindDispatch)
         assertTrue(text.contains("restored"))
+    }
+
+    @Test
+    fun `a manual choice locks the song against the automatic pipeline`() {
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        // The automatic session (and the LLM tier) must consult the user's choice.
+        assertTrue(target.contains("!AutoLyricsReplacementBridge.isLocked(appleMusicId)"))
+        assertTrue(target.contains("!AutoLyricsReplacementBridge.isLocked(id)"))
+        // and the sheet publishes that choice from the selection store
+        val controller = controller()
+        assertTrue(controller.contains("AutoLyricsReplacementBridge.isUserLocked = {"))
+        assertTrue(controller.contains("hasManualSelection(appleMusicId)"))
+        assertTrue(controller.contains("store.selection(appleMusicId).isNotEmpty()"))
+    }
+
+    @Test
+    fun `every accepted publish notifies the sheet`() {
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        // One funnel: the bridge call and the sheet notification sit together, so a
+        // new publish path cannot silently skip the window.
+        val assignment = target.substringAfter("publishReplacement = { appleMusicId ->")
+            .substringBefore("\n        }")
+        assertTrue(assignment.contains("resultBridge.onReplacementPublished(appleMusicId)"))
+        assertTrue(assignment.contains("AutoLyricsReplacementBridge.notifyPublished?.invoke(appleMusicId)"))
+        // every former direct call site was routed through the funnel
+        val directCalls = target.split("resultBridge.onReplacementPublished(").size - 1
+        assertTrue("only the funnel may call the bridge directly, found " + directCalls, directCalls == 1)
+    }
+
+    @Test
+    fun `applying a source re-arms the automatic session`() {
+        val controller = controller()
+        assertTrue(controller.contains("AutoLyricsReplacementBridge.userApplied(appleMusicId)"))
+        assertTrue(controller.contains("private fun notifyUserApplied("))
+        // apply / clear / hide / restore-all all report it
+        val calls = controller.split("notifyUserApplied(songId)").size - 1
+        assertTrue("expected the four state-changing paths, found " + calls, calls >= 4)
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        assertTrue(target.contains("markTakeoverApplied(appleMusicId)"))
+        assertTrue(target.contains("AutoLyricsReplacementBridge.installUserApplied("))
+        assertTrue(target.contains("AutoLyricsReplacementBridge.uninstallUserApplied("))
+    }
+
+    @Test
+    fun `a published replacement only refreshes the sheet, never re-applies`() {
+        val controller = controller()
+        val handler = controller.substringAfter("private fun onAutoReplacementPublished(")
+            .substringBefore("private fun notifyUserApplied(")
+        assertTrue(handler.contains("notifyListeners()"))
+        // no apply, no store write, no pipeline re-entry from a notification
+        assertFalse(handler.contains("apply("))
+        assertFalse(handler.contains("applyOnline("))
+        assertFalse(handler.contains("store.select("))
+        assertFalse(handler.contains("refreshHost("))
+        // and the dedupe keeps a publish burst to one refresh
+        assertTrue(controller.contains("PUBLISH_NOTIFY_DEDUPE_MS"))
+        assertTrue(handler.contains("lastPublishedNotify.compareAndSet"))
     }
 
     @Test

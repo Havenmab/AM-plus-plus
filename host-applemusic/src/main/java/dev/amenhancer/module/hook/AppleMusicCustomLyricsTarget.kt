@@ -104,6 +104,11 @@ internal class AppleMusicCustomLyricsTarget(
         // goes through this one callback, so the native result observer remains
         // the only installer instead of an out-of-band Fragment re-entry.
         lateinit var resultBridge: LyricsResultSubmissionBridge
+        // Every publish path funnels through this lambda, so the lyrics-source
+        // window hears exactly the document the page just received. It is assigned
+        // together with the bridge below; until then it is a no-op, because no
+        // replacement can be published before the bridge exists.
+        var publishReplacement: (Long) -> Unit = { }
         // The other half of a successful completion: the enricher's merged
         // document (the user's body plus the injected lanes). The feed forwards
         // it here and the custom session re-parses it as the track's preferred
@@ -172,7 +177,7 @@ internal class AppleMusicCustomLyricsTarget(
             onReplacementPublished = { appleMusicId ->
                 mainHandler.post {
                     if (registration.isActive) {
-                        resultBridge.onReplacementPublished(appleMusicId)
+                        publishReplacement(appleMusicId)
                         if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
                             refreshSession?.onSongChanged(appleMusicId)
                         }
@@ -203,7 +208,7 @@ internal class AppleMusicCustomLyricsTarget(
             )
             if (published) {
                 mainHandler.post {
-                    if (registration.isActive) resultBridge.onReplacementPublished(appleMusicId)
+                    if (registration.isActive) publishReplacement(appleMusicId)
                 }
             }
         }
@@ -218,7 +223,7 @@ internal class AppleMusicCustomLyricsTarget(
                     // This callback already runs on the independent refresh worker.
                     session.refreshEntry(entry, isCancelled, Executor { it.run() }) { id ->
                         mainHandler.post {
-                            if (registration.isActive && !isCancelled()) resultBridge.onReplacementPublished(id)
+                            if (registration.isActive && !isCancelled()) publishReplacement(id)
                         }
                     }
                 },
@@ -285,7 +290,7 @@ internal class AppleMusicCustomLyricsTarget(
                 onReplacementPublished = { appleMusicId ->
                     mainHandler.post {
                         if (registration.isActive) {
-                            resultBridge.onReplacementPublished(appleMusicId)
+                            publishReplacement(appleMusicId)
                             if (currentSong.current()?.details?.appleMusicId == appleMusicId) {
                                 refreshSession?.onSongChanged(appleMusicId)
                             }
@@ -297,7 +302,10 @@ internal class AppleMusicCustomLyricsTarget(
                     appleMusicId !in runtime.suppressedIds &&
                         appleMusicId !in configuredManualIds &&
                         !session.isMapped(appleMusicId) &&
-                        session.readyReplacementFor(appleMusicId) == null
+                        session.readyReplacementFor(appleMusicId) == null &&
+                        // A source the user picked in the lyrics-source sheet owns
+                        // the song: the automatic chain must not replace it.
+                        !AutoLyricsReplacementBridge.isLocked(appleMusicId)
                 },
                 executor = runtime.executor,
                 logger = ModernXposedRuntime::log,
@@ -318,17 +326,28 @@ internal class AppleMusicCustomLyricsTarget(
                     config.settings().let { it.customLyricsEnabled && it.automaticLyricsEnabled && it.llmLyricsEnabled } &&
                         id !in autoLyricsRuntime.suppressedIds &&
                         id !in configuredManualIds && !session.isMapped(id) &&
-                        session.readyReplacementFor(id) == null && autoSession?.readyReplacementFor(id) == null
+                        session.readyReplacementFor(id) == null && autoSession?.readyReplacementFor(id) == null &&
+                        // Same rule as the automatic tier: a picked source wins.
+                        !AutoLyricsReplacementBridge.isLocked(id)
                 },
                 onReplacementPublished = { id ->
                     mainHandler.post {
-                        if (registration.isActive) resultBridge.onReplacementPublished(id)
+                        if (registration.isActive) publishReplacement(id)
                     }
                 },
             ).also { translation ->
                 translation.onSongChanged(currentSong.current()?.details?.appleMusicId)
                 registration.onClose(translation::close)
             }
+        }
+        // The sheet just applied a source for this song: tell the automatic session
+        // so its in-flight result is dropped and the visible document stays the
+        // user's. Registered by identity so a torn-down generation cannot clear a
+        // later one's handler.
+        autoSession?.let { automatic ->
+            val takeover: (Long) -> Unit = { appleMusicId -> automatic.markTakeoverApplied(appleMusicId) }
+            AutoLyricsReplacementBridge.installUserApplied(takeover)
+            registration.onClose { AutoLyricsReplacementBridge.uninstallUserApplied(takeover) }
         }
         val readyReplacementFor: (Long) -> Any? = { appleMusicId ->
             parser.unwrap(session.readyReplacementFor(appleMusicId)
@@ -403,6 +422,12 @@ internal class AppleMusicCustomLyricsTarget(
             logger = ModernXposedRuntime::log,
         ) ?: return TargetCapabilityInstall.Degraded("Lyric ViewModel result contract unavailable")
         registration.onClose(resultBridge::close)
+        publishReplacement = { appleMusicId ->
+            if (appleMusicId > 0L) {
+                resultBridge.onReplacementPublished(appleMusicId)
+                AutoLyricsReplacementBridge.notifyPublished?.invoke(appleMusicId)
+            }
+        }
         val parserHooked = runCatching {
             parseMethod.isAccessible = true
             hook(parseMethod, object : ModernMethodHook() {

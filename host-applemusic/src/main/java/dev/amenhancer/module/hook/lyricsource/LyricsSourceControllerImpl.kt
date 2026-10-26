@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook.lyricsource
 import android.os.Handler
 import android.os.Looper
 import dev.amenhancer.module.hook.AutoLyricsCandidate
+import dev.amenhancer.module.hook.AutoLyricsReplacementBridge
 import dev.amenhancer.module.hook.AutoLyricsPublishResult
 import dev.amenhancer.module.hook.AutoLyricsRuntime
 import dev.amenhancer.module.hook.CurrentSongIdentityCache
@@ -90,7 +91,16 @@ internal class LyricsSourceControllerImpl(
      */
     private val recentCandidates = java.util.concurrent.atomic.AtomicReference<RecentCandidates?>(null)
 
+    /** Last time an automatic publish was forwarded to the sheet (dedupe window). */
+    private val lastPublishedNotify = AtomicLong(0L)
+
     init {
+        // The automatic pipeline asks before it replaces a song: a manual choice in
+        // the sheet owns the song and must survive the automatic chain.
+        AutoLyricsReplacementBridge.isUserLocked = { appleMusicId -> hasManualSelection(appleMusicId) }
+        // And when the automatic pipeline does publish, an open sheet re-reads the
+        // lanes so it shows the source that just became active.
+        AutoLyricsReplacementBridge.notifyPublished = { appleMusicId -> onAutoReplacementPublished(appleMusicId) }
         // A song change is the one event the sheet cannot poll for cheaply: it
         // resets every lane, so the open sheet must be told.
         runCatching {
@@ -185,6 +195,7 @@ internal class LyricsSourceControllerImpl(
         // (there the lane then shows nothing, which is that lane's default state).
         if (option.key == LyricSourceKeys.AM_LYRICS_APPLE) {
             val restored = restoreLane(envelope, lane)
+            if (restored.ok) notifyUserApplied(songId)
             logger(LyricSourceDiagnostics.applyLine(songId, lane, option, restored))
             return restored
         }
@@ -203,6 +214,9 @@ internal class LyricsSourceControllerImpl(
             LyricSourceKind.CUSTOM_FILE, LyricSourceKind.CACHE -> adoptDocument(envelope, lane, option)
             LyricSourceKind.ONLINE -> applyOnline(envelope, lane, option)
         }
+        // A completed switch is the page's new truth: re-arm the automatic session
+        // for this song so a queued automatic result cannot undo it.
+        if (result.ok) notifyUserApplied(songId)
         logger(LyricSourceDiagnostics.applyLine(songId, lane, option, result))
         return result
     }
@@ -210,6 +224,7 @@ internal class LyricsSourceControllerImpl(
     override fun clear(lane: LyricLane): ApplyResult {
         val envelope = snapshotOf() ?: return noSong()
         val result = restoreLane(envelope, lane)
+        if (result.ok) notifyUserApplied(envelope.snapshot.songId)
         logger(LyricSourceDiagnostics.applyLine(envelope.snapshot.songId, lane, null, result))
         return result
     }
@@ -269,6 +284,7 @@ internal class LyricsSourceControllerImpl(
             )
         }
         if (result.ok) {
+            notifyUserApplied(songId)
             refreshHost(songId)
             notifyListeners()
         }
@@ -295,6 +311,7 @@ internal class LyricsSourceControllerImpl(
             logger(LyricSourceDiagnostics.applyLine(songId, LyricLane.ORIGINAL, null, result))
             return result
         }
+        notifyUserApplied(songId)
         refreshHost(songId)
         notifyListeners()
         val message = when {
@@ -357,6 +374,47 @@ internal class LyricsSourceControllerImpl(
         mainHandler.post {
             listeners.forEach { listener -> runCatching { listener() } }
         }
+    }
+
+    // ------------------------------------------------- bridge (auto pipeline)
+
+    /** True when any lane of [appleMusicId] carries a stored choice (a lock). */
+    private fun hasManualSelection(appleMusicId: Long): Boolean {
+        if (appleMusicId <= 0L) return false
+        return runCatching { store.selection(appleMusicId).isNotEmpty() }.getOrDefault(false)
+    }
+
+    /**
+     * An automatic replacement was published for [appleMusicId].
+     *
+     * Refresh only: the page already shows the new document, so the sheet just has
+     * to re-read the lanes. Nothing here applies, persists or re-enters a pipeline —
+     * a refresh that applied on every notification would fight the automatic chain
+     * and duplicate the user's last choice.
+     */
+    private fun onAutoReplacementPublished(appleMusicId: Long) {
+        if (appleMusicId <= 0L) return
+        val current = currentSong.current()?.details?.appleMusicId ?: 0L
+        if (appleMusicId != current) return
+        val now = System.currentTimeMillis()
+        val previous = lastPublishedNotify.get()
+        if (now - previous < PUBLISH_NOTIFY_DEDUPE_MS) return
+        if (!lastPublishedNotify.compareAndSet(previous, now)) return
+        logger("lyrics-source: auto replacement published id=" + appleMusicId + " (refreshing sheet)")
+        notifyListeners()
+    }
+
+    /** Tells the automatic session the user just took this song over. */
+    private fun notifyUserApplied(appleMusicId: Long) {
+        if (appleMusicId <= 0L) return
+        AutoLyricsReplacementBridge.userApplied(appleMusicId)
+    }
+
+    /** Releases this controller's bridge registrations (only when it still owns them). */
+    internal fun release() {
+        runCatching { AutoLyricsReplacementBridge.isUserLocked = null }
+        runCatching { AutoLyricsReplacementBridge.notifyPublished = null }
+        listeners.clear()
     }
 
     // --------------------------------------------------- remembered candidates
@@ -697,5 +755,8 @@ internal class LyricsSourceControllerImpl(
 
         /** Bound on the per-song candidate memory; a session rarely exceeds a few. */
         const val MAX_REMEMBERED_CANDIDATES = 64
+
+        /** Collapses the automatic pipeline's publish bursts into one sheet refresh. */
+        const val PUBLISH_NOTIFY_DEDUPE_MS = 400L
     }
 }

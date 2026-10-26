@@ -1,6 +1,8 @@
 package dev.amenhancer.module.ui
 
 import dev.amenhancer.module.i18n.ModuleText
+import dev.amenhancer.module.settings.LyricsSourceIndexWriter
+import dev.amenhancer.module.ui.source.LyricsSourceSheetEntryBridge
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -299,6 +301,8 @@ internal class EmbeddedSettingsHost private constructor(
         if (!registered) return
         registered = false
         application.unregisterActivityLifecycleCallbacks(this)
+        LyricsSourceSheetEntryBridge.detach()
+        LyricsSourceIndexWriter.unregister()
         removeMainContentLayoutObserver()
         removeInjectedViews(activityReference?.get())
         dismissDialog()
@@ -634,6 +638,14 @@ internal class EmbeddedSettingsHost private constructor(
             selectionHandler = selectionHandler,
             activityMatcher = activityMatcher,
             nativeBridgeFactory = nativeBridgeFactory,
-        ).also(application::registerActivityLifecycleCallbacks)
+        ).also { host ->
+            application.registerActivityLifecycleCallbacks(host)
+            // The Apple Music "更多" menu opens the lyrics-source sheet through
+            // a host-api lambda; the module side of that seam is installed here
+            // and removed in uninstall() so a disabled module cannot leave a
+            // stale entry point behind.
+            LyricsSourceSheetEntryBridge.attach(host)
+            LyricsSourceIndexWriter.register(controller)
+        }
     }
 }

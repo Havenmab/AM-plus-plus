@@ -2728,7 +2728,9 @@
       "B": "F"
     }
   },
-  "knownDegradations": [],
+  "knownDegradations": [
+    "lyrics-source-menu-generic-path"
+  ],
   "profileRevision": 7,
   "chrome": {
     "resources": {

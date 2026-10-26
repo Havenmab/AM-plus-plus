@@ -80,14 +80,16 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         assertTrue(target.contains("LlmLyricsReplacementSession("))
         assertTrue(target.contains("Handler(Looper.getMainLooper())"))
         assertTrue(target.contains("mainHandler.post {"))
-        assertTrue(target.contains("resultBridge.onReplacementPublished(appleMusicId)"))
+        // Every publisher (configured lyrics, automatic fallback, cache refresh, LLM and this
+        // fork's merged document) now goes through one funnel, so there is exactly one direct
+        // call: the funnel itself. The lyrics-source sheet relies on that funnel to refresh.
+        assertTrue(target.contains("var publishReplacement"))
         assertEquals(
-            // Configured lyrics, automatic fallback, cache refresh, LLM and this
-            // fork's merged custom document (user body + online translation and
-            // pronunciation lanes) each publish through the same bridge.
-            5,
+            1,
             Regex("resultBridge\\.onReplacementPublished").findAll(target).count(),
         )
+        assertTrue(Regex("publishReplacement\\(").findAll(target).count() >= 5)
+        assertTrue(target.contains("AutoLyricsReplacementBridge.notifyPublished"))
         assertTrue(
             target.indexOf("CustomLyricsReplacementSession(") <
                 target.indexOf("LyricsResultSubmissionBridge.create("),

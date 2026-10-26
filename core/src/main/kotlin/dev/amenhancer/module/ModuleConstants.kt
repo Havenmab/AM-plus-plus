@@ -75,13 +75,15 @@ object ModuleConstants {
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
+    /** The lyrics-source sheet: per-lane source picking from the player menu. */
+    const val FEATURE_LYRICS_SOURCE_SHEET = "lyrics_source_sheet"
 
     /**
      * Identifies the package a device log came from. Bump it whenever a
      * release ships, and print it once per session so a log can never be
      * mistaken for a newer (or older) build than it is.
      */
-    const val BUILD_TAG = "2026-10-25-1.6.7-integ-1613"
+    const val BUILD_TAG = "2026-10-25-1.6.7-lyrics-source-1613"
     const val FEATURE_CURRENT_SONG_IDENTITY = "current_song_identity"
     const val FEATURE_CATALOG_LANGUAGE = "catalog_language"
     const val FEATURE_TITLE_CORRECTION = "title_correction"

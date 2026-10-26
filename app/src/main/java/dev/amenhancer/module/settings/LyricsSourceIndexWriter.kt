@@ -48,8 +48,15 @@ internal object LyricsSourceIndexWriter {
         songId: Long,
         ttml: String,
         providerSource: String,
-    ): Boolean = runCatching {
-        controller.saveLyrics(
+    ): String? = runCatching {
+        // The index rejects a second entry for a song that already has one unless the caller
+        // says which entry it is replacing. A song whose lyrics came from a previous online
+        // pick always has one, so every later switch used to fail with "target exists" and the
+        // sheet only showed a generic storage error.
+        val alreadyIndexed = runCatching {
+            controller.lyricsEntries().any { it.appleMusicId == songId }
+        }.getOrDefault(false)
+        val result = controller.saveLyrics(
             CustomLyricsDraft(
                 appleMusicId = songId,
                 displayName = LyricSourceText.providerLabel(providerSource),
@@ -59,10 +66,18 @@ internal object LyricsSourceIndexWriter {
                 // and replacement pipelines must never silently overwrite it later.
                 userEdited = true,
             ),
-        ) is EmbeddedActionResult.Done
+            replacingAppleMusicId = songId.takeIf { alreadyIndexed },
+        )
+        when (result) {
+            is EmbeddedActionResult.Done -> null
+            is EmbeddedActionResult.Failed -> {
+                fail("replace", IllegalStateException(result.message))
+                result.message
+            }
+        }
     }.getOrElse { error ->
         fail("replace", error)
-        false
+        error.message ?: "写入自定义歌词索引失败"
     }
 
     private fun remove(controller: EmbeddedSettingsController, songId: Long): Boolean =

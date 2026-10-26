@@ -539,14 +539,16 @@ internal class LyricsSourceControllerImpl(
         val fileId = option.key.substringAfter(':')
         val ttml = runCatching { envelope.probed.input.customFiles.firstOrNull { it.fileId == fileId } }
             .getOrNull() ?: return ApplyResult.failed(LyricSourceErrorCodes.NOT_AVAILABLE, "该歌词文件已不存在")
-        val replaced = runCatching { readDocument(fileId) }.getOrNull()?.let { document ->
-            LyricsSourceCustomIndexBridge.replaceLyrics(
-                songId,
-                document,
-                LyricSourceProviders.fromCustomLyricsSource(ttml.originSource),
-            )
-        } ?: false
-        if (!replaced) return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "写入自定义歌词索引失败")
+        val document = runCatching { readDocument(fileId) }.getOrNull()
+            ?: return ApplyResult.failed(LyricSourceErrorCodes.NOT_AVAILABLE, "该歌词文件已不存在")
+        val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(
+            songId,
+            document,
+            LyricSourceProviders.fromCustomLyricsSource(ttml.originSource),
+        )
+        if (replaceFailure != null) {
+            return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, replaceFailure)
+        }
         if (!store.select(songId, lane, option.key)) {
             return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
         }
@@ -622,10 +624,11 @@ internal class LyricsSourceControllerImpl(
         // The index bridge speaks provider ids ("qm"/"lb"/...); the publisher below
         // speaks the module's own source tags, which is what a stored entry records.
         if (LyricsSourceCustomIndexBridge.canReplace) {
-            return if (LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)) {
+            val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)
+            return if (replaceFailure == null) {
                 ApplyResult(ok = true, message = "已切换歌词来源")
             } else {
-                ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "写入自定义歌词索引失败")
+                ApplyResult.failed(LyricSourceErrorCodes.STORAGE, replaceFailure)
             }
         }
         val publisher = runtime?.publisher

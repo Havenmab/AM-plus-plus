@@ -78,9 +78,16 @@ object LyricsSourceSheetEntry {
  */
 object LyricsSourceCustomIndexBridge {
 
-    /** `(appleMusicId, ttml, providerSource) -> replaced`. */
+    /**
+     * `(appleMusicId, ttml, providerSource) -> failure message`.
+     *
+     * Null means the index accepted the document; a string is the user-facing reason the
+     * write failed (an existing entry that could not be replaced, a rejected document, a
+     * storage error). Returning the reason instead of a bare boolean is what lets the sheet
+     * tell the user *why* a source could not be applied instead of a generic failure.
+     */
     @Volatile
-    var replace: ((Long, String, String) -> Boolean)? = null
+    var replace: ((Long, String, String) -> String?)? = null
 
     /** `(appleMusicId) -> removed`. */
     @Volatile
@@ -90,10 +97,11 @@ object LyricsSourceCustomIndexBridge {
 
     val canRemove: Boolean get() = remove != null
 
-    /** Replaces the song's custom-lyrics document; false when no writer is registered. */
-    fun replaceLyrics(songId: Long, ttml: String, source: String): Boolean {
-        val writer = replace ?: return false
-        return runCatching { writer(songId, ttml, source) }.getOrDefault(false)
+    /** Replaces the song's custom-lyrics document; null on success, else the reason. */
+    fun replaceLyrics(songId: Long, ttml: String, source: String): String? {
+        val writer = replace ?: return "切换自定义歌词需要 app 侧索引写入口（未注册）"
+        return runCatching { writer(songId, ttml, source) }
+            .getOrElse { error -> (error.javaClass.simpleName + ": " + error.message) }
     }
 
     /** Removes the song's custom-lyrics document; false when no writer is registered. */

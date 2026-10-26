@@ -107,10 +107,14 @@ internal class LyricsSourceMenuTarget(
         if (!enabled()) {
             return TargetCapabilityInstall.Degraded("歌词源面板已关闭，不添加菜单项")
         }
+        // The app-side sheet registers through EmbeddedSettingsHost.install(), which runs
+        // *after* FeatureInstallation.installEmbedded() (this target's install). Gating the
+        // install on LyricsSourceSheetEntry.available therefore failed forever on a cold
+        // start: the hook was never installed, so the item could never appear even after the
+        // sheet was ready. Install the hook unconditionally and check availability when a
+        // popup is actually populated (injectRow), which runs on every menu open.
         if (!LyricsSourceSheetEntry.available) {
-            val reason = "歌词源面板未注册（app 侧未安装 LyricsSourceSheetEntry），不添加菜单项"
-            onFailure(reason)
-            return TargetCapabilityInstall.Degraded(reason)
+            logger("lyrics-source menu: sheet surface not registered yet; item appears once it is")
         }
         val contract = LyricsSourceMenuContract.from(profile.document)
         val detail = buildList {

@@ -279,7 +279,7 @@ class LyricsSourceHostStructureTest {
         // why every mirror failed), so the provider only forwards it.
         assertTrue(mirror.contains("\" 网络不可达：\""))
         assertTrue(amll.contains("lastFailure = downloader.lastFailure"))
-        assertTrue(amll.contains("\"AMLL\""))
+        assertTrue(amll.contains("\"AMLL 索引\""))
         val search = source("LyricsSourceSearch.kt")
         assertTrue(
             search.contains(

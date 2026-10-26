@@ -333,7 +333,9 @@ private fun EmbeddedSettingsHost.laneCard(
             addView(progressIndicator(activity), LinearLayout.LayoutParams(dp(activity, 18), dp(activity, 18)))
         }
         selected?.let { option ->
-            addView(embeddedBadge(activity, precisionLabel(option, locale)))
+            precisionLabel(option, locale)?.let { precision ->
+                addView(embeddedBadge(activity, precision))
+            }
             addView(embeddedBadge(activity, LyricSourceText.providerLabel(option.providerId, locale)))
         }
     }, matchWidthWrapContent())
@@ -581,12 +583,14 @@ internal fun EmbeddedSettingsHost.optionBadges(
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
     })
-    addView(embeddedBadge(activity, precisionLabel(option, locale)).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = dp(activity, 6) }
-    })
+    precisionLabel(option, locale)?.let { precision ->
+        addView(embeddedBadge(activity, precision).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = dp(activity, 6) }
+        })
+    }
     if (option.hasTranslation) {
         addView(embeddedBadge(activity, LyricsSourceSheetText.hasTranslation(locale)).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -605,10 +609,18 @@ internal fun EmbeddedSettingsHost.optionBadges(
     }
 }
 
-internal fun precisionLabel(option: LyricSourceOption, locale: Locale): String =
-    if (option.hasWords) {
-        LyricsSourceSheetText.wordPrecision(locale)
-    } else {
-        LyricsSourceSheetText.linePrecision(locale)
+/**
+ * The 逐词/逐行 badge text, or null when the source cannot prove its timing.
+ *
+ * A catalog-synthesized placeholder (a stored selection rebuilt without reading
+ * the document behind it) reports [LyricSourceOption.precisionKnown] = false:
+ * claiming "line by line" there would misdescribe a word-synced document, so the
+ * sheet shows the source without a precision claim instead.
+ */
+internal fun precisionLabel(option: LyricSourceOption, locale: Locale): String? =
+    when {
+        !option.precisionKnown -> null
+        option.hasWords -> LyricsSourceSheetText.wordPrecision(locale)
+        else -> LyricsSourceSheetText.linePrecision(locale)
     }
 

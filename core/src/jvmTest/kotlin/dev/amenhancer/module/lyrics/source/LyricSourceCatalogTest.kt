@@ -474,6 +474,7 @@ class LyricSourceCatalogTest {
         assertEquals("QQ 音乐", selected?.label)
         assertEquals("已应用的在线翻译", selected?.detail)
         assertEquals(false, selected?.hasWords)
+        assertEquals(false, selected?.precisionKnown)
         assertEquals(0, selected?.matchScore)
         assertTrue(translation.overridden)
         assertFalse(translation.hidden)
@@ -522,6 +523,7 @@ class LyricSourceCatalogTest {
         assertEquals("QQ 音乐", selected.label)
         assertEquals("已保存到本地", selected.detail)
         assertTrue(selected.hasTranslation)
+        assertFalse(selected.precisionKnown)
         assertTrue(state.overridden)
     }
 
@@ -565,6 +567,52 @@ class LyricSourceCatalogTest {
 
         assertNull(state.selected)
         assertFalse(state.overridden)
+    }
+
+    @Test
+    fun `a synthesized online source recovers precision from the displayed document`() {
+        // An applied online document is installed as the song's custom lyrics, so when
+        // it is the document on screen the probe read it: the placeholder can tell the
+        // truth about word timing instead of defaulting to line-level.
+        val record = fileRecord(
+            fileId = "applied",
+            displayName = "QQ 音乐",
+            originSource = CustomLyricsSources.QQ,
+            hasWords = true,
+        )
+        val key = LyricSourceKeys.online(LyricSourceProviders.QQ, "552173242")
+        val input = input(customFiles = listOf(record), activeFileId = "applied")
+
+        val state = LyricSourceCatalog.laneState(input, LyricLane.ORIGINAL, key, ZH)
+        val selected = state.selected!!
+
+        assertEquals(key, selected.key)
+        assertTrue(selected.hasWords)
+        assertTrue(selected.precisionKnown)
+        assertTrue(state.overridden)
+    }
+
+    @Test
+    fun `a rebuilt document reports precision only when it is the displayed one`() {
+        val record = fileRecord(fileId = "active", hasWords = true)
+        val key = LyricSourceKeys.customFile("active")
+
+        val showing = LyricSourceCatalog.laneState(
+            input(customFiles = listOf(record), activeFileId = "active"),
+            LyricLane.TRANSLATION,
+            key,
+            ZH,
+        )
+        assertTrue(showing.selected!!.precisionKnown)
+        assertTrue(showing.selected!!.hasWords)
+
+        val hidden = LyricSourceCatalog.laneState(
+            input(customFiles = listOf(record)),
+            LyricLane.TRANSLATION,
+            key,
+            ZH,
+        )
+        assertFalse(hidden.selected!!.precisionKnown)
     }
 
     private fun input(

@@ -118,6 +118,17 @@ data class LyricSourceOption(
     val matchScore: Int = 0,
     /** Secondary line shown under the label (album, origin, "已编辑", ...). */
     val detail: String = "",
+    /**
+     * True when [hasWords] is an observation of the source rather than a default.
+     *
+     * The catalog lists what it can prove. When a stored selection has to be
+     * rebuilt because the document behind it is not in this snapshot
+     * ([LyricSourceCatalog.synthesize]), the word-timing flag is unknown; reporting
+     * it as "line by line" would misdescribe a word-synced document. The sheet
+     * should render its 逐词/逐行 badge only when this is true, and otherwise show
+     * the source without a precision claim.
+     */
+    val precisionKnown: Boolean = true,
 ) {
     val isApple: Boolean get() = kind == LyricSourceKind.APPLE
 

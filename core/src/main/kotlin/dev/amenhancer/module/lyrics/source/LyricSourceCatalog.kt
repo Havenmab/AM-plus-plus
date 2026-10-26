@@ -124,8 +124,10 @@ object LyricSourceCatalog {
      * produced it is not replayed, so its candidate is not in [options] - while the
      * page keeps showing the QQ translation; the sheet would then disagree with the
      * lyrics. The placeholder is deliberately honest about what is known: the
-     * provider comes from the key, the label is its brand, the detail says the source
-     * is applied, and precision stays unknown (false).
+     * provider comes from the key and the label is its brand. Precision is reported
+     * only when the document the page is showing belongs to the same provider
+     * ([LyricSourceOption.precisionKnown]); otherwise it stays unknown, so the sheet
+     * cannot claim 逐行 for a word-synced document.
      *
      * A custom-lyrics key is only rebuilt while its index record still exists: the
      * document is what the host would have to publish, so a deleted file must degrade
@@ -139,7 +141,7 @@ object LyricSourceCatalog {
         key: String,
         locale: Locale = Locale.getDefault(),
     ): LyricSourceOption? = when {
-        LyricSourceKeys.onlineProvider(key) != null -> onlinePlaceholder(lane, key, locale)
+        LyricSourceKeys.onlineProvider(key) != null -> onlinePlaceholder(input, lane, key, locale)
         LyricSourceKeys.customFileId(key) != null -> documentPlaceholder(input, lane, key, locale)
         else -> null
     }
@@ -460,21 +462,31 @@ object LyricSourceCatalog {
      * belong to the provider the user actually picked.
      */
     private fun onlinePlaceholder(
+        input: LyricSourceInput,
         lane: LyricLane,
         key: String,
         locale: Locale,
     ): LyricSourceOption? {
         val providerId = LyricSourceKeys.onlineProvider(key) ?: return null
+        // The applied online document is installed as the song's custom lyrics, so
+        // when the page is showing that document its probe results are the real
+        // capabilities of this very source. Same provider only: another provider's
+        // document says nothing about this one.
+        val displayed = input.activeFileId
+            ?.let { activeId -> input.customFiles.firstOrNull { it.fileId == activeId } }
+            ?.takeIf { it.providerId == providerId }
         return LyricSourceOption(
             key = key,
             kind = LyricSourceKind.ONLINE,
             providerId = providerId,
             label = LyricSourceText.providerLabel(providerId, locale),
-            // Precision of a document that is not in this snapshot is unknown, so it
-            // is reported as line-level rather than guessed as word-level.
-            hasWords = false,
-            hasTranslation = lane == LyricLane.TRANSLATION,
-            hasRomanization = lane == LyricLane.ROMANIZATION,
+            // [fileOption] and [cacheOption] report the source document's own word
+            // timing on every lane, so the placeholder does the same: one meaning for
+            // hasWords across all option kinds.
+            hasWords = displayed?.hasWords == true,
+            hasTranslation = displayed?.hasTranslation == true || lane == LyricLane.TRANSLATION,
+            hasRomanization = displayed?.hasRomanization == true || lane == LyricLane.ROMANIZATION,
+            precisionKnown = displayed != null,
             detail = LyricSourceText.appliedOnlineDetail(lane, locale),
         )
     }
@@ -501,6 +513,9 @@ object LyricSourceCatalog {
             key = key,
             hasTranslation = base.hasTranslation || lane == LyricLane.TRANSLATION,
             hasRomanization = base.hasRomanization || lane == LyricLane.ROMANIZATION,
+            // Only the displayed document was actually parsed by the probe; for any
+            // other index entry the precision flags are defaults, not observations.
+            precisionKnown = record.fileId == input.activeFileId,
         )
     }
 

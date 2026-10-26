@@ -176,6 +176,15 @@ internal class LyricsSourceControllerImpl(
     override fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult {
         val envelope = snapshotOf() ?: return noSong()
         val songId = envelope.snapshot.songId
+        // The catalog now re-synthesises an applied online option that this round's
+        // search did not return, so tapping it again is a real possibility. It is
+        // already in effect: re-fetching would pay for a network round trip and
+        // republish byte-identical content, so answer without touching the network.
+        if (option.kind == LyricSourceKind.ONLINE && isAlreadyApplied(songId, lane, option.key)) {
+            val noop = ApplyResult(ok = true, message = "该来源已在生效")
+            logger(LyricSourceDiagnostics.applyLine(songId, lane, option, noop))
+            return noop
+        }
         val result = when (option.kind) {
             LyricSourceKind.APPLE -> restoreLane(envelope, lane)
             LyricSourceKind.OVERLAY_STORE -> adoptOverlay(envelope, lane, option)
@@ -607,6 +616,10 @@ internal class LyricsSourceControllerImpl(
     }
 
     // -------------------------------------------------------------------- state
+
+    /** True when [key] is exactly what this lane already stores for the song. */
+    private fun isAlreadyApplied(songId: Long, lane: LyricLane, key: String): Boolean =
+        runCatching { store.optionKey(songId, lane) }.getOrNull() == key
 
     private fun persistHidden(songId: Long, lane: LyricLane): ApplyResult =
         if (store.select(songId, lane, LyricSourceKeys.HIDDEN)) {

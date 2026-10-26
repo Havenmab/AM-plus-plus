@@ -164,6 +164,19 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `re-applying the source that is already in effect costs no network`() {
+        val text = controller()
+        // The catalog re-synthesises an applied online option, so the sheet can
+        // hand it back to apply(); the guard must sit before the network branch.
+        val guard = text.indexOf("isAlreadyApplied(songId, lane, option.key)")
+        val network = text.indexOf("LyricSourceKind.ONLINE -> applyOnline(envelope, lane, option)")
+        assertTrue("the already-applied guard exists", guard >= 0)
+        assertTrue("and it runs before applyOnline", guard < network)
+        assertTrue(text.contains("该来源已在生效"))
+        assertTrue(text.contains("private fun isAlreadyApplied("))
+    }
+
+    @Test
     fun `the refresh emits the lane and native-row diagnostics`() {
         val text = controller()
         assertTrue(text.contains("lyrics-source diag id="))

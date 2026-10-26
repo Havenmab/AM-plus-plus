@@ -157,6 +157,21 @@ internal fun translationEnricher(
     }
 }
 
+/**
+ * The overlay store records sources in the module's own vocabulary
+ * (CustomLyricsSources), which is what the lyrics-source catalog maps back to a
+ * platform name; the providers above speak in Source.
+ */
+private fun customSourceTag(source: dev.amenhancer.module.lyrics.online.Source): String =
+    when (source) {
+        dev.amenhancer.module.lyrics.online.Source.QM -> CustomLyricsSources.QQ
+        dev.amenhancer.module.lyrics.online.Source.NE -> CustomLyricsSources.NETEASE
+        dev.amenhancer.module.lyrics.online.Source.KUWO -> CustomLyricsSources.KUWO
+        dev.amenhancer.module.lyrics.online.Source.KUGOU -> CustomLyricsSources.KUGOU
+        dev.amenhancer.module.lyrics.online.Source.LB -> CustomLyricsSources.LUNABEAT
+        dev.amenhancer.module.lyrics.online.Source.AMLL -> CustomLyricsSources.AMLL
+    }
+
 internal fun createAutoLyricsRuntime(
     application: Application,
     suppressedIds: Set<Long> = emptySet(),

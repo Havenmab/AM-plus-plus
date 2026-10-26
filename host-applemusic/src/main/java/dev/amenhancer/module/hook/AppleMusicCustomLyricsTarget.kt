@@ -6,7 +6,6 @@ import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
-import dev.amenhancer.module.lyrics.source.LyricSourceProviders
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executor
@@ -149,11 +148,12 @@ internal class AppleMusicCustomLyricsTarget(
                         // The document being displayed comes from the custom index, so the
                         // entry's own source is the only truthful answer. No entry (or an
                         // unreadable manifest) means "unknown", never a guess.
+                        // The entry already stores the module's own source vocabulary, which
+                        // is exactly what the overlay (and the catalog behind it) expects.
                         val providerSource = runCatching {
                             config.customLyricsManifest().entries
                                 .firstOrNull { it.appleMusicId == appleMusicId }
                                 ?.source
-                                ?.let(LyricSourceProviders::fromCustomLyricsSource)
                         }.getOrNull()
                         runtime.nativeLyricOverlay.publishDisplayed(
                             appleMusicId,

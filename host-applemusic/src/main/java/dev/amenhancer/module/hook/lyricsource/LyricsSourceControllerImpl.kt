@@ -368,10 +368,10 @@ internal class LyricsSourceControllerImpl(
         val songId = envelope.snapshot.songId
         val previous = runCatching { store.selection(songId) }.getOrDefault(emptyMap())
         dropOverlayLanes(songId)
-        val bridgeRemoved = if (LyricsSourceCustomIndexBridge.canRemove) {
+        // The index entry is what makes the page show a custom document; restoring Apple
+        // has to delete it, not just forget the selection.
+        if (LyricsSourceCustomIndexBridge.canRemove) {
             LyricsSourceCustomIndexBridge.removeLyrics(songId)
-        } else {
-            false
         }
         // "Restore Apple" locks the whole song to Apple: clearing the overrides here
         // is exactly what let automatic completion take the song back.

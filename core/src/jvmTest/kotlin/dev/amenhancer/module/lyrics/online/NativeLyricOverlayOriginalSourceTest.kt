@@ -53,6 +53,25 @@ class NativeLyricOverlayOriginalSourceTest {
         assertEquals("am-lyrics", store.originalSource("42"))
     }
 
+    @Test
+    fun `an update that does not know the provider keeps the recorded source`() {
+        val store = NativeLyricOverlayStore()
+        store.update(songId = SONG_ID, lines = listOf(line()), originalSource = "kuwo")
+
+        // The translation enricher republishes the lanes without naming the provider.
+        store.update(
+            songId = SONG_ID,
+            lines = listOf(line("另一行")),
+            translationSource = "netease",
+        )
+
+        assertEquals("kuwo", store.originalSource(SONG_ID))
+
+        // Another song never inherits it.
+        store.update(songId = "43", lines = listOf(line()))
+        assertNull(store.originalSource("43"))
+    }
+
     private fun line(text: String = "夜に駆ける"): NativeLyricLine = NativeLyricLine(
         begin = 0L,
         end = 1_000L,

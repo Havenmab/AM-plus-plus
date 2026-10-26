@@ -189,7 +189,9 @@ class LyricsSourceHostStructureTest {
             "the previously wrong message is gone",
             !text.contains("Apple 没有该车道，用「不显示」关闭它"),
         )
-        assertTrue(restore.contains("store.clear(songId, lane)"))
+        // restoring a lane writes the explicit Apple preference (the lock that keeps
+        // automatic completion away from it)
+        assertTrue(restore.contains("store.select(songId, lane, LyricSourceKeys.APPLE)"))
     }
 
     @Test
@@ -463,23 +465,32 @@ class LyricsSourceHostStructureTest {
         val text = controller()
         // the original lane stores the explicit Apple choice (which the lock reads back)
         assertTrue(text.contains("store.select(songId, lane, LyricSourceKeys.APPLE)"))
-        assertTrue(text.contains("store.selection(appleMusicId).isNotEmpty()"))
-        // supplement lanes still just drop their override
-        assertTrue(text.contains("store.clear(songId, lane)"))
+        assertTrue(text.contains("store.isUserLocked(appleMusicId)"))
+        // every lane locks the same way (no lane is left unlocked to be re-filled)
+        assertTrue(text.contains("LyricLane.ALL.all { lane -> store.select(songId, lane, LyricSourceKeys.APPLE) }"))
         // and the refresh reports whether the session re-imported anything
         assertTrue(text.contains("\"lyrics-source refresh id=\""))
         assertTrue(text.contains("refreshSong=unavailable"))
+        // the only unlock path deletes the key instead of storing the preference
+        assertTrue(text.contains("private fun unhideLane(lane: LyricLane): ApplyResult"))
+        assertTrue(text.contains("if (!hidden) return unhideLane(lane)"))
+        val unlock = text.substringAfter("private fun unhideLane(").substringBefore("override fun clearAll()")
+        assertTrue(unlock.contains("store.clear(songId, lane)"))
+        assertFalse(unlock.contains("LyricSourceKeys.APPLE"))
     }
 
     @Test
     fun `the overlay records which provider published the document`() {
         // enricher (auto completion): the provider that supplied this document
         val session = appSource("hook/AutoLyricsReplacementSession.kt")
-        assertTrue(session.contains("originalSource = LyricSourceProviders.fromSource(outcome.source)"))
+        // the store keeps the module's own source vocabulary, so the catalog can map it
+        assertTrue(session.contains("originalSource = customSourceTag(outcome.source)"))
+        assertTrue(session.contains("private fun customSourceTag("))
+        assertTrue(session.contains("CustomLyricsSources.QQ"))
         // custom-document lane: the index entry's own source, never a guess
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
-        assertTrue(target.contains("LyricSourceProviders::fromCustomLyricsSource"))
         assertTrue(target.contains("originalSource = providerSource"))
+        assertTrue(target.contains("?.source"))
         assertTrue(target.contains("?.firstOrNull { it.appleMusicId == appleMusicId }"))
         // and the sheet reads it back instead of showing a generic label
         val probes = source("LyricsSourceProbes.kt")
@@ -505,7 +516,7 @@ class LyricsSourceHostStructureTest {
         val controller = controller()
         assertTrue(controller.contains("AutoLyricsReplacementBridge.isUserLocked = {"))
         assertTrue(controller.contains("hasManualSelection(appleMusicId)"))
-        assertTrue(controller.contains("store.selection(appleMusicId).isNotEmpty()"))
+        assertTrue(controller.contains("store.isUserLocked(appleMusicId)"))
     }
 
     @Test

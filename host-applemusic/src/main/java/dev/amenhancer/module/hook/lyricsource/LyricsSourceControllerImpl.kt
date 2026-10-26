@@ -304,7 +304,10 @@ internal class LyricsSourceControllerImpl(
         if (lane == LyricLane.ORIGINAL) {
             return ApplyResult.failed(LyricSourceErrorCodes.NOT_SUPPORTED, "原歌词车道不能隐藏")
         }
-        if (!hidden) return clear(lane)
+        // Un-hiding is the one action that *unlocks* the lane: drop its stored key
+        // (including a dangling one) and hand the lane back to the automatic path.
+        // clear(lane) deliberately does the opposite — it stores the Apple preference.
+        if (!hidden) return unhideLane(lane)
         val envelope = snapshotOf() ?: return noSong()
         val songId = envelope.snapshot.songId
         val state = envelope.snapshot.lane(lane)
@@ -359,6 +362,24 @@ internal class LyricsSourceControllerImpl(
             refreshHost(songId)
             notifyListeners()
         }
+        logger(LyricSourceDiagnostics.applyLine(songId, lane, null, result))
+        return result
+    }
+
+    /**
+     * Drops a supplement lane's stored key and returns it to its Apple default, which
+     * is the only supported way to release the per-song lock (see [clear], which locks).
+     */
+    private fun unhideLane(lane: LyricLane): ApplyResult {
+        val envelope = snapshotOf() ?: return noSong()
+        val songId = envelope.snapshot.songId
+        val cleared = runCatching { store.clear(songId, lane) }.getOrDefault(false)
+        if (!cleared) logger("lyrics-source: unlock had no key id=" + songId + " lane=" + lane.key)
+        dropOverlayLanes(songId)
+        AutoLyricsReplacementBridge.restoreApple(songId)
+        refreshHost(songId)
+        notifyListeners()
+        val result = ApplyResult(ok = true, message = "已显示")
         logger(LyricSourceDiagnostics.applyLine(songId, lane, null, result))
         return result
     }

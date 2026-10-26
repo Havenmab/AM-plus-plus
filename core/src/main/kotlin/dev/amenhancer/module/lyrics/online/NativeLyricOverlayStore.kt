@@ -137,6 +137,10 @@ class NativeLyricOverlayStore {
          * module wrote; only the publisher knows where that document came from, so it
          * hands the name in and the lyrics-source sheet can show the real platform
          * instead of the anonymous "已写入歌词".
+         *
+         * Null keeps whatever the same song recorded before, because most updates
+         * (automatic enrichment republishing its lanes) never knew the original's
+         * provider and must not erase it.
          */
         originalSource: String? = null,
     ): Boolean {
@@ -204,7 +208,11 @@ class NativeLyricOverlayStore {
                 ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
-            originalSource = originalSource,
+            // A null here means "this caller does not know the provider" (the automatic
+            // enrichment republishes lanes it did not fetch), so the previously recorded
+            // name survives instead of being wiped; only the same song can inherit it.
+            originalSource = originalSource
+                ?: overlay?.takeIf { it.songId == id }?.originalSource,
             hasPronunciation = entries.any {
                 it.second.pronunciation != null ||
                     it.second.pronunciationSpans.isNotEmpty() ||

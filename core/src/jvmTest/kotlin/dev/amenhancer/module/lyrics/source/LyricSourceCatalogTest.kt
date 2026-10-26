@@ -254,8 +254,10 @@ class LyricSourceCatalogTest {
         val snapshot = LyricSourceCatalog.build(
             input,
             mapOf(
+                // The file record is gone from the index.
                 LyricLane.ORIGINAL to LyricSourceKeys.customFile("deleted"),
-                LyricLane.TRANSLATION to LyricSourceKeys.online(LyricSourceProviders.NETEASE, "999"),
+                // The overlay store no longer holds this lane; nothing can be rebuilt.
+                LyricLane.TRANSLATION to LyricSourceKeys.overlay(LyricLane.TRANSLATION),
             ),
             ZH,
         )
@@ -452,6 +454,117 @@ class LyricSourceCatalogTest {
         assertTrue(snapshot.isEmpty)
         assertNull(snapshot.lane(LyricLane.ORIGINAL)!!.selected)
         assertEquals(7L, snapshot.songId)
+    }
+
+    @Test
+    fun `an applied online selection is synthesized into the snapshot`() {
+        // Bug A: the applied key is not in the probe list because the search that
+        // produced it is not replayed when the sheet opens. The lane must still
+        // report the source the page is showing instead of falling back to 不显示.
+        val key = LyricSourceKeys.online(LyricSourceProviders.QQ, "552173242")
+        val input = input()
+
+        val snapshot = LyricSourceCatalog.build(input, mapOf(LyricLane.TRANSLATION to key), ZH)
+        val translation = snapshot.lane(LyricLane.TRANSLATION)!!
+        val selected = translation.selected
+
+        assertEquals(key, selected?.key)
+        assertEquals(LyricSourceKind.ONLINE, selected?.kind)
+        assertEquals(LyricSourceProviders.QQ, selected?.providerId)
+        assertEquals("QQ 音乐", selected?.label)
+        assertEquals("已应用的在线翻译", selected?.detail)
+        assertEquals(false, selected?.hasWords)
+        assertEquals(0, selected?.matchScore)
+        assertTrue(translation.overridden)
+        assertFalse(translation.hidden)
+        assertEquals(setOf(LyricLane.TRANSLATION), snapshot.overriddenLanes)
+        // The sheet lists the current source too, so the user can see and leave it.
+        assertTrue(translation.options.any { it.key == key })
+    }
+
+    @Test
+    fun `a placeholder keeps an unknown provider id readable`() {
+        val key = LyricSourceKeys.online("future-provider", "42")
+
+        val state = LyricSourceCatalog.laneState(
+            input(),
+            LyricLane.ROMANIZATION,
+            key,
+            ZH,
+        )
+
+        assertEquals(key, state.selected?.key)
+        assertEquals("future-provider", state.selected?.providerId)
+        assertEquals("future-provider", state.selected?.label)
+        assertEquals("已应用的在线音译", state.selected?.detail)
+        assertTrue(state.overridden)
+    }
+
+    @Test
+    fun `a saved custom file is rebuilt even when the lane filter hid it`() {
+        // The probe only reads a bounded number of documents, so it may report a
+        // record without the translation flag while the user has applied it.
+        val record = fileRecord(
+            fileId = "saved-1",
+            displayName = "QQ 音乐",
+            originSource = CustomLyricsSources.MANUAL,
+            hasTranslation = false,
+        )
+        val key = LyricSourceKeys.customFile("saved-1")
+        val input = input(customFiles = listOf(record))
+
+        val state = LyricSourceCatalog.laneState(input, LyricLane.TRANSLATION, key, ZH)
+        val selected = state.selected!!
+
+        assertEquals(key, selected.key)
+        assertEquals(LyricSourceKind.CUSTOM_FILE, selected.kind)
+        assertEquals(LyricSourceProviders.QQ, selected.providerId)
+        assertEquals("QQ 音乐", selected.label)
+        assertEquals("已保存到本地", selected.detail)
+        assertTrue(selected.hasTranslation)
+        assertTrue(state.overridden)
+    }
+
+    @Test
+    fun `a file key whose record is gone still degrades to the default`() {
+        val input = input(
+            apple = AppleLyricsCapability(hasLyrics = true),
+            customFiles = listOf(fileRecord(fileId = "other")),
+        )
+
+        val snapshot = LyricSourceCatalog.build(
+            input,
+            mapOf(LyricLane.ORIGINAL to LyricSourceKeys.customFile("deleted")),
+            ZH,
+        )
+
+        assertEquals(LyricSourceKeys.APPLE, snapshot.lane(LyricLane.ORIGINAL)!!.selected?.key)
+        assertFalse(snapshot.hasOverrides)
+    }
+
+    @Test
+    fun `a resolvable stored key is listed once and not duplicated`() {
+        val candidateKey = LyricSourceKeys.online(LyricSourceProviders.QQ, "2002")
+        val withCandidate = input(
+            onlineCandidates = listOf(candidate(id = "2002", hasTranslation = true)),
+        )
+
+        val state = LyricSourceCatalog.laneState(withCandidate, LyricLane.TRANSLATION, candidateKey, ZH)
+
+        assertEquals(candidateKey, state.selected?.key)
+        assertEquals(1, state.options.count { it.key == candidateKey })
+        assertEquals(1, state.options.size)
+        assertTrue(state.overridden)
+    }
+
+    @Test
+    fun `a stored Apple key that Apple no longer serves is not fabricated`() {
+        val input = input(customFiles = listOf(fileRecord(hasTranslation = true)))
+
+        val state = LyricSourceCatalog.laneState(input, LyricLane.TRANSLATION, LyricSourceKeys.APPLE, ZH)
+
+        assertNull(state.selected)
+        assertFalse(state.overridden)
     }
 
     private fun input(

@@ -13,6 +13,8 @@ import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
 import dev.amenhancer.module.lyrics.online.OnlineTranslationEnrichment
+import dev.amenhancer.module.lyrics.online.SongSearchResult
+import dev.amenhancer.module.lyrics.online.Source
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricSourceCatalog
@@ -23,6 +25,7 @@ import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceProviders
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceSelectionStore
+import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
 import dev.amenhancer.module.lyrics.source.LyricsSourceController
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
@@ -75,13 +78,29 @@ internal class LyricsSourceControllerImpl(
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val lastSongId = AtomicLong(0L)
 
+    /**
+     * The online candidates this process has already seen for the current song.
+     *
+     * The catalog only lists a provider hit while the request that produced it is
+     * in flight; without this the lane's persisted key ("online:qm:...") resolves
+     * to nothing on the very next snapshot and the sheet falls back to "不显示"
+     * right after a successful switch. Remembering the candidates keeps the
+     * selection resolvable for the rest of the session, and it is dropped as soon
+     * as the song changes.
+     */
+    private val recentCandidates = java.util.concurrent.atomic.AtomicReference<RecentCandidates?>(null)
+
     init {
         // A song change is the one event the sheet cannot poll for cheaply: it
         // resets every lane, so the open sheet must be told.
         runCatching {
             currentSong.addListener { song ->
                 val next = song?.details?.appleMusicId ?: 0L
-                if (lastSongId.getAndSet(next) != next) notifyListeners()
+                if (lastSongId.getAndSet(next) != next) {
+                    // A different track invalidates every candidate identity.
+                    recentCandidates.set(null)
+                    notifyListeners()
+                }
             }
         }
     }
@@ -95,7 +114,11 @@ internal class LyricsSourceControllerImpl(
         val songId = probed.input.song.songId
         lastSongId.compareAndSet(0L, songId)
         val selection = runCatching { store.selection(songId) }.getOrDefault(emptyMap())
-        val snapshot = runCatching { LyricSourceCatalog.build(probed.input, selection) }.getOrNull()
+        // Feed back the candidates this session already offered, otherwise a
+        // persisted "online:..." selection stops resolving one snapshot after it
+        // was applied.
+        val input = probed.input.copy(onlineCandidates = rememberedCandidates(songId))
+        val snapshot = runCatching { LyricSourceCatalog.build(input, selection) }.getOrNull()
             ?: return null
         selection.forEach { (lane, key) ->
             val state = snapshot.lane(lane) ?: return@forEach
@@ -112,6 +135,12 @@ internal class LyricsSourceControllerImpl(
         val probed: LyricsSourceProbes.Probed,
     )
 
+    /** Online candidates already seen for one song, pooled across lanes. */
+    private data class RecentCandidates(
+        val songId: Long,
+        val candidates: List<OnlineLyricsCandidate>,
+    )
+
     // -------------------------------------------------------------------- search
 
     override fun search(
@@ -126,8 +155,11 @@ internal class LyricsSourceControllerImpl(
         }
         val songId = probed.input.song.songId
         search.search(query, lane, probed.input.song.durationMs) { outcome ->
+            outcome.onSuccess { candidates -> rememberCandidates(songId, candidates) }
             val mapped = outcome.mapCatching { candidates ->
-                val withCandidates = probed.input.copy(onlineCandidates = candidates)
+                val withCandidates = probed.input.copy(
+                    onlineCandidates = candidates + rememberedCandidates(songId),
+                )
                 LyricSourceCatalog.onlineOptions(withCandidates, lane)
             }
             mapped.onSuccess { options ->
@@ -170,6 +202,13 @@ internal class LyricsSourceControllerImpl(
         val songId = envelope.snapshot.songId
         val state = envelope.snapshot.lane(lane)
         val appleServes = state?.appleAvailable == true
+        // The overlay lane is cleared first: it is content this module injected and
+        // the only thing a hide can remove without touching Apple's own settings.
+        // Whatever Apple itself shows is handled next, and a lane nobody serves is
+        // already hidden — writing a marker there would keep "restore" offering
+        // something to undo forever.
+        val overlayHadLane = overlayHasLane(songId, lane)
+        if (overlayHadLane) dropOverlayLanes(songId)
         val result = when (lane) {
             LyricLane.ROMANIZATION -> {
                 // Apple's own pronunciation preference is the native 隐藏发音
@@ -177,34 +216,31 @@ internal class LyricsSourceControllerImpl(
                 // When it is missing, tapping the menu's own row performs exactly
                 // the same preference write, and it is the row the user would have
                 // touched anyway.
-                if (pronunciationToggle.setSelected(false) ||
-                    LyricsSourceNativeMenu.clickPronunciationRow()
-                ) {
-                    persistHidden(songId, lane)
-                } else if (!appleServes) {
-                    dropOverlayLanes(songId)
-                    persistHidden(songId, lane)
-                } else {
-                    ApplyResult.failed(
+                when {
+                    appleServes && (pronunciationToggle.setSelected(false) ||
+                        LyricsSourceNativeMenu.clickPronunciationRow()) -> persistHidden(songId, lane)
+                    appleServes -> ApplyResult.failed(
                         LyricSourceErrorCodes.NOT_SUPPORTED,
                         "本机 Apple Music 未提供音译开关符号，请用系统菜单的「隐藏发音」",
                     )
+                    overlayHadLane -> persistHidden(songId, lane)
+                    // Nothing to hide: the lane already shows nothing, and a stored
+                    // marker would only make it look permanently overridden.
+                    else -> ApplyResult(ok = true, message = "该车道已是不显示状态")
                 }
             }
-            LyricLane.TRANSLATION -> {
-                if (!appleServes) {
-                    dropOverlayLanes(songId)
-                    persistHidden(songId, lane)
-                } else if (LyricsSourceNativeMenu.clickTranslationRow()) {
+            LyricLane.TRANSLATION -> when {
+                appleServes && LyricsSourceNativeMenu.clickTranslationRow() -> {
                     // 1609 pins no translation setter, so the native row is the only
                     // way to hide Apple's own lane; tapping it is the system switch.
                     persistHidden(songId, lane)
-                } else {
-                    ApplyResult.failed(
-                        LyricSourceErrorCodes.NOT_SUPPORTED,
-                        "Apple 自带译文请在系统菜单里点「隐藏翻译」（本机未拿到原生行）",
-                    )
                 }
+                appleServes -> ApplyResult.failed(
+                    LyricSourceErrorCodes.NOT_SUPPORTED,
+                    "Apple 自带译文请在系统菜单里点「隐藏翻译」（本机未拿到原生行）",
+                )
+                overlayHadLane -> persistHidden(songId, lane)
+                else -> ApplyResult(ok = true, message = "该车道已是不显示状态")
             }
             LyricLane.ORIGINAL -> ApplyResult.failed(
                 LyricSourceErrorCodes.NOT_SUPPORTED,
@@ -302,27 +338,69 @@ internal class LyricsSourceControllerImpl(
         }
     }
 
+    // --------------------------------------------------- remembered candidates
+
+    private fun rememberedCandidates(songId: Long): List<OnlineLyricsCandidate> =
+        recentCandidates.get()?.takeIf { it.songId == songId }?.candidates.orEmpty()
+
+    private fun rememberCandidates(songId: Long, candidates: List<OnlineLyricsCandidate>) {
+        if (candidates.isEmpty()) return
+        val current = recentCandidates.get()?.takeIf { it.songId == songId }
+        val merged = (current?.candidates.orEmpty() + candidates)
+            .distinctBy { candidate -> candidate.providerId + ":" + candidate.result.id }
+            .take(MAX_REMEMBERED_CANDIDATES)
+        recentCandidates.set(RecentCandidates(songId, merged))
+    }
+
+    /**
+     * Keeps an applied option resolvable even when it came from a search whose
+     * result list is gone (the sheet re-created, a process-level cache eviction).
+     * The remote id is the last key segment, which is exactly what the provider
+     * clients take back.
+     */
+    private fun rememberAppliedCandidate(songId: Long, option: LyricSourceOption) {
+        if (option.kind != LyricSourceKind.ONLINE) return
+        val remoteId = option.key.substringAfterLast(':').trim()
+        if (remoteId.isEmpty()) return
+        val source = search.sourceOf(option.providerId)
+        val synthetic = OnlineLyricsCandidate(
+            providerId = option.providerId,
+            result = SongSearchResult(
+                id = remoteId,
+                title = option.label,
+                artist = "",
+                album = "",
+                duration = 0L,
+                source = source ?: Source.LB,
+            ),
+            hasWords = option.hasWords,
+            hasTranslation = option.hasTranslation,
+            hasRomanization = option.hasRomanization,
+        )
+        rememberCandidates(songId, listOf(synthetic))
+    }
+
     // ------------------------------------------------------------- apply helpers
 
     private fun restoreLane(envelope: SnapshotEnvelope, lane: LyricLane): ApplyResult {
         val songId = envelope.snapshot.songId
         val state = envelope.snapshot.lane(lane)
         val appleServes = state?.appleAvailable == true
-        if (lane.isSupplement && !appleServes) {
-            // Apple has no lane to return to: "restore" would leave the lane
-            // showing nothing, which is exactly what 不显示 means. Refusing keeps
-            // the two intents apart instead of silently hiding the lane.
-            return ApplyResult.failed(
-                LyricSourceErrorCodes.NOT_SUPPORTED,
-                "Apple 没有该车道，用「不显示」关闭它",
-            )
-        }
+        // clear() only drops this lane's override; it never writes the "hidden"
+        // marker. A supplement lane Apple does not serve then shows nothing, which
+        // is its default state and a perfectly valid answer — refusing here made
+        // the 不显示 switch and 恢复路径 both dead on such songs.
         val stored = runCatching { store.clear(songId, lane) }.getOrDefault(false)
-        dropOverlayLanes(songId)
+        val dropped = dropOverlayLanes(songId)
         if (!stored) logger("lyrics-source: selection clear failed id=" + songId + " lane=" + lane.key)
         refreshHost(songId)
         notifyListeners()
-        return ApplyResult(ok = true, message = "已恢复 Apple 原生")
+        val message = when {
+            !lane.isSupplement || appleServes -> "已恢复 Apple 原生"
+            dropped -> "已关闭该车道（Apple 没有该车道，已清除本模块写入的内容）"
+            else -> "该车道已是不显示状态"
+        }
+        return ApplyResult(ok = true, message = message)
     }
 
     private fun adoptOverlay(
@@ -427,6 +505,7 @@ internal class LyricsSourceControllerImpl(
             mainHandler.post {
                 busy.set(false)
                 if (outcome.ok) {
+                    rememberAppliedCandidate(songId, option)
                     runCatching { store.select(songId, lane, option.key) }
                     refreshHost(songId)
                     notifyListeners()
@@ -536,8 +615,22 @@ internal class LyricsSourceControllerImpl(
             ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存隐藏状态失败")
         }
 
-    private fun dropOverlayLanes(songId: Long) {
-        runCatching { overlay.clear(songId.toString()) }
+    /** Drops everything this module published for the song; true when it had content. */
+    private fun dropOverlayLanes(songId: Long): Boolean =
+        runCatching { overlay.clear(songId.toString()) }.getOrDefault(false)
+
+    /** True when the overlay currently holds [lane] for this song (not another track's). */
+    private fun overlayHasLane(songId: Long, lane: LyricLane): Boolean {
+        val key = songId.toString()
+        return runCatching {
+            val current = overlay.currentSongId()
+            if (current != null && current != key) return@runCatching false
+            when (lane) {
+                LyricLane.ORIGINAL -> false
+                LyricLane.TRANSLATION -> overlay.hasTranslation(key)
+                LyricLane.ROMANIZATION -> overlay.hasPronunciation(key)
+            }
+        }.getOrDefault(false)
     }
 
     /**
@@ -546,6 +639,23 @@ internal class LyricsSourceControllerImpl(
      * re-import a changed custom document.
      */
     private fun refreshHost(songId: Long) {
+        // Diagnosis only (no behaviour change): the native 显示发音 row can be
+        // greyed out while our own lane reports the lane as available, and the
+        // next exported log has to answer which side said what.
+        runCatching {
+            val key = songId.toString()
+            val probed = probes.probe()
+            logger(
+                "lyrics-source diag id=" + songId +
+                    " appleLyrics=" + (probed?.input?.apple?.hasLyrics ?: false) +
+                    " appleRomanization=" + (probed?.input?.apple?.hasRomanization ?: false) +
+                    " appleTranslation=" + (probed?.input?.apple?.hasTranslation ?: false) +
+                    " overlayPronunciation=" + overlay.hasPronunciation(key) +
+                    " overlayTranslation=" + overlay.hasTranslation(key) +
+                    " overlayLanguages=" + overlay.pronunciationLanguages(key).joinToString(",") +
+                    " nativeMenu=[" + LyricsSourceNativeMenu.describe() + "]",
+            )
+        }
         runCatching { nativeRefresh()?.onCustomOverlayUpdated(songId) }
         runCatching {
             val refresh = runtime?.refreshSong ?: return@runCatching
@@ -559,5 +669,8 @@ internal class LyricsSourceControllerImpl(
 
     private companion object {
         const val PREVIEW_LINES = 3
+
+        /** Bound on the per-song candidate memory; a session rarely exceeds a few. */
+        const val MAX_REMEMBERED_CANDIDATES = 64
     }
 }

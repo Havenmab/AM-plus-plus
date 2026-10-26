@@ -47,10 +47,12 @@ object LyricSourceCatalog {
      * Builds the snapshot for [input].
      *
      * [selection] is this song's stored lane -> option key map (see
-     * [LyricSourceSelectionStore.selection]); a key that no longer resolves, a
-     * malformed key and a key on the wrong lane are all ignored and the lane
-     * falls back to its default, which is the documented degradation path for a
-     * deleted custom file or a provider that dropped a song.
+     * [LyricSourceSelectionStore.selection]). A malformed key, a key on the wrong
+     * lane and a key whose content is genuinely gone (a deleted custom file, an
+     * overlay lane the store no longer holds) are ignored and the lane falls back to
+     * its default. A key that is merely *not listed* - an applied online source, whose
+     * search result is not replayed when the sheet opens - is rebuilt by
+     * [synthesize] so the sheet keeps reporting the source the page is showing.
      */
     fun build(
         input: LyricSourceInput,
@@ -87,20 +89,59 @@ object LyricSourceCatalog {
             return LyricLaneState(lane = lane, selected = null, options = options, overridden = true)
         }
 
-        val storedOption = stored
+        val selected = stored
             ?.takeUnless(LyricSourceKeys::isHidden)
-            ?.let { key -> options.firstOrNull { it.key == key } }
+            ?.let { key ->
+                options.firstOrNull { it.key == key } ?: synthesize(input, lane, key, locale)
+            }
 
-        return if (storedOption == null) {
-            LyricLaneState(lane = lane, selected = fallback, options = options, overridden = false)
-        } else {
-            LyricLaneState(
+        if (selected == null) {
+            return LyricLaneState(
                 lane = lane,
-                selected = storedOption,
+                selected = fallback,
                 options = options,
-                overridden = storedOption.key != fallback?.key,
+                overridden = false,
             )
         }
+        // A synthesized placeholder is not part of the probed list, so it is offered
+        // as one extra trailing entry: the sheet can show it as the current source and
+        // the user can switch away from it, but it never grows the search results.
+        val offered = if (options.any { it.key == selected.key }) options else options + selected
+        return LyricLaneState(
+            lane = lane,
+            selected = selected,
+            options = offered,
+            overridden = selected.key != fallback?.key,
+        )
+    }
+
+    /**
+     * Rebuilds a stored selection as an option when the probe no longer lists it.
+     *
+     * A snapshot is built from what the host can prove right now, but the selection
+     * file remembers what the user chose. Without this step an applied online
+     * translation would fall back to "不显示" on the next snapshot - the search that
+     * produced it is not replayed, so its candidate is not in [options] - while the
+     * page keeps showing the QQ translation; the sheet would then disagree with the
+     * lyrics. The placeholder is deliberately honest about what is known: the
+     * provider comes from the key, the label is its brand, the detail says the source
+     * is applied, and precision stays unknown (false).
+     *
+     * A custom-lyrics key is only rebuilt while its index record still exists: the
+     * document is what the host would have to publish, so a deleted file must degrade
+     * (fall back to the lane default) instead of resurrecting a name for missing
+     * content. The overlay key is never rebuilt either - content the store no longer
+     * holds is genuinely gone.
+     */
+    fun synthesize(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        key: String,
+        locale: Locale = Locale.getDefault(),
+    ): LyricSourceOption? = when {
+        LyricSourceKeys.onlineProvider(key) != null -> onlinePlaceholder(lane, key, locale)
+        LyricSourceKeys.customFileId(key) != null -> documentPlaceholder(input, lane, key, locale)
+        else -> null
     }
 
     /**
@@ -395,7 +436,7 @@ object LyricSourceCatalog {
         hasWords = record.hasWords,
         hasTranslation = record.hasTranslation,
         hasRomanization = record.hasRomanization,
-        detail = LyricSourceText.customFileDetail(record.displayName, locale),
+        detail = LyricSourceText.customFileDetail(record.providerId, record.displayName, locale),
     )
 
     private fun cacheOption(
@@ -412,6 +453,56 @@ object LyricSourceCatalog {
         hasRomanization = record.hasRomanization,
         detail = LyricSourceText.cacheDetail(record.displayName, locale),
     )
+
+    /**
+     * The placeholder for an applied online source. The provider is read back out of
+     * the key, so the brand the sheet shows and the apply path the host takes still
+     * belong to the provider the user actually picked.
+     */
+    private fun onlinePlaceholder(
+        lane: LyricLane,
+        key: String,
+        locale: Locale,
+    ): LyricSourceOption? {
+        val providerId = LyricSourceKeys.onlineProvider(key) ?: return null
+        return LyricSourceOption(
+            key = key,
+            kind = LyricSourceKind.ONLINE,
+            providerId = providerId,
+            label = LyricSourceText.providerLabel(providerId, locale),
+            // Precision of a document that is not in this snapshot is unknown, so it
+            // is reported as line-level rather than guessed as word-level.
+            hasWords = false,
+            hasTranslation = lane == LyricLane.TRANSLATION,
+            hasRomanization = lane == LyricLane.ROMANIZATION,
+            detail = LyricSourceText.appliedOnlineDetail(lane, locale),
+        )
+    }
+
+    /**
+     * The placeholder for a stored custom-lyrics key whose record still exists.
+     * The key itself is the proof that the document serves this lane, so the lane
+     * flag is set even when the probe could not read the document body.
+     */
+    private fun documentPlaceholder(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        key: String,
+        locale: Locale,
+    ): LyricSourceOption? {
+        val fileId = LyricSourceKeys.customFileId(key) ?: return null
+        val record = input.customFiles.firstOrNull { it.fileId == fileId } ?: return null
+        val base = if (record.isAutoCache) {
+            cacheOption(record, lane, locale)
+        } else {
+            fileOption(record, lane, locale)
+        }
+        return base.copy(
+            key = key,
+            hasTranslation = base.hasTranslation || lane == LyricLane.TRANSLATION,
+            hasRomanization = base.hasRomanization || lane == LyricLane.ROMANIZATION,
+        )
+    }
 
     private fun add(
         options: LinkedHashMap<String, LyricSourceOption>,

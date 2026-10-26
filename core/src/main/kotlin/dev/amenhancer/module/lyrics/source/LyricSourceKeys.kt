@@ -86,6 +86,43 @@ object LyricSourceProviders {
     /** The chain position of a provider; unknown ids sort last. */
     fun onlineRank(providerId: String): Int =
         ONLINE_ORDER.indexOf(providerId).let { if (it < 0) ONLINE_ORDER.size else it }
+
+    /**
+     * The provider ids whose brand can identify a saved document by name.
+     *
+     * The custom-lyrics index only stores a provider tag for the providers
+     * [dev.amenhancer.module.config.CustomLyricsManifestPolicy] accepts; a document
+     * saved from a search provider is downgraded to "manual" when the index is
+     * sanitized, so the provider tag is lost while the entry keeps the provider
+     * name the sheet wrote into it. This list is what [providerIdForLabel] matches.
+     */
+    val LABELLED_PROVIDERS: List<String> = listOf(
+        QQ,
+        NETEASE,
+        KUWO,
+        KUGOU,
+        LUNABEAT,
+        AMLL,
+        AM_LYRICS,
+    )
+
+    /**
+     * Recovers a provider id from a saved document name, or null when the name is
+     * not a provider brand. Both language variants are matched (the sheet names a
+     * record with [LyricSourceText.providerLabel]), spaces and case are ignored, so
+     * "QQ 音乐", "qq音乐" and "QQ Music" all identify [QQ].
+     */
+    fun providerIdForLabel(displayName: String): String? {
+        val normalized = normalizeLabel(displayName)
+        if (normalized.isEmpty()) return null
+        return LABELLED_PROVIDERS.firstOrNull { providerId ->
+            normalizeLabel(LyricSourceText.providerLabel(providerId, Locale.SIMPLIFIED_CHINESE)) == normalized ||
+                normalizeLabel(LyricSourceText.providerLabel(providerId, Locale.US)) == normalized
+        }
+    }
+
+    private fun normalizeLabel(value: String): String =
+        value.trim().lowercase(Locale.ROOT).replace(" ", "")
 }
 
 /**
@@ -123,6 +160,8 @@ object LyricSourceKeys {
     private const val FILE_PREFIX = "file"
     private const val CACHE_PREFIX = "cache"
     private const val ONLINE_PREFIX = "online"
+    private const val SEPARATOR = ":"
+    private const val SEPARATOR_CHAR = ':'
 
     /** Upper bound for a persisted key; kept short so a JSON file cannot bloat. */
     const val MAX_KEY_LENGTH = 128
@@ -157,6 +196,40 @@ object LyricSourceKeys {
 
     /** True when the key is the reserved "lane hidden" marker. */
     fun isHidden(key: String?): Boolean = key == HIDDEN
+
+    /**
+     * The provider id inside an "online:<provider>:<remoteId>" key, or null.
+     *
+     * Parsing exists so a stored selection can be turned back into a label and a
+     * placeholder option when the provider search that produced it is no longer
+     * in the snapshot (see [LyricSourceCatalog]): the persisted key is the only
+     * evidence left of "the user picked this QQ 歌曲".
+     */
+    fun onlineProvider(key: String?): String? = splitOnline(key)?.first
+
+    /** The provider-side id inside an "online:<provider>:<remoteId>" key, or null. */
+    fun onlineRemoteId(key: String?): String? = splitOnline(key)?.second
+
+    /** The index file id inside a "file:<fileId>" or "cache:<fileId>" key, or null. */
+    fun customFileId(key: String?): String? {
+        val value = key?.trim() ?: return null
+        val prefix = when {
+            value.startsWith(FILE_PREFIX + SEPARATOR) -> FILE_PREFIX + SEPARATOR
+            value.startsWith(CACHE_PREFIX + SEPARATOR) -> CACHE_PREFIX + SEPARATOR
+            else -> return null
+        }
+        return value.removePrefix(prefix).takeIf { it.isNotEmpty() }
+    }
+
+    private fun splitOnline(key: String?): Pair<String, String>? {
+        val value = key?.trim() ?: return null
+        val prefix = ONLINE_PREFIX + SEPARATOR
+        if (!value.startsWith(prefix)) return null
+        val rest = value.removePrefix(prefix)
+        val separator = rest.indexOf(SEPARATOR_CHAR)
+        if (separator <= 0 || separator == rest.length - 1) return null
+        return rest.substring(0, separator) to rest.substring(separator + 1)
+    }
 
     /**
      * One key segment: trimmed, control characters and the ':' separator removed,

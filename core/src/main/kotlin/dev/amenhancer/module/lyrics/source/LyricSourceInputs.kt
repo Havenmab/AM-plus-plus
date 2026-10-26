@@ -139,8 +139,30 @@ data class CustomLyricsSourceRecord(
     /** True for the automatic-completion cache; those records are the "缓存" group. */
     val isAutoCache: Boolean get() = originSource == CustomLyricsSources.AUTO_CACHE
 
-    /** The provider id this record is attributed to. */
-    val providerId: String get() = LyricSourceProviders.fromCustomLyricsSource(originSource)
+    /**
+     * The provider id this record is attributed to.
+     *
+     * The stored source tag wins. When the index downgraded it to "manual" (the
+     * manifest only keeps a tag for the providers it accepts, so a document saved
+     * from a search provider loses its origin there), the display name the sheet
+     * wrote is used to recover the brand: an entry named "QQ 音乐" is still a QQ
+     * document, not a user-written file.
+     */
+    val providerId: String
+        get() {
+            val mapped = LyricSourceProviders.fromCustomLyricsSource(originSource)
+            if (mapped != LyricSourceProviders.FILE) return mapped
+            return LyricSourceProviders.providerIdForLabel(displayName) ?: LyricSourceProviders.FILE
+        }
+
+    /**
+     * True for a document downloaded from an online provider and kept in the
+     * index: it lives in a local file, but calling it "自定义文件" would hide where
+     * the lyrics actually came from.
+     */
+    val isSavedOnline: Boolean
+        get() = !isAutoCache && providerId != LyricSourceProviders.FILE &&
+            providerId != LyricSourceProviders.CACHE
 
     companion object {
         /**

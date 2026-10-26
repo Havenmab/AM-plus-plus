@@ -126,6 +126,54 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `hiding a lane clears our own content before touching Apple's switch`() {
+        val text = controller()
+        val overlayFirst = text.indexOf("if (overlayHadLane) dropOverlayLanes(songId)")
+        val appleBranch = text.indexOf("appleServes && LyricsSourceNativeMenu.clickTranslationRow()")
+        assertTrue("the overlay lane is cleared first", overlayFirst >= 0)
+        assertTrue("Apple's own switch is handled after it", appleBranch > overlayFirst)
+        // and a lane nobody serves is already hidden: no marker, no failure
+        assertTrue(text.contains("该车道已是不显示状态"))
+    }
+
+    @Test
+    fun `restoring a supplement lane never refuses when Apple has no such lane`() {
+        val text = controller()
+        val restore = text.substringAfter("private fun restoreLane(")
+            .substringBefore("private fun adoptOverlay(")
+        assertFalse(
+            "clear() must drop the override, not fail",
+            restore.contains("LyricSourceErrorCodes.NOT_SUPPORTED"),
+        )
+        assertTrue(
+            "the previously wrong message is gone",
+            !text.contains("Apple 没有该车道，用「不显示」关闭它"),
+        )
+        assertTrue(restore.contains("store.clear(songId, lane)"))
+    }
+
+    @Test
+    fun `an applied online source stays resolvable for the rest of the session`() {
+        val text = controller()
+        // the snapshot feeds remembered candidates back into the catalog input
+        assertTrue(text.contains("probed.input.copy(onlineCandidates = rememberedCandidates(songId))"))
+        assertTrue(text.contains("private fun rememberCandidates("))
+        assertTrue(text.contains("rememberAppliedCandidate(songId, option)"))
+        // and a song change drops them
+        assertTrue(text.contains("recentCandidates.set(null)"))
+    }
+
+    @Test
+    fun `the refresh emits the lane and native-row diagnostics`() {
+        val text = controller()
+        assertTrue(text.contains("lyrics-source diag id="))
+        assertTrue(text.contains("appleRomanization="))
+        assertTrue(text.contains("overlayPronunciation="))
+        assertTrue(text.contains("LyricsSourceNativeMenu.describe()"))
+        assertTrue(source("LyricsSourceNativeMenu.kt").contains("fun describe(): String"))
+    }
+
+    @Test
     fun `the custom index bridge is used with provider ids and never silently skipped`() {
         val text = controller()
         assertTrue(text.contains("LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)"))

@@ -47,6 +47,30 @@ internal object LyricsSourceNativeMenu {
         translationRow = null
     }
 
+    /**
+     * One-line state of both rows for the device log. Diagnosis only: "Apple's
+     * 显示发音 row is greyed out while our lane says the lane is available" is a
+     * host-state question, and answering it needs the row's own enabled/clickable
+     * flags next to our lane flags.
+     */
+    fun describe(): String =
+        "pronunciationRow=" + describe(pronunciationRow) +
+            " translationRow=" + describe(translationRow)
+
+    private fun describe(reference: WeakReference<View>?): String {
+        val view = reference?.get() ?: return "none"
+        val text = (view as? android.widget.TextView)?.text?.toString()?.take(24) ?: "-"
+        return buildString {
+            append("text=").append(text)
+            append(",enabled=").append(view.isEnabled)
+            append(",clickable=").append(view.isClickable)
+            append(",alpha=").append(view.alpha)
+            append(",visible=").append(view.visibility)
+            append(",shown=").append(view.isShown)
+            append(",attached=").append(view.isAttachedToWindow)
+        }
+    }
+
     private fun click(reference: WeakReference<View>?): Boolean {
         val row = reference?.get() ?: return false
         return runCatching { row.performClick() }.getOrDefault(false)

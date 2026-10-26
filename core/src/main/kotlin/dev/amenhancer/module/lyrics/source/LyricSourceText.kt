@@ -107,9 +107,36 @@ object LyricSourceText {
     fun cacheDetail(displayName: String, locale: Locale = Locale.getDefault()): String =
         displayName.ifBlank { pick("Auto cache", "自动缓存", locale) }
 
-    /** The secondary line of a custom-file option: the manifest's display name. */
-    fun customFileDetail(displayName: String, locale: Locale = Locale.getDefault()): String =
-        displayName.ifBlank { pick("Custom lyrics", "自定义歌词", locale) }
+    /**
+     * The secondary line of a custom-lyrics index option.
+     *
+     * A document downloaded from a provider says so ("已保存到本地"): the file is
+     * local, but the user picked an online source and the sheet must not present it
+     * as something they wrote. A manual document keeps its own name, and the auto
+     * cache keeps its cache name.
+     */
+    fun customFileDetail(
+        providerId: String,
+        displayName: String,
+        locale: Locale = Locale.getDefault(),
+    ): String = when (providerId) {
+        LyricSourceProviders.CACHE ->
+            displayName.ifBlank { pick("Auto cache", "自动缓存", locale) }
+        LyricSourceProviders.FILE ->
+            displayName.ifBlank { pick("Custom lyrics", "自定义歌词", locale) }
+        else -> pick("Saved locally", "已保存到本地", locale)
+    }
+
+    /**
+     * The secondary line of the placeholder option the catalog synthesizes for a
+     * stored online selection whose search result is no longer in the snapshot.
+     */
+    fun appliedOnlineDetail(lane: LyricLane, locale: Locale = Locale.getDefault()): String =
+        pick(
+            "Applied online source",
+            "已应用的在线" + laneLabel(lane, locale),
+            locale,
+        )
 
     /** The secondary line of an online candidate: artist and album, whichever exist. */
     fun onlineDetail(

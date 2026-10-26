@@ -20,6 +20,13 @@ object CustomLyricsManifestPolicy {
         CustomLyricsSources.AMLL,
         CustomLyricsSources.AM_LYRICS,
         CustomLyricsSources.LUNABEAT,
+        // The lyrics-source sheet can save any search provider's document as the song's
+        // custom lyrics; without these the index sanitizer rewrote the provider back to
+        // `manual`, so the sheet could no longer tell where the document came from.
+        CustomLyricsSources.QQ,
+        CustomLyricsSources.NETEASE,
+        CustomLyricsSources.KUWO,
+        CustomLyricsSources.KUGOU,
     )
 
     fun sanitize(manifest: CustomLyricsManifest): CustomLyricsManifest {

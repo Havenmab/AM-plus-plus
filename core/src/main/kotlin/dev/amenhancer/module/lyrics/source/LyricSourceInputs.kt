@@ -199,7 +199,15 @@ data class OnlineLyricsCandidate(
     /** Provider id: "qm" / "ne" / "kuwo" / "kugou" / "lb" / "amll". */
     val providerId: String,
     val result: SongSearchResult,
-    /** The provider's document is word-timed (逐词). */
+    /**
+     * The provider declares this candidate's document is word-timed (逐词).
+     *
+     * It is the only precision evidence a search hit has: the body has not been
+     * fetched, so a provider that does not claim word timing is reported with an
+     * unknown precision ([LyricSourceOption.precisionKnown] = false) instead of being
+     * labelled 逐行. A declared-but-wrong claim is the provider's problem; the preview
+     * reports what the fetched document actually is.
+     */
     val hasWords: Boolean = false,
     val hasTranslation: Boolean = false,
     val hasRomanization: Boolean = false,

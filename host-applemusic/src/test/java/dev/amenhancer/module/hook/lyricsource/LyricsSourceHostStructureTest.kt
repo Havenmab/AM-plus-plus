@@ -206,45 +206,68 @@ class LyricsSourceHostStructureTest {
         assertTrue(amll.contains("catalogue.candidates(query, limit)"))
         assertFalse("the inline parser is gone", amll.contains("private fun parseEntry("))
         assertFalse("and so is the inline matcher", amll.contains("private fun matches("))
-        // ids are corpus file names, joined onto the *endpoint's* body prefix
-        assertTrue(amll.contains("fetch(endpoint.filePrefix + remoteId)"))
+        // bodies and index both go through the shared mirror downloader
+        assertTrue(amll.contains("downloader.download(LABEL_INDEX, OWNER, REPO, INDEX_PATH)"))
+        assertTrue(amll.contains("downloader.download(LABEL_BODY, OWNER, REPO, \"raw-lyrics/\" + remoteId)"))
         assertTrue(amll.contains("isSafeCorpusFile(remoteId)"))
         val search = source("LyricsSourceSearch.kt")
-        assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) results += searchAmll(query)"))
-        assertTrue(search.contains("option.providerId == LyricSourceProviders.AMLL"))
-        // Source.AMLL exists now, so both mappings must be exhaustive and correct
+        assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) {"))
+        assertTrue(search.contains("results += searchAmll(query)"))
+        assertTrue(search.contains("results += searchAmLyrics(query, songId)"))
         assertTrue(search.contains("Source.AMLL -> LyricSourceProviders.AMLL"))
         assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
         assertTrue(search.contains("entry.toSearchResult()"))
         assertTrue(source("LyricsSourceWiring.kt").contains("amll = amll"))
+        assertTrue(source("LyricsSourceWiring.kt").contains("amLyrics = amLyrics"))
     }
 
     @Test
-    fun `AMLL falls back across three endpoints and says why each one failed`() {
-        val amll = source("LyricsSourceAmllProvider.kt")
-        // canonical, CDN mirror (different path shape), proxy prefix - in that order
-        val github = amll.indexOf("https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/metadata")
-        val jsdelivr = amll.indexOf("https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/metadata")
-        val ghfast = amll.indexOf("https://ghfast.top/https://raw.githubusercontent.com")
-        assertTrue("github endpoint", github > 0)
-        assertTrue("jsdelivr endpoint", jsdelivr > github)
-        assertTrue("ghfast endpoint", ghfast > jsdelivr)
-        // the body URL follows the endpoint that worked
-        assertTrue(amll.contains("https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/raw-lyrics/"))
-        assertTrue(amll.contains("private var preferred: Endpoint?"))
-        assertTrue(amll.contains("endpointOrder()"))
-        // every failure is logged with endpoint + status/error, not just "failed"
-        assertTrue(amll.contains("\"lyrics-source search: amll index failed \""))
-        assertTrue(amll.contains("endpoint=\" + endpoint.id"))
-        assertTrue(amll.contains("status=\" + (response.status ?: \"-\")"))
-        assertTrue(amll.contains("error=\" + (response.error ?: \"-\")"))
-        // the fetcher is gzip/UA aware with a 15s budget and reports the status
-        val fetcher = source("LyricsSourceAmllFetch.kt")
+    fun `AM-Lyrics is a real provider: exact Adam ID, text search, hash verification`() {
+        val am = source("LyricsSourceAmLyricsProvider.kt")
+        assertTrue(am.contains("Zennmn"))
+        assertTrue(am.contains("index.json"))
+        // the index parser is core's, so the layout rules stay in one place
+        assertTrue(am.contains("AmLyricsClient.parseIndex("))
+        // exact identity first: a per-song lyric matched by Adam ID (or alternates)
+        assertTrue(am.contains("catalogue.entryFor(songId)"))
+        // text search over the display name
+        assertTrue(am.contains("private fun matches(entry: AmLyricsIndexEntry, tokens: List<String>)"))
+        // body is verified exactly like the module's own importer
+        assertTrue(am.contains("entry.sizeBytes"))
+        assertTrue(am.contains("entry.sha256"))
+        assertTrue(am.contains("MessageDigest.getInstance(\"SHA-256\")"))
+        assertTrue(am.contains("TtmlInputPolicy.isAcceptable(ttml)"))
+        // and a tampered body is refused, not published
+        assertTrue(am.contains("AM-Lyrics 文件校验失败"))
+        val search = source("LyricsSourceSearch.kt")
+        assertTrue(search.contains("providerId = LyricSourceProviders.AM_LYRICS"))
+        assertTrue(search.contains("id = entry.sha256"))
+        assertTrue(search.contains("amLyrics?.entryFor(remoteIdOf(option))"))
+    }
+
+    @Test
+    fun `both GitHub corpora share one mirror fallback and report per-attempt diagnostics`() {
+        val mirror = source("LyricsSourceCorpusMirror.kt")
+        // canonical, CDN mirror (@main shape), proxy - in that order
+        val github = mirror.indexOf("https://raw.githubusercontent.com/")
+        val jsdelivr = mirror.indexOf("https://cdn.jsdelivr.net/gh/")
+        val ghfast = mirror.indexOf("https://ghfast.top/https://raw.githubusercontent.com")
+        assertTrue("github first", github in 0 until jsdelivr)
+        assertTrue("jsdelivr second", jsdelivr < ghfast)
+        assertTrue(mirror.contains("private var preferred"))
+        assertTrue(mirror.contains("listOf(first) + LyricsSourceCorpusMirror.entries.filter { it != first }"))
+        // each failed attempt says which mirror, what status and how long
+        assertTrue(mirror.contains("\"endpoint=\" + mirror.id"))
+        assertTrue(mirror.contains("status=\" + (response.status ?: \"-\")"))
+        assertTrue(mirror.contains("error=\" + (response.error ?: \"-\")"))
+        assertTrue(mirror.contains("var lastFailure: String? = null"))
+        // the shared fetcher asks for gzip and reports status/error instead of null
+        val fetcher = source("LyricsSourceCorpusFetch.kt")
         assertTrue(fetcher.contains("\"Accept-Encoding\" to \"gzip\""))
         assertTrue(fetcher.contains("GZIPInputStream"))
         assertTrue(fetcher.contains("TIMEOUT_MS = 15_000"))
-        assertTrue(fetcher.contains("val error: String? = null"))
         assertTrue(fetcher.contains("val status: Int? = null"))
+        assertTrue(fetcher.contains("val error: String? = null"))
     }
 
     @Test
@@ -253,7 +276,11 @@ class LyricsSourceHostStructureTest {
         assertTrue(amll.contains("var lastFailure: String? = null"))
         assertTrue(amll.contains("AMLL 网络不可达"))
         val search = source("LyricsSourceSearch.kt")
-        assertTrue(search.contains("fun lastFailure(): String? = amll?.lastFailure ?: lunabeatFailure"))
+        assertTrue(
+            search.contains(
+                "fun lastFailure(): String? = amll?.lastFailure ?: amLyrics?.lastFailure ?: lunabeatFailure",
+            ),
+        )
         val controller = controller()
         // only a missing catalogue is an error; a reachable catalogue with no hit is
         // an ordinary empty result
@@ -271,17 +298,54 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
-    fun `the search list starts with Apple's own document and it always restores`() {
+    fun `the search list starts with Apple's own document and applying it always restores`() {
         val text = controller()
         // the pinned first row comes from core, so the sheet never loses the way back
         assertTrue(text.contains("LyricSourceCatalog.searchOptions(withCandidates, lane)"))
-        // and applying it is an unconditional restore: no Apple-availability guard may
-        // reject it on a supplement lane Apple does not serve
-        val restoreBranch = text.indexOf("if (option.key == LyricSourceKeys.AM_LYRICS_APPLE)")
-        val kindDispatch = text.indexOf("LyricSourceKind.APPLE -> restoreLane(envelope, lane)")
-        assertTrue("the AM-Lyrics row has its own branch", restoreBranch >= 0)
-        assertTrue("before the kind dispatch", restoreBranch < kindDispatch)
-        assertTrue(text.contains("restored"))
+        // it is an ordinary APPLE option, and restoreLane carries no availability guard
+        assertTrue(text.contains("LyricSourceKind.APPLE -> restoreLane(envelope, lane)"))
+        val restore = text.substringAfter("private fun restoreLane(").substringBefore("private fun adoptOverlay(")
+        assertFalse(restore.contains("NOT_SUPPORTED"))
+    }
+
+    @Test
+    fun `an online search row never claims a precision it has not observed`() {
+        val search = source("LyricsSourceSearch.kt")
+        // No search-time candidate may claim word timing: the catalog derives each
+        // row's precisionKnown from this flag, so a true here would label the row
+        // 逐词 on a guess (the body has not been fetched yet).
+        assertFalse("search candidates must not claim word timing", search.contains("hasWords = true"))
+        assertFalse(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
+        // the fetched document's own measurement is used where it exists
+        assertTrue(search.contains("hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }"))
+        // and the preview reports the precision it has just measured
+        val text = controller()
+        assertTrue(text.contains("LyricsSourcePreview("))
+        assertTrue(text.contains("precisionKnown = true"))
+        assertTrue(text.contains("hasWords = document.hasWords"))
+        // core owns the search-row rule now; the host must not re-derive it
+        assertTrue(text.contains("LyricSourceCatalog.searchOptions(withCandidates, lane)"))
+        assertFalse(text.contains("option.copy(hasWords = false, precisionKnown = false)"))
+    }
+
+    @Test
+    fun `apply and restore install their result on the native model immediately`() {
+        val text = controller()
+        // apply: write the index and then ask the host to install it (no restart)
+        assertTrue(text.contains("AutoLyricsReplacementBridge.reapply(songId)"))
+        // restore: drop the index entry, then re-show Apple's own document
+        assertTrue(text.contains("LyricsSourceCustomIndexBridge.removeLyrics(songId)"))
+        assertTrue(text.contains("AutoLyricsReplacementBridge.restoreApple(songId)"))
+        // clearing a lane that had no override is not an error
+        assertTrue(text.contains("nothing to clear"))
+        assertFalse(text.contains("selection clear failed"))
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        // the host owns the two actions: re-parse the fresh entry, or refresh the index
+        assertTrue(target.contains("installReapplyCustomLyrics("))
+        assertTrue(target.contains("installApplyAppleOriginal("))
+        assertTrue(target.contains("session.refreshEntry(entry, { false }, Executor { it.run() })"))
+        assertTrue(target.contains("session.start()"))
+        assertTrue(target.contains("config.customLyricsManifest()"))
     }
 
     @Test

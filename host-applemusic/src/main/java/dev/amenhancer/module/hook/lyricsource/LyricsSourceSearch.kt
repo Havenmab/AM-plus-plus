@@ -50,6 +50,7 @@ internal class LyricsSourceSearch(
     transport: LyricHttpTransport?,
     private val lunabeat: LunabeatClient?,
     private val amll: LyricsSourceAmllProvider? = null,
+    private val amLyrics: LyricsSourceAmLyricsProvider? = null,
     private val executor: Executor,
     private val logger: (String) -> Unit,
 ) {
@@ -81,12 +82,13 @@ internal class LyricsSourceSearch(
      * an empty list, because "your network cannot reach AMLL" and "this song is not
      * in AMLL" are different answers.
      */
-    fun lastFailure(): String? = amll?.lastFailure ?: lunabeatFailure
+    fun lastFailure(): String? = amll?.lastFailure ?: amLyrics?.lastFailure ?: lunabeatFailure
 
     /** Searches [query] for [lane]; [onDone] runs exactly once on the executor thread. */
     fun search(
         query: String,
         lane: LyricLane,
+        songId: Long,
         durationMs: Long,
         onDone: (Result<List<OnlineLyricsCandidate>>) -> Unit,
     ) {
@@ -96,13 +98,14 @@ internal class LyricsSourceSearch(
             return
         }
         executor.execute {
-            onDone(runCatching { searchBlocking(keyword, lane, durationMs) })
+            onDone(runCatching { searchBlocking(keyword, lane, songId, durationMs) })
         }
     }
 
     private fun searchBlocking(
         query: String,
         lane: LyricLane,
+        songId: Long,
         durationMs: Long,
     ): List<OnlineLyricsCandidate> {
         // TTML sources come first: they can serve every lane and their precision
@@ -114,9 +117,38 @@ internal class LyricsSourceSearch(
         // AMLL serves a whole document only (its TTML carries translation lanes
         // inside the same body, but this module's translation merge needs a parsed
         // provider body), so it is offered for the original lane only.
-        if (lane == LyricLane.ORIGINAL) results += searchAmll(query)
+        if (lane == LyricLane.ORIGINAL) {
+            results += searchAmll(query)
+            results += searchAmLyrics(query, songId)
+        }
         results += searchLineProviders(query, durationMs, lane)
         return results
+    }
+
+    private fun searchAmLyrics(query: String, songId: Long): List<OnlineLyricsCandidate> {
+        val provider = amLyrics ?: return emptyList()
+        // The index is keyed by Adam ID, so the current song can hit exactly (that is
+        // the strongest identity for a per-song lyric); the query then adds text
+        // matches. The key segment is the file's sha256, which is also what the body
+        // verification compares against.
+        return provider.search(query, songId, SEARCH_PAGE_SIZE).map { entry ->
+            OnlineLyricsCandidate(
+                providerId = LyricSourceProviders.AM_LYRICS,
+                result = SongSearchResult(
+                    id = entry.sha256,
+                    title = entry.displayName,
+                    artist = "",
+                    album = "",
+                    duration = 0L,
+                    // Source has no AM-Lyrics member yet; the catalog keys and labels
+                    // everything by providerId, and this value only feeds the ranker.
+                    source = Source.AMLL,
+                ),
+                hasWords = false,
+                hasTranslation = false,
+                hasRomanization = false,
+            )
+        }
     }
 
     private fun searchAmll(query: String): List<OnlineLyricsCandidate> {
@@ -220,7 +252,10 @@ internal class LyricsSourceSearch(
                         duration = 0L,
                         source = Source.LB,
                     ),
-                    hasWords = true,
+                    // Precision is only known once the body is fetched (the preview
+                    // carries it). The catalog derives precisionKnown from this flag,
+                    // so claiming true here would label the row 逐词 on a guess.
+                    hasWords = false,
                     hasTranslation = true,
                     hasRomanization = false,
                 )
@@ -255,6 +290,11 @@ internal class LyricsSourceSearch(
      */
     fun documentFor(option: LyricSourceOption, durationMs: Long): Document? {
         if (option.kind != LyricSourceKind.ONLINE) return null
+        if (option.providerId == LyricSourceProviders.AM_LYRICS) {
+            val entry = amLyrics?.entryFor(remoteIdOf(option)) ?: return null
+            val document = amLyrics.document(entry) ?: return null
+            return Document(ttml = document.ttml, hasWords = document.hasWords)
+        }
         if (option.providerId == LyricSourceProviders.AMLL) {
             // AMLL ships its own TTML dialect; the repository's converter rewrites
             // it into the shape Apple's parser reads before anything is published.
@@ -281,9 +321,10 @@ internal class LyricsSourceSearch(
     /** The provider's translation lane, for a merge into the displayed document. */
     fun translationLines(option: LyricSourceOption): List<OnlineTranslationLine>? {
         if (option.kind != LyricSourceKind.ONLINE) return null
-        // AMLL is listed for the original lane only, so it has no translation
-        // body to merge here (see searchBlocking).
+        // Both GitHub corpora are listed for the original lane only, so they have no
+        // translation body to merge here (see searchBlocking).
         if (option.providerId == LyricSourceProviders.AMLL) return null
+        if (option.providerId == LyricSourceProviders.AM_LYRICS) return null
         if (option.providerId == LyricSourceProviders.LUNABEAT) {
             // Apple's own document shape: the reader already pairs every line with
             // its translation, so those lanes are reused verbatim.

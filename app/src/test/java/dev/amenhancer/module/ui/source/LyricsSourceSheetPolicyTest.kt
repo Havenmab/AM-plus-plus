@@ -106,6 +106,31 @@ class LyricsSourceSheetPolicyTest {
     }
 
     @Test
+    fun `a source without observed precision claims nothing`() {
+        assertNull(precisionClaim(precisionKnown = false, hasWords = true))
+        assertNull(precisionClaim(precisionKnown = false, hasWords = false))
+        assertEquals(LyricsSourcePrecisionClaim.WORDS, precisionClaim(true, true))
+        assertEquals(LyricsSourcePrecisionClaim.LINES, precisionClaim(true, false))
+    }
+
+    @Test
+    fun `a fetched preview remembers the precision it observed`() {
+        val loaded = LyricsSourcePreviewState.Loaded(
+            optionKey = "online:qm:42",
+            lines = listOf(LyricsSourcePreviewLine(original = "第一行")),
+            precisionKnown = true,
+            hasWords = true,
+        )
+        assertEquals(LyricsSourcePrecisionClaim.WORDS, precisionClaim(loaded.precisionKnown, loaded.hasWords))
+        assertNull(
+            precisionClaim(
+                LyricsSourcePreviewState.Loaded("online:ne:7", emptyList()).precisionKnown,
+                LyricsSourcePreviewState.Loaded("online:ne:7", emptyList()).hasWords,
+            ),
+        )
+    }
+
+    @Test
     fun `the preview shows exactly three lines`() {
         assertEquals(3, LyricsSourceSearchPolicy.PREVIEW_LINES)
         assertTrue(LyricsSourceSearchPolicy.DEBOUNCE_MS in 200L..1_000L)

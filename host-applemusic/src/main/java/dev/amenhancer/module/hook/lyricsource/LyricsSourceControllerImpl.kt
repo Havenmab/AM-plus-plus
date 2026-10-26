@@ -28,6 +28,7 @@ import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceSelectionStore
 import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
 import dev.amenhancer.module.lyrics.source.LyricsSourceController
+import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
 import java.util.concurrent.CopyOnWriteArraySet
@@ -164,15 +165,19 @@ internal class LyricsSourceControllerImpl(
             return
         }
         val songId = probed.input.song.songId
-        search.search(query, lane, probed.input.song.durationMs) { outcome ->
+        search.search(query, lane, songId, probed.input.song.durationMs) { outcome ->
             outcome.onSuccess { candidates -> rememberCandidates(songId, candidates) }
             val mapped = outcome.mapCatching { candidates ->
                 val withCandidates = probed.input.copy(
                     onlineCandidates = candidates + rememberedCandidates(songId),
                 )
-                // searchOptions pins Apple's own document (the module calls it
-                // AM-Lyrics) as the first row and appends the ranked provider hits,
-                // so "go back to Apple" is always reachable from the search list.
+                // searchOptions pins Apple's own document as the first row and
+                // appends the ranked provider hits, so "go back to Apple" is always
+                // reachable from the search list.
+                // The catalog derives each online row's precisionKnown from the
+                // candidate's own hasWords. No provider can prove word timing before
+                // its body is fetched, so search rows stay "未确认" and the preview is
+                // where the sheet learns 逐词/逐行.
                 val options = LyricSourceCatalog.searchOptions(withCandidates, lane)
                 if (options.count { it.kind == LyricSourceKind.ONLINE } == 0) {
                     // Not a single provider row: when a catalogue could not be
@@ -201,12 +206,6 @@ internal class LyricsSourceControllerImpl(
         // song's override and let Apple's own data serve the lane again. It must
         // succeed on every lane, including a supplement lane Apple does not serve
         // (there the lane then shows nothing, which is that lane's default state).
-        if (option.key == LyricSourceKeys.AM_LYRICS_APPLE) {
-            val restored = restoreLane(envelope, lane)
-            if (restored.ok) notifyUserApplied(songId)
-            logger(LyricSourceDiagnostics.applyLine(songId, lane, option, restored))
-            return restored
-        }
         // The catalog now re-synthesises an applied online option that this round's
         // search did not return, so tapping it again is a real possibility. It is
         // already in effect: re-fetching would pay for a network round trip and
@@ -338,27 +337,28 @@ internal class LyricsSourceControllerImpl(
     override fun preview(
         option: LyricSourceOption,
         lane: LyricLane,
-        onDone: (Result<List<LyricsSourcePreviewLine>>) -> Unit,
+        onDone: (Result<LyricsSourcePreview>) -> Unit,
     ) {
         val durationMs = runCatching { snapshotOf()?.snapshot?.song?.durationMs }.getOrNull() ?: 0L
         executor.execute {
-            val outcome = runCatching { previewLines(option, lane, durationMs) }
+            val outcome = runCatching { previewOf(option, lane, durationMs) }
             mainHandler.post { onDone(outcome) }
         }
     }
 
-    private fun previewLines(
+    private fun previewOf(
         option: LyricSourceOption,
         lane: LyricLane,
         durationMs: Long,
-    ): List<LyricsSourcePreviewLine> {
-        // The preview and the apply read the same document, so what the user saw
-        // in the three lines is exactly what gets published.
-        val ttml = when (option.kind) {
-            LyricSourceKind.ONLINE -> search.documentFor(option, durationMs)?.ttml
+    ): LyricsSourcePreview {
+        // The preview and the apply read the same document, so what the user saw in
+        // the three lines is exactly what gets published — including its precision,
+        // which a search row cannot know but a fetched body can.
+        val document = when (option.kind) {
+            LyricSourceKind.ONLINE -> search.documentFor(option, durationMs)
             else -> null
         } ?: throw IllegalStateException("该来源无法预览")
-        val lines = AppleLyricTtmlReader.read(ttml)
+        val lines = AppleLyricTtmlReader.read(document.ttml)
             .take(PREVIEW_LINES)
             .map { line ->
                 LyricsSourcePreviewLine(
@@ -368,7 +368,11 @@ internal class LyricsSourceControllerImpl(
                 )
             }
         if (lines.isEmpty()) throw IllegalStateException("该来源没有可预览的行")
-        return lines
+        return LyricsSourcePreview(
+            lines = lines,
+            precisionKnown = true,
+            hasWords = document.hasWords,
+        )
     }
 
     // ------------------------------------------------------------------- observe
@@ -477,14 +481,29 @@ internal class LyricsSourceControllerImpl(
         // marker. A supplement lane Apple does not serve then shows nothing, which
         // is its default state and a perfectly valid answer — refusing here made
         // the 不显示 switch and 恢复路径 both dead on such songs.
+        // A false return only means "this lane had no override" — not a failure.
         val stored = runCatching { store.clear(songId, lane) }.getOrDefault(false)
+        if (!stored) logger("lyrics-source: nothing to clear id=" + songId + " lane=" + lane.key)
+        // The page may be displaying a custom document from the index; clearing the
+        // selection and the overlay cannot undo that, the entry itself has to go.
+        val removed = if (lane == LyricLane.ORIGINAL && LyricsSourceCustomIndexBridge.canRemove) {
+            LyricsSourceCustomIndexBridge.removeLyrics(songId).also { ok ->
+                logger("lyrics-source: index entry removed id=" + songId + " ok=" + ok)
+            }
+        } else {
+            false
+        }
         val dropped = dropOverlayLanes(songId)
-        if (!stored) logger("lyrics-source: selection clear failed id=" + songId + " lane=" + lane.key)
+        if (lane == LyricLane.ORIGINAL) {
+            // Dropping the entry does not uninstall the pointer the page already has:
+            // the host re-publishes Apple's own document (index refresh + selector).
+            AutoLyricsReplacementBridge.restoreApple(songId)
+        }
         refreshHost(songId)
         notifyListeners()
         val message = when {
             !lane.isSupplement || appleServes -> "已恢复 Apple 原生"
-            dropped -> "已关闭该车道（Apple 没有该车道，已清除本模块写入的内容）"
+            dropped || removed -> "已关闭该车道（Apple 没有该车道，已清除本模块写入的内容）"
             else -> "该车道已是不显示状态"
         }
         return ApplyResult(ok = true, message = message)
@@ -552,6 +571,9 @@ internal class LyricsSourceControllerImpl(
         if (!store.select(songId, lane, option.key)) {
             return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
         }
+        // The same instant-install rule as the online path: the index write alone is
+        // invisible until the page re-requests its lyrics.
+        AutoLyricsReplacementBridge.reapply(songId)
         refreshHost(songId)
         notifyListeners()
         return ApplyResult(ok = true, message = "已切换自定义歌词")
@@ -626,6 +648,9 @@ internal class LyricsSourceControllerImpl(
         if (LyricsSourceCustomIndexBridge.canReplace) {
             val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(songId, ttml, option.providerId)
             return if (replaceFailure == null) {
+                // Writing the index only becomes visible after a restart, because the
+                // page keeps the pointer it already has. Install it now.
+                AutoLyricsReplacementBridge.reapply(songId)
                 ApplyResult(ok = true, message = "已切换歌词来源")
             } else {
                 ApplyResult.failed(LyricSourceErrorCodes.STORAGE, replaceFailure)
@@ -639,7 +664,10 @@ internal class LyricsSourceControllerImpl(
         val sourceToken = search.customSourceToken(option.providerId)
         val candidate = AutoLyricsCandidate(sourceToken, ttml, option.label)
         return when (publisher.publish(songId, candidate)) {
-            AutoLyricsPublishResult.PUBLISHED -> ApplyResult(ok = true, message = "已切换歌词来源")
+            AutoLyricsPublishResult.PUBLISHED -> {
+                AutoLyricsReplacementBridge.reapply(songId)
+                ApplyResult(ok = true, message = "已切换歌词来源")
+            }
             AutoLyricsPublishResult.ALREADY_CONFIGURED -> ApplyResult.failed(
                 LyricSourceErrorCodes.NOT_SUPPORTED,
                 "本曲已有自定义歌词，换源需要 app 侧索引写入口（未注册）",

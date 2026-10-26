@@ -616,43 +616,69 @@ class LyricSourceCatalogTest {
     }
 
     @Test
-    fun `the search list starts with the fixed Apple Music entry`() {
-        val input = input(onlineCandidates = listOf(candidate(id = "2002")))
+    fun `the search list starts with the fixed Apple row`() {
+        val input = input(
+            apple = AppleLyricsCapability(hasLyrics = true),
+            onlineCandidates = listOf(candidate(id = "2002")),
+        )
 
         val options = LyricSourceCatalog.searchOptions(input, LyricLane.ORIGINAL, ZH)
 
         assertEquals(2, options.size)
         val leading = options.first()
-        assertEquals(LyricSourceKeys.AM_LYRICS_APPLE, leading.key)
+        assertEquals(LyricSourceKeys.APPLE, leading.key)
         assertEquals(LyricSourceKind.APPLE, leading.kind)
-        assertEquals(LyricSourceProviders.AM_LYRICS, leading.providerId)
-        assertEquals("Apple Music（AM-Lyrics）", leading.label)
+        assertEquals(LyricSourceProviders.APPLE, leading.providerId)
+        assertEquals("Apple Music（原生）", leading.label)
         assertEquals("恢复 Apple 原生", leading.detail)
+        // A restore row is an action, not a content claim.
+        assertFalse(leading.precisionKnown)
+        // Apple is one source: the pinned row is the same identity the lane resolves to.
+        assertEquals(
+            leading.key,
+            LyricSourceCatalog.laneState(input, LyricLane.ORIGINAL, null, ZH).selected?.key,
+        )
     }
 
     @Test
-    fun `the fixed entry is offered even when a search finds nothing`() {
+    fun `the fixed row is offered even when a search finds nothing`() {
         val options = LyricSourceCatalog.searchOptions(input(), LyricLane.ROMANIZATION, ZH)
 
-        assertEquals(listOf(LyricSourceKeys.AM_LYRICS_APPLE), options.map { it.key })
+        assertEquals(listOf(LyricSourceKeys.APPLE), options.map { it.key })
     }
 
     @Test
-    fun `the fixed entry is not a lane option and is never persisted`() {
-        val input = input(apple = AppleLyricsCapability(hasLyrics = true))
+    fun `adding the fixed row never changes a lane option list`() {
+        val input = input(apple = AppleLyricsCapability(hasLyrics = true, hasTranslation = true))
 
-        val options = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH)
+        val laneOptions = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH)
+        val searchOptions = LyricSourceCatalog.searchOptions(input, LyricLane.TRANSLATION, ZH)
 
-        assertTrue(options.none { it.key == LyricSourceKeys.AM_LYRICS_APPLE })
-        // A stored key of that name cannot name an option, so the lane degrades.
-        val state = LyricSourceCatalog.laneState(
-            input,
-            LyricLane.ORIGINAL,
-            LyricSourceKeys.AM_LYRICS_APPLE,
-            ZH,
-        )
-        assertEquals(LyricSourceKeys.APPLE, state.selected?.key)
-        assertFalse(state.overridden)
+        // The pinned row carries the Apple key, which the original lane already lists
+        // once; a supplement lane Apple cannot serve has no such option at all.
+        assertEquals(1, laneOptions.count { it.key == LyricSourceKeys.APPLE })
+        assertEquals(1, searchOptions.count { it.key == LyricSourceKeys.APPLE })
+        assertNull(LyricSourceCatalog.option(input, LyricLane.ROMANIZATION, LyricSourceKeys.APPLE, ZH))
+    }
+
+    @Test
+    fun `an online hit claims precision only when the provider declares word timing`() {
+        val wordTimed = input(onlineCandidates = listOf(candidate(id = "1", hasWords = true)))
+        val wordTimedOption = LyricSourceCatalog
+            .onlineOptions(wordTimed, LyricLane.ORIGINAL, ZH)
+            .single()
+        assertTrue(wordTimedOption.hasWords)
+        assertTrue(wordTimedOption.precisionKnown)
+
+        // Nothing was declared, and the body has not been fetched: the option must not
+        // claim line-level precision either, or the sheet would label a word-synced
+        // document 逐行.
+        val undeclared = input(onlineCandidates = listOf(candidate(id = "2", hasWords = false)))
+        val undeclaredOption = LyricSourceCatalog
+            .onlineOptions(undeclared, LyricLane.ORIGINAL, ZH)
+            .single()
+        assertFalse(undeclaredOption.hasWords)
+        assertFalse(undeclaredOption.precisionKnown)
     }
 
     private fun input(

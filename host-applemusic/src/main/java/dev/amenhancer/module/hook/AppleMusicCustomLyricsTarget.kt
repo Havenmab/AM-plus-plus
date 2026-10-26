@@ -157,6 +157,17 @@ internal class AppleMusicCustomLyricsTarget(
         }
         var refreshSession: AutoLyricsRefreshSession? = null
         var llmSession: LlmLyricsReplacementSession? = null
+        // Hoisted so the lyrics-source sheet can queue re-parse work behind the
+        // session's own index/entry tasks (single thread, FIFO).
+        val customLyricsExecutor = ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            ArrayBlockingQueue(1),
+            { runnable -> Thread(runnable, "ampp-custom-lyrics").apply { isDaemon = true } },
+            ThreadPoolExecutor.AbortPolicy(),
+        )
         val configuredManualIds = runCatching {
             config.customLyricsManifest().entries
                 .filter(CustomLyricsEntry::enabled)
@@ -184,15 +195,7 @@ internal class AppleMusicCustomLyricsTarget(
                     }
                 }
             },
-            executor = ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                TimeUnit.MILLISECONDS,
-                ArrayBlockingQueue(1),
-                { runnable -> Thread(runnable, "ampp-custom-lyrics").apply { isDaemon = true } },
-                ThreadPoolExecutor.AbortPolicy(),
-            ),
+            executor = customLyricsExecutor,
             logger = ModernXposedRuntime::log,
         )
         // The custom session now exists: a completed enrichment publishes its
@@ -427,6 +430,64 @@ internal class AppleMusicCustomLyricsTarget(
                 resultBridge.onReplacementPublished(appleMusicId)
                 AutoLyricsReplacementBridge.notifyPublished?.invoke(appleMusicId)
             }
+        }
+        // The lyrics-source sheet's two "make it visible now" actions. They live here
+        // because only this target holds the replacement session (which turns a
+        // document into a native pointer) and the result bridge (which submits it);
+        // they are published on the shared bridge instead of widening the factory
+        // signature.
+        val reapplyCustomLyrics: (Long) -> Unit = { appleMusicId ->
+            if (appleMusicId > 0L && registration.isActive) {
+                runCatching {
+                    customLyricsExecutor.execute {
+                        // Re-read the manifest: the sheet just wrote that entry, so a
+                        // cached one would describe the previous document.
+                        val entry = runCatching {
+                            config.customLyricsManifest().entries.firstOrNull { candidate ->
+                                candidate.appleMusicId == appleMusicId && candidate.enabled
+                            }
+                        }.getOrNull()
+                        if (entry == null) {
+                            mainHandler.post { if (registration.isActive) publishReplacement(appleMusicId) }
+                            return@execute
+                        }
+                        session.refreshEntry(entry, { false }, Executor { it.run() }) { published ->
+                            mainHandler.post { if (registration.isActive) publishReplacement(published) }
+                        }
+                    }
+                }.onFailure { error ->
+                    ModernXposedRuntime.log("lyrics-source reapply was rejected: " + error.message)
+                }
+            }
+        }
+        val applyAppleOriginal: (Long) -> Unit = { appleMusicId ->
+            if (appleMusicId > 0L && registration.isActive) {
+                // Deleting the index entry does not uninstall the pointer the page is
+                // already showing: refresh the index cache (which drops the entry),
+                // then let the selector fall through to Apple's own document. Two
+                // wake-ups because both the refresh and the selector are async, and
+                // the page has to be back within a second.
+                session.start()
+                nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
+                mainHandler.postDelayed(
+                    {
+                        if (registration.isActive) publishReplacement(appleMusicId)
+                        mainHandler.postDelayed(
+                            { if (registration.isActive) publishReplacement(appleMusicId) },
+                            // Second wake-up for a session whose refresh was slower.
+                            450L,
+                        )
+                    },
+                    // 120 ms: the index refresh is a manifest read, not a network call.
+                    120L,
+                )
+            }
+        }
+        AutoLyricsReplacementBridge.installReapplyCustomLyrics(reapplyCustomLyrics)
+        AutoLyricsReplacementBridge.installApplyAppleOriginal(applyAppleOriginal)
+        registration.onClose {
+            AutoLyricsReplacementBridge.uninstallReapplyCustomLyrics(reapplyCustomLyrics)
+            AutoLyricsReplacementBridge.uninstallApplyAppleOriginal(applyAppleOriginal)
         }
         val parserHooked = runCatching {
             parseMethod.isAccessible = true

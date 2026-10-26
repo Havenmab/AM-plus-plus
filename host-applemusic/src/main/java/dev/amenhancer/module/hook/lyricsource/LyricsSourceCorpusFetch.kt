@@ -7,25 +7,22 @@ import java.net.URL
 import java.util.zip.GZIPInputStream
 
 /**
- * A tiny fetcher for the AMLL corpus.
+ * The HTTP fetcher shared by the two GitHub-hosted corpora (AMLL and AM-Lyrics).
  *
- * The module's shared HttpLyricTransport is the right tool for the lyric
- * providers, but it cannot serve this repository: it hides the response status (a
- * failure is just null, so a device log cannot say "403 from
- * raw.githubusercontent.com" versus "connection timed out"), it caps the body at
- * the caller's byte limit, and it never decompresses. The AMLL index is ~1.6 MB
- * uncompressed / ~440 KB gzipped, so all three matter.
+ * The module's own HttpLyricTransport is the right tool for the lyric providers,
+ * but it cannot serve these repositories: it hides the response status (a failure
+ * is just null, so a device log cannot say "403 from raw.githubusercontent.com"
+ * versus "connection timed out"), it caps the body at the caller's byte limit, and
+ * it never decompresses. The AMLL index is ~1.6 MB uncompressed / ~440 KB
+ * gzipped, so all three matter.
  *
- * This fetcher therefore reports what happened instead of swallowing it:
- *
- * - [Result.status] is the HTTP status when the server answered at all;
- * - [Result.error] carries the exception class + message when it did not;
- * - gzip is requested and inflated here, so a metered mobile connection transfers
- *   the compressed form;
- * - the body is bounded by [MAX_BYTES] and the timeouts are [TIMEOUT_MS], so a
- *   captive portal cannot hang the search executor.
+ * This fetcher reports what happened instead of swallowing it: [Result.status] is
+ * the HTTP status when the server answered, [Result.error] carries the exception
+ * when it did not, gzip is requested and inflated here, and the body is bounded by
+ * [MAX_BYTES] with [TIMEOUT_MS] timeouts so a captive portal cannot hang the
+ * search executor.
  */
-internal object LyricsSourceAmllFetch {
+internal object LyricsSourceCorpusFetch {
 
     /** One response, successful or not. Never throws. */
     internal data class Result(
@@ -48,7 +45,7 @@ internal object LyricsSourceAmllFetch {
         "Accept" to "text/plain, application/json;q=0.9, */*;q=0.5",
         // The shared transport does not inflate; this fetcher does, so asking for
         // gzip is safe here and is the difference between ~440 KB and ~1.6 MB on
-        // the index.
+        // the AMLL index.
         "Accept-Encoding" to "gzip",
     )
 

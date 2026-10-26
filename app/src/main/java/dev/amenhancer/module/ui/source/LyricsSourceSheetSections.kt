@@ -618,9 +618,9 @@ internal fun EmbeddedSettingsHost.optionBadges(
  * sheet shows the source without a precision claim instead.
  */
 internal fun precisionLabel(option: LyricSourceOption, locale: Locale): String? =
-    when {
-        !option.precisionKnown -> null
-        option.hasWords -> LyricsSourceSheetText.wordPrecision(locale)
-        else -> LyricsSourceSheetText.linePrecision(locale)
+    when (precisionClaim(option.precisionKnown, option.hasWords)) {
+        LyricsSourcePrecisionClaim.WORDS -> LyricsSourceSheetText.wordPrecision(locale)
+        LyricsSourcePrecisionClaim.LINES -> LyricsSourceSheetText.linePrecision(locale)
+        null -> null
     }
 

@@ -121,12 +121,14 @@ data class LyricSourceOption(
     /**
      * True when [hasWords] is an observation of the source rather than a default.
      *
-     * The catalog lists what it can prove. When a stored selection has to be
-     * rebuilt because the document behind it is not in this snapshot
-     * ([LyricSourceCatalog.synthesize]), the word-timing flag is unknown; reporting
-     * it as "line by line" would misdescribe a word-synced document. The sheet
-     * should render its 逐词/逐行 badge only when this is true, and otherwise show
-     * the source without a precision claim.
+     * The catalog lists what it can prove. Two cases leave it guessing, and both
+     * report false instead of claiming "line by line" for a possibly word-synced
+     * document: a stored selection rebuilt from its key
+     * ([LyricSourceCatalog.synthesize]), and an online search hit, whose body has not
+     * been fetched yet (only the provider's own word-timing claim counts there). The
+     * sheet should
+     * render its 逐词/逐行 badge only when this is true, and otherwise show the source
+     * without a precision claim.
      */
     val precisionKnown: Boolean = true,
 ) {
@@ -297,6 +299,30 @@ data class LyricsSourcePreviewLine(
 )
 
 /**
+ * What a preview turned out to be: the first lines plus the precision of the
+ * document behind them.
+ *
+ * Precision is the one thing a search row cannot know: the body has not been
+ * fetched yet ([LyricSourceOption.precisionKnown] is false for a hit). A preview
+ * does fetch it, so this is where the sheet stops guessing - it can label the
+ * candidate 逐词/逐行 from [hasWords] instead of from the search row's default.
+ * [precisionKnown] mirrors the option field: false means the host could not
+ * establish the document's word timing, and the sheet must not claim either way.
+ */
+data class LyricsSourcePreview(
+    val lines: List<LyricsSourcePreviewLine>,
+    /**
+     * False when the host could not establish the document's word timing.
+     *
+     * With it false the sheet must not claim either 逐词 or 逐行, exactly like
+     * [LyricSourceOption.precisionKnown].
+     */
+    val precisionKnown: Boolean = false,
+    /** True when the fetched document carries per-word timing. */
+    val hasWords: Boolean = false,
+)
+
+/**
  * The one seam between the lyrics-source sheet and the host.
  *
  * The host implements it once (it owns the Apple document, the overlay store,
@@ -391,14 +417,15 @@ interface LyricsSourceController {
 
     /**
      * Fetches the first three lines of the option so the sheet can show the
-     * 原文/译文 preview before applying. Best effort: the default implementation
-     * reports preview as unsupported, and the sheet keeps the "使用" action
-     * available without a preview.
+     * 原文/译文 preview before applying, together with the precision of the document
+     * it just fetched (a preview is the earliest honest moment to know it). Best
+     * effort: the default implementation reports preview as unsupported, and the
+     * sheet keeps the "使用" action available without a preview.
      */
     fun preview(
         option: LyricSourceOption,
         lane: LyricLane,
-        onDone: (Result<List<LyricsSourcePreviewLine>>) -> Unit,
+        onDone: (Result<LyricsSourcePreview>) -> Unit,
     ) {
         onDone(Result.failure(UnsupportedOperationException(LyricSourceText.previewUnavailable())))
     }

@@ -82,12 +82,34 @@ class LyricsSourceControllerContractTest {
     @Test
     fun `preview reports unsupported by default`() {
         val controller = FakeController()
-        var outcome: Result<List<LyricsSourcePreviewLine>>? = null
+        var outcome: Result<LyricsSourcePreview>? = null
 
         controller.preview(appleOption(), LyricLane.ORIGINAL) { outcome = it }
 
         assertTrue(outcome!!.isFailure)
         assertTrue(outcome!!.exceptionOrNull()!!.message!!.isNotBlank())
+    }
+
+    @Test
+    fun `a preview carries the precision of the document it fetched`() {
+        val lines = listOf(LyricsSourcePreviewLine("夜に駆ける", "夜跑"))
+        val unknown = LyricsSourcePreview(lines = lines)
+        assertFalse(unknown.hasWords)
+        assertFalse(unknown.precisionKnown)
+
+        // Field order is (lines, precisionKnown, hasWords); both flags are named here
+        // because the sheet builds them positionally in the documented order.
+        val known = LyricsSourcePreview(lines, true, true)
+        var outcome: Result<LyricsSourcePreview>? = null
+
+        FakeController(previewResult = Result.success(known))
+            .preview(appleOption(), LyricLane.ORIGINAL) { outcome = it }
+
+        val preview = outcome!!.getOrNull()!!
+        assertEquals(known, preview)
+        assertEquals(lines, preview.lines)
+        assertTrue(preview.hasWords)
+        assertTrue(preview.precisionKnown)
     }
 
     @Test
@@ -135,6 +157,7 @@ class LyricsSourceControllerContractTest {
     private class FakeController(
         private val snapshot: LyricsSourceSnapshot? = null,
         private val clearResult: ApplyResult = ApplyResult.APPLIED,
+        private val previewResult: Result<LyricsSourcePreview>? = null,
     ) : LyricsSourceController {
 
         val clearedLanes = mutableListOf<LyricLane>()
@@ -154,6 +177,19 @@ class LyricsSourceControllerContractTest {
         override fun clear(lane: LyricLane): ApplyResult {
             clearedLanes += lane
             return clearResult
+        }
+
+        override fun preview(
+            option: LyricSourceOption,
+            lane: LyricLane,
+            onDone: (Result<LyricsSourcePreview>) -> Unit,
+        ) {
+            val prepared = previewResult
+            if (prepared == null) {
+                super.preview(option, lane, onDone)
+            } else {
+                onDone(prepared)
+            }
         }
     }
 }

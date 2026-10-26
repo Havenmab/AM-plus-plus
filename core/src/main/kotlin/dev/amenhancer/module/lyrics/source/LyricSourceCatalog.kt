@@ -242,22 +242,26 @@ object LyricSourceCatalog {
         .toList()
 
     /**
-     * The fixed "Apple Music (AM-Lyrics)" entry every lane's search results start with.
+     * The fixed "Apple Music (原生)" row every lane's search results start with.
      *
      * It is the one option a search list can always offer: whatever the providers
      * return, "go back to Apple's own document" stays reachable. Its kind is
      * [LyricSourceKind.APPLE], so the host applies it through the same restore path as
-     * the lane card's reset (clear this song's override for the lane); its key is
-     * never persisted, because that path drops the stored key instead of writing this
-     * one.
+     * the lane card's reset (clear this song's override for the lane), and its key is
+     * [LyricSourceKeys.APPLE] - Apple's document is one source no matter which surface
+     * named it. A lane Apple cannot serve resolves this key to nothing, which is the
+     * correct degradation: the restore itself still clears the override.
      */
     fun appleRestoreOption(locale: Locale = Locale.getDefault()): LyricSourceOption =
         LyricSourceOption(
-            key = LyricSourceKeys.AM_LYRICS_APPLE,
+            key = LyricSourceKeys.APPLE,
             kind = LyricSourceKind.APPLE,
-            providerId = LyricSourceProviders.AM_LYRICS,
-            label = LyricSourceText.appleAmLyricsLabel(locale),
+            providerId = LyricSourceProviders.APPLE,
+            label = LyricSourceText.appleNativeLabel(locale),
             detail = LyricSourceText.appleRestoreDetail(locale),
+            // A restore row is an action, not a content claim: never advertise a
+            // precision the search path has not observed.
+            precisionKnown = false,
         )
 
     /**
@@ -319,6 +323,11 @@ object LyricSourceCatalog {
             hasWords = candidate.hasWords,
             hasTranslation = candidate.hasTranslation,
             hasRomanization = candidate.hasRomanization,
+            // A search hit has not fetched its body: the provider's word-timing claim
+            // is the only precision evidence there is. Without it the option reports an
+            // unknown precision, so the sheet shows no 逐词/逐行 badge instead of
+            // labelling an unverified document 逐行; the preview reports the real one.
+            precisionKnown = candidate.hasWords,
             matchScore = matchScore.coerceIn(MIN_MATCH_SCORE, MAX_MATCH_SCORE),
             detail = LyricSourceText.onlineDetail(result.artist, result.album, locale),
         )

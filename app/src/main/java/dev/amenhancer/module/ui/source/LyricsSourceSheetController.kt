@@ -8,7 +8,7 @@ import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricSourceErrorCodes
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourceAccess
-import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
+import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
 import java.util.Locale
 
@@ -321,16 +321,22 @@ internal class LyricsSourceSheetController(
         val token = previewToken.next()
         previewState = LyricsSourcePreviewState.Loading(option.key)
         view.render()
-        val onDone: (Result<List<LyricsSourcePreviewLine>>) -> Unit = { result ->
+        val onDone: (Result<LyricsSourcePreview>) -> Unit = { result ->
             if (!closed && previewToken.isCurrent(token) && lane == searchLane) {
                 previewState = result.fold(
-                    onSuccess = { lines ->
-                        val visible = lines.filter { it.original.isNotBlank() || it.translation != null || it.romanization != null }
+                    onSuccess = { preview ->
+                        val visible = preview.lines
+                            .filter { it.original.isNotBlank() || it.translation != null || it.romanization != null }
                             .take(LyricsSourceSearchPolicy.PREVIEW_LINES)
                         if (visible.isEmpty()) {
                             LyricsSourcePreviewState.Failed(option.key, LyricsSourceSheetText.previewEmpty(locale))
                         } else {
-                            LyricsSourcePreviewState.Loaded(option.key, visible)
+                            LyricsSourcePreviewState.Loaded(
+                                optionKey = option.key,
+                                lines = visible,
+                                precisionKnown = preview.precisionKnown,
+                                hasWords = preview.hasWords,
+                            )
                         }
                     },
                     onFailure = { error ->

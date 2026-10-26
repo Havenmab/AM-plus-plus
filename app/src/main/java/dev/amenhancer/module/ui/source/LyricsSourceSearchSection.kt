@@ -321,8 +321,16 @@ internal class LyricsSourceSearchSection(
                 is LyricsSourcePreviewState.Failed ->
                     addView(host.messageRow(activity, state.message, emphasized = true))
                 is LyricsSourcePreviewState.Loaded -> {
+                    val claim = precisionClaim(state.precisionKnown, state.hasWords)
+                    val title = LyricsSourceSheetText.previewLines(locale, state.lines.size)
                     addView(TextView(activity).apply {
-                        text = LyricsSourceSheetText.previewLines(locale, state.lines.size)
+                        text = when (claim) {
+                            null -> title
+                            else -> title + " · " + LyricsSourceSheetText.previewPrecision(
+                                locale,
+                                claim == LyricsSourcePrecisionClaim.WORDS,
+                            )
+                        }
                         textSize = host.embeddedTextSize(activity, 12f, 12f)
                         setEmbeddedTextColor(activity) { colors -> colors.secondary }
                         setPadding(0, 0, 0, host.dp(activity, 4))

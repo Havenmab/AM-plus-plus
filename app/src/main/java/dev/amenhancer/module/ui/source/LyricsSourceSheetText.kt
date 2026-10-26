@@ -174,6 +174,14 @@ internal object LyricsSourceSheetText {
     fun previewLines(locale: Locale, lines: Int): String =
         format(pick("Preview · first %1\$s lines", "预览 · 前 %1\$s 行", locale), locale, lines)
 
+    /** The precision of the fetched preview document, shown beside the preview title. */
+    fun previewPrecision(locale: Locale, hasWords: Boolean): String =
+        if (hasWords) {
+            pick("This source: word by word", "该来源：逐词", locale)
+        } else {
+            pick("This source: line by line", "该来源：逐行", locale)
+        }
+
     fun wordPrecision(locale: Locale): String = pick("Word by word", "逐词", locale)
 
     fun linePrecision(locale: Locale): String = pick("Line by line", "逐行", locale)

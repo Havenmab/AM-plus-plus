@@ -44,6 +44,10 @@ internal sealed interface LyricsSourcePreviewState {
     data class Loaded(
         val optionKey: String,
         val lines: List<LyricsSourcePreviewLine>,
+        /** True when the fetched document's word timing was actually observed. */
+        val precisionKnown: Boolean = false,
+        /** Per-word timing of the fetched document; only meaningful with [precisionKnown]. */
+        val hasWords: Boolean = false,
     ) : LyricsSourcePreviewState
 
     /** The key this state belongs to, or null for [None]. */
@@ -55,6 +59,30 @@ internal sealed interface LyricsSourcePreviewState {
             is Loaded -> optionKey
         }
 }
+
+/** Which precision a source may claim in the sheet. */
+internal enum class LyricsSourcePrecisionClaim {
+    /** The document carries per-word timing (逐词). */
+    WORDS,
+
+    /** The document is line timed (逐行). */
+    LINES,
+}
+
+/**
+ * The precision claim a source may make, or null when it must stay silent.
+ *
+ * A search hit does not fetch the body, so its option reports
+ * [dev.amenhancer.module.lyrics.source.LyricSourceOption.precisionKnown] = false
+ * and the sheet must not print 逐词/逐行 at all; a fetched preview observes the
+ * document, so it usually can.
+ */
+internal fun precisionClaim(precisionKnown: Boolean, hasWords: Boolean): LyricsSourcePrecisionClaim? =
+    when {
+        !precisionKnown -> null
+        hasWords -> LyricsSourcePrecisionClaim.WORDS
+        else -> LyricsSourcePrecisionClaim.LINES
+    }
 
 /**
  * Pure search decisions, kept out of the view so the debounce and query rules

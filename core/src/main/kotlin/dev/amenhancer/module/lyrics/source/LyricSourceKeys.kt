@@ -144,19 +144,17 @@ object LyricSourceProviders {
  * never inject a key that no option can match.
  */
 object LyricSourceKeys {
-    /** Apple's own document. */
-    const val APPLE: String = "apple"
-
     /**
-     * The fixed "Apple Music (AM-Lyrics)" entry pinned to the top of a lane's search
-     * results.
+     * Apple's own document.
      *
-     * It is an [LyricSourceKind.APPLE] option, so applying it restores Apple's own
-     * document for the lane (the host clears the song's override); it is never
-     * persisted, because the restore path drops the stored key instead of writing
-     * this one.
+     * This is also the identity of the fixed "Apple Music (原生)" row pinned to the
+     * top of every search list: Apple's document is one source whether it is reached
+     * from the lane card or from the result list, so both use this key and it always
+     * resolves to the Apple option of the lane Apple can serve. The named third-party
+     * providers keep their own ids ([LyricSourceProviders.AMLL] for amll-ttml-db,
+     * [LyricSourceProviders.AM_LYRICS] for the am-lyrics repository); neither is Apple.
      */
-    const val AM_LYRICS_APPLE: String = "am-lyrics"
+    const val APPLE: String = "apple"
 
     /**
      * The persisted marker for "this supplement lane is hidden on purpose".

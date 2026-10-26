@@ -128,17 +128,24 @@ internal fun createLyricsSourceTarget(
         // keeps its placeholder until the app-side bridge forwards one.
         metadataArtworkUrl = { null },
     )
-    // AMLL has its own fetcher: the shared transport caps bodies at the TTML size
-    // and hides the response status, while this corpus needs ~1.6 MB, gzip and a
-    // real per-endpoint error line.
+    // The two GitHub corpora share one downloader: whichever mirror works on this
+    // device is remembered once, and both of them report the same diagnostics.
+    val corpus = LyricsSourceCorpusDownloader(logger = logger)
     val amll = LyricsSourceAmllProvider(
         directory = File(directory, AMLL_DIRECTORY),
+        downloader = corpus,
+        logger = logger,
+    )
+    val amLyrics = LyricsSourceAmLyricsProvider(
+        directory = File(directory, AM_LYRICS_DIRECTORY),
+        downloader = corpus,
         logger = logger,
     )
     val search = LyricsSourceSearch(
         transport = lyricsTransport,
         lunabeat = lunabeat,
         amll = amll,
+        amLyrics = amLyrics,
         executor = executor,
         logger = logger,
     )
@@ -219,5 +226,6 @@ private class LunabeatDiskCache(private val directory: File) : LunabeatCatalogCa
 private const val STORAGE_DIRECTORY = "ampp-lyrics-source"
 private const val LUNABEAT_DIRECTORY = "lunabeat"
 private const val AMLL_DIRECTORY = "amll"
+private const val AM_LYRICS_DIRECTORY = "am-lyrics"
 private const val REQUEST_TIMEOUT_MS = 4_000
 private const val INDEX_MAX_BYTES = 2 * 1024 * 1024

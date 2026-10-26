@@ -289,15 +289,25 @@ class LyricSourceKeysTest {
     }
 
     @Test
-    fun `the fixed AM-Lyrics entry has a valid stable key`() {
-        assertEquals("am-lyrics", LyricSourceKeys.AM_LYRICS_APPLE)
+    fun `the Apple restore identity stays Apple and am-lyrics stays a provider`() {
+        // Apple's own document is one source: the pinned search row uses the same key
+        // and provider as the lane's Apple option.
+        assertEquals("apple", LyricSourceKeys.APPLE)
+        assertEquals("apple", LyricSourceProviders.APPLE)
         assertEquals(
-            LyricSourceKeys.AM_LYRICS_APPLE,
-            LyricSourceKeys.sanitize(LyricSourceKeys.AM_LYRICS_APPLE),
+            LyricSourceKeys.APPLE,
+            LyricSourceKeys.sanitize(LyricSourceKeys.APPLE),
         )
-        assertFalse(LyricSourceKeys.isHidden(LyricSourceKeys.AM_LYRICS_APPLE))
-        assertNull(LyricSourceKeys.onlineProvider(LyricSourceKeys.AM_LYRICS_APPLE))
-        assertNull(LyricSourceKeys.customFileId(LyricSourceKeys.AM_LYRICS_APPLE))
+
+        // The two third-party repositories keep their own ids: amll-ttml-db is "amll",
+        // the am-lyrics repo is "am-lyrics", and neither is the restore identity.
+        assertEquals("amll", LyricSourceProviders.AMLL)
+        assertEquals("am-lyrics", LyricSourceProviders.AM_LYRICS)
+        assertEquals("AM-Lyrics", LyricSourceText.providerLabel(LyricSourceProviders.AM_LYRICS, EN))
+        assertEquals("AMLL", LyricSourceText.providerLabel(LyricSourceProviders.AMLL, EN))
+        assertEquals("Apple Music（原生）", LyricSourceText.appleNativeLabel(ZH))
+        assertEquals("Apple Music (native)", LyricSourceText.appleNativeLabel(EN))
+        assertEquals("恢复 Apple 原生", LyricSourceText.appleRestoreDetail(ZH))
     }
 
     private fun entry(

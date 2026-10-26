@@ -273,6 +273,7 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `a dead catalogue surfaces as a search error, an empty match does not`() {
         val amll = source("LyricsSourceAmllProvider.kt")
+        val mirror = source("LyricsSourceCorpusMirror.kt")
         assertTrue(amll.contains("var lastFailure: String? = null"))
         // The unreachable-catalogue message is built by the shared mirror (provider label +
         // why every mirror failed), so the provider only forwards it.

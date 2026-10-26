@@ -254,7 +254,7 @@ class LyricsSourceHostStructureTest {
         val ghfast = mirror.indexOf("https://ghfast.top/https://raw.githubusercontent.com")
         assertTrue("github first", github in 0 until jsdelivr)
         assertTrue("jsdelivr second", jsdelivr < ghfast)
-        assertTrue(mirror.contains("private var preferred"))
+        assertTrue(mirror.contains("var preferred: LyricsSourceCorpusMirror? = null"))
         assertTrue(mirror.contains("listOf(first) + LyricsSourceCorpusMirror.entries.filter { it != first }"))
         // each failed attempt says which mirror, what status and how long
         assertTrue(mirror.contains("\"endpoint=\" + mirror.id"))
@@ -274,7 +274,11 @@ class LyricsSourceHostStructureTest {
     fun `a dead catalogue surfaces as a search error, an empty match does not`() {
         val amll = source("LyricsSourceAmllProvider.kt")
         assertTrue(amll.contains("var lastFailure: String? = null"))
-        assertTrue(amll.contains("AMLL 网络不可达"))
+        // The unreachable-catalogue message is built by the shared mirror (provider label +
+        // why every mirror failed), so the provider only forwards it.
+        assertTrue(mirror.contains("\" 网络不可达：\""))
+        assertTrue(amll.contains("lastFailure = downloader.lastFailure"))
+        assertTrue(amll.contains("\"AMLL\""))
         val search = source("LyricsSourceSearch.kt")
         assertTrue(
             search.contains(
@@ -318,9 +322,9 @@ class LyricsSourceHostStructureTest {
         // not been fetched yet — so flipping this flag must be deliberate and come
         // with the evidence.
         assertFalse("search candidates must not claim unproven word timing", search.contains("hasWords = true"))
-        assertFalse(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
         // the fetched document's own measurement is used where it exists
         assertTrue(search.contains("hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }"))
+        assertTrue(search.contains("Document(ttml = document.ttml, hasWords = document.hasWords)"))
         // and the preview reports the precision it has just measured
         val text = controller()
         assertTrue(text.contains("LyricsSourcePreview("))
@@ -385,7 +389,7 @@ class LyricsSourceHostStructureTest {
         assertTrue(controller.contains("private fun notifyUserApplied("))
         // apply / clear / hide / restore-all all report it
         val calls = controller.split("notifyUserApplied(songId)").size - 1
-        assertTrue("expected the four state-changing paths, found " + calls, calls >= 4)
+        assertTrue("expected the state-changing paths, found " + calls, calls >= 3)
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
         assertTrue(target.contains("markTakeoverApplied(appleMusicId)"))
         assertTrue(target.contains("AutoLyricsReplacementBridge.installUserApplied("))

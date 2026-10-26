@@ -222,7 +222,7 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
-    fun `AM-Lyrics is a real provider: exact Adam ID, text search, hash verification`() {
+    fun `AM-Lyrics is a real provider with exact Adam ID, text search and hash verification`() {
         val am = source("LyricsSourceAmLyricsProvider.kt")
         assertTrue(am.contains("Zennmn"))
         assertTrue(am.contains("index.json"))
@@ -311,10 +311,13 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `an online search row never claims a precision it has not observed`() {
         val search = source("LyricsSourceSearch.kt")
-        // No search-time candidate may claim word timing: the catalog derives each
-        // row's precisionKnown from this flag, so a true here would label the row
-        // 逐词 on a guess (the body has not been fetched yet).
-        assertFalse("search candidates must not claim word timing", search.contains("hasWords = true"))
+        // Precision policy for THIS layer: a search-time candidate may only claim word
+        // timing when a provider can actually prove it. core honours
+        // candidate.hasWords = true as such a declaration (a future timing-aware
+        // corpus only has to set it here), and today no provider can — the body has
+        // not been fetched yet — so flipping this flag must be deliberate and come
+        // with the evidence.
+        assertFalse("search candidates must not claim unproven word timing", search.contains("hasWords = true"))
         assertFalse(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
         // the fetched document's own measurement is used where it exists
         assertTrue(search.contains("hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }"))

@@ -84,9 +84,25 @@ object LyricSourceCatalog {
         val options = options(input, lane, locale)
         val fallback = defaultOption(input, lane, options)
         val stored = LyricSourceKeys.sanitize(storedKey)
+        val appleLocked = stored == LyricSourceKeys.APPLE
 
-        if (stored != null && LyricSourceKeys.isHidden(stored) && lane.isSupplement) {
-            return LyricLaneState(lane = lane, selected = null, options = options, overridden = true)
+        if (stored != null && LyricSourceKeys.isHidden(stored)) {
+            if (!lane.isSupplement) {
+                // "Hidden" is not a state the original lane can have: degrade instead of
+                // locking a lane the user never chose to hide.
+                return LyricLaneState(
+                    lane = lane,
+                    selected = fallback,
+                    options = options,
+                    overridden = false,
+                )
+            }
+            return LyricLaneState(
+                lane = lane,
+                selected = null,
+                options = options,
+                overridden = true,
+            )
         }
 
         val selected = stored
@@ -96,11 +112,16 @@ object LyricSourceCatalog {
             }
 
         if (selected == null) {
+            // A recorded choice that cannot be resolved still locks the lane: the Apple
+            // preference may simply have no lane to show, and a stale key stays the
+            // user's choice until the restore action clears it. Without the lock the
+            // automatic completion would silently take the song back.
             return LyricLaneState(
                 lane = lane,
                 selected = fallback,
                 options = options,
-                overridden = false,
+                overridden = stored != null,
+                appleLocked = appleLocked,
             )
         }
         // A synthesized placeholder is not part of the probed list, so it is offered
@@ -111,7 +132,8 @@ object LyricSourceCatalog {
             lane = lane,
             selected = selected,
             options = offered,
-            overridden = selected.key != fallback?.key,
+            overridden = true,
+            appleLocked = appleLocked,
         )
     }
 
@@ -179,10 +201,12 @@ object LyricSourceCatalog {
             kind = LyricSourceKind.APPLE,
             providerId = LyricSourceProviders.APPLE,
             label = LyricSourceText.providerLabel(LyricSourceProviders.APPLE, locale),
-            hasWords = apple.hasWords,
+            hasWords = apple.hasTiming && apple.hasWords,
             hasTranslation = apple.hasTranslation,
             hasRomanization = apple.hasRomanization,
+            hasTiming = apple.hasTiming,
             detail = LyricSourceText.appleDetail(
+                hasTiming = apple.hasTiming,
                 hasWords = apple.hasWords,
                 hasTranslation = apple.hasTranslation,
                 hasRomanization = apple.hasRomanization,
@@ -199,18 +223,24 @@ object LyricSourceCatalog {
     ): LyricSourceOption? {
         val overlay = input.overlay
         if (!overlay.hasLane(lane)) return null
-        val recorded = overlay.sourceFor(lane)?.takeIf { it.isNotBlank() }
-        val providerId = recorded
-            ?.let(LyricSourceProviders::fromCustomLyricsSource)
+        // The overlay store keeps the translation/romanization sources but not the
+        // original's, so the original is named after the document the page is showing:
+        // that document *is* what was written into the store.
+        // The recorded name is in the module's source vocabulary ("amll-ttml-db"), the
+        // fallback is already a provider id, so only the recorded one is mapped.
+        val recordedSource = overlay.sourceFor(lane)?.takeIf { it.isNotBlank() }
+        val providerId = recordedSource?.let(LyricSourceProviders::fromCustomLyricsSource)
+            ?: activeProviderId(input).takeIf { lane == LyricLane.ORIGINAL }
             ?: LyricSourceProviders.OVERLAY
         return LyricSourceOption(
             key = LyricSourceKeys.overlay(lane),
             kind = LyricSourceKind.OVERLAY_STORE,
             providerId = providerId,
             label = LyricSourceText.providerLabel(providerId, locale),
-            hasWords = lane == LyricLane.ORIGINAL && overlay.hasWords,
+            hasWords = lane == LyricLane.ORIGINAL && overlay.hasTiming && overlay.hasWords,
             hasTranslation = overlay.hasTranslation,
             hasRomanization = overlay.hasRomanization,
+            hasTiming = overlay.hasTiming,
             detail = LyricSourceText.overlayDetail(lane, providerId, locale),
         )
     }
@@ -445,10 +475,11 @@ object LyricSourceCatalog {
     }
 
     /**
-     * The value to persist for a lane's current state: the option key, or the
-     * reserved [LyricSourceKeys.HIDDEN] marker when the lane shows nothing.
-     * Returns null when the lane has neither (the original lane's empty state),
-     * which the caller stores as "no override".
+     * The value to persist for a lane's current state: the option key (Apple's is
+     * [LyricSourceKeys.APPLE], i.e. the explicit Apple preference), or the reserved
+     * [LyricSourceKeys.HIDDEN] marker when the lane shows nothing. Returns null when
+     * the lane has neither (the original lane's empty state), which the caller stores
+     * as "no override".
      */
     fun persistedKey(laneState: LyricLaneState): String? =
         laneState.selected?.key
@@ -476,9 +507,10 @@ object LyricSourceCatalog {
         kind = LyricSourceKind.CUSTOM_FILE,
         providerId = record.providerId,
         label = LyricSourceText.customFileLabel(record.providerId, record.userEdited, locale),
-        hasWords = record.hasWords,
+        hasWords = record.hasTiming && record.hasWords,
         hasTranslation = record.hasTranslation,
         hasRomanization = record.hasRomanization,
+        hasTiming = record.hasTiming,
         detail = LyricSourceText.customFileDetail(record.providerId, record.displayName, locale),
     )
 
@@ -491,11 +523,24 @@ object LyricSourceCatalog {
         kind = LyricSourceKind.CACHE,
         providerId = LyricSourceProviders.CACHE,
         label = LyricSourceText.providerLabel(LyricSourceProviders.CACHE, locale),
-        hasWords = record.hasWords,
+        hasWords = record.hasTiming && record.hasWords,
         hasTranslation = record.hasTranslation,
         hasRomanization = record.hasRomanization,
+        hasTiming = record.hasTiming,
         detail = LyricSourceText.cacheDetail(record.displayName, locale),
     )
+
+    /**
+     * The provider behind the document the page is showing, when it is one of the
+     * user's own index entries. It is how the overlay store's original lane gets a
+     * real name: the store records the translation/romanization sources only, and the
+     * displayed document is exactly where the original came from.
+     */
+    private fun activeProviderId(input: LyricSourceInput): String? =
+        input.activeFileId
+            ?.let { activeId -> input.customFiles.firstOrNull { it.fileId == activeId } }
+            ?.providerId
+            ?.takeIf { it != LyricSourceProviders.FILE && it != LyricSourceProviders.CACHE }
 
     /**
      * The placeholder for an applied online source. The provider is read back out of
@@ -524,9 +569,10 @@ object LyricSourceCatalog {
             // [fileOption] and [cacheOption] report the source document's own word
             // timing on every lane, so the placeholder does the same: one meaning for
             // hasWords across all option kinds.
-            hasWords = displayed?.hasWords == true,
+            hasWords = displayed?.hasTiming == true && displayed.hasWords,
             hasTranslation = displayed?.hasTranslation == true || lane == LyricLane.TRANSLATION,
             hasRomanization = displayed?.hasRomanization == true || lane == LyricLane.ROMANIZATION,
+            hasTiming = displayed?.hasTiming ?: true,
             precisionKnown = displayed != null,
             detail = LyricSourceText.appliedOnlineDetail(lane, locale),
         )

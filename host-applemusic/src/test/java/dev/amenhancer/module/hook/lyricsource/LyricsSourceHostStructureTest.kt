@@ -72,6 +72,33 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `the sheet stays reachable on a song without Apple's lyrics popup`() {
+        val text = menu()
+        // entry 1: the popup append stays the shortest path when Apple has the lanes
+        assertTrue(text.contains("menu.addView(item"))
+        // entry 2: the menu shape is relaxed to "a container with clickable text rows",
+        // and the anchor name - not the row count - identifies the entry point
+        assertTrue(text.contains("const val MIN_NATIVE_ROWS = 1"))
+        assertTrue(text.contains("if (nativeRows.none { it.isClickable }) return"))
+        assertTrue(text.contains("const val ANCHOR_LYRICS_MORE = \"lyrics-more\""))
+        assertTrue(text.contains("const val ANCHOR_PLAYER_OVERFLOW = \"player-overflow\""))
+        assertTrue(text.contains("private fun anchorKind(view: View): String?"))
+        // an adapter-owned menu is reported, never mutated
+        assertTrue(text.contains("not appendable"))
+        // entry 3: long press on the lyrics area, installable with no menu at all
+        val longPress = source("LyricsSourceLongPressEntry.kt")
+        assertTrue(longPress.contains("LayoutInflationRegistry.register(name)"))
+        assertTrue(longPress.contains("\"lyrics_main_content\", \"song_lyrics_list\""))
+        // never steal a gesture Apple (or another module) already owns
+        assertTrue(longPress.contains("if (root.isLongClickable)"))
+        assertTrue(longPress.contains("if (!enabled()) return@setOnLongClickListener false"))
+        assertTrue(longPress.contains("val opened = onOpen(activity)"))
+        assertTrue(longPress.contains("if (opened) logger"))
+        // and it is installed by the same target install path
+        assertTrue(text.contains("LyricsSourceLongPressEntry.install("))
+    }
+
+    @Test
     fun `a missing contract degrades instead of adding a dead entry`() {
         val text = menu()
         assertTrue(text.contains("TargetCapabilityInstall.Degraded"))
@@ -144,8 +171,9 @@ class LyricsSourceHostStructureTest {
         val appleBranch = text.indexOf("appleServes && LyricsSourceNativeMenu.clickTranslationRow()")
         assertTrue("the overlay lane is cleared first", overlayFirst >= 0)
         assertTrue("Apple's own switch is handled after it", appleBranch > overlayFirst)
-        // and a lane nobody serves is already hidden: no marker, no failure
-        assertTrue(text.contains("该车道已是不显示状态"))
+        // and a lane nobody serves is already hidden: no marker, no failure,
+        // one word of feedback
+        assertTrue(text.contains("message = \"已隐藏\""))
     }
 
     @Test
@@ -184,8 +212,28 @@ class LyricsSourceHostStructureTest {
         val network = text.indexOf("LyricSourceKind.ONLINE -> applyOnline(envelope, lane, option)")
         assertTrue("the already-applied guard exists", guard >= 0)
         assertTrue("and it runs before applyOnline", guard < network)
-        assertTrue(text.contains("该来源已在生效"))
+        // a no-op needs no explanatory copy: ok=true with no message at all
+        assertFalse(text.contains("该来源已在生效"))
+        assertTrue(text.contains("ApplyResult(ok = true)"))
         assertTrue(text.contains("private fun isAlreadyApplied("))
+    }
+
+    @Test
+    fun `success copy stays one word and failures keep an actionable reason`() {
+        val text = controller()
+        // successes are terse
+        assertTrue(text.contains("message = \"已切换\""))
+        assertTrue(text.contains("message = \"已隐藏\""))
+        assertTrue(text.contains("message = \"已恢复\""))
+        assertTrue(text.contains("message = \"已关闭\""))
+        // no parenthetical explanations or counters in success copy
+        assertFalse(text.contains("（匹配 "))
+        assertFalse(text.contains("译文没有变化"))
+        assertFalse(text.contains("已切换到在线译文"))
+        // failures still say what the user can act on
+        assertTrue(text.contains("该歌词文件已不存在"))
+        assertTrue(text.contains("写入自定义歌词索引失败"))
+        assertTrue(text.contains("保存选择失败"))
     }
 
     @Test
@@ -405,6 +453,46 @@ class LyricsSourceHostStructureTest {
         assertTrue(target.contains("session.refreshEntry(entry, { false }, Executor { it.run() })"))
         assertTrue(target.contains("session.start()"))
         assertTrue(target.contains("config.customLyricsManifest()"))
+        // three wake-ups (120/450/1200) and every one of them logs that it fired
+        assertTrue(target.contains("longArrayOf(120L, 450L, 1200L)"))
+        assertTrue(target.contains("\"lyrics-source restore id=\""))
+    }
+
+    @Test
+    fun `restoring Apple is a stored preference, so auto-completion cannot undo it`() {
+        val text = controller()
+        // the original lane stores the explicit Apple choice (which the lock reads back)
+        assertTrue(text.contains("store.select(songId, lane, LyricSourceKeys.APPLE)"))
+        assertTrue(text.contains("store.selection(appleMusicId).isNotEmpty()"))
+        // supplement lanes still just drop their override
+        assertTrue(text.contains("store.clear(songId, lane)"))
+        // and the refresh reports whether the session re-imported anything
+        assertTrue(text.contains("\"lyrics-source refresh id=\""))
+        assertTrue(text.contains("refreshSong=unavailable"))
+    }
+
+    @Test
+    fun `the overlay records which provider published the document`() {
+        // enricher (auto completion): the provider that supplied this document
+        val session = appSource("hook/AutoLyricsReplacementSession.kt")
+        assertTrue(session.contains("originalSource = LyricSourceProviders.fromSource(outcome.source)"))
+        // custom-document lane: the index entry's own source, never a guess
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        assertTrue(target.contains("LyricSourceProviders::fromCustomLyricsSource"))
+        assertTrue(target.contains("originalSource = providerSource"))
+        assertTrue(target.contains("?.firstOrNull { it.appleMusicId == appleMusicId }"))
+        // and the sheet reads it back instead of showing a generic label
+        val probes = source("LyricsSourceProbes.kt")
+        assertTrue(probes.contains("originalSource = overlay.originalSource(key)"))
+        assertFalse(probes.contains("originalSource = null,"))
+    }
+
+    @Test
+    fun `a static document is not labelled word- or line-timed`() {
+        val text = controller()
+        assertTrue(text.contains("TtmlTimingPolicy.hasTiming(document.ttml)"))
+        assertTrue(text.contains("precisionKnown = timed"))
+        assertTrue(text.contains("hasWords = timed && document.hasWords"))
     }
 
     @Test

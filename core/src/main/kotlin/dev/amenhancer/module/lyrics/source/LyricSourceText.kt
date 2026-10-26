@@ -74,15 +74,40 @@ object LyricSourceText {
     /** The "不显示" choice offered by the supplement lanes' toggle. */
     fun hiddenLabel(locale: Locale = Locale.getDefault()): String = pick("Hidden", "不显示", locale)
 
+    /**
+     * The precision badge for one source, or null when the sheet must render none.
+     *
+     * "No timeline" is a fact about the document, so it is reported even when the
+     * precision is unknown: a static lyric must never be described as 逐行. Word/line
+     * precision is only claimed when it was actually observed ([precisionKnown]).
+     */
+    fun timingLabel(
+        hasTiming: Boolean,
+        precisionKnown: Boolean,
+        hasWords: Boolean,
+        locale: Locale = Locale.getDefault(),
+    ): String? = when {
+        !hasTiming -> pick("No timeline", "无时间轴", locale)
+        !precisionKnown -> null
+        hasWords -> pick("Word by word", "逐词", locale)
+        else -> pick("Line by line", "逐行", locale)
+    }
+
+    /** [timingLabel] for one option: the sheet's single call, so no combination logic lives in the UI. */
+    fun timingLabel(option: LyricSourceOption, locale: Locale = Locale.getDefault()): String? =
+        timingLabel(option.hasTiming, option.precisionKnown, option.hasWords, locale)
+
     /** The secondary line of Apple's option: precision plus the lanes Apple also carries. */
     fun appleDetail(
+        hasTiming: Boolean,
         hasWords: Boolean,
         hasTranslation: Boolean,
         hasRomanization: Boolean,
         locale: Locale = Locale.getDefault(),
     ): String {
         val parts = mutableListOf(
-            if (hasWords) pick("Word by word", "逐词", locale) else pick("Line by line", "逐行", locale),
+            timingLabel(hasTiming, precisionKnown = true, hasWords = hasWords, locale = locale)
+                ?: pick("Line by line", "逐行", locale),
         )
         if (hasTranslation) parts += pick("with translation", "带翻译", locale)
         if (hasRomanization) parts += pick("with romanization", "带音译", locale)

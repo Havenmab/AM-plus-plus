@@ -3,8 +3,10 @@ package dev.amenhancer.module.ui.source
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
+import dev.amenhancer.module.lyrics.source.LyricSourceText
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
+import java.util.Locale
 
 /** What the sheet is showing for the current song. */
 internal enum class LyricsSourceSheetPhase {
@@ -48,6 +50,8 @@ internal sealed interface LyricsSourcePreviewState {
         val precisionKnown: Boolean = false,
         /** Per-word timing of the fetched document; only meaningful with [precisionKnown]. */
         val hasWords: Boolean = false,
+        /** False when the fetched document has no timeline at all (static lyrics). */
+        val hasTiming: Boolean = true,
     ) : LyricsSourcePreviewState
 
     /** The key this state belongs to, or null for [None]. */
@@ -60,29 +64,24 @@ internal sealed interface LyricsSourcePreviewState {
         }
 }
 
-/** Which precision a source may claim in the sheet. */
-internal enum class LyricsSourcePrecisionClaim {
-    /** The document carries per-word timing (逐词). */
-    WORDS,
-
-    /** The document is line timed (逐行). */
-    LINES,
-}
-
 /**
- * The precision claim a source may make, or null when it must stay silent.
+ * The timing badge text for one option, or null when the sheet must render none.
  *
- * A search hit does not fetch the body, so its option reports
- * [dev.amenhancer.module.lyrics.source.LyricSourceOption.precisionKnown] = false
- * and the sheet must not print 逐词/逐行 at all; a fetched preview observes the
- * document, so it usually can.
+ * Delegates to [LyricSourceText.timingLabel] so the badge and the option's own
+ * detail line (which core builds with the same function) can never disagree about
+ * the same source: "无时间轴" wins over everything else, unknown precision renders
+ * nothing, and only an observed document may claim 逐词/逐行.
  */
-internal fun precisionClaim(precisionKnown: Boolean, hasWords: Boolean): LyricsSourcePrecisionClaim? =
-    when {
-        !precisionKnown -> null
-        hasWords -> LyricsSourcePrecisionClaim.WORDS
-        else -> LyricsSourcePrecisionClaim.LINES
-    }
+internal fun precisionLabel(option: LyricSourceOption, locale: Locale): String? =
+    LyricSourceText.timingLabel(option, locale)
+
+/** The same four-state label for a fetched preview document. */
+internal fun previewTimingLabel(
+    hasTiming: Boolean,
+    precisionKnown: Boolean,
+    hasWords: Boolean,
+    locale: Locale,
+): String? = LyricSourceText.timingLabel(hasTiming, precisionKnown, hasWords, locale)
 
 /**
  * Pure search decisions, kept out of the view so the debounce and query rules

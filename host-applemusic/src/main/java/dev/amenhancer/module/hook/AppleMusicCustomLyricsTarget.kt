@@ -6,6 +6,7 @@ import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
+import dev.amenhancer.module.lyrics.source.LyricSourceProviders
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executor
@@ -145,7 +146,20 @@ internal class AppleMusicCustomLyricsTarget(
                     // write that carries its (Word-timed) romanization into the
                     // model the native getters can serve.
                     onDisplayedDocument = { appleMusicId, ttml ->
-                        runtime.nativeLyricOverlay.publishDisplayed(appleMusicId, ttml)
+                        // The document being displayed comes from the custom index, so the
+                        // entry's own source is the only truthful answer. No entry (or an
+                        // unreadable manifest) means "unknown", never a guess.
+                        val providerSource = runCatching {
+                            config.customLyricsManifest().entries
+                                .firstOrNull { it.appleMusicId == appleMusicId }
+                                ?.source
+                                ?.let(LyricSourceProviders::fromCustomLyricsSource)
+                        }.getOrNull()
+                        runtime.nativeLyricOverlay.publishDisplayed(
+                            appleMusicId,
+                            ttml,
+                            originalSource = providerSource,
+                        )
                     },
                 )
             }
@@ -469,18 +483,25 @@ internal class AppleMusicCustomLyricsTarget(
                 // the page has to be back within a second.
                 session.start()
                 nativeLyricDelivery?.onCustomOverlayUpdated(appleMusicId)
-                mainHandler.postDelayed(
-                    {
-                        if (registration.isActive) publishReplacement(appleMusicId)
-                        mainHandler.postDelayed(
-                            { if (registration.isActive) publishReplacement(appleMusicId) },
-                            // Second wake-up for a session whose refresh was slower.
-                            450L,
-                        )
-                    },
-                    // 120 ms: the index refresh is a manifest read, not a network call.
-                    120L,
-                )
+                // Three wake-ups with growing spacing: the index refresh and the
+                // selector are both async, and the page must be back on Apple within a
+                // second or two even on a busy main thread. Every wake-up logs its
+                // result so a device log shows which one actually landed.
+                val wakes = longArrayOf(120L, 450L, 1200L)
+                wakes.forEach { delayMs ->
+                    mainHandler.postDelayed(
+                        {
+                            if (registration.isActive) {
+                                publishReplacement(appleMusicId)
+                                ModernXposedRuntime.log(
+                                    "lyrics-source restore id=" + appleMusicId +
+                                        " wake=" + delayMs + "ms published=true",
+                                )
+                            }
+                        },
+                        delayMs,
+                    )
+                }
             }
         }
         AutoLyricsReplacementBridge.installReapplyCustomLyrics(reapplyCustomLyrics)

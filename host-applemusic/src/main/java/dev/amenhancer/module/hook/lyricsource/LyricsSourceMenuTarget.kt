@@ -128,6 +128,14 @@ internal class LyricsSourceMenuTarget(
         }
         installed = true
         installedDetail = detail.joinToString(" + ")
+        // Third entry point: a long press on the lyrics area opens the sheet even when
+        // Apple renders no "more" popup at all (a song without translation or
+        // romanization has no rows to show there).
+        LyricsSourceLongPressEntry.install(
+            enabled = enabled,
+            onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
+            logger = logger,
+        )
         logger("lyrics-source menu: installed " + installedDetail + " (profile=" + profile.id + ")")
         return TargetCapabilityInstall.Active("Lyrics source menu: " + installedDetail)
     }
@@ -270,14 +278,22 @@ internal class LyricsSourceMenuTarget(
         if (!LyricsSourceSheetEntry.available) return
         if (!popup.isShowing) return
         // The exact path already proved the page through the click listener's
-        // PlayerLyricsViewFragment reference, so it only has to recognise the
-        // button it does not strictly need. The generic path has no such
-        // reference and must prove the page from the anchor instead: either the
-        // lyrics "more" button itself, or a descendant of the lyrics sheet
-        // header. A player-page or mini-player "more" never qualifies.
-        if (source == GENERIC_PATH && !isLyricsMoreAnchor(anchor) && !belongsToLyricsSheet(anchor)) return
+        // PlayerLyricsViewFragment reference. The generic path has no such reference,
+        // so it proves the entry point from the anchor instead: the lyrics "more"
+        // button, any descendant of the lyrics sheet header, or the player page's own
+        // overflow button. The sheet must stay reachable on a song whose popup only
+        // carries one row, so the anchor — not the row count — is what identifies us.
+        val anchorKind = anchorKind(anchor)
+        if (source == GENERIC_PATH && anchorKind == null && !belongsToLyricsSheet(anchor)) return
         val menu = popup.contentView as? LinearLayout ?: run {
-            logger("lyrics-source menu: popup content is " + popup.contentView?.javaClass?.name + ", skipped")
+            // An adapter-owned menu (RecyclerView) cannot be appended to without
+            // mutating Apple's adapter, which this feature never does; the long-press
+            // entry covers those screens instead.
+            val container = popup.contentView
+            logger(
+                "lyrics-source menu: popup content is " + container?.javaClass?.name +
+                    " (not appendable), relying on the long-press entry",
+            )
             return
         }
         // Our own row from an earlier popup (or from the other install path) is
@@ -288,8 +304,11 @@ internal class LyricsSourceMenuTarget(
         val nativeRows = (0 until menu.childCount)
             .map { menu.getChildAt(it) }
             .filter { it.tag != ITEM_TAG }
+        // At least one clickable text row: the lyrics popup has two, but other
+        // popups AM shows from the same buttons may carry a single action.
         if (nativeRows.size !in MIN_NATIVE_ROWS..MAX_NATIVE_ROWS) return
         if (nativeRows.any { it !is TextView || (it as TextView).text.isNullOrBlank() }) return
+        if (nativeRows.none { it.isClickable }) return
         // The popup builder adds the pronunciation row first and the translation
         // row second; remembering them lets the sheet's 不显示 switch perform the
         // same tap the user would have performed in this menu.
@@ -381,11 +400,24 @@ internal class LyricsSourceMenuTarget(
 
     // --------------------------------------------------------------- validation
 
-    private fun isLyricsMoreAnchor(view: View): Boolean {
-        if (view !is ImageView) return false
-        if (moreButtonId != 0 && view.id == moreButtonId) return true
-        val description = moreButtonDescription ?: return false
-        return view.contentDescription?.toString() == description
+    private fun isLyricsMoreAnchor(view: View): Boolean = anchorKind(view) != null
+
+    /**
+     * Which known "more" button [view] is, or null. Both are resolved by resource
+     * *name* so a numeric id shift never matters, and the two names are what tells
+     * the lyrics popup apart from the player page's own overflow menu.
+     */
+    private fun anchorKind(view: View): String? {
+        if (view !is ImageView) return null
+        if (moreButtonId != 0 && view.id == moreButtonId) {
+            return if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else ANCHOR_PLAYER_OVERFLOW
+        }
+        val description = moreButtonDescription ?: return null
+        return if (view.contentDescription?.toString() == description) {
+            if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else ANCHOR_PLAYER_OVERFLOW
+        } else {
+            null
+        }
     }
 
     /**
@@ -432,7 +464,9 @@ internal class LyricsSourceMenuTarget(
         const val MORE_BUTTON_ID_NAME = "list_left_icon"
         const val MORE_BUTTON_DESCRIPTION_NAME = "more_button"
         const val LYRICS_SHEET_HEADER_ID_NAME = "current_player_item"
-        const val MIN_NATIVE_ROWS = 2
+        const val MIN_NATIVE_ROWS = 1
+        const val ANCHOR_LYRICS_MORE = "lyrics-more"
+        const val ANCHOR_PLAYER_OVERFLOW = "player-overflow"
         const val MAX_NATIVE_ROWS = 8
         const val MAX_ANCESTOR_DEPTH = 8
     }

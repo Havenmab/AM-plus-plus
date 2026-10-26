@@ -68,7 +68,6 @@ internal class LyricsSourceSheetDialog(
     private val laneSection = LinearLayout(activity)
     private val searchSection = LyricsSourceSearchSection(host, activity, controller)
     private val panelSurface = EmbeddedG3Drawable()
-    private val restoreHint: TextView
     private val restoreButton: Button
     private val topDivider: View
     private val bottomDivider: View
@@ -218,14 +217,7 @@ internal class LyricsSourceSheetDialog(
         footer.orientation = LinearLayout.HORIZONTAL
         footer.gravity = Gravity.CENTER_VERTICAL
         footer.setPaddingRelative(host.dp(activity, 16), host.dp(activity, 6), host.dp(activity, 12), host.dp(activity, 6))
-        restoreHint = TextView(activity).apply {
-            textSize = host.embeddedTextSize(activity, 12f, 12f)
-            setEmbeddedTextColor(activity) { colors -> colors.secondary }
-            setSingleLine(false)
-            maxLines = 2
-            setPadding(0, 0, host.dp(activity, 8), 0)
-        }
-        footer.addView(restoreHint, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        footer.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
         restoreButton = host.actionButton(
             activity = activity,
             label = LyricsSourceSheetText.restoreApple(LyricsSourceSheetText.locale(activity)),
@@ -355,7 +347,6 @@ internal class LyricsSourceSheetDialog(
         val hasOverrides = controller.snapshot?.hasOverrides == true
         restoreButton.isEnabled = hasOverrides && !controller.isBusy
         restoreButton.alpha = if (restoreButton.isEnabled) 1f else 0.5f
-        restoreHint.text = host.lyricsSourceRestoreHint(activity, controller.snapshot)
     }
 
     override fun showMessage(message: String, long: Boolean) {

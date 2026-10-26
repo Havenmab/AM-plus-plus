@@ -131,6 +131,16 @@ data class LyricSourceOption(
      * without a precision claim.
      */
     val precisionKnown: Boolean = true,
+    /**
+     * True when the document has a timeline at all; false means static lyrics.
+     *
+     * Apple may publish a lyric document with no timings at all (the page renders it
+     * as non-scrolling static text), and a custom TTML can be plain lines too, so
+     * "no timeline" has to be a fact of its own: [hasWords] = false only means
+     * line-level timing, and reporting static lyrics as 逐行 would promise scrolling
+     * the document cannot do. See [LyricSourceText.timingLabel] for the badge text.
+     */
+    val hasTiming: Boolean = true,
 ) {
     val isApple: Boolean get() = kind == LyricSourceKind.APPLE
 
@@ -156,8 +166,26 @@ data class LyricLaneState(
     val selected: LyricSourceOption?,
     /** Every option the lane can switch to, in display order (Apple first). */
     val options: List<LyricSourceOption>,
-    /** True when [selected] is a stored per-song override rather than the default. */
+    /**
+     * True when this lane carries a stored per-song choice, i.e. the user locked it.
+     *
+     * An explicit Apple preference ([LyricSourceKeys.APPLE]) counts: choosing "Apple
+     * native" is a decision the automatic completion must not overwrite, even though
+     * it equals the lane's default. A stored key that no longer resolves also keeps
+     * the lane locked until it is cleared - it is still a recorded choice, and the
+     * sheet's restore action is what releases it.
+     */
     val overridden: Boolean = false,
+    /**
+     * True when this lane is pinned to Apple by the user, i.e. the song's stored key
+     * for it is exactly [LyricSourceKeys.APPLE].
+     *
+     * Read the flag, do not infer it from [overridden] and [selected]: an override
+     * can also be a file, a provider hit or a hidden lane, and an Apple lock survives
+     * even when Apple cannot serve the lane (the preference is recorded, the lane
+     * simply has nothing to show). The sheet uses it to render "已锁定 Apple 原生".
+     */
+    val appleLocked: Boolean = false,
 ) {
     /** True when the lane currently shows nothing (only meaningful for supplement lanes). */
     val hidden: Boolean get() = selected == null
@@ -173,6 +201,15 @@ data class LyricLaneState(
      * false, the only way out of a stored override is "不显示".
      */
     val appleAvailable: Boolean get() = options.any { it.isApple }
+
+    /**
+     * True when the Apple document serving this lane has a timeline.
+     *
+     * Only meaningful when [appleAvailable]: the sheet uses it to say "Apple 只有静态
+     * 歌词" instead of promising a scrollable lyric. Defaults to true when Apple does
+     * not serve the lane, because then the flag describes nothing.
+     */
+    val appleHasTiming: Boolean get() = options.firstOrNull { it.isApple }?.hasTiming ?: true
 }
 
 /**
@@ -192,7 +229,13 @@ data class LyricsSourceSnapshot(
     val song: LyricSongContext,
     /** Exactly one state per lane, in [LyricLane.ALL] order. */
     val lanes: List<LyricLaneState>,
-    /** Lanes carrying a stored override (subset of [LyricLane.ALL]). */
+    /**
+     * Lanes carrying a stored user choice (subset of [LyricLane.ALL]).
+     *
+     * It includes an explicit Apple preference, because that is a lock rather than a
+     * no-op: the automatic completion must not replace a song the user pinned to
+     * Apple. Empty means the song is free for the automatic chain.
+     */
     val overriddenLanes: Set<LyricLane> = emptySet(),
 ) {
     val songId: Long get() = song.songId
@@ -203,8 +246,14 @@ data class LyricsSourceSnapshot(
 
     fun lane(lane: LyricLane): LyricLaneState? = lanes.firstOrNull { it.lane == lane }
 
-    /** True when "恢复 Apple 原生" has something to undo. */
+    /** True when this song is locked by a stored choice ("恢复 Apple 原生" can release it). */
     val hasOverrides: Boolean get() = overriddenLanes.isNotEmpty()
+
+    /**
+     * True when the original lane's Apple document has a timeline: the sheet's cue to
+     * describe static Apple lyrics instead of a scrollable lyric.
+     */
+    val appleHasTiming: Boolean get() = lane(LyricLane.ORIGINAL)?.appleHasTiming ?: true
 
     /** True when the song offers no selectable source in any lane. */
     val isEmpty: Boolean get() = lanes.all { it.options.isEmpty() }
@@ -320,6 +369,14 @@ data class LyricsSourcePreview(
     val precisionKnown: Boolean = false,
     /** True when the fetched document carries per-word timing. */
     val hasWords: Boolean = false,
+    /**
+     * True when the fetched document has a timeline at all; false means static lyrics.
+     *
+     * Same meaning as [LyricSourceOption.hasTiming]. A preview has just parsed the
+     * body, so the host passes the observed value; the default stays true because a
+     * forgotten observation must never claim "无时间轴" for a scrollable document.
+     */
+    val hasTiming: Boolean = true,
 )
 
 /**
@@ -368,13 +425,18 @@ interface LyricsSourceController {
     fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult
 
     /**
-     * Restores the lane's default and drops this lane's stored override.
+     * Restores the lane to Apple and **records the Apple preference**.
      *
      * For [LyricLane.ORIGINAL] that is Apple's own document. For
      * [LyricLane.TRANSLATION] and [LyricLane.ROMANIZATION] it is Apple's own lane
      * when Apple has one ([LyricLaneState.appleAvailable]), and "不显示"
      * ([LyricLaneState.hidden]) when it does not - so clear() alone cannot express
      * "hide a lane Apple does cover"; that is [setLaneHidden].
+     *
+     * The result is persisted as [LyricSourceKeys.APPLE] rather than by dropping the
+     * key: "the user wants Apple here" is a decision the automatic completion must not
+     * overwrite, so the lane reports [LyricLaneState.appleLocked] afterwards. Only
+     * switching to another source, or [setLaneHidden] with hidden = false, releases it.
      */
     fun clear(lane: LyricLane): ApplyResult
 
@@ -385,8 +447,9 @@ interface LyricsSourceController {
      * hidden == true persists the reserved [LyricSourceKeys.HIDDEN] marker for
      * this song and lane, so the lane stays hidden across song changes and app
      * restarts; hidden == false drops the override and returns the lane to its
-     * default. It is the sheet's "翻译/音译 不显示" switch, the same intent as the
-     * native 隐藏翻译 / 隐藏发音 toggles.
+     * default - it also releases the lock, which is the one deliberate way back to
+     * "let the automatic chain decide again". It is the sheet's "翻译/音译 不显示"
+     * switch, the same intent as the native 隐藏翻译 / 隐藏发音 toggles.
      *
      * Implementations must reject [LyricLane.ORIGINAL] with
      * [LyricSourceErrorCodes.NOT_SUPPORTED]: the original lane can never be empty.
@@ -398,8 +461,14 @@ interface LyricsSourceController {
         )
 
     /**
-     * "恢复 Apple 原生": drops every stored override for the current song and
-     * restores all three lanes in one transaction.
+     * "恢复 Apple 原生": restores Apple for every lane **and locks the song**, in one
+     * transaction.
+     *
+     * Each lane ends up persisted as [LyricSourceKeys.APPLE], exactly like [clear],
+     * so the automatic completion leaves the song alone: pressing "restore Apple" is
+     * an explicit preference, not a request to be filled in again. Nothing is
+     * unlocked by this call; only an explicit source switch (or un-hiding a lane)
+     * releases a lane.
      *
      * The default implementation clears the lanes one by one so a host that only
      * implements [clear] still compiles and the action works; a host that can

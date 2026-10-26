@@ -96,10 +96,13 @@ class LyricsSourceControllerContractTest {
         val unknown = LyricsSourcePreview(lines = lines)
         assertFalse(unknown.hasWords)
         assertFalse(unknown.precisionKnown)
+        // A forgotten observation must not claim static lyrics: the default keeps the
+        // timeline, and only an explicit false says "无时间轴".
+        assertTrue(unknown.hasTiming)
+        assertFalse(LyricsSourcePreview(lines = lines, hasTiming = false).hasTiming)
 
-        // Field order is (lines, precisionKnown, hasWords); both flags are named here
-        // because the sheet builds them positionally in the documented order.
-        val known = LyricsSourcePreview(lines, true, true)
+        // Field order is (lines, precisionKnown, hasWords, hasTiming).
+        val known = LyricsSourcePreview(lines, true, true, true)
         var outcome: Result<LyricsSourcePreview>? = null
 
         FakeController(previewResult = Result.success(known))
@@ -110,6 +113,7 @@ class LyricsSourceControllerContractTest {
         assertEquals(lines, preview.lines)
         assertTrue(preview.hasWords)
         assertTrue(preview.precisionKnown)
+        assertTrue(preview.hasTiming)
     }
 
     @Test

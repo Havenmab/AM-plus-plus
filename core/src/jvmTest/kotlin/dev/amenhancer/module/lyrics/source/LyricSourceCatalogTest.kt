@@ -230,7 +230,7 @@ class LyricSourceCatalogTest {
     }
 
     @Test
-    fun `a stored key equal to the default is not an override`() {
+    fun `an explicit Apple preference locks the lane`() {
         val input = input(apple = AppleLyricsCapability(hasLyrics = true))
 
         val snapshot = LyricSourceCatalog.build(
@@ -238,14 +238,36 @@ class LyricSourceCatalogTest {
             mapOf(LyricLane.ORIGINAL to LyricSourceKeys.APPLE),
             ZH,
         )
+        val original = snapshot.lane(LyricLane.ORIGINAL)!!
 
-        assertEquals(LyricSourceKeys.APPLE, snapshot.lane(LyricLane.ORIGINAL)!!.selected?.key)
-        assertFalse(snapshot.lane(LyricLane.ORIGINAL)!!.overridden)
-        assertFalse(snapshot.hasOverrides)
+        assertEquals(LyricSourceKeys.APPLE, original.selected?.key)
+        // Choosing "Apple native" equals the default visually but is still a decision
+        // the automatic completion must not overwrite.
+        assertTrue(original.overridden)
+        assertTrue(original.appleLocked)
+        assertTrue(snapshot.hasOverrides)
+        assertEquals(setOf(LyricLane.ORIGINAL), snapshot.overriddenLanes)
     }
 
     @Test
-    fun `an unknown stored key degrades to the default without claiming an override`() {
+    fun `an Apple preference for a lane Apple cannot serve stays locked`() {
+        val input = input(apple = AppleLyricsCapability(hasLyrics = true))
+
+        val snapshot = LyricSourceCatalog.build(
+            input,
+            mapOf(LyricLane.TRANSLATION to LyricSourceKeys.APPLE),
+            ZH,
+        )
+        val translation = snapshot.lane(LyricLane.TRANSLATION)!!
+
+        // The preference is recorded, the lane simply has nothing to show.
+        assertNull(translation.selected)
+        assertTrue(translation.overridden)
+        assertTrue(translation.appleLocked)
+    }
+
+    @Test
+    fun `a stored choice that no longer resolves keeps the lane locked`() {
         val input = input(
             apple = AppleLyricsCapability(hasLyrics = true),
             customFiles = listOf(fileRecord(fileId = "other")),
@@ -262,10 +284,14 @@ class LyricSourceCatalogTest {
             ZH,
         )
 
-        assertEquals(LyricSourceKeys.APPLE, snapshot.lane(LyricLane.ORIGINAL)!!.selected?.key)
-        assertFalse(snapshot.lane(LyricLane.ORIGINAL)!!.overridden)
+        // The lane falls back to the default it can reach, but the recorded choice is
+        // still the user's: it stays locked until the restore action clears it.
+        val original = snapshot.lane(LyricLane.ORIGINAL)!!
+        assertEquals(LyricSourceKeys.APPLE, original.selected?.key)
+        assertTrue(original.overridden)
+        assertFalse(original.appleLocked)
         assertNull(snapshot.lane(LyricLane.TRANSLATION)!!.selected)
-        assertFalse(snapshot.hasOverrides)
+        assertTrue(snapshot.hasOverrides)
     }
 
     @Test
@@ -528,7 +554,7 @@ class LyricSourceCatalogTest {
     }
 
     @Test
-    fun `a file key whose record is gone still degrades to the default`() {
+    fun `a file key whose record is gone degrades but keeps the song locked`() {
         val input = input(
             apple = AppleLyricsCapability(hasLyrics = true),
             customFiles = listOf(fileRecord(fileId = "other")),
@@ -541,7 +567,7 @@ class LyricSourceCatalogTest {
         )
 
         assertEquals(LyricSourceKeys.APPLE, snapshot.lane(LyricLane.ORIGINAL)!!.selected?.key)
-        assertFalse(snapshot.hasOverrides)
+        assertTrue(snapshot.hasOverrides)
     }
 
     @Test
@@ -559,15 +585,6 @@ class LyricSourceCatalogTest {
         assertTrue(state.overridden)
     }
 
-    @Test
-    fun `a stored Apple key that Apple no longer serves is not fabricated`() {
-        val input = input(customFiles = listOf(fileRecord(hasTranslation = true)))
-
-        val state = LyricSourceCatalog.laneState(input, LyricLane.TRANSLATION, LyricSourceKeys.APPLE, ZH)
-
-        assertNull(state.selected)
-        assertFalse(state.overridden)
-    }
 
     @Test
     fun `a synthesized online source recovers precision from the displayed document`() {
@@ -681,6 +698,85 @@ class LyricSourceCatalogTest {
         assertFalse(undeclaredOption.precisionKnown)
     }
 
+    @Test
+    fun `an Apple document without a timeline is described as static`() {
+        val input = input(apple = AppleLyricsCapability(hasLyrics = true, hasTiming = false))
+
+        val state = LyricSourceCatalog.laneState(input, LyricLane.ORIGINAL, null, ZH)
+        val selected = state.selected!!
+
+        assertFalse(selected.hasTiming)
+        assertFalse(selected.hasWords)
+        assertEquals("无时间轴", LyricSourceText.timingLabel(selected, ZH))
+        assertTrue(selected.detail.startsWith("无时间轴"))
+        // The lane and the snapshot both answer "Apple only has static lyrics".
+        assertFalse(state.appleHasTiming)
+        assertFalse(LyricSourceCatalog.build(input, emptyMap(), ZH).appleHasTiming)
+        assertFalse(input.appleHasTiming)
+    }
+
+    @Test
+    fun `a static custom document reports no timing`() {
+        val input = input(customFiles = listOf(fileRecord(fileId = "static", hasTiming = false)))
+
+        val option = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH).single()
+
+        assertFalse(option.hasTiming)
+        assertFalse(option.hasWords)
+        assertEquals("无时间轴", LyricSourceText.timingLabel(option, ZH))
+    }
+
+    @Test
+    fun `the overlay original lane is named after the displayed document`() {
+        val written = input(
+            overlay = OverlayLyricsCapability(hasOriginal = true, hasWords = true),
+            customFiles = listOf(
+                fileRecord(fileId = "shown", originSource = CustomLyricsSources.AMLL),
+            ),
+            activeFileId = "shown",
+        )
+
+        val option = LyricSourceCatalog
+            .options(written, LyricLane.ORIGINAL, ZH)
+            .first { it.kind == LyricSourceKind.OVERLAY_STORE }
+
+        // The store keeps no original source; the displayed document is where it came from.
+        assertEquals(LyricSourceProviders.AMLL, option.providerId)
+        assertEquals("AMLL", option.label)
+    }
+
+    @Test
+    fun `a recorded overlay original source wins over the displayed document`() {
+        val written = input(
+            overlay = OverlayLyricsCapability(
+                hasOriginal = true,
+                originalSource = CustomLyricsSources.KUWO,
+            ),
+            customFiles = listOf(
+                fileRecord(fileId = "shown", originSource = CustomLyricsSources.AMLL),
+            ),
+            activeFileId = "shown",
+        )
+
+        val option = LyricSourceCatalog
+            .options(written, LyricLane.ORIGINAL, ZH)
+            .first { it.kind == LyricSourceKind.OVERLAY_STORE }
+
+        assertEquals("酷我音乐", option.label)
+    }
+
+    @Test
+    fun `an unnamed overlay original falls back to the written-lane label`() {
+        val written = input(overlay = OverlayLyricsCapability(hasOriginal = true))
+
+        val option = LyricSourceCatalog
+            .options(written, LyricLane.ORIGINAL, ZH)
+            .first { it.kind == LyricSourceKind.OVERLAY_STORE }
+
+        assertEquals(LyricSourceProviders.OVERLAY, option.providerId)
+        assertEquals("已写入歌词", option.label)
+    }
+
     private fun input(
         songId: Long = 42L,
         apple: AppleLyricsCapability = AppleLyricsCapability(),
@@ -744,6 +840,7 @@ class LyricSourceCatalogTest {
         hasWords: Boolean = true,
         hasTranslation: Boolean = false,
         hasRomanization: Boolean = false,
+        hasTiming: Boolean = true,
     ): CustomLyricsSourceRecord = CustomLyricsSourceRecord(
         fileId = fileId,
         displayName = displayName,
@@ -752,6 +849,7 @@ class LyricSourceCatalogTest {
         hasWords = hasWords,
         hasTranslation = hasTranslation,
         hasRomanization = hasRomanization,
+        hasTiming = hasTiming,
     )
 
     private companion object {

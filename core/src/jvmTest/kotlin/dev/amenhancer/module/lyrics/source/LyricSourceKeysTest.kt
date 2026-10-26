@@ -127,8 +127,9 @@ class LyricSourceKeysTest {
         assertEquals("音译", LyricSourceText.laneLabel(LyricLane.ROMANIZATION, ZH))
         assertEquals("不显示", LyricSourceText.hiddenLabel(ZH))
         assertEquals("自动缓存", LyricSourceText.kindLabel(LyricSourceKind.CACHE, ZH))
-        assertEquals("逐词 · 带翻译", LyricSourceText.appleDetail(true, true, false, ZH))
-        assertEquals("Line by line", LyricSourceText.appleDetail(false, false, false, EN))
+        assertEquals("逐词 · 带翻译", LyricSourceText.appleDetail(true, true, true, false, ZH))
+        assertEquals("Line by line", LyricSourceText.appleDetail(true, false, false, false, EN))
+        assertEquals("无时间轴", LyricSourceText.appleDetail(false, false, false, false, ZH))
         assertEquals("YOASOBI · THE BOOK", LyricSourceText.onlineDetail("YOASOBI", "THE BOOK", ZH))
         assertEquals("在线歌词", LyricSourceText.onlineDetail("", "", ZH))
         assertTrue(LyricSourceText.previewUnavailable(ZH).isNotBlank())
@@ -308,6 +309,26 @@ class LyricSourceKeysTest {
         assertEquals("Apple Music（原生）", LyricSourceText.appleNativeLabel(ZH))
         assertEquals("Apple Music (native)", LyricSourceText.appleNativeLabel(EN))
         assertEquals("恢复 Apple 原生", LyricSourceText.appleRestoreDetail(ZH))
+    }
+
+    @Test
+    fun `the timing badge has three states plus the unknown one`() {
+        // No timeline is a fact about the document, so it is reported even when the
+        // word precision was never established.
+        assertEquals(
+            "无时间轴",
+            LyricSourceText.timingLabel(hasTiming = false, precisionKnown = true, hasWords = true, locale = ZH),
+        )
+        assertEquals(
+            "No timeline",
+            LyricSourceText.timingLabel(hasTiming = false, precisionKnown = false, hasWords = false, locale = EN),
+        )
+        // Unknown precision on a timed document: claim nothing.
+        assertNull(
+            LyricSourceText.timingLabel(hasTiming = true, precisionKnown = false, hasWords = true, locale = ZH),
+        )
+        assertEquals("逐词", LyricSourceText.timingLabel(hasTiming = true, precisionKnown = true, hasWords = true, locale = ZH))
+        assertEquals("逐行", LyricSourceText.timingLabel(hasTiming = true, precisionKnown = true, hasWords = false, locale = ZH))
     }
 
     private fun entry(

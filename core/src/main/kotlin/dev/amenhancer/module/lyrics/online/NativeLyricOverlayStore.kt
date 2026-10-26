@@ -93,6 +93,8 @@ class NativeLyricOverlayStore {
         val backgroundByTiming: Map<TimingKey, List<Entry>>,
         val hasTranslation: Boolean,
         val translationSource: String?,
+        /** Provider of the displayed original document; null when the caller did not name it. */
+        val originalSource: String? = null,
         val hasPronunciation: Boolean,
         val pronunciationSource: String?,
         /**
@@ -128,6 +130,15 @@ class NativeLyricOverlayStore {
         translationSource: String? = null,
         pronunciationSource: String? = null,
         pronunciationLanguages: List<String> = emptyList(),
+        /**
+         * The provider the displayed original came from, when the caller knows it.
+         *
+         * The lanes stored here are the translation/pronunciation of a document this
+         * module wrote; only the publisher knows where that document came from, so it
+         * hands the name in and the lyrics-source sheet can show the real platform
+         * instead of the anonymous "已写入歌词".
+         */
+        originalSource: String? = null,
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
         val entries = lines.mapNotNull { line ->
@@ -193,6 +204,7 @@ class NativeLyricOverlayStore {
                 ),
             hasTranslation = entries.any { it.second.translation != null },
             translationSource = translationSource,
+            originalSource = originalSource,
             hasPronunciation = entries.any {
                 it.second.pronunciation != null ||
                     it.second.pronunciationSpans.isNotEmpty() ||
@@ -218,12 +230,15 @@ class NativeLyricOverlayStore {
         songId: Long,
         ttml: String,
         pronunciationSource: String? = DISPLAYED_DOCUMENT_SOURCE,
+        /** Provider of this document, for the lyrics-source sheet's original lane. */
+        originalSource: String? = null,
     ): Boolean {
         if (songId <= 0L || ttml.isBlank()) return false
         return update(
             songId = songId.toString(),
             lines = DisplayedLyricPublication.lines(ttml),
             pronunciationSource = pronunciationSource,
+            originalSource = originalSource,
             // The document's own `<transliteration xml:lang>` tags: the lane the
             // app's native parser keys the pronunciation by, which the toggle's
             // availability needs when Apple's own advertisement stays empty.
@@ -252,6 +267,14 @@ class NativeLyricOverlayStore {
 
     fun translationSource(songId: String?): String? =
         overlay?.takeIf { it.songId == songId && it.hasTranslation }?.translationSource
+
+    /**
+     * The provider the displayed original came from, or null when the publisher did not
+     * name one. Gated on the song id like every other lookup, so a stale track can never
+     * answer for the next one.
+     */
+    fun originalSource(songId: String?): String? =
+        overlay?.takeIf { it.songId == songId }?.originalSource
 
     /** True when the displayed document's own romanization was published. */
     fun hasPronunciation(songId: String?): Boolean =

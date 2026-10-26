@@ -2,7 +2,10 @@ package dev.amenhancer.module.ui.source
 
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricSourceKind
+import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -106,29 +109,53 @@ class LyricsSourceSheetPolicyTest {
     }
 
     @Test
-    fun `a source without observed precision claims nothing`() {
-        assertNull(precisionClaim(precisionKnown = false, hasWords = true))
-        assertNull(precisionClaim(precisionKnown = false, hasWords = false))
-        assertEquals(LyricsSourcePrecisionClaim.WORDS, precisionClaim(true, true))
-        assertEquals(LyricsSourcePrecisionClaim.LINES, precisionClaim(true, false))
+    fun `timing badge names static lyrics and hides unknown precision`() {
+        val zh = Locale.SIMPLIFIED_CHINESE
+        assertEquals("无时间轴", precisionLabel(option(hasTiming = false, precisionKnown = true, hasWords = true), zh))
+        assertEquals("无时间轴", precisionLabel(option(hasTiming = false, precisionKnown = false, hasWords = false), zh))
+        assertNull(precisionLabel(option(hasTiming = true, precisionKnown = false, hasWords = true), zh))
+        assertEquals("逐词", precisionLabel(option(hasTiming = true, precisionKnown = true, hasWords = true), zh))
+        assertEquals("逐行", precisionLabel(option(hasTiming = true, precisionKnown = true, hasWords = false), zh))
     }
 
     @Test
-    fun `a fetched preview remembers the precision it observed`() {
-        val loaded = LyricsSourcePreviewState.Loaded(
+    fun `a fetched preview keeps the timing it observed`() {
+        val zh = Locale.SIMPLIFIED_CHINESE
+        val wordTimed = LyricsSourcePreviewState.Loaded(
             optionKey = "online:qm:42",
             lines = listOf(LyricsSourcePreviewLine(original = "第一行")),
             precisionKnown = true,
             hasWords = true,
+            hasTiming = true,
         )
-        assertEquals(LyricsSourcePrecisionClaim.WORDS, precisionClaim(loaded.precisionKnown, loaded.hasWords))
-        assertNull(
-            precisionClaim(
-                LyricsSourcePreviewState.Loaded("online:ne:7", emptyList()).precisionKnown,
-                LyricsSourcePreviewState.Loaded("online:ne:7", emptyList()).hasWords,
-            ),
+        assertEquals("逐词", previewTimingLabel(wordTimed.hasTiming, wordTimed.precisionKnown, wordTimed.hasWords, zh))
+
+        val static = LyricsSourcePreviewState.Loaded(
+            optionKey = "online:ne:7",
+            lines = listOf(LyricsSourcePreviewLine(original = "第一行")),
+            precisionKnown = true,
+            hasWords = false,
+            hasTiming = false,
         )
+        assertEquals("无时间轴", previewTimingLabel(static.hasTiming, static.precisionKnown, static.hasWords, zh))
+
+        val unknown = LyricsSourcePreviewState.Loaded(
+            optionKey = "online:kuwo:9",
+            lines = listOf(LyricsSourcePreviewLine(original = "第一行")),
+        )
+        assertNull(previewTimingLabel(unknown.hasTiming, unknown.precisionKnown, unknown.hasWords, zh))
     }
+
+    private fun option(hasTiming: Boolean, precisionKnown: Boolean, hasWords: Boolean): LyricSourceOption =
+        LyricSourceOption(
+            key = "test",
+            kind = LyricSourceKind.APPLE,
+            providerId = "apple",
+            label = "Apple Music",
+            hasWords = hasWords,
+            precisionKnown = precisionKnown,
+            hasTiming = hasTiming,
+        )
 
     @Test
     fun `the preview shows exactly three lines`() {

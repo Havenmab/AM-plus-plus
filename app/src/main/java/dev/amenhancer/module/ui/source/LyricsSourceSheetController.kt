@@ -336,6 +336,7 @@ internal class LyricsSourceSheetController(
                                 lines = visible,
                                 precisionKnown = preview.precisionKnown,
                                 hasWords = preview.hasWords,
+                                hasTiming = preview.hasTiming,
                             )
                         }
                     },
@@ -433,10 +434,9 @@ internal class LyricsSourceSheetController(
     /** The footer action: confirm, then restore every lane in one transaction. */
     fun restoreAppleNative() {
         if (isBusy) return
-        if (snapshot?.hasOverrides != true) {
-            view.showMessage(LyricsSourceSheetText.restoreAllNative(locale))
-            return
-        }
+        // The footer button is already disabled when nothing is stored; stay silent
+        // instead of explaining the state the button itself shows.
+        if (snapshot?.hasOverrides != true) return
         view.confirmRestore {
             if (closed || isBusy) return@confirmRestore
             val controller = LyricsSourceAccess.controller

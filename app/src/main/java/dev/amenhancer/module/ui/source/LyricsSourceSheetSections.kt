@@ -65,7 +65,6 @@ internal fun EmbeddedSettingsHost.renderLyricsSourceSongCard(
                 activity = activity,
                 controller = controller,
                 message = LyricsSourceSheetText.unavailable(locale),
-                hint = LyricsSourceSheetText.unavailableHint(locale),
                 retryLabel = null,
             ),
         )
@@ -74,7 +73,6 @@ internal fun EmbeddedSettingsHost.renderLyricsSourceSongCard(
                 activity = activity,
                 controller = controller,
                 message = LyricsSourceSheetText.loadFailed(locale, controller.failureMessage.orEmpty()),
-                hint = null,
                 retryLabel = LyricsSourceSheetText.retry(locale),
             ),
         )
@@ -86,16 +84,6 @@ internal fun EmbeddedSettingsHost.renderLyricsSourceSongCard(
                 parent.addView(songCard(activity, snapshot))
             }
         }
-    }
-}
-
-/** "恢复 Apple 原生" hint text under the footer action. */
-internal fun EmbeddedSettingsHost.lyricsSourceRestoreHint(activity: Activity, snapshot: LyricsSourceSnapshot?): String {
-    val locale = LyricsSourceSheetText.locale(activity)
-    return if (snapshot?.hasOverrides == true) {
-        LyricsSourceSheetText.restoreHint(locale)
-    } else {
-        LyricsSourceSheetText.restoreAllNative(locale)
     }
 }
 
@@ -223,13 +211,6 @@ private fun EmbeddedSettingsHost.noSongCard(activity: Activity, controller: Lyri
                     setEmbeddedTextColor(activity) { colors -> colors.onSurface }
                     setSingleLine(false)
                 }, matchWidthWrapContent())
-                addView(TextView(activity).apply {
-                    text = LyricsSourceSheetText.noSongHint(locale)
-                    textSize = embeddedTextSize(activity, 12f, 12f)
-                    setEmbeddedTextColor(activity) { colors -> colors.secondary }
-                    setSingleLine(false)
-                    setPadding(0, dp(activity, 3), 0, 0)
-                }, matchWidthWrapContent())
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginStart = dp(activity, 12)
             })
@@ -247,7 +228,6 @@ private fun EmbeddedSettingsHost.statusCard(
     activity: Activity,
     controller: LyricsSourceSheetController,
     message: String,
-    hint: String?,
     retryLabel: String?,
 ): View = embeddedCard(activity, null) {
     addView(TextView(activity).apply {
@@ -256,15 +236,6 @@ private fun EmbeddedSettingsHost.statusCard(
         setEmbeddedTextColor(activity) { colors -> colors.onSurface }
         setSingleLine(false)
     }, matchWidthWrapContent())
-    if (!hint.isNullOrBlank()) {
-        addView(TextView(activity).apply {
-            text = hint
-            textSize = embeddedTextSize(activity, 12f, 12f)
-            setEmbeddedTextColor(activity) { colors -> colors.secondary }
-            setSingleLine(false)
-            setPadding(0, dp(activity, 4), 0, 0)
-        }, matchWidthWrapContent())
-    }
     if (retryLabel != null) {
         addView(LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -301,7 +272,7 @@ private fun EmbeddedSettingsHost.laneCard(
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setEmbeddedTextColor(activity) { colors -> colors.onSurface }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (state?.overridden == true) {
+        if (state?.overridden == true && state.appleLocked != true) {
             addView(embeddedBadge(activity, LyricsSourceSheetText.customisedBadge(locale)))
         }
         if (!state?.options.isNullOrEmpty()) {
@@ -355,7 +326,7 @@ private fun EmbeddedSettingsHost.laneCard(
             embeddedSettingRow(
                 activity = activity,
                 title = LyricsSourceSheetText.hideLaneTitle(locale),
-                summary = LyricsSourceSheetText.hideLaneSummary(locale),
+                summary = "",
                 checked = state.hidden,
                 enabled = !busy,
                 compactWidePadding = true,
@@ -397,7 +368,7 @@ private fun EmbeddedSettingsHost.laneCandidates(
     val container = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     val options = state?.options.orEmpty()
     if (options.isEmpty()) {
-        container.addView(emptyHint(activity, LyricsSourceSheetText.noCandidates(locale), LyricsSourceSheetText.noCandidatesHint(locale)))
+        container.addView(emptyHint(activity, LyricsSourceSheetText.noCandidates(locale)))
     } else {
         options.forEachIndexed { index, option ->
             container.addView(candidateRow(activity, controller, lane, option, state?.selected?.key == option.key))
@@ -512,7 +483,7 @@ internal fun EmbeddedSettingsHost.progressIndicator(activity: Activity): Progres
     }
 }
 
-internal fun EmbeddedSettingsHost.emptyHint(activity: Activity, title: String, hint: String): View =
+internal fun EmbeddedSettingsHost.emptyHint(activity: Activity, title: String): View =
     LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
@@ -534,14 +505,6 @@ internal fun EmbeddedSettingsHost.emptyHint(activity: Activity, title: String, h
             setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
             setSingleLine(false)
             setPadding(0, dp(activity, 6), 0, 0)
-        }, matchWidthWrapContent())
-        addView(TextView(activity).apply {
-            text = hint
-            textSize = embeddedTextSize(activity, 12f, 12f)
-            gravity = Gravity.CENTER
-            setEmbeddedTextColor(activity) { colors -> colors.mutedText }
-            setSingleLine(false)
-            setPadding(0, dp(activity, 4), 0, 0)
         }, matchWidthWrapContent())
     }
 
@@ -609,18 +572,4 @@ internal fun EmbeddedSettingsHost.optionBadges(
     }
 }
 
-/**
- * The 逐词/逐行 badge text, or null when the source cannot prove its timing.
- *
- * A catalog-synthesized placeholder (a stored selection rebuilt without reading
- * the document behind it) reports [LyricSourceOption.precisionKnown] = false:
- * claiming "line by line" there would misdescribe a word-synced document, so the
- * sheet shows the source without a precision claim instead.
- */
-internal fun precisionLabel(option: LyricSourceOption, locale: Locale): String? =
-    when (precisionClaim(option.precisionKnown, option.hasWords)) {
-        LyricsSourcePrecisionClaim.WORDS -> LyricsSourceSheetText.wordPrecision(locale)
-        LyricsSourcePrecisionClaim.LINES -> LyricsSourceSheetText.linePrecision(locale)
-        null -> null
-    }
 

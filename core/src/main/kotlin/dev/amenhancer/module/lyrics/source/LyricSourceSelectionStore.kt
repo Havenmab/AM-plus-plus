@@ -68,6 +68,16 @@ class LyricSourceSelectionStore(
         }
     }
 
+    /**
+     * True when [songId] has at least one stored lane choice: the user locked this
+     * song's sources and the automatic completion must leave it alone.
+     *
+     * An explicit Apple preference ([LyricSourceKeys.APPLE]) counts exactly like any
+     * other key, and a key that no longer resolves still counts until it is cleared:
+     * it is a recorded choice, and the sheet's restore action is what releases it.
+     */
+    fun isUserLocked(songId: Long): Boolean = selection(songId).isNotEmpty()
+
     /** The stored key for one lane, or null when the lane is not overridden. */
     fun optionKey(songId: Long, lane: LyricLane): String? {
         if (songId <= 0L) return null

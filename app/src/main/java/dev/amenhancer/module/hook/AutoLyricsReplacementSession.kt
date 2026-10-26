@@ -139,11 +139,18 @@ internal fun translationEnricher(
                 appleMusicId = appleMusicId,
                 diagnostic = { line -> scoped.log(appleMusicId, line) },
             )?.let { outcome ->
-                overlay?.update(
-                    songId = appleMusicId.toString(),
-                    lines = outcome.lines,
-                    translationSource = outcome.translationSource,
-                )
+                // A song whose source the user picked — including "restore Apple" — owns
+                // its lanes: automatic completion must not write over it again.
+                if (!AutoLyricsReplacementBridge.isLocked(appleMusicId)) {
+                    overlay?.update(
+                        songId = appleMusicId.toString(),
+                        lines = outcome.lines,
+                        translationSource = outcome.translationSource,
+                        // The provider that actually supplied this document, so the
+                        // source sheet can name it instead of "已写入歌词".
+                        originalSource = customSourceTag(outcome.source),
+                    )
+                }
                 outcome.ttml
             }
         }.getOrNull()

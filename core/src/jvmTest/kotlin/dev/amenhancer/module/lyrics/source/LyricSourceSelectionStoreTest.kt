@@ -280,5 +280,18 @@ class LyricSourceSelectionStoreTest {
         assertTrue(LyricSourceSelectionStore(file).selection(42L).isEmpty())
     }
 
+    @Test
+    fun `an explicit Apple preference counts as the user lock`() {
+        val store = LyricSourceSelectionStore(selectionFile())
+
+        assertFalse(store.isUserLocked(42L))
+        store.select(42L, LyricLane.ORIGINAL, LyricSourceKeys.APPLE)
+        assertTrue(store.isUserLocked(42L))
+        assertFalse(store.isUserLocked(43L))
+
+        store.clearSong(42L)
+        assertFalse(store.isUserLocked(42L))
+    }
+
     private fun selectionFile(): File = File(temp.newFolder(), LyricSourceSelectionStore.FILE_NAME)
 }

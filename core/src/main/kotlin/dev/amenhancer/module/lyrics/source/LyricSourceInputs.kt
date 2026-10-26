@@ -65,6 +65,11 @@ data class AppleLyricsCapability(
     val hasLyrics: Boolean = false,
     /** The document is word-timed (逐词). */
     val hasWords: Boolean = false,
+    /**
+     * The document has a timeline at all. False means Apple ships static lyrics
+     * (non-scrolling), which the sheet must label "无时间轴" rather than 逐行.
+     */
+    val hasTiming: Boolean = true,
     /** The document carries Apple's own translation lane. */
     val hasTranslation: Boolean = false,
     /** The document carries Apple's own romanization lane. */
@@ -95,6 +100,8 @@ data class OverlayLyricsCapability(
     val hasRomanization: Boolean = false,
     /** Word-level timing available in the stored original. */
     val hasWords: Boolean = false,
+    /** The stored content still has a timeline (a static document has none). */
+    val hasTiming: Boolean = true,
     /** Provider the stored original came from, in the module's own source vocabulary. */
     val originalSource: String? = null,
     /** Provider the stored translation came from. */
@@ -135,6 +142,8 @@ data class CustomLyricsSourceRecord(
     val hasTranslation: Boolean = false,
     val hasRomanization: Boolean = false,
     val sizeBytes: Long = 0L,
+    /** The document has a timeline at all; false means static, non-scrolling lyrics. */
+    val hasTiming: Boolean = true,
 ) {
     /** True for the automatic-completion cache; those records are the "缓存" group. */
     val isAutoCache: Boolean get() = originSource == CustomLyricsSources.AUTO_CACHE
@@ -176,6 +185,7 @@ data class CustomLyricsSourceRecord(
             hasWords: Boolean = true,
             hasTranslation: Boolean = false,
             hasRomanization: Boolean = false,
+            hasTiming: Boolean = true,
         ): CustomLyricsSourceRecord = CustomLyricsSourceRecord(
             fileId = entry.fileId,
             displayName = entry.displayName,
@@ -185,6 +195,7 @@ data class CustomLyricsSourceRecord(
             hasTranslation = hasTranslation,
             hasRomanization = hasRomanization,
             sizeBytes = entry.sizeBytes,
+            hasTiming = hasTiming,
         )
     }
 }
@@ -238,6 +249,15 @@ data class LyricSourceInput(
     val activeFileId: String? = null,
 ) {
     val songId: Long get() = song.songId
+
+    /**
+     * Apple's original document has a timeline ([AppleLyricsCapability.hasTiming]).
+     *
+     * Exposed on the input as well so a caller that only has the whole probe result
+     * can ask the question the lane card asks ("Apple 只有静态歌词"), without reaching
+     * into [apple] and without a second source of truth.
+     */
+    val appleHasTiming: Boolean get() = apple.hasTiming
 
     /** True when the host found nothing at all for any lane. */
     val isEmpty: Boolean

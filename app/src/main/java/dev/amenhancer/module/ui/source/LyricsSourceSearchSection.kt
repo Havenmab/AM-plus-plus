@@ -105,14 +105,6 @@ internal class LyricsSourceSearchSection(
                 host.embeddedSectionLabel(activity, LyricsSourceSheetText.searchTitle(locale)),
                 host.matchWidthWrapContent(),
             )
-            addView(TextView(activity).apply {
-                text = LyricsSourceSheetText.searchSummary(locale)
-                textSize = host.embeddedTextSize(activity, 12f, 12f)
-                setEmbeddedTextColor(activity) { colors -> colors.secondary }
-                setSingleLine(false)
-                maxLines = 2
-                setPadding(0, 0, 0, host.dp(activity, 10))
-            }, host.matchWidthWrapContent())
             addView(chipsRow, host.matchWidthWrapContent())
             addView(inputsRow, host.matchWidthWrapContent())
             addView(LinearLayout(activity).apply {
@@ -209,10 +201,7 @@ internal class LyricsSourceSearchSection(
     private fun renderStatus() {
         statusContainer.removeAllViews()
         when (val state = controller.searchState) {
-            LyricsSourceSearchState.Idle ->
-                if (LyricsSourceSearchPolicy.isSearchable(controller.titleQuery, controller.artistQuery)) {
-                    statusContainer.addView(host.messageRow(activity, LyricsSourceSheetText.searchIdle(locale)))
-                }
+            LyricsSourceSearchState.Idle -> Unit
             LyricsSourceSearchState.Loading ->
                 statusContainer.addView(host.busyRow(activity, LyricsSourceSheetText.searching(locale)))
             is LyricsSourceSearchState.Failed -> {
@@ -231,13 +220,7 @@ internal class LyricsSourceSearchSection(
                 }, host.matchWidthWrapContent())
             }
             is LyricsSourceSearchState.Loaded -> if (state.options.isEmpty()) {
-                statusContainer.addView(
-                    host.emptyHint(
-                        activity,
-                        LyricsSourceSheetText.noResults(locale),
-                        LyricsSourceSheetText.noResultsHint(locale),
-                    ),
-                )
+                statusContainer.addView(host.emptyHint(activity, LyricsSourceSheetText.noResults(locale)))
             }
         }
     }
@@ -321,15 +304,18 @@ internal class LyricsSourceSearchSection(
                 is LyricsSourcePreviewState.Failed ->
                     addView(host.messageRow(activity, state.message, emphasized = true))
                 is LyricsSourcePreviewState.Loaded -> {
-                    val claim = precisionClaim(state.precisionKnown, state.hasWords)
+                    val timing = previewTimingLabel(
+                        state.hasTiming,
+                        state.precisionKnown,
+                        state.hasWords,
+                        locale,
+                    )
                     val title = LyricsSourceSheetText.previewLines(locale, state.lines.size)
                     addView(TextView(activity).apply {
-                        text = when (claim) {
-                            null -> title
-                            else -> title + " · " + LyricsSourceSheetText.previewPrecision(
-                                locale,
-                                claim == LyricsSourcePrecisionClaim.WORDS,
-                            )
+                        text = if (timing == null) {
+                            title
+                        } else {
+                            title + " · " + LyricsSourceSheetText.sourcePrecision(locale, timing)
                         }
                         textSize = host.embeddedTextSize(activity, 12f, 12f)
                         setEmbeddedTextColor(activity) { colors -> colors.secondary }

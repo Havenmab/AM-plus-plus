@@ -2,6 +2,7 @@ package dev.amenhancer.module.hook.lyricsource
 
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.hook.CurrentSongIdentityCache
+import dev.amenhancer.module.hook.TtmlTimingPolicy
 import dev.amenhancer.module.hook.TtmlTimingObservationRegistry
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
@@ -90,12 +91,17 @@ internal class LyricsSourceProbes(
                 hasRomanization = lines?.let { parsed ->
                     parsed.any { !it.romanization.isNullOrBlank() }
                 } ?: false,
+                // Unknown (no document read) keeps core's "assume a timeline" default:
+                // only an observed static document may report false.
+                hasTiming = document?.let { ttml ->
+                    runCatching { TtmlTimingPolicy.hasTiming(ttml) }.getOrDefault(true)
+                } ?: true,
             )
         }
         val input = LyricSourceInput(
             song = song,
             apple = appleCapability(appleTtml),
-            overlay = overlayCapability(songId),
+            overlay = overlayCapability(songId, displayedTtml),
             customFiles = customFiles,
             activeFileId = activeFileId,
         )
@@ -118,12 +124,15 @@ internal class LyricsSourceProbes(
                 hasTranslation = lines.any { !it.translation.isNullOrBlank() },
                 hasRomanization = lines.any { !it.romanization.isNullOrBlank() } ||
                     AppleLyricTtmlReader.transliterationLanguages(ttml).isNotEmpty(),
+                // Static lyrics have no <p begin/end> anywhere: the sheet must not
+                // present them as scroll-synced.
+                hasTiming = TtmlTimingPolicy.hasTiming(ttml),
             )
         }.getOrDefault(AppleLyricsCapability())
     }
 
     /** What this module published for the song, with the provider of each lane. */
-    fun overlayCapability(songId: Long): OverlayLyricsCapability {
+    fun overlayCapability(songId: Long, displayedTtml: String? = null): OverlayLyricsCapability {
         val key = songId.toString()
         return runCatching {
             val revision = overlay.revision()
@@ -138,7 +147,15 @@ internal class LyricsSourceProbes(
                 hasTranslation = overlay.hasTranslation(key),
                 hasRomanization = overlay.hasPronunciation(key),
                 hasWords = false,
-                originalSource = overlay.pronunciationSource(key),
+                // The stored lanes belong to the document the page is showing, so its
+                // timeline is the overlay's timeline.
+                hasTiming = displayedTtml?.let { ttml ->
+                    runCatching { TtmlTimingPolicy.hasTiming(ttml) }.getOrDefault(true)
+                } ?: true,
+                // The provider that published the displayed document (auto completion,
+                // a sheet pick, or the custom-document lane). Null when the store has no
+                // record, which the sheet shows as "已写入歌词".
+                originalSource = overlay.originalSource(key),
                 translationSource = overlay.translationSource(key),
                 romanizationSource = overlay.pronunciationSource(key),
             )

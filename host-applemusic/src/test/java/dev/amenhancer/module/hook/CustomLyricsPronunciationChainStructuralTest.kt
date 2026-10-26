@@ -80,7 +80,20 @@ class CustomLyricsPronunciationChainStructuralTest {
     fun `the custom target feeds the displayed document and the refresh into the native delivery`() {
         // The overlay the getters read is the shared runtime store, published from
         // the displayed document the session actually read.
-        assertTrue(target.contains("runtime.nativeLyricOverlay.publishDisplayed(appleMusicId, ttml)"))
+        // The publish now also names the provider that owns the document; the source is
+        // read from the index entry, so it is the stored vocabulary and never a guess.
+        assertTrue(
+            target.contains(
+                "runtime.nativeLyricOverlay.publishDisplayed(
+" +
+                    "                            appleMusicId,
+" +
+                    "                            ttml,
+" +
+                    "                            originalSource = providerSource,",
+            ),
+        )
+        assertTrue(target.contains("?.source"))
         assertTrue(target.contains("onDisplayedDocument = { appleMusicId, ttml ->"))
         // The completion's refresh ask goes to the delivery this target owns.
         assertTrue(

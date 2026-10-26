@@ -60,8 +60,10 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `the generic popup path proves the page before touching it`() {
         val text = menu()
-        assertTrue(text.contains("isLyricsMoreAnchor(anchor)"))
-        assertTrue(text.contains("belongsToLyricsSheet(anchor)"))
+        // the anchor is classified by resource name (lyrics "more" vs player overflow)
+        assertTrue(text.contains("val anchorKind = anchorKind(anchor)"))
+        assertTrue(text.contains("if (source == GENERIC_PATH && anchorKind == null && !belongsToLyricsSheet(anchor)) return"))
+        assertTrue(text.contains("private fun anchorKind(view: View): String?"))
         assertTrue(text.contains("private fun isLyricsMoreAnchor"))
         assertTrue(text.contains("list_left_icon"))
         assertTrue(text.contains("more_button"))
@@ -140,10 +142,12 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `a failed restore rolls the stored selection back`() {
         val text = controller()
-        val clearSong = text.indexOf("store.clearSong(songId)")
+        // the transaction is the per-lane Apple lock (restoring locks, it does not clear)
+        val lock = text.indexOf("LyricLane.ALL.all { lane -> store.select(songId, lane, LyricSourceKeys.APPLE) }")
         val rollback = text.indexOf("previous.forEach { (lane, key) -> runCatching { store.select(songId, lane, key) } }")
-        assertTrue("clearSong is the transaction", clearSong >= 0)
-        assertTrue("rollback runs after the failed clear", rollback > clearSong)
+        assertTrue("the apple lock is the transaction", lock >= 0)
+        assertTrue("rollback runs after the failed lock", rollback > lock)
+        assertFalse("clearSong is not the transaction any more", text.contains("store.clearSong(songId)"))
     }
 
     @Test
@@ -226,8 +230,9 @@ class LyricsSourceHostStructureTest {
         // successes are terse
         assertTrue(text.contains("message = \"已切换\""))
         assertTrue(text.contains("message = \"已隐藏\""))
-        assertTrue(text.contains("message = \"已恢复\""))
-        assertTrue(text.contains("message = \"已关闭\""))
+        // restore assigns its copy through a when-branch, so the branch is what to pin
+        assertTrue(text.contains("!lane.isSupplement || appleServes -> \"已恢复\""))
+        assertTrue(text.contains("dropped || removed -> \"已关闭\""))
         // no parenthetical explanations or counters in success copy
         assertFalse(text.contains("（匹配 "))
         assertFalse(text.contains("译文没有变化"))
@@ -384,11 +389,13 @@ class LyricsSourceHostStructureTest {
         // the fetched document's own measurement is used where it exists
         assertTrue(search.contains("hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }"))
         assertTrue(search.contains("Document(ttml = document.ttml, hasWords = document.hasWords)"))
-        // and the preview reports the precision it has just measured
+        // and the preview reports the precision it has just measured, including
+        // whether the document has a timeline at all
         val text = controller()
         assertTrue(text.contains("LyricsSourcePreview("))
-        assertTrue(text.contains("precisionKnown = true"))
-        assertTrue(text.contains("hasWords = document.hasWords"))
+        assertTrue(text.contains("precisionKnown = timed"))
+        assertTrue(text.contains("hasWords = timed && document.hasWords"))
+        assertTrue(text.contains("hasTiming = timed"))
         // core owns the search-row rule now; the host must not re-derive it
         assertTrue(text.contains("LyricSourceCatalog.searchOptions(withCandidates, lane)"))
         assertFalse(text.contains("option.copy(hasWords = false, precisionKnown = false)"))
@@ -445,8 +452,10 @@ class LyricsSourceHostStructureTest {
         // restore: drop the index entry, then re-show Apple's own document
         assertTrue(text.contains("LyricsSourceCustomIndexBridge.removeLyrics(songId)"))
         assertTrue(text.contains("AutoLyricsReplacementBridge.restoreApple(songId)"))
-        // clearing a lane that had no override is not an error
-        assertTrue(text.contains("nothing to clear"))
+        // restoring is the Apple *preference*, so a lane without a key is reported as
+        // "not stored" (info) rather than as a failed clear
+        assertTrue(text.contains("restore preference not stored"))
+        assertTrue(text.contains("unlock had no key"))
         assertFalse(text.contains("selection clear failed"))
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
         // the host owns the two actions: re-parse the fresh entry, or refresh the index
@@ -491,7 +500,8 @@ class LyricsSourceHostStructureTest {
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
         assertTrue(target.contains("originalSource = providerSource"))
         assertTrue(target.contains("?.source"))
-        assertTrue(target.contains("?.firstOrNull { it.appleMusicId == appleMusicId }"))
+        assertTrue(target.contains(".firstOrNull { it.appleMusicId == appleMusicId }"))
+        assertTrue(target.contains("?.source"))
         // and the sheet reads it back instead of showing a generic label
         val probes = source("LyricsSourceProbes.kt")
         assertTrue(probes.contains("originalSource = overlay.originalSource(key)"))

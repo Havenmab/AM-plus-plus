@@ -75,6 +75,14 @@ object GlassPolicy {
     const val BOTTOM_SCRIM_STOPS = 9
     /** Backdrop blur shared by the navigation bar and the mini-player panel. */
     const val PANEL_BLUR_DP = EnhancementDefaults.GLASS_PANEL_BLUR_DP
+    /**
+     * Experimental: blur through one runtime-shader pass on a coarser sampling grid
+     * (dev.amenhancer.backdrop.textureBlur) instead of Skia's full-resolution BlurEffect.
+     * Flip to false to fall straight back to the previous rendering path for an A/B run.
+     */
+    const val TEXTURE_BLUR_ENABLED = true
+    /** Adds a sub-LSB dither to the texture blur, which hides banding in dark scenes. */
+    const val TEXTURE_BLUR_DITHER = true
 
     fun supports(sdk: Int, verifiedHost: Boolean, tablet: Boolean) =
         !tablet && supports(sdk, verifiedHost, GlassHostForm.PhoneStacked)

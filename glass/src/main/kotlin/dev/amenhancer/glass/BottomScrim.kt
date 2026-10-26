@@ -18,6 +18,7 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.vibrancy
+import dev.amenhancer.backdrop.textureBlur
 
 private fun smoothstep(value: Float): Float {
     val t = value.coerceIn(0f, 1f)
@@ -49,7 +50,12 @@ fun BottomScrim(backdrop: Backdrop) {
             shape = { RectangleShape },
             effects = {
                 vibrancy()
-                blur(GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx())
+                val radius = GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx()
+                if (GlassPolicy.TEXTURE_BLUR_ENABLED) {
+                    textureBlur(radius, dither = GlassPolicy.TEXTURE_BLUR_DITHER)
+                } else {
+                    blur(radius)
+                }
             },
             highlight = null,
             shadow = null,

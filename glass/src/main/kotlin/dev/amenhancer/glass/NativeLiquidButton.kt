@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.amenhancer.backdrop.VibrantBlur
+import dev.amenhancer.backdrop.textureBlur
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -81,7 +82,12 @@ fun NativeLiquidButton(
             effects = {
                 if (material == null) {
                     vibrancy()
-                    blur(panelBlur.toPx())
+                    val radius = panelBlur.toPx()
+                    if (GlassPolicy.TEXTURE_BLUR_ENABLED) {
+                        textureBlur(radius, dither = GlassPolicy.TEXTURE_BLUR_DITHER)
+                    } else {
+                        blur(radius)
+                    }
                 } else material.applyTo(this)
                 // Keep the capsule center outside refraction, including compact layouts.
                 val refraction = minOf(24f.dp.toPx(), size.minDimension * 0.375f)

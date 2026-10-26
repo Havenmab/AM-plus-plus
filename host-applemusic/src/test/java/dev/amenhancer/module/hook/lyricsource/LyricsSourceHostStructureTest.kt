@@ -74,30 +74,50 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
-    fun `the sheet stays reachable on a song without Apple's lyrics popup`() {
+    fun `the sheet has an entry that does not depend on any native menu`() {
         val text = menu()
-        // entry 1: the popup append stays the shortest path when Apple has the lanes
+        val floating = source("LyricsSourceFloatingEntry.kt")
+        // it is installed by the same target path, fed by the feature switch
+        assertTrue(text.contains("LyricsSourceFloatingEntry.install("))
+        assertTrue(text.contains("LyricsSourceFloatingEntry.attachFromFragment("))
+        // a real view of our own, added to the decor overlay (Apple's layout untouched)
+        assertTrue(floating.contains("activity.window?.decorView as? ViewGroup"))
+        assertTrue(floating.contains("Gravity.END or Gravity.CENTER_VERTICAL"))
+        assertTrue(floating.contains("const val BUTTON_TAG = \"ampp_lyrics_source_floating_entry\""))
+        assertTrue(floating.contains("tag = BUTTON_TAG"))
+        // dedupe + leave with the page + nothing when the feature is off
+        assertTrue(floating.contains("if (attachedHost?.get() === host && attachedButton?.get()?.isAttachedToWindow == true) return"))
+        assertTrue(floating.contains("host.addOnAttachStateChangeListener("))
+        assertTrue(floating.contains("if (attachedHost?.get() === view) remove(logger)"))
+        assertTrue(floating.contains("if (!enabled()) return"))
+        // low contrast, never a gesture trap
+        assertTrue(floating.contains("alpha = 0.72f"))
+        assertTrue(floating.contains("isClickable = true"))
+        // the long press is attached from the fragment's own view tree now
+        assertTrue(floating.contains("fun attachFromFragment("))
+        assertTrue(floating.contains("getMethod(\"getView\").invoke(fragment)"))
+        assertTrue(floating.contains("firstLyricContainer(root)"))
+        assertTrue(floating.contains("private fun firstLyricContainer(root: View): View?"))
+        // and it still never steals a gesture Apple already owns
+        assertTrue(floating.contains("if (host.isLongClickable)"))
+        assertTrue(floating.contains("if (!enabled()) return@setOnLongClickListener false"))
+    }
+
+    @Test
+    fun `the menu row stays on the lyrics popup only`() {
+        val text = menu()
+        // entry 1 (shortest path when Apple has the lanes): the popup append stays
         assertTrue(text.contains("menu.addView(item"))
-        // entry 2: the menu shape is relaxed to "a container with clickable text rows",
-        // and the anchor name - not the row count - identifies the entry point
         assertTrue(text.contains("const val MIN_NATIVE_ROWS = 1"))
         assertTrue(text.contains("if (nativeRows.none { it.isClickable }) return"))
         assertTrue(text.contains("const val ANCHOR_LYRICS_MORE = \"lyrics-more\""))
-        assertTrue(text.contains("const val ANCHOR_PLAYER_OVERFLOW = \"player-overflow\""))
         assertTrue(text.contains("private fun anchorKind(view: View): String?"))
+        // the player page's "..." opens a TRACK action menu: we must not insert there
+        assertFalse(text.contains("ANCHOR_PLAYER_OVERFLOW"))
+        assertFalse(text.contains("player-overflow"))
+        assertTrue(text.contains("return if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else null"))
         // an adapter-owned menu is reported, never mutated
         assertTrue(text.contains("not appendable"))
-        // entry 3: long press on the lyrics area, installable with no menu at all
-        val longPress = source("LyricsSourceLongPressEntry.kt")
-        assertTrue(longPress.contains("LayoutInflationRegistry.register(name)"))
-        assertTrue(longPress.contains("\"lyrics_main_content\", \"song_lyrics_list\""))
-        // never steal a gesture Apple (or another module) already owns
-        assertTrue(longPress.contains("if (root.isLongClickable)"))
-        assertTrue(longPress.contains("if (!enabled()) return@setOnLongClickListener false"))
-        assertTrue(longPress.contains("val opened = onOpen(activity)"))
-        assertTrue(longPress.contains("if (opened) logger"))
-        // and it is installed by the same target install path
-        assertTrue(text.contains("LyricsSourceLongPressEntry.install("))
     }
 
     @Test

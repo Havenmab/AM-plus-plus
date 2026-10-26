@@ -116,26 +116,28 @@ internal class LyricsSourceMenuTarget(
         if (!LyricsSourceSheetEntry.available) {
             logger("lyrics-source menu: sheet surface not registered yet; item appears once it is")
         }
+        // The always-present entry comes first and does not depend on any menu: the
+        // lyrics popup only exists when Apple's document has the translation /
+        // romanization rows, and the player "..." is a track action menu this feature
+        // deliberately leaves alone. A build without the popup seam still gets a
+        // working entry through this path.
+        LyricsSourceFloatingEntry.install(
+            enabled = enabled,
+            onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
+            logger = logger,
+        )
         val contract = LyricsSourceMenuContract.from(profile.document)
         val detail = buildList {
             installExactListener(contract)?.let { add(it) }
             installGenericPopupHook()?.let { add(it) }
         }
         if (detail.isEmpty()) {
-            val reason = "Apple Music " + profile.versionCode + " 的歌词更多弹层没有可用契约，不添加菜单项"
+            val reason = "Apple Music " + profile.versionCode + " 的歌词更多弹层没有可用契约（浮动入口已安装）"
             onFailure(reason)
             return TargetCapabilityInstall.Degraded(reason)
         }
         installed = true
         installedDetail = detail.joinToString(" + ")
-        // Third entry point: a long press on the lyrics area opens the sheet even when
-        // Apple renders no "more" popup at all (a song without translation or
-        // romanization has no rows to show there).
-        LyricsSourceLongPressEntry.install(
-            enabled = enabled,
-            onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
-            logger = logger,
-        )
         logger("lyrics-source menu: installed " + installedDetail + " (profile=" + profile.id + ")")
         return TargetCapabilityInstall.Active("Lyrics source menu: " + installedDetail)
     }
@@ -166,8 +168,17 @@ internal class LyricsSourceMenuTarget(
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (!enabled()) return
                     val anchor = param.args.getOrNull(0) as? View ?: return
-                    val popup = runCatching { findPopup(param.thisObject, contract) }.getOrNull() ?: return
-                    offerMenu(popup, anchor, EXACT_PATH)
+                    val fragment = runCatching { fragmentOf(param.thisObject, contract) }.getOrNull()
+                    val popup = runCatching { findPopup(param.thisObject, contract) }.getOrNull()
+                    if (popup != null) offerMenu(popup, anchor, EXACT_PATH)
+                    // The fragment reference is the only place where the lyrics page's
+                    // view tree is reachable, so the always-on entry attaches from here.
+                    LyricsSourceFloatingEntry.attachFromFragment(
+                        fragment = fragment,
+                        enabled = enabled,
+                        onOpen = { activity -> LyricsSourceSheetEntry.open(activity) },
+                        logger = logger,
+                    )
                 }
             })
         }.getOrDefault(false)
@@ -409,15 +420,13 @@ internal class LyricsSourceMenuTarget(
      */
     private fun anchorKind(view: View): String? {
         if (view !is ImageView) return null
-        if (moreButtonId != 0 && view.id == moreButtonId) {
-            return if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else ANCHOR_PLAYER_OVERFLOW
-        }
-        val description = moreButtonDescription ?: return null
-        return if (view.contentDescription?.toString() == description) {
-            if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else ANCHOR_PLAYER_OVERFLOW
-        } else {
-            null
-        }
+        val nameMatches = (moreButtonId != 0 && view.id == moreButtonId) ||
+            (moreButtonDescription != null && view.contentDescription?.toString() == moreButtonDescription)
+        if (!nameMatches) return null
+        // Only the lyrics page's own "more" button hosts our row. The player page's
+        // "..." opens a *track* action menu (pin / remove / share), so inserting a
+        // lyrics entry there would describe the wrong thing.
+        return if (belongsToLyricsSheet(view)) ANCHOR_LYRICS_MORE else null
     }
 
     /**
@@ -466,7 +475,6 @@ internal class LyricsSourceMenuTarget(
         const val LYRICS_SHEET_HEADER_ID_NAME = "current_player_item"
         const val MIN_NATIVE_ROWS = 1
         const val ANCHOR_LYRICS_MORE = "lyrics-more"
-        const val ANCHOR_PLAYER_OVERFLOW = "player-overflow"
         const val MAX_NATIVE_ROWS = 8
         const val MAX_ANCESTOR_DEPTH = 8
     }

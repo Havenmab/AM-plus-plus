@@ -5,39 +5,62 @@ import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.source.AmllCatalogEntry
 import dev.amenhancer.module.lyrics.source.AmllCatalogIndex
-import dev.amenhancer.module.lyrics.source.LyricHttpTransport
 import org.json.JSONObject
 import java.io.File
 
 /**
  * AMLL TTML DB as a searchable provider.
  *
- * The AMLL database is a static GitHub repository, so it needs no credentials and
- * no protocol work: one JSONL index (one song per line) plus one TTML body per
- * song. That is also why it belongs in the sheet — the module could previously
- * only reach AMLL by Adam ID, so a song Apple does not know could not be matched
- * against the corpus at all.
+ * The database is a static GitHub repository: one JSONL index (one song per line)
+ * plus one TTML body per song. The module could previously only reach AMLL by Adam
+ * ID, so a song Apple does not know could not be matched against the corpus.
  *
- * Two halves:
+ * ## Why three endpoints
  *
- * - This class owns everything the pure layer cannot: downloading the index,
- *   the ETag / 24h conditional-GET policy, the on-disk copy, and fetching +
- *   converting one body. None of it may block the main thread; the caller runs
- *   it on the search executor.
- * - Parsing, tolerance (bad JSON, unsafe file names, duplicate files, entry cap)
- *   and candidate scoring live in [AmllCatalogIndex], which the module's JVM
- *   tests already cover.
+ * raw.githubusercontent.com is frequently unreachable from mainland networks, and
+ * the sheet's search must not silently answer "no results" because of that. Every
+ * request therefore tries, in order: the canonical host, the jsDelivr mirror of
+ * the same tree (different path shape) and a ghfast.top proxy in front of the
+ * canonical URL. The first endpoint that answers is remembered for this process.
+ * Every attempt is logged with endpoint, HTTP status (or exception) and elapsed
+ * time, so one exported log says whether the device could reach any of them.
  *
- * Ids are the raw corpus **file names** (e.g. "1768754400682-...ttml"), which is
- * what the raw-lyrics URL takes and what the option key carries, so nothing ever
- * re-appends a suffix here.
+ * ## Cache
+ *
+ * The parsed catalogue lives in memory, then on disk (raw bytes + a small meta
+ * document with endpoint/etag/loadedAt), and counts as fresh for [INDEX_TTL_MS].
+ * A fresh disk copy is used without any request, so search keeps working offline
+ * after one successful download; a stale copy is still served when the refresh
+ * fails.
+ *
+ * Parsing, tolerance and scoring live in the core catalog ([AmllCatalogIndex]),
+ * which the module's JVM tests already cover.
  */
 internal class LyricsSourceAmllProvider(
-    private val transport: LyricHttpTransport?,
     private val directory: File,
     private val logger: (String) -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val fetch: (String) -> LyricsSourceAmllFetch.Result = LyricsSourceAmllFetch::get,
 ) {
+
+    /** One corpus endpoint: index URL and body prefix, always kept in step. */
+    internal enum class Endpoint(val id: String, val indexUrl: String, val filePrefix: String) {
+        GITHUB(
+            id = "github",
+            indexUrl = "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/metadata/raw-lyrics-index.jsonl",
+            filePrefix = "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/raw-lyrics/",
+        ),
+        JSDELIVR(
+            id = "jsdelivr",
+            indexUrl = "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/metadata/raw-lyrics-index.jsonl",
+            filePrefix = "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/raw-lyrics/",
+        ),
+        GHPROXY(
+            id = "ghfast",
+            indexUrl = "https://ghfast.top/https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/metadata/raw-lyrics-index.jsonl",
+            filePrefix = "https://ghfast.top/https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/raw-lyrics/",
+        ),
+    }
 
     /** A converted, publishable AMLL document. */
     internal data class Document(val ttml: String, val hasWords: Boolean)
@@ -51,102 +74,156 @@ internal class LyricsSourceAmllProvider(
     @Volatile
     private var loadedAtMs: Long = 0L
 
+    /** The endpoint that last answered; tried first for the rest of the process. */
+    @Volatile
+    private var preferred: Endpoint? = null
+
     /**
-     * Candidate rows for [query], already scored and ordered by the catalog.
-     * An empty list means "no catalogue" or "nothing matched"; the log line tells
+     * Why the last search found nothing on the network side, or null when the
+     * catalogue was usable. The controller forwards this to the sheet, so
+     * "network unreachable" and "no matching song" are different states for the
+     * user instead of the same empty list.
+     */
+    @Volatile
+    var lastFailure: String? = null
+        private set
+
+    /**
+     * Candidate rows for [query], already scored and ordered by the core catalog.
+     * An empty list means "no catalogue" or "nothing matched"; [lastFailure] tells
      * the two apart.
      */
     fun search(query: String, limit: Int): List<AmllCatalogEntry> {
         val startedAt = clock()
         val catalogue = catalogue()
         if (catalogue == null) {
+            if (lastFailure == null) lastFailure = "AMLL 索引不可用（三个端点均失败）"
             logger("lyrics-source search: amll catalogue unavailable entries=0")
             return emptyList()
         }
+        lastFailure = null
         val hits = runCatching { catalogue.candidates(query, limit) }.getOrDefault(emptyList())
         logger(
             "lyrics-source search: amll entries=" + catalogue.size +
                 " hits=" + hits.size +
+                " endpoint=" + (preferred?.id ?: "cache") +
                 " tookMs=" + (clock() - startedAt),
         )
         return hits
     }
 
-    /** The Apple-format document for a corpus file name, or null when it fails. */
+    /** The Apple-format document for a corpus file name, or null when every endpoint fails. */
     fun document(remoteId: String): Document? {
-        // The id *is* the corpus file name, so the body URL is a plain join. The
-        // catalog parser already dropped unsafe names; this re-check keeps a
-        // hand-edited persisted key from turning into a path traversal.
+        // The id IS the corpus file name; the parser already rejected unsafe names,
+        // and this re-check keeps a hand-edited persisted key from becoming a path
+        // traversal.
         if (!isSafeCorpusFile(remoteId)) return null
-        val raw = fetchText(FILE_BASE_URL + remoteId) ?: return null
-        val converted = runCatching { AmllTtmlFormatConverter.toAppleFormat(raw) }.getOrNull() ?: return null
-        val ttml = converted.ttml.takeIf { it.isNotBlank() } ?: return null
-        if (!TtmlInputPolicy.isAcceptable(ttml)) return null
-        return Document(
-            ttml = ttml,
-            hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }.getOrDefault(false),
-        )
+        for (endpoint in endpointOrder()) {
+            val response = fetch(endpoint.filePrefix + remoteId)
+            if (!response.ok) {
+                logger(
+                    "lyrics-source amll body failed endpoint=" + endpoint.id +
+                        " status=" + (response.status ?: "-") +
+                        " error=" + (response.error ?: "-") +
+                        " tookMs=" + response.elapsedMs,
+                )
+                continue
+            }
+            val raw = response.bytes?.toString(Charsets.UTF_8) ?: continue
+            val ttml = runCatching { AmllTtmlFormatConverter.toAppleFormat(raw) }
+                .getOrNull()
+                ?.ttml
+                ?.takeIf { it.isNotBlank() }
+                ?: continue
+            if (!TtmlInputPolicy.isAcceptable(ttml)) {
+                logger("lyrics-source amll body rejected endpoint=" + endpoint.id + " (invalid document)")
+                continue
+            }
+            preferred = endpoint
+            return Document(
+                ttml = ttml,
+                hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }.getOrDefault(false),
+            )
+        }
+        return null
     }
 
     // ------------------------------------------------------------------ index
 
     /**
-     * The parsed catalogue: memory, then a fresh-enough disk copy, then GitHub.
-     * Never throws; an unusable index simply reads as null and the search reports
-     * itself as unavailable.
+     * The parsed catalogue: memory, then a fresh-enough disk copy, then the
+     * endpoints in order. Never throws; an unusable index reads as null and
+     * [lastFailure] explains why.
      */
     private fun catalogue(): AmllCatalogIndex? {
         index?.takeIf { clock() - loadedAtMs < INDEX_TTL_MS }?.let { return it }
         index?.let {
             // Stale but usable: refresh once inline (search executor thread) and
-            // keep serving whatever we have when the refresh fails.
+            // keep serving it when the refresh fails.
             runCatching { refreshIndex() }
             return index
         }
         if (indexFile.isFile) {
             readCachedIndex()?.let { cached ->
                 index = cached
-                loadedAtMs = readLoadedAt()
+                loadedAtMs = readMeta().loadedAt
                 if (clock() - loadedAtMs >= INDEX_TTL_MS) runCatching { refreshIndex() }
-                return index
+                if (index != null) return index
             }
         }
         runCatching { refreshIndex() }
         return index
     }
 
+    private fun endpointOrder(): List<Endpoint> {
+        val first = preferred ?: return Endpoint.entries.toList()
+        return listOf(first) + Endpoint.entries.filter { it != first }
+    }
+
     private fun refreshIndex() {
-        val active = transport ?: run {
-            logger("lyrics-source search: amll transport unavailable")
-            return
-        }
-        val etag = readEtag()
-        val response = runCatching { active.getResponse(INDEX_URL, ifNoneMatch = etag) }.getOrNull()
-        if (response == null) {
-            logger("lyrics-source search: amll index fetch failed (cache=" + indexFile.isFile + ")")
-            return
-        }
-        if (response.statusCode == HTTP_NOT_MODIFIED) {
+        val failures = mutableListOf<String>()
+        for (endpoint in endpointOrder()) {
+            val response = fetch(endpoint.indexUrl)
+            if (!response.ok) {
+                val detail = "endpoint=" + endpoint.id +
+                    " status=" + (response.status ?: "-") +
+                    " error=" + (response.error ?: "-") +
+                    " tookMs=" + response.elapsedMs
+                failures += detail
+                logger("lyrics-source search: amll index failed " + detail)
+                continue
+            }
+            val body = response.bytes?.toString(Charsets.UTF_8)
+            if (body.isNullOrBlank()) {
+                failures += "endpoint=" + endpoint.id + " empty body"
+                logger("lyrics-source search: amll index failed endpoint=" + endpoint.id + " empty body")
+                continue
+            }
+            val parsed = runCatching { AmllCatalogIndex.parse(body) }.getOrNull()
+            if (parsed == null || parsed.size == 0) {
+                failures += "endpoint=" + endpoint.id + " unparsable (" + body.length + " bytes)"
+                logger(
+                    "lyrics-source search: amll index failed endpoint=" + endpoint.id +
+                        " unparsable bytes=" + body.length,
+                )
+                continue
+            }
+            writeIndex(response.bytes)
+            writeMeta(endpoint.id, response.etag, clock())
+            preferred = endpoint
+            index = parsed
             loadedAtMs = clock()
-            writeMeta(etag, loadedAtMs)
-            logger("lyrics-source search: amll index unchanged (304)")
+            lastFailure = null
+            logger(
+                "lyrics-source search: amll index loaded endpoint=" + endpoint.id +
+                    " entries=" + parsed.size +
+                    " gzip=" + response.gzipped +
+                    " tookMs=" + response.elapsedMs,
+            )
             return
         }
-        val body = response.body?.toString(Charsets.UTF_8)
-        if (response.statusCode != HTTP_OK || body.isNullOrBlank()) {
-            logger("lyrics-source search: amll index status=" + response.statusCode)
-            return
-        }
-        val parsed = runCatching { AmllCatalogIndex.parse(body) }.getOrNull()
-        if (parsed == null || parsed.size == 0) {
-            logger("lyrics-source search: amll index empty after parse bytes=" + body.length)
-            return
-        }
-        writeIndex(body)
-        writeMeta(response.etag ?: etag, clock())
-        index = parsed
-        loadedAtMs = clock()
-        logger("lyrics-source search: amll index loaded entries=" + parsed.size)
+        lastFailure = "AMLL 网络不可达：" + failures.joinToString("; ")
+        logger("lyrics-source search: amll index unavailable (" + failures.size + " endpoints tried)")
     }
 
     private fun readCachedIndex(): AmllCatalogIndex? = runCatching {
@@ -154,31 +231,38 @@ internal class LyricsSourceAmllProvider(
         AmllCatalogIndex.parse(indexFile.readText(Charsets.UTF_8)).takeIf { it.size > 0 }
     }.getOrNull()
 
-    private fun writeIndex(body: String) {
+    private fun writeIndex(bytes: ByteArray?) {
+        if (bytes == null) return
         runCatching {
             if (!directory.exists()) directory.mkdirs()
             val pending = File(directory, INDEX_FILE_NAME + ".tmp")
-            pending.writeText(body, Charsets.UTF_8)
+            pending.writeBytes(bytes)
             if (indexFile.exists()) indexFile.delete()
             pending.renameTo(indexFile)
         }.onFailure { logger("lyrics-source search: amll index write failed: " + it.message) }
     }
 
-    private fun readEtag(): String? = runCatching {
-        if (!metaFile.isFile) return null
-        JSONObject(metaFile.readText(Charsets.UTF_8)).optString("etag").takeIf { it.isNotBlank() }
-    }.getOrNull()
+    private data class Meta(val endpoint: String?, val etag: String?, val loadedAt: Long)
 
-    private fun readLoadedAt(): Long = runCatching {
-        if (!metaFile.isFile) return 0L
-        JSONObject(metaFile.readText(Charsets.UTF_8)).optLong("loadedAt", 0L)
-    }.getOrDefault(0L)
+    private fun readMeta(): Meta = runCatching {
+        if (!metaFile.isFile) return Meta(null, null, 0L)
+        val json = JSONObject(metaFile.readText(Charsets.UTF_8))
+        Meta(
+            endpoint = json.optString("endpoint").takeIf { it.isNotBlank() },
+            etag = json.optString("etag").takeIf { it.isNotBlank() },
+            loadedAt = json.optLong("loadedAt", 0L),
+        )
+    }.getOrDefault(Meta(null, null, 0L))
 
-    private fun writeMeta(etag: String?, loadedAt: Long) {
+    private fun writeMeta(endpoint: String, etag: String?, loadedAt: Long) {
         runCatching {
             if (!directory.exists()) directory.mkdirs()
             metaFile.writeText(
-                JSONObject().put("etag", etag.orEmpty()).put("loadedAt", loadedAt).toString(),
+                JSONObject()
+                    .put("endpoint", endpoint)
+                    .put("etag", etag.orEmpty())
+                    .put("loadedAt", loadedAt)
+                    .toString(),
                 Charsets.UTF_8,
             )
         }
@@ -190,21 +274,11 @@ internal class LyricsSourceAmllProvider(
             !name.contains("..") &&
             name.none { it == '/' || it == '\\' || it.isISOControl() }
 
-    private fun fetchText(url: String): String? = runCatching {
-        transport?.get(url)?.takeIf { it.isNotBlank() }
-    }.getOrNull()
-
     private companion object {
-        const val INDEX_URL =
-            "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/metadata/raw-lyrics-index.jsonl"
-        const val FILE_BASE_URL =
-            "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/raw-lyrics/"
         const val INDEX_FILE_NAME = "raw-lyrics-index.jsonl"
         const val META_FILE_NAME = "raw-lyrics-index.meta.json"
         const val INDEX_TTL_MS = 24L * 60L * 60L * 1000L
         const val MAX_INDEX_BYTES = 8L * 1024L * 1024L
         const val MAX_FILE_NAME_LENGTH = 128
-        const val HTTP_OK = 200
-        const val HTTP_NOT_MODIFIED = 304
     }
 }

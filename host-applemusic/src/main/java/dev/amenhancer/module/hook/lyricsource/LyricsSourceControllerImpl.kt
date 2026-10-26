@@ -173,7 +173,15 @@ internal class LyricsSourceControllerImpl(
                 // searchOptions pins Apple's own document (the module calls it
                 // AM-Lyrics) as the first row and appends the ranked provider hits,
                 // so "go back to Apple" is always reachable from the search list.
-                LyricSourceCatalog.searchOptions(withCandidates, lane)
+                val options = LyricSourceCatalog.searchOptions(withCandidates, lane)
+                if (options.count { it.kind == LyricSourceKind.ONLINE } == 0) {
+                    // Not a single provider row: when a catalogue could not be
+                    // reached the sheet must say so instead of rendering "no
+                    // results" for a network problem (AMLL lives on hosts that are
+                    // frequently blocked).
+                    search.lastFailure()?.let { reason -> throw IllegalStateException(reason) }
+                }
+                options
             }
             mapped.onSuccess { options ->
                 logger(LyricSourceDiagnostics.searchLine(songId, lane, query, options.size))

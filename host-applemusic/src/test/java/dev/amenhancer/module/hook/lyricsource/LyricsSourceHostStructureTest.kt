@@ -197,18 +197,17 @@ class LyricsSourceHostStructureTest {
         assertTrue(amll.contains("raw-lyrics/"))
         // the repository's dialect is converted before anything is published
         assertTrue(amll.contains("AmllTtmlFormatConverter.toAppleFormat(raw)"))
-        // conditional refresh, bounded by the TTL, never blocking the sheet
-        assertTrue(amll.contains("getResponse(INDEX_URL, ifNoneMatch = etag)"))
+        // a 24h disk cache serves offline searches and bounds the traffic
         assertTrue(amll.contains("INDEX_TTL_MS"))
-        assertTrue(amll.contains("HTTP_NOT_MODIFIED"))
+        assertTrue(amll.contains("readCachedIndex()"))
         // the parsing/tolerance/scoring is core's AmllCatalogIndex (16 JVM tests);
-        // this class only owns the fetch, the ETag policy and the disk copy
+        // this class only owns the transport policy and the disk copy
         assertTrue(amll.contains("AmllCatalogIndex.parse(body)"))
         assertTrue(amll.contains("catalogue.candidates(query, limit)"))
         assertFalse("the inline parser is gone", amll.contains("private fun parseEntry("))
         assertFalse("and so is the inline matcher", amll.contains("private fun matches("))
-        // ids are corpus file names, joined onto the raw-lyrics base, never rebuilt
-        assertTrue(amll.contains("FILE_BASE_URL + remoteId"))
+        // ids are corpus file names, joined onto the *endpoint's* body prefix
+        assertTrue(amll.contains("fetch(endpoint.filePrefix + remoteId)"))
         assertTrue(amll.contains("isSafeCorpusFile(remoteId)"))
         val search = source("LyricsSourceSearch.kt")
         assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) results += searchAmll(query)"))
@@ -218,6 +217,48 @@ class LyricsSourceHostStructureTest {
         assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
         assertTrue(search.contains("entry.toSearchResult()"))
         assertTrue(source("LyricsSourceWiring.kt").contains("amll = amll"))
+    }
+
+    @Test
+    fun `AMLL falls back across three endpoints and says why each one failed`() {
+        val amll = source("LyricsSourceAmllProvider.kt")
+        // canonical, CDN mirror (different path shape), proxy prefix - in that order
+        val github = amll.indexOf("https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/metadata")
+        val jsdelivr = amll.indexOf("https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/metadata")
+        val ghfast = amll.indexOf("https://ghfast.top/https://raw.githubusercontent.com")
+        assertTrue("github endpoint", github > 0)
+        assertTrue("jsdelivr endpoint", jsdelivr > github)
+        assertTrue("ghfast endpoint", ghfast > jsdelivr)
+        // the body URL follows the endpoint that worked
+        assertTrue(amll.contains("https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/raw-lyrics/"))
+        assertTrue(amll.contains("private var preferred: Endpoint?"))
+        assertTrue(amll.contains("endpointOrder()"))
+        // every failure is logged with endpoint + status/error, not just "failed"
+        assertTrue(amll.contains("\"lyrics-source search: amll index failed \""))
+        assertTrue(amll.contains("endpoint=\" + endpoint.id"))
+        assertTrue(amll.contains("status=\" + (response.status ?: \"-\")"))
+        assertTrue(amll.contains("error=\" + (response.error ?: \"-\")"))
+        // the fetcher is gzip/UA aware with a 15s budget and reports the status
+        val fetcher = source("LyricsSourceAmllFetch.kt")
+        assertTrue(fetcher.contains("\"Accept-Encoding\" to \"gzip\""))
+        assertTrue(fetcher.contains("GZIPInputStream"))
+        assertTrue(fetcher.contains("TIMEOUT_MS = 15_000"))
+        assertTrue(fetcher.contains("val error: String? = null"))
+        assertTrue(fetcher.contains("val status: Int? = null"))
+    }
+
+    @Test
+    fun `a dead catalogue surfaces as a search error, an empty match does not`() {
+        val amll = source("LyricsSourceAmllProvider.kt")
+        assertTrue(amll.contains("var lastFailure: String? = null"))
+        assertTrue(amll.contains("AMLL 网络不可达"))
+        val search = source("LyricsSourceSearch.kt")
+        assertTrue(search.contains("fun lastFailure(): String? = amll?.lastFailure ?: lunabeatFailure"))
+        val controller = controller()
+        // only a missing catalogue is an error; a reachable catalogue with no hit is
+        // an ordinary empty result
+        assertTrue(controller.contains("search.lastFailure()?.let { reason -> throw IllegalStateException(reason) }"))
+        assertTrue(controller.contains("options.count { it.kind == LyricSourceKind.ONLINE } == 0"))
     }
 
     @Test

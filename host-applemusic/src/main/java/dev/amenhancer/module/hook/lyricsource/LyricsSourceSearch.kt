@@ -71,6 +71,18 @@ internal class LyricsSourceSearch(
     /** Lunabeat catalogue hits, keyed by the option's remote id (its content hash). */
     private val lunabeatHits = ConcurrentHashMap<String, LunabeatSong>()
 
+    /** Why the last Lunabeat lookup produced nothing, or null when it worked. */
+    @Volatile
+    private var lunabeatFailure: String? = null
+
+    /**
+     * Why the last search could not reach its catalogues (null when they were
+     * usable). The controller turns this into a user-facing search error instead of
+     * an empty list, because "your network cannot reach AMLL" and "this song is not
+     * in AMLL" are different answers.
+     */
+    fun lastFailure(): String? = amll?.lastFailure ?: lunabeatFailure
+
     /** Searches [query] for [lane]; [onDone] runs exactly once on the executor thread. */
     fun search(
         query: String,
@@ -162,11 +174,14 @@ internal class LyricsSourceSearch(
     private fun searchLunabeat(query: String): List<OnlineLyricsCandidate> {
         val startedAt = System.currentTimeMillis()
         val client = lunabeat ?: run {
+            lunabeatFailure = "LunaBeat：未配置"
             logger("lyrics-source search: lunabeat provider unavailable")
             return emptyList()
         }
         val catalog = runCatching { client.loadCatalog() }
             .onFailure { error ->
+                lunabeatFailure = "LunaBeat：无法加载目录（" +
+                    (error.message ?: error.javaClass.simpleName) + "）"
                 logger(
                     "lyrics-source search: lunabeat catalogue failed: " +
                         (error.message ?: error.javaClass.simpleName),
@@ -174,9 +189,11 @@ internal class LyricsSourceSearch(
             }
             .getOrNull()
         if (catalog == null) {
+            if (lunabeatFailure == null) lunabeatFailure = "LunaBeat：目录不可用（manifest/index 拉取失败）"
             logger("lyrics-source search: lunabeat catalogue unavailable (manifest/index fetch)")
             return emptyList()
         }
+        lunabeatFailure = null
         val tokens = tokensOf(query)
         if (tokens.isEmpty()) return emptyList()
         val hits = catalog.songs

@@ -128,8 +128,10 @@ internal fun createLyricsSourceTarget(
         // keeps its placeholder until the app-side bridge forwards one.
         metadataArtworkUrl = { null },
     )
+    // AMLL has its own fetcher: the shared transport caps bodies at the TTML size
+    // and hides the response status, while this corpus needs ~1.6 MB, gzip and a
+    // real per-endpoint error line.
     val amll = LyricsSourceAmllProvider(
-        transport = lyricsTransport,
         directory = File(directory, AMLL_DIRECTORY),
         logger = logger,
     )

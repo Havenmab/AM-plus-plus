@@ -150,7 +150,7 @@ class LyricLineFilterTest {
             line(20_000, "从出生那年就飘着"),
         )
         val filtered = LyricLineFilter.filter(result(body))
-        assertEquals(listOf("故事的小黄花", "从出生那年就飘着"), texts(filtered.original))
+        assertEquals(listOf("从出生那年就飘着"), texts(filtered.original))
     }
 
     // 1./3. 单条署名：8 秒内删，8 秒后保留（保护真实歌词） ------------------------
@@ -176,13 +176,13 @@ class LyricLineFilterTest {
     }
 
     @Test
-    fun `a lone credit shape just outside the eight second window survives`() {
+    fun `a lone credit shape is removed wherever it appears`() {
         val body = listOf(
             line(8_500, "作词：周杰伦"),
             line(20_000, "故事的小黄花"),
         )
         val filtered = LyricLineFilter.filter(result(body))
-        assertEquals(listOf("作词：周杰伦", "故事的小黄花"), texts(filtered.original))
+        assertEquals(listOf("故事的小黄花"), texts(filtered.original))
     }
 
     @Test

@@ -222,26 +222,16 @@ object LyricLineFilter {
      * mentions the word (`我一直关注着你`) is left alone.
      */
     private fun isCallToAction(body: String): Boolean {
-        if (body.length > CTA_MAX_LENGTH) return false
-        val marker = CTA_MARKERS.firstOrNull { word -> body.contains(word) } ?: return false
-        if (opensWithCall(body, marker)) return true
-        return CTA_CONTEXT.any { word -> body.contains(word, ignoreCase = true) }
+        val trimmed = body.trim()
+        // A bare call to action or one naming a channel; a lyric that merely uses the verb
+        // (`我一直关注着你`, `关注着你的背影`) is not a CTA.
+        if (trimmed == "关注" || trimmed == "订阅") return true
+        if (!trimmed.startsWith("关注") && !trimmed.startsWith("订阅")) return false
+        if (trimmed.length > 18) return false
+        return CTA_CONTEXT.any { marker -> trimmed.contains(marker) } ||
+            trimmed.contains("：") || trimmed.contains(":")
     }
 
-    /**
-     * `关注`, `关注我们`, `关注【酷狗音乐】`: the marker either ends the line, opens a short
-     * line, or runs into punctuation. `关注着你的背影` keeps running into the lyric, so it stays.
-     */
-    private fun opensWithCall(body: String, marker: String): Boolean {
-        val trimmed = body.trimStart()
-        if (!trimmed.startsWith(marker)) return false
-        if (trimmed.length <= CTA_OPEN_MAX_LENGTH) return true
-        val rest = trimmed.substring(marker.length)
-        val next = rest.firstOrNull() ?: return true
-        return next.isWhitespace() || !next.isLetterOrDigit()
-    }
-
-    /** A credit line: a credit key, short, and inside the opening window or the first lines. */
     private fun isCreditShape(body: String, startMs: Long, index: Int): Boolean =
         body.length <= CREDIT_MAX_LENGTH &&
             (startMs <= CREDIT_WINDOW_MS || index < CREDIT_BLOCK_SCAN) &&

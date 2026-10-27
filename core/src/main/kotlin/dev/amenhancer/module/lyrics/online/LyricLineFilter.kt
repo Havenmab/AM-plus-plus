@@ -45,6 +45,12 @@ object LyricLineFilter {
     /** How many credit-shaped lines inside that scan turn the lane into a "has credits" lane. */
     const val CREDIT_BLOCK_MIN = 2
 
+    /** Lines inspected for the opening credit/header block. */
+    const val LEADING_SCAN = 20
+
+    /** Only the first minute can open with a block; later lines are lyrics. */
+    const val LEADING_WINDOW_MS = 60_000L
+
     /** Without a credit block a lone credit shape is only dropped while the song is barely started. */
     /** Two identical lines closer than this are a provider duplicate. */
     const val DUPLICATE_WINDOW_MS = 3_000L

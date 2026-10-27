@@ -149,12 +149,16 @@ internal fun createLyricsSourceTarget(
         executor = executor,
         logger = logger,
     )
+    // The overlay store is memory only; this file is what survives a restart
+    // (same directory as the selection, so one module data folder holds the state).
+    val overlayPersistence = LyricsSourceOverlayPersistence(File(directory, OVERLAY_FILE_NAME))
     val controller = LyricsSourceControllerImpl(
         currentSong = currentSong,
         overlay = overlay,
         probes = probes,
         search = search,
         store = store,
+        persistence = overlayPersistence,
         readDocument = { fileId ->
             runCatching {
                 config.openFile(fileId)?.use { input -> input.readBytes().toString(Charsets.UTF_8) }
@@ -224,6 +228,7 @@ private class LunabeatDiskCache(private val directory: File) : LunabeatCatalogCa
 }
 
 private const val STORAGE_DIRECTORY = "ampp-lyrics-source"
+private const val OVERLAY_FILE_NAME = "overlay.json"
 private const val LUNABEAT_DIRECTORY = "lunabeat"
 private const val AMLL_DIRECTORY = "amll"
 private const val AM_LYRICS_DIRECTORY = "am-lyrics"

@@ -511,6 +511,43 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `the overlay survives a restart and a stored choice can re-apply by key`() {
+        val persistence = source("LyricsSourceOverlayPersistence.kt")
+        // one file in the module data folder, atomic replace, bounded
+        assertTrue(persistence.contains("const val MAX_SONGS = 64"))
+        assertTrue(persistence.contains("const val MAX_TTML_BYTES = 512 * 1024"))
+        assertTrue(persistence.contains("File(file.parentFile, file.name + \".tmp\")"))
+        assertTrue(persistence.contains("pending.renameTo(file)"))
+        // replay goes through the public store API, from the merged document's own lanes
+        assertTrue(persistence.contains("DisplayedLyricPublication.lines(record.ttml)"))
+        assertTrue(persistence.contains("overlay.update("))
+        assertTrue(persistence.contains("translationSource = record.translationSource"))
+        assertTrue(persistence.contains("originalSource = record.originalSource"))
+        // and the controller restores before probing, then saves after an apply
+        val text = controller()
+        assertTrue(text.contains("persistence.restoreInto(songId, overlay)"))
+        assertTrue(text.contains("persistence.save("))
+        assertTrue(source("LyricsSourceWiring.kt").contains("OVERLAY_FILE_NAME = \"overlay.json\""))
+        // a restart must not turn a stored online key into "not supported": the apply
+        // re-fetches the body from the key (provider id + remote id) every time
+        assertTrue(text.contains("val lines = search.translationLines(option)"))
+        assertTrue(text.contains("val document = search.documentFor(option, envelope.snapshot.song.durationMs)"))
+    }
+
+    @Test
+    fun `auto completion keeps Apple's document and only fills the translation lane`() {
+        val target = hookSource("AppleMusicCustomLyricsTarget.kt")
+        // Apple's document already scrolls: enrichment may only add the lane, never
+        // return a merged document (that is what created a custom entry)
+        assertTrue(target.contains("val replacementFirst = displayedTtml == null || !TtmlTimingPolicy.hasTiming(displayedTtml)"))
+        assertTrue(target.contains("runCatching { enrich?.invoke(appleMusicId, displayedTtml) }"))
+        // and the overlay must never claim to be the original document
+        val probes = source("LyricsSourceProbes.kt")
+        assertTrue(probes.contains("hasOriginal = false,"))
+        assertFalse(probes.contains("hasOriginal = current == key"))
+    }
+
+    @Test
     fun `the overlay records which provider published the document`() {
         // enricher (auto completion): the provider that supplied this document
         val session = appSource("hook/AutoLyricsReplacementSession.kt")

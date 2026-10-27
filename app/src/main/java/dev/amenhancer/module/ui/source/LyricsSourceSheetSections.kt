@@ -165,9 +165,13 @@ private fun EmbeddedSettingsHost.badgeColumn(
 ): View = LinearLayout(activity).apply {
     orientation = LinearLayout.VERTICAL
     gravity = Gravity.END
-    val original = snapshot.lane(LyricLane.ORIGINAL)?.selected
-    val provider = original?.let { LyricSourceText.providerLabel(it.providerId, locale) }
-        ?: LyricSourceText.noOptionsLabel(locale)
+    val original = snapshot.lane(LyricLane.ORIGINAL)?.displayedSource()
+    val provider = when {
+        original == null -> LyricSourceText.noOptionsLabel(locale)
+        // The Apple option's own label already reads "Apple Music（原生）".
+        original.kind == LyricSourceKind.APPLE -> original.label
+        else -> LyricSourceText.providerLabel(original.providerId, locale)
+    }
     addView(embeddedBadge(activity, LyricsSourceSheetText.sourceBadge(locale, provider)).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -255,10 +259,10 @@ private fun EmbeddedSettingsHost.laneCard(
 ): View = embeddedCard(activity, null) {
     val locale = LyricsSourceSheetText.locale(activity)
     val busy = controller.isLaneBusy(lane)
-    val selected = state?.selected
+    val shown = state?.displayedSource()
     val appleAvailable = state?.appleAvailable == true
     val sourceText = when {
-        selected != null -> selected.label
+        shown != null -> shown.label
         state == null -> LyricSourceText.noOptionsLabel(locale)
         lane.isSupplement -> LyricSourceText.hiddenLabel(locale)
         else -> LyricSourceText.noOptionsLabel(locale)
@@ -295,7 +299,7 @@ private fun EmbeddedSettingsHost.laneCard(
             text = sourceText
             textSize = embeddedTextSize(activity, 15f, 15f)
             setEmbeddedTextColor(activity) { colors ->
-                if (selected == null) colors.onSurfaceVariant else colors.onSurface
+                if (shown == null) colors.onSurfaceVariant else colors.onSurface
             }
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
@@ -303,14 +307,16 @@ private fun EmbeddedSettingsHost.laneCard(
         if (busy) {
             addView(progressIndicator(activity), LinearLayout.LayoutParams(dp(activity, 18), dp(activity, 18)))
         }
-        selected?.let { option ->
+        shown?.let { option ->
             precisionLabel(option, locale)?.let { precision ->
                 addView(embeddedBadge(activity, precision))
             }
-            addView(embeddedBadge(activity, LyricSourceText.providerLabel(option.providerId, locale)))
+            if (option.showsProviderBadge()) {
+                addView(embeddedBadge(activity, LyricSourceText.providerLabel(option.providerId, locale)))
+            }
         }
     }, matchWidthWrapContent())
-    selected?.detail?.takeIf { it.isNotBlank() }?.let { detail ->
+    shown?.detail?.takeIf { it.isNotBlank() }?.let { detail ->
         addView(TextView(activity).apply {
             text = detail
             textSize = embeddedTextSize(activity, 12f, 12f)
@@ -334,7 +340,7 @@ private fun EmbeddedSettingsHost.laneCard(
             matchWidthWrapContent(),
         )
     }
-    if (state != null && appleAvailable && selected?.kind != LyricSourceKind.APPLE) {
+    if (state != null && appleAvailable && shown != null && shown.kind != LyricSourceKind.APPLE) {
         addView(LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(activity, 2), 0, 0)
@@ -540,12 +546,14 @@ internal fun EmbeddedSettingsHost.optionBadges(
 ): View = LinearLayout(activity).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
-    addView(embeddedBadge(activity, LyricSourceText.providerLabel(option.providerId, locale)).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-    })
+    if (option.showsProviderBadge()) {
+        addView(embeddedBadge(activity, LyricSourceText.providerLabel(option.providerId, locale)).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        })
+    }
     precisionLabel(option, locale)?.let { precision ->
         addView(embeddedBadge(activity, precision).apply {
             layoutParams = LinearLayout.LayoutParams(

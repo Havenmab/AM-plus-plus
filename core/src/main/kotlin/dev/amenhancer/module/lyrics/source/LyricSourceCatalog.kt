@@ -83,6 +83,7 @@ object LyricSourceCatalog {
     ): LyricLaneState {
         val options = options(input, lane, locale)
         val fallback = defaultOption(input, lane, options)
+        val displayed = displayedOption(input, lane, options, locale)
         val stored = LyricSourceKeys.sanitize(storedKey)
         val appleLocked = stored == LyricSourceKeys.APPLE
 
@@ -95,6 +96,7 @@ object LyricSourceCatalog {
                     selected = fallback,
                     options = options,
                     overridden = false,
+                    displayed = displayed,
                 )
             }
             return LyricLaneState(
@@ -102,6 +104,7 @@ object LyricSourceCatalog {
                 selected = null,
                 options = options,
                 overridden = true,
+                displayed = displayed,
             )
         }
 
@@ -122,6 +125,7 @@ object LyricSourceCatalog {
                 options = options,
                 overridden = stored != null,
                 appleLocked = appleLocked,
+                displayed = displayed,
             )
         }
         // A synthesized placeholder is not part of the probed list, so it is offered
@@ -134,6 +138,7 @@ object LyricSourceCatalog {
             options = offered,
             overridden = true,
             appleLocked = appleLocked,
+            displayed = displayed,
         )
     }
 
@@ -200,7 +205,9 @@ object LyricSourceCatalog {
             key = LyricSourceKeys.APPLE,
             kind = LyricSourceKind.APPLE,
             providerId = LyricSourceProviders.APPLE,
-            label = LyricSourceText.providerLabel(LyricSourceProviders.APPLE, locale),
+            // The brand alone would render a second, identical "Apple Music" badge next
+            // to the provider badge; the option says what it is instead.
+            label = LyricSourceText.appleNativeLabel(locale),
             hasWords = apple.hasTiming && apple.hasWords,
             hasTranslation = apple.hasTranslation,
             hasRomanization = apple.hasRomanization,
@@ -223,6 +230,10 @@ object LyricSourceCatalog {
     ): LyricSourceOption? {
         val overlay = input.overlay
         if (!overlay.hasLane(lane)) return null
+        // The store keeps the translation/romanization lanes of whatever document is on
+        // screen; when that document is Apple's, the original text is Apple's too and
+        // the overlay must not claim it.
+        if (lane == LyricLane.ORIGINAL && !overlayServingOriginal(input)) return null
         // The overlay store keeps the translation/romanization sources but not the
         // original's, so the original is named after the document the page is showing:
         // that document *is* what was written into the store.
@@ -384,7 +395,7 @@ object LyricSourceCatalog {
         lane: LyricLane,
         options: List<LyricSourceOption>,
     ): LyricSourceOption? {
-        if (input.overlay.hasLane(lane)) {
+        if (overlayServesLane(input, lane)) {
             val writtenKey = LyricSourceKeys.overlay(lane)
             options.firstOrNull { it.key == writtenKey }?.let { return it }
         }
@@ -529,6 +540,69 @@ object LyricSourceCatalog {
         hasTiming = record.hasTiming,
         detail = LyricSourceText.cacheDetail(record.displayName, locale),
     )
+
+    /**
+     * True when the overlay store can serve [lane] for this input.
+     *
+     * The original lane is the exception: the store records the lanes *of* a displayed
+     * document, so it holds an original only when that document is one this module
+     * wrote. When Apple's own document is on screen ([LyricSourceInput.activeFileId]
+     * null) the overlay's "original" would be Apple's text with a third-party label -
+     * the lane must stay Apple instead.
+     */
+    private fun overlayServesLane(input: LyricSourceInput, lane: LyricLane): Boolean =
+        when (lane) {
+            LyricLane.ORIGINAL -> overlayServingOriginal(input)
+            LyricLane.TRANSLATION, LyricLane.ROMANIZATION -> input.overlay.hasLane(lane)
+        }
+
+    /** True only when the module wrote the whole displayed document. */
+    private fun overlayServingOriginal(input: LyricSourceInput): Boolean =
+        input.overlay.hasOriginal && input.activeFileId != null
+
+    /**
+     * What the page is showing for [lane] right now (see [LyricLaneState.displayed]).
+     *
+     * - A custom document on screen ([LyricSourceInput.activeFileId]) is the original.
+     * - Apple's own document is the original otherwise, even while the overlay store
+     *   holds the translation/romanization lanes layered on it.
+     * - A whole document this module wrote is the overlay's own original, when no index
+     *   entry explains the page.
+     * - A supplement lane is the overlay lane the store holds, else Apple's lane, else
+     *   nothing at all (the lane is not displayed).
+     */
+    private fun displayedOption(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        options: List<LyricSourceOption>,
+        locale: Locale,
+    ): LyricSourceOption? = when (lane) {
+        LyricLane.ORIGINAL -> activeDocumentOption(input, options)
+            ?: options.firstOrNull { it.isApple }
+            ?: writtenOverlayOption(input, lane, options, locale)
+        LyricLane.TRANSLATION, LyricLane.ROMANIZATION ->
+            writtenOverlayOption(input, lane, options, locale)
+                ?: options.firstOrNull { it.isApple }
+    }
+
+    /** The overlay option for [lane], when the store serves it and the lane lists it. */
+    private fun writtenOverlayOption(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        options: List<LyricSourceOption>,
+        locale: Locale,
+    ): LyricSourceOption? = overlayOption(input, lane, locale)
+        ?.let { written -> options.firstOrNull { it.key == written.key } }
+
+    /** The index entry the page is showing, when [LyricSourceInput.activeFileId] names one. */
+    private fun activeDocumentOption(
+        input: LyricSourceInput,
+        options: List<LyricSourceOption>,
+    ): LyricSourceOption? {
+        val activeId = input.activeFileId ?: return null
+        options.firstOrNull { it.key == LyricSourceKeys.customFile(activeId) }?.let { return it }
+        return options.firstOrNull { it.key == LyricSourceKeys.cache(activeId) }
+    }
 
     /**
      * The provider behind the document the page is showing, when it is one of the

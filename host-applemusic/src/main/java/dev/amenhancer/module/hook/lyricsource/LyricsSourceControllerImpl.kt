@@ -74,6 +74,8 @@ internal class LyricsSourceControllerImpl(
     private val readDocument: (String) -> String?,
     private val runtime: AutoLyricsRuntime?,
     private val nativeRefresh: () -> NativeLyricsTarget?,
+    /** Remembers the lanes across a process restart (the store itself is memory only). */
+    private val persistence: LyricsSourceOverlayPersistence,
     private val pronunciationToggle: LyricsSourcePronunciationToggle,
     private val executor: Executor,
     private val logger: (String) -> Unit,
@@ -122,6 +124,17 @@ internal class LyricsSourceControllerImpl(
                     recentCandidates.set(null)
                     notifyListeners()
                 }
+                // New track (or first one after a restart): replay the lanes this song
+                // had, then let the native model recompute. Lazy, per song, and cheap when
+                // nothing is stored.
+                if (next > 0L) {
+                    runCatching {
+                        if (persistence.restoreInto(next, overlay)) {
+                            logger("lyrics-source overlay: restored id=" + next)
+                            nativeRefresh()?.onCustomOverlayUpdated(next)
+                        }
+                    }
+                }
             }
         }
     }
@@ -134,6 +147,13 @@ internal class LyricsSourceControllerImpl(
         val probed = runCatching { probes.probe() }.getOrNull() ?: return null
         val songId = probed.input.song.songId
         lastSongId.compareAndSet(0L, songId)
+        // The overlay store is process memory; after a restart the user's stored choice
+        // still names a source whose lanes are gone. Replay them before probing, so the
+        // sheet and the page both see the content the user applied.
+        runCatching { persistence.restoreInto(songId, overlay) }
+            .onSuccess { restored ->
+                if (restored) logger("lyrics-source overlay: restored from disk id=" + songId)
+            }
         val selection = runCatching { store.selection(songId) }.getOrDefault(emptyMap())
         // Feed back the candidates this session already offered, otherwise a
         // persisted "online:..." selection stops resolving one snapshot after it
@@ -822,6 +842,22 @@ internal class LyricsSourceControllerImpl(
             pronunciationSource = overlay.pronunciationSource(songId.toString()),
             pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
         )
+        // Remember the merged document so the lanes can be replayed after a restart; the
+        // same lines are what DisplayedLyricPublication turns back into the store.
+        if (changed) {
+            runCatching {
+                persistence.save(
+                    LyricsSourceOverlayPersistence.Record(
+                        songId = songId,
+                        ttml = outcome.ttml,
+                        translationSource = search.customSourceToken(option.providerId),
+                        originalSource = overlay.originalSource(songId.toString()),
+                        pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }.onSuccess { saved -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + saved) }
+        }
         return if (changed) {
             ApplyResult(ok = true, message = "已切换")
         } else {

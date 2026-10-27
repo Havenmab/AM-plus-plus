@@ -45,7 +45,7 @@ class LyricSourceDiagnosticsTest {
         assertTrue(line.startsWith("lyrics-source lane id=42 lane=original"))
         assertTrue(line.contains("selected=apple kind=apple overridden=false apple=true"))
         assertTrue(line.contains("options=apple"))
-        assertTrue(line.contains("labels=\"Apple Music\""))
+        assertTrue(line.contains("labels=\"Apple Music (native)\""))
     }
 
     @Test

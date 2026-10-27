@@ -2,6 +2,7 @@ package dev.amenhancer.module.ui.source
 
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricLaneState
 import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
@@ -9,6 +10,7 @@ import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -146,16 +148,47 @@ class LyricsSourceSheetPolicyTest {
         assertNull(previewTimingLabel(unknown.hasTiming, unknown.precisionKnown, unknown.hasWords, zh))
     }
 
-    private fun option(hasTiming: Boolean, precisionKnown: Boolean, hasWords: Boolean): LyricSourceOption =
-        LyricSourceOption(
-            key = "test",
-            kind = LyricSourceKind.APPLE,
-            providerId = "apple",
-            label = "Apple Music",
-            hasWords = hasWords,
-            precisionKnown = precisionKnown,
-            hasTiming = hasTiming,
+    private fun option(
+        hasTiming: Boolean = true,
+        precisionKnown: Boolean = true,
+        hasWords: Boolean = true,
+        kind: LyricSourceKind = LyricSourceKind.APPLE,
+        providerId: String = "apple",
+        label: String = "Apple Music",
+    ): LyricSourceOption = LyricSourceOption(
+        key = "test",
+        kind = kind,
+        providerId = providerId,
+        label = label,
+        hasWords = hasWords,
+        precisionKnown = precisionKnown,
+        hasTiming = hasTiming,
+    )
+
+    @Test
+    fun `the displayed document wins over the stored choice`() {
+        val chosen = option(kind = LyricSourceKind.CUSTOM_FILE, providerId = "file", label = "自定义文件")
+        val displayed = option()
+        val lane = LyricLaneState(
+            lane = LyricLane.ORIGINAL,
+            selected = chosen,
+            options = listOf(displayed, chosen),
+            displayed = displayed,
         )
+        assertSame(displayed, lane.displayedSource())
+
+        val unknown = lane.copy(displayed = null)
+        assertSame(chosen, unknown.displayedSource())
+
+        assertNull(LyricLaneState(LyricLane.ORIGINAL, selected = null, options = emptyList()).displayedSource())
+    }
+
+    @Test
+    fun `apple options do not repeat their brand as a provider badge`() {
+        assertFalse(option().showsProviderBadge())
+        assertTrue(option(kind = LyricSourceKind.ONLINE, providerId = "qm", label = "晴天").showsProviderBadge())
+        assertTrue(option(kind = LyricSourceKind.CUSTOM_FILE, providerId = "file", label = "自定义文件").showsProviderBadge())
+    }
 
     @Test
     fun `the preview shows exactly three lines`() {

@@ -39,7 +39,9 @@ class LyricSourceCatalogTest {
             ),
             customFiles = listOf(fileRecord()),
             onlineCandidates = listOf(candidate()),
-            activeFileId = null,
+            // The overlay's original lane is only believed when the module wrote the
+            // document on screen, so the page shows that custom file here.
+            activeFileId = FILE_ID,
         )
 
         val original = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH)
@@ -62,7 +64,7 @@ class LyricSourceCatalogTest {
             ),
             original.map { it.kind },
         )
-        assertEquals("Apple Music", original[0].label)
+        assertEquals("Apple Music（原生）", original[0].label)
         assertEquals("酷我音乐", original[1].label)
         assertEquals("自定义文件", original[2].label)
         assertEquals(TITLE, original[3].label)
@@ -114,7 +116,7 @@ class LyricSourceCatalogTest {
         assertEquals("AMLL", translation[1].label)
 
         val original = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH)
-        assertEquals("Apple Music", original[0].label)
+        assertEquals("Apple Music（原生）", original[0].label)
         assertEquals("自定义文件", original[1].label)
         assertEquals("AMLL", original[2].label)
         assertTrue(LyricSourceCatalog.options(input, LyricLane.ROMANIZATION, ZH).isEmpty())
@@ -150,6 +152,8 @@ class LyricSourceCatalogTest {
         val written = input(
             apple = AppleLyricsCapability(hasLyrics = true),
             overlay = OverlayLyricsCapability(hasOriginal = true, originalSource = CustomLyricsSources.KUWO),
+            customFiles = listOf(fileRecord(fileId = "shown")),
+            activeFileId = "shown",
         )
         assertEquals(
             LyricSourceKeys.overlay(LyricLane.ORIGINAL),
@@ -767,7 +771,11 @@ class LyricSourceCatalogTest {
 
     @Test
     fun `an unnamed overlay original falls back to the written-lane label`() {
-        val written = input(overlay = OverlayLyricsCapability(hasOriginal = true))
+        val written = input(
+            overlay = OverlayLyricsCapability(hasOriginal = true),
+            customFiles = listOf(fileRecord(fileId = "shown")),
+            activeFileId = "shown",
+        )
 
         val option = LyricSourceCatalog
             .options(written, LyricLane.ORIGINAL, ZH)
@@ -775,6 +783,73 @@ class LyricSourceCatalogTest {
 
         assertEquals(LyricSourceProviders.OVERLAY, option.providerId)
         assertEquals("已写入歌词", option.label)
+    }
+
+    @Test
+    fun `an overlay translation lane leaves the original lane as Apple`() {
+        // The bug on device: enrichment wrote a translation lane, so the overlay exists,
+        // but the page is still Apple's document - the original lane must say so.
+        val input = input(
+            apple = AppleLyricsCapability(hasLyrics = true, hasWords = true, hasTranslation = true),
+            overlay = OverlayLyricsCapability(
+                // A probe that mistakes "the store has lanes" for "we wrote the document".
+                hasOriginal = true,
+                hasTranslation = true,
+                translationSource = CustomLyricsSources.KUWO,
+            ),
+            activeFileId = null,
+        )
+
+        val snapshot = LyricSourceCatalog.build(input, emptyMap(), ZH)
+        val original = snapshot.lane(LyricLane.ORIGINAL)!!
+        val translation = snapshot.lane(LyricLane.TRANSLATION)!!
+
+        assertEquals(LyricSourceKeys.APPLE, original.displayed?.key)
+        assertEquals("Apple Music（原生）", original.displayed?.label)
+        assertTrue(original.options.none { it.kind == LyricSourceKind.OVERLAY_STORE })
+        assertEquals(LyricSourceKeys.APPLE, original.selected?.key)
+
+        // The translation really is the written lane, so that lane names its provider.
+        assertEquals(LyricSourceKeys.overlay(LyricLane.TRANSLATION), translation.displayed?.key)
+        assertEquals("酷我音乐", translation.displayed?.label)
+    }
+
+    @Test
+    fun `a displayed custom document is what the original lane reports`() {
+        val input = input(
+            apple = AppleLyricsCapability(hasLyrics = true),
+            customFiles = listOf(
+                fileRecord(fileId = "shown", originSource = CustomLyricsSources.AMLL),
+            ),
+            activeFileId = "shown",
+        )
+
+        val original = LyricSourceCatalog.laneState(input, LyricLane.ORIGINAL, null, ZH)
+
+        assertEquals(LyricSourceKeys.customFile("shown"), original.displayed?.key)
+        assertEquals("AMLL", original.displayed?.label)
+        // With no stored choice, the file in effect is also what selected reports.
+        assertEquals(LyricSourceKeys.customFile("shown"), original.selected?.key)
+        assertFalse(original.overridden)
+    }
+
+    @Test
+    fun `the displayed source is unknown when nothing is on screen`() {
+        val snapshot = LyricSourceCatalog.build(input(), emptyMap(), ZH)
+
+        LyricLane.ALL.forEach { lane ->
+            assertNull(snapshot.lane(lane)!!.displayed)
+        }
+    }
+
+    @Test
+    fun `the Apple lane option says it is the native document`() {
+        val input = input(apple = AppleLyricsCapability(hasLyrics = true, hasWords = true))
+
+        val option = LyricSourceCatalog.options(input, LyricLane.ORIGINAL, ZH).single()
+
+        assertEquals("Apple Music（原生）", option.label)
+        assertEquals(LyricSourceProviders.APPLE, option.providerId)
     }
 
     private fun input(

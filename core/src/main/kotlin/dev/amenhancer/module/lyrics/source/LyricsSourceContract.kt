@@ -177,6 +177,20 @@ data class LyricLaneState(
      */
     val overridden: Boolean = false,
     /**
+     * The source of the document the page is **actually showing** for this lane, or
+     * null when it cannot be told.
+     *
+     * [selected] is the behavioural choice (what a restore or an apply would act on);
+     * this is the description of what is on screen right now. They differ exactly when
+     * a stored choice has not taken effect yet, and when the overlay store only layers
+     * translation/romanization on top of Apple's document: then the original lane is
+     * Apple's, whatever the user previously selected.
+     *
+     * The sheet renders this option's label/detail/badge and falls back to [selected]
+     * when it is null.
+     */
+    val displayed: LyricSourceOption? = null,
+    /**
      * True when this lane is pinned to Apple by the user, i.e. the song's stored key
      * for it is exactly [LyricSourceKeys.APPLE].
      *

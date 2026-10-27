@@ -95,6 +95,15 @@ data class AppleLyricsCapability(
  * it to report what is *actually displayed* when a lane has no stored override.
  */
 data class OverlayLyricsCapability(
+    /**
+     * True only when the module wrote the **whole** document the page is showing.
+     *
+     * The store always holds the translation/romanization lanes of the displayed
+     * document, so "the overlay exists" is not this flag: when Apple's document is on
+     * screen the original is Apple's, and reporting it here would make the sheet name
+     * a third-party provider for Apple's text. Pair it with
+     * [LyricSourceInput.activeFileId] being set.
+     */
     val hasOriginal: Boolean = false,
     val hasTranslation: Boolean = false,
     val hasRomanization: Boolean = false,

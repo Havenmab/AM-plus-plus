@@ -2,6 +2,8 @@ package dev.amenhancer.module.ui.source
 
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricLaneState
+import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceText
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
@@ -150,6 +152,24 @@ internal data class LyricsSourceBusy(
 
 /** Convenience accessors over the current snapshot used by the view layer. */
 internal fun LyricsSourceSnapshot?.laneState(lane: LyricLane) = this?.lane(lane)
+
+/**
+ * The source the sheet must describe for one lane.
+ *
+ * [LyricLaneState.displayed] is the document the page is showing right now;
+ * [LyricLaneState.selected] is only the behavioural choice, which differs while a
+ * stored choice has not taken effect and when the overlay store merely layers a
+ * translation on top of Apple's own document. The sheet prefers the displayed
+ * source and falls back to the choice when the host cannot tell, so a lane never
+ * ends up with no source line at all.
+ */
+internal fun LyricLaneState.displayedSource(): LyricSourceOption? = displayed ?: selected
+
+/**
+ * Apple's option names itself ("Apple Music（原生）"), so rendering its provider
+ * brand as a second badge would print the same name twice.
+ */
+internal fun LyricSourceOption.showsProviderBadge(): Boolean = kind != LyricSourceKind.APPLE
 
 /**
  * The user-facing text of an [ApplyResult]: the host owns the precise wording

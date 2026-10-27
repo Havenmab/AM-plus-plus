@@ -751,10 +751,13 @@ internal fun selectAutoLyricsFetch(
     return if (replacementFirst) {
         resolverFetch(appleMusicId) ?: enriched()
     } else {
-        // Apple already carries line or word timing: a search source must never replace it, so only
-        // the translation lane is added.  The resolver stays the fallback when enrichment yields
-        // nothing -- it may still reach the bundled providers, which are allowed to replace.
-        enriched() ?: resolverFetch(appleMusicId)
+        // Apple already carries line or word timing. Enrichment must then only *add the
+        // translation lane* (its overlay side effect) while the document stays Apple's:
+        // returning the merged document here made the auto session publish a custom entry,
+        // so the sheet reported the original lane as 自定义文件. The resolver is not a
+        // fallback for the same reason -- it replaces the document.
+        runCatching { enrich?.invoke(appleMusicId, displayedTtml) }
+        null
     }
 }
 

@@ -143,7 +143,10 @@ internal class LyricsSourceProbes(
                 return@runCatching OverlayLyricsCapability()
             }
             OverlayLyricsCapability(
-                hasOriginal = current == key && revision > 0L,
+                // The overlay never carries the original document: it holds the lanes the
+                // page shows *for* Apple's document. Reporting it as an original source made
+                // the sheet label Apple's own lyrics as 已写入歌词 / 自定义文件.
+                hasOriginal = false,
                 hasTranslation = overlay.hasTranslation(key),
                 hasRomanization = overlay.hasPronunciation(key),
                 hasWords = false,

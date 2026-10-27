@@ -66,10 +66,6 @@ internal class LyricsSourceSearch(
     /** A provider document with the timing precision its own data supports. */
     internal data class Document(val ttml: String, val hasWords: Boolean)
 
-    private companion object {
-        /** Upper bound for one search batch; late providers still log and are discarded. */
-        const val SEARCH_TIMEOUT_MS = 2_600L
-    }
 
     private val lineSources: List<SearchLyricsSource> = if (transport == null) {
         emptyList()
@@ -469,6 +465,9 @@ internal class LyricsSourceSearch(
         option.key.substringAfterLast(':').trim()
 
     private companion object {
+        /** Upper bound for one search batch; late providers still log and are discarded. */
+        const val SEARCH_TIMEOUT_MS = 2_600L
+
         const val SEARCH_PAGE_SIZE = 20
 
         fun providerIdOf(source: Source): String = when (source) {

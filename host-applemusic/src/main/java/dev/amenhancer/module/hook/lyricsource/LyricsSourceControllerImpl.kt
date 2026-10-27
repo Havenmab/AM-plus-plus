@@ -9,6 +9,7 @@ import dev.amenhancer.module.hook.AutoLyricsRuntime
 import dev.amenhancer.module.hook.CurrentSongIdentityCache
 import dev.amenhancer.module.hook.TtmlTimingPolicy
 import dev.amenhancer.module.hook.LyricsSourceCustomIndexBridge
+import dev.amenhancer.module.lyrics.online.LyricRecentSource
 import dev.amenhancer.module.hook.NativeLyricsTarget
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader

@@ -141,12 +141,20 @@ internal fun createLyricsSourceTarget(
         downloader = corpus,
         logger = logger,
     )
+    // Applied sources are remembered so the next search can rank them first.
+    val recents = LyricsSourceRecentsStore(File(directory, RECENTS_FILE), logger)
+    // One provider per thread: Lunabeat needs ~1.2 s while the GitHub corpora answer in ~100 ms.
+    val parallelSearchExecutor = java.util.concurrent.Executors.newFixedThreadPool(4) { task ->
+        Thread(task, "ampp-lyrics-search").apply { isDaemon = true }
+    }
     val search = LyricsSourceSearch(
         transport = lyricsTransport,
         lunabeat = lunabeat,
         amll = amll,
         amLyrics = amLyrics,
         executor = executor,
+        parallelExecutor = parallelSearchExecutor,
+        recentSources = recents::all,
         logger = logger,
     )
     val controller = LyricsSourceControllerImpl(
@@ -164,6 +172,7 @@ internal fun createLyricsSourceTarget(
         nativeRefresh = nativeLyrics,
         pronunciationToggle = LyricsSourcePronunciationToggle(nativeResolver),
         executor = executor,
+        recents = recents,
         logger = logger,
     )
     val menu = LyricsSourceMenuTarget(
@@ -224,6 +233,7 @@ private class LunabeatDiskCache(private val directory: File) : LunabeatCatalogCa
 }
 
 private const val STORAGE_DIRECTORY = "ampp-lyrics-source"
+private const val RECENTS_FILE = "recents.json"
 private const val LUNABEAT_DIRECTORY = "lunabeat"
 private const val AMLL_DIRECTORY = "amll"
 private const val AM_LYRICS_DIRECTORY = "am-lyrics"

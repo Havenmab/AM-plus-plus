@@ -62,6 +62,8 @@ internal class LyricsSourceSearchSection(
     private val titleInput: EditText
     private val statusContainer: LinearLayout
     private val resultsContainer: LinearLayout
+    private lateinit var recentRow: LinearLayout
+    private var lastRecentProviders: List<String> = emptyList()
     private var syncingInputs = false
     private var lastRenderedSearchState: LyricsSourceSearchState? = null
     private var lastRenderedPreviewState: LyricsSourcePreviewState? = null
@@ -85,6 +87,12 @@ internal class LyricsSourceSearchSection(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        recentRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(0, host.dp(activity, 8), 0, 0)
+        }
         val inputsRow = LinearLayout(activity).apply {
             orientation = if (host.isEmbeddedPhone(activity)) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
             setPadding(0, host.dp(activity, 10), 0, 0)
@@ -105,6 +113,7 @@ internal class LyricsSourceSearchSection(
                 host.embeddedSectionLabel(activity, LyricsSourceSheetText.searchTitle(locale)),
                 host.matchWidthWrapContent(),
             )
+            addView(recentRow, host.matchWidthWrapContent())
             addView(chipsRow, host.matchWidthWrapContent())
             addView(inputsRow, host.matchWidthWrapContent())
             addView(LinearLayout(activity).apply {
@@ -135,8 +144,30 @@ internal class LyricsSourceSearchSection(
         }
     }
 
+    /** "Recently used" quick picks: one tap re-searches with that provider pinned first. */
+    private fun renderRecentProviders() {
+        val providers = runCatching { controller.recentProviders() }.getOrDefault(emptyList())
+        if (providers == lastRecentProviders) return
+        lastRecentProviders = providers
+        recentRow.removeAllViews()
+        recentRow.visibility = if (providers.isEmpty()) View.GONE else View.VISIBLE
+        providers.forEach { providerId ->
+            val chip = host.textActionButton(activity, LyricSourceText.providerLabel(providerId, locale)) {
+                controller.selectRecentProvider(providerId)
+            }
+            recentRow.addView(
+                chip,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    host.dp(activity, 32),
+                ).apply { marginEnd = host.dp(activity, 6) },
+            )
+        }
+    }
+
     /** Updates chips, fields, status and result rows from the controller state. */
     fun render() {
+        renderRecentProviders()
         renderChips()
         syncInputs()
         renderStatus()

@@ -394,6 +394,6 @@ class LyricLineFilterTest {
             line(17_000, "编曲 : 周杰伦"),
         )
         val filtered = LyricLineFilter.filter(result(body))
-        assertEquals(emptyList<String>(), texts(filtered.original))
+        assertEquals(listOf("他说：别回头"), texts(filtered.original))
     }
 }

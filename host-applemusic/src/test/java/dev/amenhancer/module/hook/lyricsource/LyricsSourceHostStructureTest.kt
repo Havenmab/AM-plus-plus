@@ -177,7 +177,8 @@ class LyricsSourceHostStructureTest {
         val search = source("LyricsSourceSearch.kt")
         // LRC-style providers are converted, not filtered out: the writer keeps
         // word spans when the provider had them and declares line timing otherwise.
-        assertTrue(search.contains("AppleLyricTtmlWriter.from(result)"))
+        // The result is cleaned of provider credit/notice lines before it is written.
+        assertTrue(search.contains("AppleLyricTtmlWriter.from(clean)"))
         assertTrue(search.contains("AppleLyricTtmlWriter.build("))
         assertTrue(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
         assertTrue(search.contains("results += searchLineProviders(query, durationMs, lane)"))

@@ -176,13 +176,15 @@ object LyricLineFilter {
         // Pass 2: the opening block is a unit. Everything up to the LAST line the rules rejected
         // inside the leading window goes with it, so a provider header the rules cannot name (or a
         // stray production note between credits) cannot survive as a fake first lyric.
-        // Sweep only the *pure* opening block: the run of rejected lines from the very first
-        // line. A line the rules keep before that run is a lyric, and nothing after it is swept.
+        // Sweep only when the lane opens with junk: everything up to the last rejected line of
+        // the opening window goes, because providers put header/credit/production leftovers there
+        // without a recognisable shape. A lane whose first line is already a lyric is left alone.
         var lastJunk = -1
-        for (index in lines.indices) {
-            if (index >= LEADING_SCAN || lines[index].start > LEADING_WINDOW_MS) break
-            if (!rejected[index]) break
-            lastJunk = index
+        if (rejected[0]) {
+            for (index in lines.indices) {
+                if (index >= LEADING_SCAN || lines[index].start > LEADING_WINDOW_MS) break
+                if (rejected[index]) lastJunk = index
+            }
         }
 
         val kept = ArrayList<LyricsLine>(lines.size)

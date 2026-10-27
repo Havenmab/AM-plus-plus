@@ -48,6 +48,7 @@ fun BottomScrim(backdrop: Backdrop) {
         Modifier.fillMaxSize().drawBackdrop(
             backdrop = backdrop,
             shape = { RectangleShape },
+            downscaleFactor = if (GlassPolicy.TEXTURE_BLUR_ENABLED) GlassPolicy.TEXTURE_BLUR_DOWNSCALE else 1,
             effects = {
                 vibrancy()
                 val radius = GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx()

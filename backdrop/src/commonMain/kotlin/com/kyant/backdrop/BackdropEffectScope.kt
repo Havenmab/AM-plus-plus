@@ -17,6 +17,13 @@ sealed interface BackdropEffectScope : Density, RuntimeShaderCache {
 
     var padding: Float
 
+    /**
+     * How much smaller than the logical surface the effect layer is rasterised, 1 when the
+     * layer runs at full resolution. Effects that work in pixels (blur, refraction shaders)
+     * divide their distances by it so a downscaled layer keeps the same visual radius.
+     */
+    val rasterScale: Float get() = 1f
+
     var renderEffect: RenderEffect?
 }
 
@@ -27,6 +34,7 @@ internal abstract class BackdropEffectScopeImpl : BackdropEffectScope, RuntimeSh
     override var size: Size = Size.Unspecified
     override var layoutDirection: LayoutDirection = LayoutDirection.Ltr
     override var padding: Float = 0f
+    override var rasterScale: Float = 1f
     override var renderEffect: RenderEffect? = null
 
     private val runtimeShaderCache = RuntimeShaderCacheImpl()

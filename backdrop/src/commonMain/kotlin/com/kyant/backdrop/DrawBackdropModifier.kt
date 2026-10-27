@@ -17,9 +17,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -50,6 +52,9 @@ import com.kyant.backdrop.shadow.Shadow
 import com.kyant.backdrop.shadow.ShadowElement
 import dev.amenhancer.backdrop.traceBackdrop
 
+/** Highest layer downscale the AM++ option accepts (1 = full resolution). */
+internal const val MAX_DOWNSCALE_FACTOR = 4
+
 private val DefaultHighlight = { Highlight.Default }
 private val DefaultShadow = { Shadow.Default }
 private val DefaultOnDrawBackdrop: DrawScope.(DrawScope.() -> Unit) -> Unit = { it() }
@@ -62,6 +67,8 @@ fun Modifier.drawPlainBackdrop(
     exportedBackdrop: LayerBackdrop? = null,
     // Backing size only, including effect padding. Logical geometry and shader size stay live.
     minLayerSize: IntSize = IntSize.Zero,
+    // AM++: rasterise the effect layer at size / downscaleFactor; 1 keeps the original path.
+    downscaleFactor: Int = 1,
     onDrawBehind: (DrawScope.() -> Unit)? = null,
     onDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit = DefaultOnDrawBackdrop,
     onDrawSurface: (DrawScope.() -> Unit)? = null,
@@ -83,6 +90,7 @@ fun Modifier.drawPlainBackdrop(
                 effects = effects,
                 layerBlock = layerBlock,
                 minLayerSize = minLayerSize,
+                downscaleFactor = downscaleFactor,
                 exportedBackdrop = exportedBackdrop,
                 onDrawBehind = onDrawBehind,
                 onDrawBackdrop = onDrawBackdrop,
@@ -105,6 +113,8 @@ fun Modifier.drawBackdrop(
     exportedBackdrop: LayerBackdrop? = null,
     // A bounded expanded size avoids resizing the effect layer throughout a collapse animation.
     minLayerSize: IntSize = IntSize.Zero,
+    // AM++: rasterise the effect layer at size / downscaleFactor; 1 keeps the original path.
+    downscaleFactor: Int = 1,
     onDrawBehind: (DrawScope.() -> Unit)? = null,
     onDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit = DefaultOnDrawBackdrop,
     onDrawSurface: (DrawScope.() -> Unit)? = null,
@@ -157,6 +167,7 @@ fun Modifier.drawBackdrop(
                 layerBlock = layerBlock,
                 clipCompositingStrategy = clipCompositingStrategy,
                 minLayerSize = minLayerSize,
+                downscaleFactor = downscaleFactor,
                 exportedBackdrop = exportedBackdrop,
                 onDrawBehind = onDrawBehind,
                 onDrawBackdrop = onDrawBackdrop,
@@ -173,6 +184,7 @@ private class DrawBackdropElement(
     val layerBlock: (GraphicsLayerScope.() -> Unit)?,
     val clipCompositingStrategy: androidx.compose.ui.graphics.CompositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen,
     val minLayerSize: IntSize,
+    val downscaleFactor: Int,
     val exportedBackdrop: LayerBackdrop?,
     val onDrawBehind: (DrawScope.() -> Unit)?,
     val onDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit,
@@ -188,6 +200,7 @@ private class DrawBackdropElement(
             layerBlock = layerBlock,
             clipCompositingStrategy = clipCompositingStrategy,
             minLayerSize = minLayerSize,
+            downscaleFactor = downscaleFactor,
             exportedBackdrop = exportedBackdrop,
             onDrawBehind = onDrawBehind,
             onDrawBackdrop = onDrawBackdrop,
@@ -203,6 +216,7 @@ private class DrawBackdropElement(
         node.layerBlock = layerBlock
         node.clipCompositingStrategy = clipCompositingStrategy
         node.minLayerSize = minLayerSize
+        node.downscaleFactor = downscaleFactor
         if (node.exportedBackdrop != exportedBackdrop) {
             node.exportedBackdrop?.layerCoordinates = null
             node.exportedBackdrop = exportedBackdrop
@@ -222,6 +236,7 @@ private class DrawBackdropElement(
         properties["layerBlock"] = layerBlock
         properties["clipCompositingStrategy"] = clipCompositingStrategy
         properties["minLayerSize"] = minLayerSize
+        properties["downscaleFactor"] = downscaleFactor
         properties["exportedBackdrop"] = exportedBackdrop
         properties["onDrawBehind"] = onDrawBehind
         properties["onDrawBackdrop"] = onDrawBackdrop
@@ -239,6 +254,7 @@ private class DrawBackdropElement(
         if (layerBlock != other.layerBlock) return false
         if (clipCompositingStrategy != other.clipCompositingStrategy) return false
         if (minLayerSize != other.minLayerSize) return false
+        if (downscaleFactor != other.downscaleFactor) return false
         if (exportedBackdrop != other.exportedBackdrop) return false
         if (onDrawBehind != other.onDrawBehind) return false
         if (onDrawBackdrop != other.onDrawBackdrop) return false
@@ -255,6 +271,7 @@ private class DrawBackdropElement(
         result = 31 * result + (layerBlock?.hashCode() ?: 0)
         result = 31 * result + clipCompositingStrategy.hashCode()
         result = 31 * result + minLayerSize.hashCode()
+        result = 31 * result + downscaleFactor
         result = 31 * result + (exportedBackdrop?.hashCode() ?: 0)
         result = 31 * result + (onDrawBehind?.hashCode() ?: 0)
         result = 31 * result + onDrawBackdrop.hashCode()
@@ -271,6 +288,7 @@ private class DrawBackdropNode(
     var layerBlock: (GraphicsLayerScope.() -> Unit)?,
     var clipCompositingStrategy: androidx.compose.ui.graphics.CompositingStrategy,
     var minLayerSize: IntSize,
+    var downscaleFactor: Int,
     var exportedBackdrop: LayerBackdrop?,
     var onDrawBehind: (DrawScope.() -> Unit)?,
     var onDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit,
@@ -300,6 +318,7 @@ private class DrawBackdropNode(
         val canvas = drawContext.canvas
         val padding = padding
         val backingSize = drawContext.size
+        val rasterScale = downscaleFactor.coerceIn(1, MAX_DOWNSCALE_FACTOR).toFloat()
         // record() receives the backing size. Callbacks must still see the same logical size
         // (including padding) they would have seen without the minimum allocation.
         if (minLayerSize != IntSize.Zero) {
@@ -308,6 +327,8 @@ private class DrawBackdropNode(
                 effectScope.size.height.toInt() + padding.toInt() * 2
             ).toSize()
         }
+        // A downscaled raster maps logical coordinates into a smaller layer.
+        if (rasterScale != 1f) canvas.scale(1f / rasterScale, 1f / rasterScale)
         if (padding != 0f) canvas.translate(padding, padding)
         try {
             onDrawBackdrop {
@@ -329,22 +350,28 @@ private class DrawBackdropNode(
         val layer = graphicsLayer
         if (layer != null) {
             val padding = padding
+            val rasterScale = downscaleFactor.coerceIn(1, MAX_DOWNSCALE_FACTOR)
+            val scale = rasterScale.toFloat()
+            val backingWidth = ((size.width + padding * 2f) / scale).toInt().coerceAtLeast(1)
+            val backingHeight = ((size.height + padding * 2f) / scale).toInt().coerceAtLeast(1)
 
             traceBackdrop("AM++/backdrop/record") {
                 recordLayer(
                     layer,
                     size = IntSize(
-                        maxOf(size.width.toInt() + padding.toInt() * 2, minLayerSize.width),
-                        maxOf(size.height.toInt() + padding.toInt() * 2, minLayerSize.height)
+                        maxOf(backingWidth, minLayerSize.width / rasterScale),
+                        maxOf(backingHeight, minLayerSize.height / rasterScale)
                     ),
                     block = recordBackdropBlock
                 )
             }
 
             layer.topLeft =
-                if (padding != 0f) IntOffset(-padding.toInt(), -padding.toInt())
+                if (padding != 0f) IntOffset(-(padding / scale).toInt(), -(padding / scale).toInt())
                 else IntOffset.Zero
-            if (minLayerSize != IntSize.Zero) {
+            if (rasterScale != 1) {
+                scale(scale, scale, pivot = Offset.Zero) { drawLayer(layer) }
+            } else if (minLayerSize != IntSize.Zero) {
                 // A larger backing must not expose pixels beyond the original padded bounds.
                 val inset = padding.toInt().toFloat()
                 clipRect(-inset, -inset, size.width.toInt() + inset, size.height.toInt() + inset) {
@@ -414,6 +441,8 @@ private class DrawBackdropNode(
         if (!isRenderEffectSupported()) return
 
         traceBackdrop("AM++/effects/update") {
+            // Effects that work in layer pixels divide by this scale to keep their radius.
+            effectScope.rasterScale = downscaleFactor.coerceIn(1, MAX_DOWNSCALE_FACTOR).toFloat()
             effectScope.apply(effects)
             graphicsLayer?.renderEffect = effectScope.renderEffect
             padding = effectScope.padding

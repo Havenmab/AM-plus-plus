@@ -30,9 +30,12 @@ fun BackdropEffectScope.textureBlur(
     }
     if (!radiusPx.isFinite() || radiusPx <= 0f) return
 
-    val taps = TextureBlurKernel.taps(radiusPx, stepPx)
-    val reach = max(radiusPx, taps.offsetsPx.lastOrNull() ?: 0f)
-    padding = max(padding, reach)
+    // The effect runs in layer pixels, which may be downscaled by the draw path.
+    val layerScale = if (rasterScale.isFinite() && rasterScale >= 1f) rasterScale else 1f
+    val layerRadius = radiusPx / layerScale
+    val taps = TextureBlurKernel.taps(layerRadius, stepPx)
+    val reach = max(layerRadius, taps.offsetsPx.lastOrNull() ?: 0f)
+    padding = max(padding, reach * layerScale)
 
     // AGSL has a built-in `step()` function, so no uniform may be named `step`.
     val shader = runCatching {
@@ -46,7 +49,7 @@ fun BackdropEffectScope.textureBlur(
         return
     }
     runCatching {
-        shader.setFloatUniform("size", size.width, size.height)
+        shader.setFloatUniform("size", size.width / layerScale, size.height / layerScale)
         if (taps.pairCount > 0) shader.setFloatUniform("offsets", taps.offsetsPx)
         shader.setFloatUniform("weights", taps.weights)
     }

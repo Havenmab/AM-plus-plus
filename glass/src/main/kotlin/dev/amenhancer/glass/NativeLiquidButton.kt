@@ -58,7 +58,10 @@ fun NativeLiquidButton(
         else Color(0xFFFAFAFA).copy(alpha = 0.4f)
     val scope = rememberCoroutineScope()
     val highlight = remember(scope) { InteractiveHighlight(scope) }
-    val material = if (minLayerSize != IntSize.Zero) {
+    // A downscaled layer changes the pixel size the cached Skia blur was built for, so the
+    // cached prefix steps aside and the texture path (which divides by rasterScale) takes over.
+    val downscale = if (GlassPolicy.TEXTURE_BLUR_ENABLED) GlassPolicy.TEXTURE_BLUR_DOWNSCALE else 1
+    val material = if (minLayerSize != IntSize.Zero && downscale == 1) {
         val radiusPx = with(LocalDensity.current) { panelBlur.toPx() }
         remember(radiusPx) { VibrantBlur(radiusPx) }
     } else null
@@ -76,6 +79,7 @@ fun NativeLiquidButton(
         Modifier.fillMaxSize().drawBackdrop(
             backdrop = backdrop,
             minLayerSize = material?.paddedSize(minLayerSize) ?: IntSize.Zero,
+            downscaleFactor = downscale,
             clipCompositingStrategy = if (autoClip) androidx.compose.ui.graphics.CompositingStrategy.Auto
                 else androidx.compose.ui.graphics.CompositingStrategy.Offscreen,
             shape = { if (expansion == 0f) capsuleShape else RoundedCornerShape(lerp(miniHeightDp / 2f, 24f, expansion).dp) },

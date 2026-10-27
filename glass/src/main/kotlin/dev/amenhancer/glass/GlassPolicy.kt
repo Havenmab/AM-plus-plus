@@ -83,6 +83,8 @@ object GlassPolicy {
     const val TEXTURE_BLUR_ENABLED = true
     /** Adds a sub-LSB dither to the texture blur, which hides banding in dark scenes. */
     const val TEXTURE_BLUR_DITHER = true
+    /** Rasterises the effect layer at 1/this size, cutting blur fragment work quadratically. */
+    const val TEXTURE_BLUR_DOWNSCALE = 2
 
     fun supports(sdk: Int, verifiedHost: Boolean, tablet: Boolean) =
         !tablet && supports(sdk, verifiedHost, GlassHostForm.PhoneStacked)

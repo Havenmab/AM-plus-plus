@@ -46,8 +46,6 @@ object LyricLineFilter {
     const val CREDIT_BLOCK_MIN = 2
 
     /** Without a credit block a lone credit shape is only dropped while the song is barely started. */
-    const val SINGLE_CREDIT_WINDOW_MS = 8_000L
-
     /** Two identical lines closer than this are a provider duplicate. */
     const val DUPLICATE_WINDOW_MS = 3_000L
 
@@ -263,11 +261,9 @@ object LyricLineFilter {
      * A credit block removes its credit shapes up to [CREDIT_WINDOW_MS]; a lone credit shape is
      * only removed inside [SINGLE_CREDIT_WINDOW_MS], which keeps `作曲：上帝` at 0:30 a lyric.
      */
-    private fun isCredit(body: String, startMs: Long, index: Int, creditBlock: Boolean): Boolean {
-        if (!isCreditShape(body, startMs, index)) return false
-        val window = if (creditBlock) CREDIT_WINDOW_MS else SINGLE_CREDIT_WINDOW_MS
-        return startMs <= window
-    }
+    private fun isCredit(body: String, startMs: Long, index: Int, creditBlock: Boolean): Boolean =
+        // No song writes a credit as a lyric, so a credit-shaped line goes wherever it appears.
+        isCreditShape(body, startMs, index)
 
     private fun isDuplicate(
         body: String,

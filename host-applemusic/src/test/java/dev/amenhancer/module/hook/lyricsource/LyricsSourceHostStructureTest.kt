@@ -518,15 +518,18 @@ class LyricsSourceHostStructureTest {
         assertTrue(persistence.contains("const val MAX_TTML_BYTES = 512 * 1024"))
         assertTrue(persistence.contains("File(file.parentFile, file.name + \".tmp\")"))
         assertTrue(persistence.contains("pending.renameTo(file)"))
-        // replay goes through the public store API, from the merged document's own lanes
-        assertTrue(persistence.contains("DisplayedLyricPublication.lines(record.ttml)"))
+        // v2 keeps the two lanes apart instead of re-deriving them from one blob, so a stored
+        // translation can never come back as a romanization.
+        assertTrue(persistence.contains("\"translations\""))
+        assertTrue(persistence.contains("\"romanizations\""))
+        assertTrue(persistence.contains("AppleLyricTtmlReader.read("))
         assertTrue(persistence.contains("overlay.update("))
         assertTrue(persistence.contains("translationSource = record.translationSource"))
         assertTrue(persistence.contains("originalSource = record.originalSource"))
         // and the controller restores before probing, then saves after an apply
         val text = controller()
         assertTrue(text.contains("persistence.restoreInto(songId, overlay)"))
-        assertTrue(text.contains("persistence.save("))
+        assertTrue(text.contains("persistence.saveMergedDocument("))
         assertTrue(source("LyricsSourceWiring.kt").contains("OVERLAY_FILE_NAME = \"overlay.json\""))
         // a restart must not turn a stored online key into "not supported": the apply
         // re-fetches the body from the key (provider id + remote id) every time

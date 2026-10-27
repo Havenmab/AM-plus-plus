@@ -123,7 +123,10 @@ object LyricLineFilter {
         line.words.joinToString("") { it.text }.trim()
 
     private fun isPlaceholder(text: String): Boolean =
-        text.isEmpty() || PLACEHOLDER.matches(text)
+        text.isEmpty() ||
+            PLACEHOLDER.matches(text) ||
+            // A line with no letter, digit or CJK glyph is decoration (`♪`, `...`, `——`).
+            text.none { it.isLetterOrDigit() }
 
     private fun isPlatformNoise(text: String): Boolean =
         PLATFORM_NOISE.any { marker -> text.contains(marker, ignoreCase = true) }

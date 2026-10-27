@@ -300,7 +300,7 @@ class LyricsSourceHostStructureTest {
         val search = source("LyricsSourceSearch.kt")
         assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) {"))
         assertTrue(search.contains("searchAmll(query)"))
-        assertTrue(search.contains("results += searchAmLyrics(query, songId)"))
+        assertTrue(search.contains("searchAmLyrics(query, songId)"))
         assertTrue(search.contains("Source.AMLL -> LyricSourceProviders.AMLL"))
         assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
         assertTrue(search.contains("entry.toSearchResult()"))

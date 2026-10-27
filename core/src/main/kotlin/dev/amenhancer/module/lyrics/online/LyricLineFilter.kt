@@ -48,6 +48,9 @@ object LyricLineFilter {
     /** Lines inspected for the opening credit/header block. */
     const val LEADING_SCAN = 20
 
+    /** A block sweep only applies when the junk starts within the first lines of the lane. */
+    const val OPENING_BLOCK_START = 4
+
     /** Only the first minute can open with a block; later lines are lyrics. */
     const val LEADING_WINDOW_MS = 60_000L
 
@@ -173,13 +176,18 @@ object LyricLineFilter {
         // Pass 2: the opening block is a unit. Everything up to the LAST line the rules rejected
         // inside the leading window goes with it, so a provider header the rules cannot name (or a
         // stray production note between credits) cannot survive as a fake first lyric.
+        val firstRejected = rejected.indexOfFirst { it }
+        // Only an opening block is swept: junk that starts mid-song is a stray line, not a header,
+        // and sweeping the prefix there would delete real lyrics in front of it.
         var lastJunk = -1
         var scanned = 0
+        if (firstRejected in 0..OPENING_BLOCK_START) {
         for (index in lines.indices) {
             if (scanned >= LEADING_SCAN) break
             scanned += 1
             if (lines[index].start > LEADING_WINDOW_MS) break
             if (rejected[index]) lastJunk = index
+        }
         }
 
         val kept = ArrayList<LyricsLine>(lines.size)

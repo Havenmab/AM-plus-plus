@@ -51,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import dev.amenhancer.backdrop.VibrantBlur
+import dev.amenhancer.glass.glassBackdropBlur
+import dev.amenhancer.glass.glassDownscaleFactor
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -650,13 +652,11 @@ private fun glassPanelMaterial(
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
+    downscaleFactor = glassDownscaleFactor(),
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { GlassCollapseShapes.capsule(material != null) },
     effects = {
-        if (material == null) {
-            vibrancy()
-            blur(panelBlur.toPx())
-        } else material.applyTo(this)
+        glassBackdropBlur(panelBlur.toPx(), material)
         lens(24f.dp.toPx(), 24f.dp.toPx())
     },
     layerBlock = {
@@ -677,12 +677,10 @@ private fun glassRefractionMaterial(
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { GlassCollapseShapes.capsule(material != null) },
+    downscaleFactor = glassDownscaleFactor(),
     effects = {
         val progress = dampedDragAnimation.pressProgress
-        if (material == null) {
-            vibrancy()
-            blur(panelBlur.toPx())
-        } else material.applyTo(this)
+        glassBackdropBlur(panelBlur.toPx(), material)
         lens(
             24f.dp.toPx() * progress,
             24f.dp.toPx() * progress

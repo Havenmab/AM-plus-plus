@@ -429,10 +429,11 @@ private fun BoxScope.DetachedSearchControl(
             Modifier.drawBackdrop(
                 backdrop = backdrop,
                 minLayerSize = material.paddedSize(minLayerSize),
+                downscaleFactor = glassDownscaleFactor(),
                 clipCompositingStrategy = CompositingStrategy.Auto,
                 shape = { GlassCollapseShapes.capsule(true) },
                 effects = {
-                    material.applyTo(this)
+                    glassBackdropBlur(radiusPx, material)
                     val edge = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
                     lens(edge, edge)
                 },

@@ -19,15 +19,12 @@ import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.utils.InteractiveHighlight
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.amenhancer.backdrop.VibrantBlur
-import dev.amenhancer.backdrop.textureBlur
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -84,15 +81,7 @@ fun NativeLiquidButton(
                 else androidx.compose.ui.graphics.CompositingStrategy.Offscreen,
             shape = { if (expansion == 0f) capsuleShape else RoundedCornerShape(lerp(miniHeightDp / 2f, 24f, expansion).dp) },
             effects = {
-                if (material == null) {
-                    vibrancy()
-                    val radius = panelBlur.toPx()
-                    if (GlassPolicy.TEXTURE_BLUR_ENABLED) {
-                        textureBlur(radius, dither = GlassPolicy.TEXTURE_BLUR_DITHER)
-                    } else {
-                        blur(radius)
-                    }
-                } else material.applyTo(this)
+                glassBackdropBlur(panelBlur.toPx(), material)
                 // Keep the capsule center outside refraction, including compact layouts.
                 val refraction = minOf(24f.dp.toPx(), size.minDimension * 0.375f)
                 lens(refraction, refraction)

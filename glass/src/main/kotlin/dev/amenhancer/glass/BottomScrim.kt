@@ -16,9 +16,6 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.vibrancy
-import dev.amenhancer.backdrop.textureBlur
 
 private fun smoothstep(value: Float): Float {
     val t = value.coerceIn(0f, 1f)
@@ -50,13 +47,7 @@ fun BottomScrim(backdrop: Backdrop) {
             shape = { RectangleShape },
             downscaleFactor = if (GlassPolicy.TEXTURE_BLUR_ENABLED) GlassPolicy.TEXTURE_BLUR_DOWNSCALE else 1,
             effects = {
-                vibrancy()
-                val radius = GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx()
-                if (GlassPolicy.TEXTURE_BLUR_ENABLED) {
-                    textureBlur(radius, dither = GlassPolicy.TEXTURE_BLUR_DITHER)
-                } else {
-                    blur(radius)
-                }
+                glassBackdropBlur(GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx(), null)
             },
             highlight = null,
             shadow = null,

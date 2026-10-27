@@ -43,12 +43,6 @@ object LyricLineFilter {
     const val CREDIT_BLOCK_SCAN = 20
 
     /** How many credit-shaped lines inside that scan turn the lane into a "has credits" lane. */
-    /** Lines inspected for the opening credit/header block. */
-    const val LEADING_SCAN = 20
-
-    /** Only the first minute can carry a block; later lines are lyrics. */
-    const val LEADING_WINDOW_MS = 60_000L
-
     const val CREDIT_BLOCK_MIN = 2
 
     /** Without a credit block a lone credit shape is only dropped while the song is barely started. */
@@ -172,17 +166,16 @@ object LyricLineFilter {
                 (identityHeader && isHeader(body, lines[index].start, songTitle, songArtist))
         }
 
-        // Pass 2: everything before the last rejected line of the opening block is part of that
-        // block (a provider header or a credit line the rules did not recognise), so it goes too.
-        // The block ends at the last rejection inside the leading window; later lines are never
-        // touched by this rule, so a real lyric that survives is never collateral damage.
-        var lastRejectedInLead = -1
+        // Pass 2: the opening block is a unit. Everything up to the LAST line the rules rejected
+        // inside the leading window goes with it, so a provider header the rules cannot name (or a
+        // stray production note between credits) cannot survive as a fake first lyric.
+        var lastJunk = -1
         var scanned = 0
         for (index in lines.indices) {
             if (scanned >= LEADING_SCAN) break
             scanned += 1
             if (lines[index].start > LEADING_WINDOW_MS) break
-            if (rejected[index]) lastRejectedInLead = index
+            if (rejected[index]) lastJunk = index
         }
 
         val kept = ArrayList<LyricsLine>(lines.size)
@@ -190,7 +183,7 @@ object LyricLineFilter {
         var previousStart = -DUPLICATE_WINDOW_MS - 1L
         for (index in lines.indices) {
             if (rejected[index]) continue
-            if (index <= lastRejectedInLead) continue
+            if (index <= lastJunk) continue
             val line = lines[index]
             val body = bodies[index]
             if (isDuplicate(body, line.start, previousBody, previousStart)) continue
@@ -200,6 +193,7 @@ object LyricLineFilter {
         }
         return kept
     }
+
     private fun text(line: LyricsLine): String =
         line.words.joinToString("") { word -> word.text }.trim()
 
@@ -249,11 +243,21 @@ object LyricLineFilter {
             (startMs <= CREDIT_WINDOW_MS || index < CREDIT_BLOCK_SCAN) &&
             matchesCreditKey(body)
 
-    private fun matchesCreditKey(body: String): Boolean =
-        CREDIT_ZH.containsMatchIn(body) ||
-            CREDIT_EN_BY.containsMatchIn(body) ||
-            CREDIT_EN_RECORDED.containsMatchIn(body) ||
-            CREDIT_EN_VOCALS.matches(body)
+    private fun matchesCreditKey(body: String): Boolean {
+        val probe = flat(body)
+        return CREDIT_ZH.containsMatchIn(probe) ||
+            CREDIT_EN_BY.containsMatchIn(probe) ||
+            CREDIT_EN_RECORDED.containsMatchIn(probe) ||
+            CREDIT_EN_VOCALS.matches(probe)
+    }
+
+    /**
+     * Providers mix ASCII, non-breaking and ideographic spaces (`作词　周杰伦`); Java spells out
+     * only the ASCII one in `\s`, so the ideographic space is folded before matching. The line
+     * itself keeps its original text.
+     */
+    private fun flat(body: String): String =
+        body.replace('\u3000', ' ').replace('\u00A0', ' ')
 
     /**
      * A credit block removes its credit shapes up to [CREDIT_WINDOW_MS]; a lone credit shape is
@@ -287,17 +291,18 @@ object LyricLineFilter {
     ): Boolean {
         val title = songTitle?.trim().orEmpty()
         val artist = songArtist?.trim().orEmpty()
+        val probe = flat(body)
         if ((title.isNotEmpty() || artist.isNotEmpty()) &&
             startMs <= CREDIT_WINDOW_MS &&
-            matchesIdentity(body, title, artist)
+            matchesIdentity(probe, title, artist)
         ) {
             return true
         }
         // No identity (or a header that disagrees with it): the shape alone has to earn the drop,
         // so the line must open the lane and carry the one separator a `歌名 - 歌手` header has.
         return startMs <= HEADER_WINDOW_MS &&
-            body.length <= HEADER_MAX_LENGTH &&
-            isTitleArtistShape(body)
+            probe.length <= HEADER_MAX_LENGTH &&
+            isTitleArtistShape(probe)
     }
 
     private fun matchesIdentity(body: String, title: String, artist: String): Boolean {

@@ -4,6 +4,7 @@ import dev.amenhancer.module.hook.TtmlTimingPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
+import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.KuwoSource
 import dev.amenhancer.module.lyrics.online.LyricsResult
 import dev.amenhancer.module.lyrics.online.NeSource
@@ -288,7 +289,12 @@ internal class LyricsSourceSearch(
      * LRC body rendered through the module's own writer. Null when the provider
      * no longer has the song.
      */
-    fun documentFor(option: LyricSourceOption, durationMs: Long): Document? {
+    fun documentFor(
+        option: LyricSourceOption,
+        durationMs: Long,
+        songTitle: String? = null,
+        songArtist: String? = null,
+    ): Document? {
         if (option.kind != LyricSourceKind.ONLINE) return null
         if (option.providerId == LyricSourceProviders.AM_LYRICS) {
             val entry = amLyrics?.entryFor(remoteIdOf(option)) ?: return null
@@ -307,7 +313,8 @@ internal class LyricsSourceSearch(
             return Document(ttml = ttml, hasWords = hasWords)
         }
         val result = fetchResult(option) ?: return null
-        val lines = runCatching { AppleLyricTtmlWriter.from(result) }.getOrNull() ?: return null
+        val clean = LyricLineFilter.filter(result, songTitle, songArtist)
+        val lines = runCatching { AppleLyricTtmlWriter.from(clean) }.getOrNull() ?: return null
         if (lines.isEmpty()) return null
         val ttml = runCatching {
             AppleLyricTtmlWriter.build(

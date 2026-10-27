@@ -535,6 +535,52 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `a translation stays a translation after a restart`() {
+        val persistence = source("LyricsSourceOverlayPersistence.kt")
+        // the two lanes are persisted as independent arrays, not one blob
+        assertTrue(persistence.contains("val translations: List<TranslationLine>"))
+        assertTrue(persistence.contains("val romanizations: List<RomanizationLine>"))
+        assertTrue(persistence.contains("\"translations\", JSONArray().apply"))
+        assertTrue(persistence.contains("\"romanizations\", JSONArray().apply"))
+        // and never derived from each other on restore
+        assertTrue(persistence.contains("translation = translation?.translation,"))
+        assertTrue(persistence.contains("roma = romanization?.romanization,"))
+        assertTrue(persistence.contains("translationSource = record.translationSource.takeIf { record.translations.isNotEmpty() }"))
+        assertTrue(persistence.contains("pronunciationSource = record.pronunciationSource.takeIf { record.romanizations.isNotEmpty() }"))
+        // both lanes go in ONE update call (a second call would replace the first)
+        assertTrue(persistence.contains("overlay.update("))
+        assertFalse(persistence.contains("publishDisplayed("))
+        // the apply saves by splitting the merged document's two lanes
+        assertTrue(controller().contains("persistence.saveMergedDocument("))
+        assertTrue(persistence.contains("AppleLyricTtmlReader.read(mergedTtml)"))
+    }
+
+    @Test
+    fun `an enriched translation shows its provider, not a custom file`() {
+        // the provider is recorded on the overlay lane and read back by the probes
+        val session = appSource("hook/AutoLyricsReplacementSession.kt")
+        assertTrue(session.contains("translationSource = outcome.translationSource"))
+        assertTrue(session.contains("originalSource = customSourceTag(outcome.source)"))
+        val text = controller()
+        assertTrue(text.contains("translationSource = search.customSourceToken(option.providerId)"))
+        assertTrue(text.contains("persistence.saveMergedDocument("))
+        val probes = source("LyricsSourceProbes.kt")
+        assertTrue(probes.contains("translationSource = overlay.translationSource(key)"))
+        // and the original lane is never claimed by the overlay
+        assertTrue(probes.contains("hasOriginal = false,"))
+    }
+
+    @Test
+    fun `the romanization lane is Apple's unless the overlay carries it`() {
+        val probes = source("LyricsSourceProbes.kt")
+        // a custom document never serves that lane ...
+        assertTrue(probes.contains("hasRomanization = false,"))
+        assertFalse(probes.contains("parsed.any { !it.romanization.isNullOrBlank() }"))
+        // ... only content the store actually holds does
+        assertTrue(probes.contains("hasRomanization = overlay.hasPronunciation(key)"))
+    }
+
+    @Test
     fun `auto completion keeps Apple's document and only fills the translation lane`() {
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
         // Apple's document already scrolls: enrichment may only add the lane, never

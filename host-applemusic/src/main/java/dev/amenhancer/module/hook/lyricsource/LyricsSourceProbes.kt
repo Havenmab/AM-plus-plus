@@ -88,9 +88,12 @@ internal class LyricsSourceProbes(
                 hasWords = lines?.let { parsed -> parsed.any { it.words.size >= 2 } } ?: false,
                 hasTranslation = lines?.let { parsed -> parsed.any { !it.translation.isNullOrBlank() } }
                     ?: false,
-                hasRomanization = lines?.let { parsed ->
-                    parsed.any { !it.romanization.isNullOrBlank() }
-                } ?: false,
+                // A custom document never offers the romanization lane: under the
+                // Apple-only policy that lane is Apple's own, and a document-based
+                // transliteration is published into the overlay by the displayed-document
+                // path instead. Offering it here produced a "自定义文件 / 使用 Apple 官方"
+                // pair on a lane Apple already serves.
+                hasRomanization = false,
                 // Unknown (no document read) keeps core's "assume a timeline" default:
                 // only an observed static document may report false.
                 hasTiming = document?.let { ttml ->

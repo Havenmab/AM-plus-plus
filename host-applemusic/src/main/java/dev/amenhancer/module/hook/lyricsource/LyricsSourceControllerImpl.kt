@@ -842,19 +842,18 @@ internal class LyricsSourceControllerImpl(
             pronunciationSource = overlay.pronunciationSource(songId.toString()),
             pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
         )
-        // Remember the merged document so the lanes can be replayed after a restart; the
-        // same lines are what DisplayedLyricPublication turns back into the store.
+        // Remember the merged document so the lanes can be replayed after a restart. The
+        // store keeps translation and romanization as independent lanes, so the two are
+        // split here and persisted apart (a single blob re-derived them wrongly).
         if (changed) {
             runCatching {
-                persistence.save(
-                    LyricsSourceOverlayPersistence.Record(
-                        songId = songId,
-                        ttml = outcome.ttml,
-                        translationSource = search.customSourceToken(option.providerId),
-                        originalSource = overlay.originalSource(songId.toString()),
-                        pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
-                        updatedAt = System.currentTimeMillis(),
-                    ),
+                persistence.saveMergedDocument(
+                    songId = songId,
+                    mergedTtml = outcome.ttml,
+                    translationSource = search.customSourceToken(option.providerId),
+                    pronunciationSource = overlay.pronunciationSource(songId.toString()),
+                    originalSource = overlay.originalSource(songId.toString()),
+                    pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
                 )
             }.onSuccess { saved -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + saved) }
         }

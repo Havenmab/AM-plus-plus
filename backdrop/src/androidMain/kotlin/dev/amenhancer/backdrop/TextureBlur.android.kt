@@ -31,20 +31,35 @@ fun BackdropEffectScope.textureBlur(
     if (!radiusPx.isFinite() || radiusPx <= 0f) return
 
     val taps = TextureBlurKernel.taps(radiusPx, downscale)
-    // Sampling reaches one pair past the last offset; keep the edge pixels inside the layer.
-    padding = max(padding, radiusPx + taps.downscale)
+    // The kernel samples up to pairCount * grid pixels out; keep those inside the layer so
+    // the clamp never folds the edge back into the blur.
+    val reach = max(radiusPx, taps.pairCount.toFloat() * taps.downscale)
+    padding = max(padding, reach)
 
-    val shader = obtainRuntimeShader(
-        key = "AMPP_TextureBlur_" + taps.pairCount + "_" + taps.downscale + "_" + dither,
-        string = shaderSource(taps.pairCount, taps.downscale, dither),
-    )
-    shader.setFloatUniform("step", taps.downscale.toFloat())
+    // AGSL has a built-in `step()` function, so the grid uniform must not be called `step`.
+    val shader = runCatching {
+        obtainRuntimeShader(
+            key = "AMPP_TextureBlur_" + taps.pairCount + "_" + taps.downscale + "_" + dither,
+            string = shaderSource(taps.pairCount, taps.downscale, dither),
+        )
+    }.getOrNull()
+    if (shader == null) {
+        // A shader the driver rejects must never take the process down.
+        blur(radiusPx)
+        return
+    }
+    shader.setFloatUniform("grid", taps.downscale.toFloat())
     shader.setFloatUniform("size", size.width, size.height)
     if (taps.pairCount > 0) {
         shader.setFloatUniform("offsets", taps.offsetsPx)
     }
     shader.setFloatUniform("weights", taps.weights)
-    effect(RuntimeShaderEffect(shader, "content"))
+    val runtimeEffect = runCatching { RuntimeShaderEffect(shader, "content") }.getOrNull()
+    if (runtimeEffect == null) {
+        blur(radiusPx)
+        return
+    }
+    effect(runtimeEffect)
 }
 
 private fun shaderSource(pairCount: Int, downscale: Int, dither: Boolean): String {
@@ -53,7 +68,7 @@ private fun shaderSource(pairCount: Int, downscale: Int, dither: Boolean): Strin
     } else {
         buildString {
             append("    for (int i = 0; i < ").append(pairCount).append("; i++) {\n")
-            append("        float2 d = float2(offsets[i] * step, 0.0);\n")
+            append("        float2 d = float2(offsets[i] * grid, 0.0);\n")
             append("        color += (content.eval(clamp(c + d, lo, hi)) + content.eval(clamp(c - d, lo, hi))) * half(weights[i + 1]);\n")
             append("    }\n")
         }
@@ -66,7 +81,7 @@ private fun shaderSource(pairCount: Int, downscale: Int, dither: Boolean): Strin
     }
     val header = "uniform shader content;\n" +
         "uniform float2 size;\n" +
-        "uniform float step;\n" +
+        "uniform float grid;\n" +
         // AGSL rejects a zero-length uniform array, so the center-only kernel omits it.
         (if (pairCount > 0) "uniform float offsets[" + pairCount + "];\n" else "") +
         "uniform float weights[" + (pairCount + 1) + "];\n"

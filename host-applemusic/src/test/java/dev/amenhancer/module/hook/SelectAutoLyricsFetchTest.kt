@@ -100,15 +100,17 @@ class SelectAutoLyricsFetchTest {
             },
         )
 
-        assertEquals("merged", result?.ttml)
-        assertEquals(ONLINE_TRANSLATION_LYRIC_SOURCE, result?.source)
+        // A document that already has timing keeps Apple's body: enrichment only fills the
+        // translation/romanization lanes through its overlay side effect, so the fetch returns
+        // no replacement at all.
+        assertEquals(null, result)
         assertEquals(42L, seenId)
         assertEquals(TIMED, seenTtml)
         assertEquals(0, resolverCalls)
     }
 
     @Test
-    fun `a failed enrichment on a timed document falls back to the resolver`() {
+    fun `a failed enrichment on a timed document still never replaces it`() {
         var resolverCalls = 0
 
         val result = selectAutoLyricsFetch(
@@ -121,12 +123,14 @@ class SelectAutoLyricsFetchTest {
             },
         )
 
-        assertEquals("resolved", result?.ttml)
-        assertEquals(1, resolverCalls)
+        // Losing the translation lane is better than swapping Apple's document for an
+        // online body: the panel would then report the whole song as a custom file.
+        assertEquals(null, result)
+        assertEquals(0, resolverCalls)
     }
 
     @Test
-    fun `a throwing enrichment on a timed document falls back to the resolver`() {
+    fun `a throwing enrichment on a timed document still never replaces it`() {
         var resolverCalls = 0
 
         val result = selectAutoLyricsFetch(
@@ -139,8 +143,8 @@ class SelectAutoLyricsFetchTest {
             },
         )
 
-        assertEquals("resolved", result?.ttml)
-        assertEquals(1, resolverCalls)
+        assertEquals(null, result)
+        assertEquals(0, resolverCalls)
     }
 
     @Test

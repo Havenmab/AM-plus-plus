@@ -562,7 +562,12 @@ class LyricsSourceHostStructureTest {
     fun `an enriched translation shows its provider, not a custom file`() {
         // the provider is recorded on the overlay lane and read back by the probes
         val session = appSource("hook/AutoLyricsReplacementSession.kt")
-        assertTrue(session.contains("translationSource = outcome.translationSource"))
+        // the store keeps the module's own source vocabulary ("qq"), not the
+        // enrichment's provider enum name ("QM"): the catalog maps the former back
+        // to a platform name and degrades the latter to "自定义文件".
+        assertTrue(session.contains("translationSource = laneProvider(outcome, outcome.translationSource)"))
+        assertTrue(session.contains("pronunciationSource = laneProvider(outcome, outcome.pronunciationSource)"))
+        assertTrue(session.contains("private fun laneProvider("))
         assertTrue(session.contains("originalSource = customSourceTag(outcome.source)"))
         val text = controller()
         assertTrue(text.contains("translationSource = search.customSourceToken(option.providerId)"))

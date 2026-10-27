@@ -19,6 +19,15 @@ package dev.amenhancer.module.lyrics.online
  * Romanization is only trimmed: HLE does not sanitize it, and a slash-only
  * pronunciation is (weirdly) still treated as content, which is preserved here
  * rather than "fixed".
+ *
+ * The lanes are then re-homed by [LyricLaneClassifier], because a provider's
+ * field name does not describe its content: QQ Music's `trans` is the **reading**
+ * (kana or romaji) for most Japanese songs — Lemon's `trans` is a `[kana:…]` tag
+ * plus romaji — and a "roma" column occasionally carries a Chinese translation.
+ * Anything that is not a Chinese translation leaves the translation lane (moving
+ * into an empty romanization lane when it is that line's reading), so "补全歌词
+ * 翻译与发音" can no longer publish a romanization as a translation or the other
+ * way round.
  */
 object OnlineTranslationExtraction {
 
@@ -30,14 +39,26 @@ object OnlineTranslationExtraction {
             line.start to text(line)
         }
         return result.original.map { line ->
-            OnlineTranslationLine(
-                startTimeMs = line.start,
-                content = text(line),
+            val content = text(line)
+            // The provider's field names are not the content: QQ's `trans` is the
+            // **reading** (kana/romaji) for most Japanese songs, and a "roma" column
+            // occasionally holds a Chinese translation. [LyricLaneClassifier] decides
+            // from the text itself and re-homes a swapped pair, so every consumer
+            // below sees a translation lane that really holds Chinese and a
+            // romanization lane that really holds kana/romaji.
+            val lanes = LyricLaneClassifier.rebalance(
                 translation = OnlineTranslationContentPolicy.sanitize(
                     translationsByStart[line.start],
                 ),
                 romanization = romanizationsByStart[line.start]
                     ?.takeIf(String::isNotEmpty),
+                original = content,
+            )
+            OnlineTranslationLine(
+                startTimeMs = line.start,
+                content = content,
+                translation = lanes.translation,
+                romanization = lanes.romanization,
             )
         }
     }

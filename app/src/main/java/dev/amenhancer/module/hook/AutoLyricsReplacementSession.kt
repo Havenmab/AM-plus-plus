@@ -19,6 +19,9 @@ import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
+import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
+import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
+import dev.amenhancer.module.lyrics.online.NativeLyricLine
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
@@ -49,6 +52,9 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 
 private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
+
+/** What a per-lane diagnostic prints when no provider supplied that lane. */
+private const val LANE_NONE = "none"
 
 /**
  * The single online chain plus the composite that owns it. One object serves
@@ -104,11 +110,20 @@ internal fun buildOnlineLyricsChain(
  * [logger] receives the bounded per-track decision lines through the module's
  * existing log channel.
  *
- * The single 「补全歌词翻译与发音」 opt-in now drives the **translation** lane only:
- * the third-party pronunciation lane has been removed, so a provider's
- * romanization column is read past and never published. Apple's own pronunciation
- * is delivered by the native lyric-model hooks, and a song Apple itself gives no
- * pronunciation shows no romanization at all.
+ * The single 「补全歌词翻译与发音」 opt-in fills the lanes of the document Apple is
+ * showing. Which lane a piece of text belongs to is decided by
+ * [LyricLaneClassifier], never by the provider's field name: QQ Music answers a
+ * Japanese song's `trans` request with the **reading** (kana and romaji), and
+ * writing that into the translation lane is what made the page render a
+ * romanization under 翻译 while 「显示发音」 had nothing to show. A reading is
+ * published as pronunciation only, Chinese as translation only, so the two
+ * switches Apple derives from the overlay can never describe each other's lane.
+ *
+ * The provider of each lane is recorded with it, in the module's own source
+ * vocabulary ([CustomLyricsSources]) that the lyrics-source sheet maps back to a
+ * platform name. A lane no provider supplied — Apple's own preserved
+ * romanization — keeps no provider, so the sheet never attributes Apple's text
+ * to a platform.
  *
  * The `rawTtml` this receives is Apple's own parsed document, so the lane only
  * runs once Apple has parsed the displayed document — in practice once the
@@ -122,9 +137,9 @@ internal fun translationEnricher(
     currentTrack: () -> CurrentSongDetails?,
     logger: (String) -> Unit = {},
     /**
-     * Timing-keyed native-model overlay. On success the merged per-line
-     * translations are written here so the host's lyric-model getters can deliver
-     * the translation lane even when Apple renders no track from the document.
+     * Timing-keyed native-model overlay. On success the merged per-line lanes are
+     * written here so the host's lyric-model getters can deliver them even when
+     * Apple renders no track from the document.
      */
     overlay: NativeLyricOverlayStore? = null,
 ): (Long, String) -> String? {
@@ -142,19 +157,109 @@ internal fun translationEnricher(
                 // A song whose source the user picked — including "restore Apple" — owns
                 // its lanes: automatic completion must not write over it again.
                 if (!AutoLyricsReplacementBridge.isLocked(appleMusicId)) {
-                    overlay?.update(
-                        songId = appleMusicId.toString(),
-                        lines = outcome.lines,
-                        translationSource = outcome.translationSource,
-                        // The provider that actually supplied this document, so the
-                        // source sheet can name it instead of "已写入歌词".
-                        originalSource = customSourceTag(outcome.source),
-                    )
+                    val lines = lanePureLines(outcome.lines)
+                    val published = publishLanes(overlay, appleMusicId, outcome, lines)
+                    scoped.log(appleMusicId, publishLine(appleMusicId, outcome, lines, published))
                 }
                 outcome.ttml
             }
         }.getOrNull()
     }
+}
+
+/**
+ * Writes [outcome]'s lanes into the native overlay, lane-pure.
+ *
+ * The enrichment already re-homes the provider pair, but the overlay is the value
+ * Apple's own 显示翻译 / 显示发音 switches are computed from
+ * ([NativeLyricOverlayStore.hasTranslation] / [NativeLyricOverlayStore.hasPronunciation]),
+ * so the same verdict is applied once more at the write: a line's text is stored
+ * as a translation only when [LyricLaneClassifier.isTranslationLike] accepts it,
+ * and as a pronunciation only when it is that line's reading. The recorded
+ * sources speak the module's vocabulary, because
+ * [dev.amenhancer.module.lyrics.source.LyricSourceProviders.fromCustomLyricsSource]
+ * is what turns them back into a platform name for the sheet.
+ */
+private fun publishLanes(
+    overlay: NativeLyricOverlayStore?,
+    appleMusicId: Long,
+    outcome: OnlineTranslationEnrichment.Outcome,
+    lines: List<NativeLyricLine>,
+): Boolean = overlay?.update(
+    songId = appleMusicId.toString(),
+    lines = lines,
+    // Only a lane the winning provider really wrote is attributed; a lane the
+    // enrichment preserved from Apple's own document keeps no provider.
+    translationSource = laneProvider(outcome, outcome.translationSource),
+    pronunciationSource = laneProvider(outcome, outcome.pronunciationSource),
+    // The merged document is the document the page shows (Apple's on the
+    // automatic path, the custom one for the completion feed), so its
+    // <transliteration xml:lang> tags are the lane names the app's parser keys
+    // the pronunciation by.
+    pronunciationLanguages = AppleLyricTtmlReader.transliterationLanguages(outcome.ttml),
+    // The provider that actually supplied this document, so the source sheet can
+    // name it instead of "已写入歌词".
+    originalSource = customSourceTag(outcome.source),
+) ?: false
+
+/**
+ * [lines] with both lanes re-homed by [LyricLaneClassifier].
+ *
+ * A reading the classifier moved (or dropped) also loses its timed slices:
+ * [NativeLyricLine.romaSpans] describe the reading that was there before, and the
+ * native word getter would otherwise serve slices of a different text.
+ */
+private fun lanePureLines(lines: List<NativeLyricLine>): List<NativeLyricLine> = lines.map { line ->
+    val lanes = LyricLaneClassifier.rebalance(
+        translation = line.translation,
+        romanization = line.roma,
+        original = line.text,
+    )
+    line.copy(
+        translation = lanes.translation,
+        roma = lanes.romanization,
+        romaSpans = if (lanes.romanization != null && lanes.romanization == line.roma) {
+            line.romaSpans
+        } else {
+            emptyList()
+        },
+    )
+}
+
+/**
+ * The provider tag for one lane, or null when the provider did not write it.
+ *
+ * [laneSource] is the enrichment's own token ("apple" / "QM" / "apple+QM" /
+ * "none"); it stays the diagnostic's vocabulary. Only a lane the winner really
+ * supplied is attributed in the store — the classifier can move a provider's text
+ * into the other lane, but it never invents one.
+ */
+private fun laneProvider(
+    outcome: OnlineTranslationEnrichment.Outcome,
+    laneSource: String,
+): String? = customSourceTag(outcome.source).takeIf { tag ->
+    tag.isNotBlank() &&
+        laneSource.split('+').any { token -> token.trim() == outcome.source.name }
+}
+
+/** One line naming both lane sources and how many lines each really holds. */
+private fun publishLine(
+    appleMusicId: Long,
+    outcome: OnlineTranslationEnrichment.Outcome,
+    lines: List<NativeLyricLine>,
+    published: Boolean,
+): String {
+    val translationLines = lines.count { line -> !line.translation.isNullOrBlank() }
+    val pronunciationLines = lines.count { line ->
+        !line.roma.isNullOrBlank() || line.romaSpans.isNotEmpty()
+    }
+    val translationSource = laneProvider(outcome, outcome.translationSource) ?: LANE_NONE
+    val pronunciationSource = laneProvider(outcome, outcome.pronunciationSource) ?: LANE_NONE
+    return "online-translation overlay id=$appleMusicId published=$published " +
+        "translationSource=$translationSource " +
+        "pronunciationSource=$pronunciationSource " +
+        "translationLines=$translationLines pronunciationLines=$pronunciationLines " +
+        "lines=${lines.size} source=${outcome.source} enrichment=${outcome.translationSource}"
 }
 
 /**

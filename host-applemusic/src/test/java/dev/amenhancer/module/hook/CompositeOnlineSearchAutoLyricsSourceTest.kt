@@ -13,6 +13,7 @@ import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -395,6 +396,42 @@ class CompositeOnlineSearchAutoLyricsSourceTest {
         assertEquals(1, candidates.size)
         assertEquals(Source.NE, candidates.single().source)
         assertEquals("orijinaru", candidates.single().lines.single().romanization)
+    }
+
+    @Test
+    fun `a qq japanese trans is a reading and never becomes a translation`() {
+        // Lemon's real shape: `trans` carries the `[kana:…]` tag plus romaji while
+        // `roma` is empty. Read as "the translation", the page rendered romaji under
+        // 翻译; the chain has to classify the column by its text instead.
+        val reading = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("夢ならば", "[kana:ゆめならば] yume naraba"),
+        )
+
+        val candidates = chain(LyricSelectionMode.FIRST_PASSING, reading)
+            .fetchTranslationCandidates(TRACK.appleMusicId)
+
+        assertEquals(1, candidates.size)
+        val line = candidates.single().lines.single()
+        assertNull("a reading must not be published as a translation", line.translation)
+        assertEquals("yume naraba", line.romanization)
+    }
+
+    @Test
+    fun `a whole document written from a reading carries no translation track`() {
+        val reading = fake(
+            Source.QM,
+            songs = listOf(song("2", Source.QM)),
+            lyrics = translatedLyrics("夢ならば", "[kana:ゆめならば] yume naraba"),
+        )
+
+        val ttml = chain(LyricSelectionMode.FIRST_PASSING, reading)
+            .fetch(TRACK.appleMusicId)
+
+        assertTrue(ttml!!.contains("夢ならば"))
+        // The writer opens the track only when some line contributes a translation.
+        assertFalse("a reading is not a translation track", ttml.contains("<translations>"))
     }
 
     @Test

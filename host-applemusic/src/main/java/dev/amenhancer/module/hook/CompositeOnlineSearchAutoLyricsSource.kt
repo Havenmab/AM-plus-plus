@@ -5,13 +5,13 @@ import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.InMemoryNeSessionStore
 import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.KuwoSource
+import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
 import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.NeSource
 import dev.amenhancer.module.lyrics.online.OnlineMatchDiagnostics
 import dev.amenhancer.module.lyrics.online.OnlineTranslationCandidate
-import dev.amenhancer.module.lyrics.online.OnlineTranslationContentPolicy
 import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.QmSource
 import dev.amenhancer.module.lyrics.online.ScoreBreakdown
@@ -489,8 +489,17 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      * One provider's aligned lanes, or null when it contributes neither lane.
      * A translation-bearing candidate is preferred by the callers; a
      * pronunciation-only one is only the fallback, so a provider whose payload
-     * carries just the romanization column can still fill a missing
-     * transliterations lane on a song Apple already translated.
+     * carries just the romanization column can still be described honestly — it
+     * simply cannot fill the translation lane.
+     *
+     * Which lane a candidate carries is decided by the *text*, not by the field the
+     * provider put it in: QQ Music answers a Japanese song's `trans` request with the
+     * kana/romaji **reading**, and reading that column as "the translation" is what
+     * made the page render romaji under 翻译, won the walk against a provider that
+     * really had Chinese, and left the lyrics-source sheet naming QQ Music for a
+     * translation it never supplied. [OnlineTranslationExtraction] re-homes the pair;
+     * [LyricLaneClassifier] is the shared verdict this chain trusts for lane presence
+     * as well, so the counters below are the truth a device log can be read against.
      */
     private fun translationCandidate(
         provider: OnlineLyricProvider,
@@ -507,15 +516,26 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             return null
         }
         val lines = OnlineTranslationExtraction.extract(result)
-        val hasTranslation = lines.any {
-            OnlineTranslationContentPolicy.isMeaningful(it.translation)
-        }
-        val hasPronunciation = lines.any { !it.romanization.isNullOrBlank() }
+        val translationLines = lines.count { LyricLaneClassifier.isTranslationLike(it.translation) }
+        val romanizationLines = lines.count { LyricLaneClassifier.isRomanizationLike(it.romanization) }
+        val hasTranslation = translationLines > 0
+        val hasPronunciation = romanizationLines > 0
         if (!hasTranslation && !hasPronunciation) {
+            // The provider did send its columns — QQ Music answers a Japanese
+            // song's `trans` with the reading — but neither column holds what its
+            // name promises, so this candidate publishes nothing at all.
+            val providerTranslations = result.translated.orEmpty().count { line ->
+                line.words.any { word -> word.text.isNotBlank() }
+            }
+            val providerRomanizations = result.romanization.orEmpty().count { line ->
+                line.words.any { word -> word.text.isNotBlank() }
+            }
             scopedDiagnostic.log(
                 appleMusicId,
                 "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
-                    "reason=no_meaningful_lane lines=${lines.size}",
+                    "reason=no_meaningful_lane lines=${lines.size} " +
+                    "translationLines=0 romanizationLines=0 " +
+                    "providerColumns=trans:$providerTranslations roma:$providerRomanizations",
             )
             return null
         }
@@ -523,14 +543,20 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             appleMusicId,
             "online-translation candidate id=$appleMusicId source=${provider.sourceId} " +
                 "reason=accepted lines=${lines.size} " +
-                "translation=$hasTranslation pronunciation=$hasPronunciation",
+                "translation=$hasTranslation pronunciation=$hasPronunciation " +
+                "translationLines=$translationLines romanizationLines=$romanizationLines",
         )
         OnlineTranslationCandidate(provider.source.sourceType, lines)
     }.getOrNull()
 
-    /** True when the candidate would fill a translation lane. */
+    /**
+     * True when the candidate would fill the translation lane. Only Chinese counts
+     * ([LyricLaneClassifier.isTranslationLike]): a provider's reading stays in its own
+     * column, so it neither enters the translation lane nor wins the walk over a
+     * provider that really has a translation.
+     */
     private fun OnlineTranslationCandidate.hasTranslationLane(): Boolean =
-        lines.any { OnlineTranslationContentPolicy.isMeaningful(it.translation) }
+        lines.any { LyricLaneClassifier.isTranslationLike(it.translation) }
 
     /**
      * Ordered walk, short-circuiting on the first provider with usable lyrics.
@@ -569,7 +595,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 searched.candidates.map(ScoredCandidate::scoredSong),
             ) ?: return@forEach
             foundPassing = true
-            val ttml = render(provider, selected, request.durationMs)
+            val ttml = render(provider, selected, request.durationMs, appleMusicId)
             if (ttml != null) return PassOutcome(ttml, true)
         }
         return PassOutcome(null, foundPassing)
@@ -593,7 +619,9 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
                 searched.candidates.map { ProviderCandidate(searched.provider, it) }
             }
             val winner = LyricMatchPolicy.selectGlobalBestScored(all) { it.candidate.score }
-            if (winner != null) return render(winner.provider, winner.candidate.song, request.durationMs)
+            if (winner != null) {
+                return render(winner.provider, winner.candidate.song, request.durationMs, appleMusicId)
+            }
         }
         return null
     }
@@ -760,13 +788,31 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             cleanLocalAlbum = request.cleanLocalAlbum,
         )
 
+    /**
+     * The provider's whole document, for the replacement path only.
+     *
+     * The writer takes the translation column and nothing else, and extraction has
+     * already re-homed it through [LyricLaneClassifier]: a provider's reading never
+     * becomes this document's `translations` track, so a document the module
+     * installs cannot show romaji under 翻译 — not now, and not after the sheet
+     * replays it from the custom index or the overlay memory.
+     */
     private fun render(
         provider: OnlineLyricProvider,
         song: SongSearchResult,
         fallbackDurationMs: Long,
+        appleMusicId: Long,
     ): String? = runCatching {
         val lines = AppleLyricTtmlWriter.from(provider.source.getLyrics(song) ?: return null)
         if (lines.isEmpty()) return null
+        // Zero here for a provider whose `trans` was a reading: the lane is left
+        // empty instead of being filled with romaji.
+        val translationLines = lines.count { !it.translation.isNullOrBlank() }
+        scopedDiagnostic.log(
+            appleMusicId,
+            "online-translation render id=$appleMusicId source=${provider.sourceId} " +
+                "lines=${lines.size} translationLines=$translationLines",
+        )
         AppleLyricTtmlWriter.build(
             lines = lines,
             durationMs = song.duration.takeIf { it > 0L } ?: fallbackDurationMs,

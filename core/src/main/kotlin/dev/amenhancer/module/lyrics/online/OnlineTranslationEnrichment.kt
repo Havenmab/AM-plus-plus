@@ -26,6 +26,14 @@ private const val LANE_NONE = "none"
  * itself exposes no pronunciation the song therefore shows no romanization at
  * all.
  *
+ * What each lane *holds* is not taken on trust. [LyricLaneClassifier] is the one
+ * authority on "is this a Chinese translation or a reading": the merged lines and
+ * the per-line lanes this outcome exposes to the overlay carry Chinese in
+ * `translation` and kana/romaji in `romanization` only. A provider — QQ Music's
+ * `trans` on a Japanese song, the reported case — or a document an older build
+ * already wrote with the two lanes swapped can therefore never make the page
+ * render a romanization as its translation.
+ *
  * Every step fails open: a malformed document, a candidate that matches
  * nothing, or no candidate at all returns null and the caller leaves the
  * displayed document untouched.
@@ -189,9 +197,11 @@ object OnlineTranslationEnrichment {
             winnerSupplied = addedTranslation,
             winner = winner.source,
         )
-        // Apple-only: the pronunciation lane can only be Apple's own, preserved.
+        // Apple-only: the pronunciation lane can only be Apple's own, preserved —
+        // and only what survived [LyricLaneClassifier]: a "transliteration" that is
+        // really a Chinese translation is not counted as a pronunciation lane.
         val pronunciationSource = laneSource(
-            appleSupplied = baseLines.any { !it.romanization.isNullOrBlank() },
+            appleSupplied = merged.any { !it.romanization.isNullOrBlank() },
             winnerSupplied = false,
             winner = winner.source,
         )
@@ -267,7 +277,8 @@ object OnlineTranslationEnrichment {
      * the matcher returns the base song with lanes filled, so word spans, timing
      * and layout of [base] stay exactly as Apple produced them. A provider's
      * romanization is never carried: Apple's own transliterations lane is left
-     * exactly as the document already had it.
+     * exactly as the document already had it — except for a lane whose content is
+     * not what the lane means, which [LyricLaneClassifier] re-homes.
      */
     private fun mergeLanes(
         base: List<AppleTtmlLine>,
@@ -275,13 +286,33 @@ object OnlineTranslationEnrichment {
     ): List<AppleTtmlLine> = base.mapIndexed { index, line ->
         val mergedLine = merged.getOrNull(index)
         val translated = mergedLine?.translation
+        val chosen = if (OnlineTranslationContentPolicy.isMeaningful(line.translation) ||
+            !OnlineTranslationContentPolicy.isMeaningful(translated)
+        ) {
+            line.translation
+        } else {
+            translated
+        }
+        // The two lanes are re-homed as a pair before anything is published:
+        // the translation lane may only carry Chinese, the romanization lane only
+        // kana/romaji. This is what keeps a provider whose `trans` is really a
+        // reading (or a document an older build already wrote that way) from
+        // rendering romaji as the translation, and a Chinese "transliteration"
+        // from rendering as the pronunciation.
+        val lanes = LyricLaneClassifier.rebalance(
+            translation = chosen,
+            romanization = line.romanization,
+            original = line.text,
+        )
         line.copy(
-            translation = if (OnlineTranslationContentPolicy.isMeaningful(line.translation) ||
-                !OnlineTranslationContentPolicy.isMeaningful(translated)
+            translation = lanes.translation,
+            romanization = lanes.romanization,
+            romanizationSpans = if (lanes.romanization != null &&
+                lanes.romanization == line.romanization
             ) {
-                line.translation
+                line.romanizationSpans
             } else {
-                translated
+                emptyList()
             },
         )
     }

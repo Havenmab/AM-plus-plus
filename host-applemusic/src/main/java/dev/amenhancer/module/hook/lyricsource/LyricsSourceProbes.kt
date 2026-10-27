@@ -134,7 +134,22 @@ internal class LyricsSourceProbes(
         }.getOrDefault(AppleLyricsCapability())
     }
 
-    /** What this module published for the song, with the provider of each lane. */
+    /**
+     * What this module published for the song, with the provider of each lane.
+     *
+     * The lane classifier decides what the store may *contain*; this decides what
+     * the sheet may *claim*, and the two questions are not the same:
+     *
+     *  - the translation lane is claimed when the store holds one, and it is named
+     *    after the recorded [OverlayLyricsCapability.translationSource] — the
+     *    provider whose Chinese was published;
+     *  - the romanization lane is claimed only when the store really holds one
+     *    ([NativeLyricOverlayStore.hasPronunciation]), and it is named after the
+     *    recorded pronunciation source. An empty overlay lane is **not** "Apple has
+     *    none": Apple's own lane is measured separately ([appleCapability]) and
+     *    still serves the lane through its own option, so the lane falls back to
+     *    Apple instead of disappearing from the sheet.
+     */
     fun overlayCapability(songId: Long, displayedTtml: String? = null): OverlayLyricsCapability {
         val key = songId.toString()
         return runCatching {
@@ -145,6 +160,7 @@ internal class LyricsSourceProbes(
                 // than the previous track's lanes.
                 return@runCatching OverlayLyricsCapability()
             }
+            val romanizationSource = overlay.pronunciationSource(key)
             OverlayLyricsCapability(
                 // The overlay never carries the original document: it holds the lanes the
                 // page shows *for* Apple's document. Reporting it as an original source made
@@ -163,7 +179,10 @@ internal class LyricsSourceProbes(
                 // record, which the sheet shows as "已写入歌词".
                 originalSource = overlay.originalSource(key),
                 translationSource = overlay.translationSource(key),
-                romanizationSource = overlay.pronunciationSource(key),
+                // The provider named by the store, never inferred from the text: one
+                // without a name is content the module republished from the displayed
+                // document, which the sheet shows as 已写入歌词 rather than as a platform.
+                romanizationSource = romanizationSource,
             )
         }.getOrDefault(OverlayLyricsCapability())
     }

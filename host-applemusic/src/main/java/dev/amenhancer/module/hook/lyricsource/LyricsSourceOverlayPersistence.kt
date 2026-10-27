@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook.lyricsource
 
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
+import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
 import dev.amenhancer.module.lyrics.online.NativeLyricLine
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
@@ -21,6 +22,15 @@ import java.io.File
  * lane, joined on (begin, end, text) when the overlay is rebuilt. Deriving both lanes
  * from one stored blob is what let a translation come back as a romanization after a
  * restart: the lanes are independent and must never stand in for each other.
+ *
+ * Keeping them apart is not enough on its own, because a stored lane can hold the
+ * wrong kind of text: an older build wrote QQ Music's `trans` - the kana/romaji
+ * reading of a Japanese song - straight into the translation lane, so the restart
+ * replayed a romanization as the translation. Every record therefore passes through
+ * [LyricLaneClassifier] on the way in and on the way out: Chinese goes back to the
+ * translation lane, kana/romaji back to the romanization lane, and the row keys and
+ * pronunciation spans are untouched, so old records are repaired without a
+ * migration.
  *
  * Bounds: one record per song, [MAX_SONGS] songs, [MAX_LINES] per lane,
  * [MAX_FILE_BYTES] for the file, atomic replace (temp file + rename); a corrupt file
@@ -109,10 +119,11 @@ internal class LyricsSourceOverlayPersistence(
 
     /** Saves (or replaces) the memory for the record's song. */
     fun save(record: Record): Boolean = synchronized(lock) {
-        if (record.songId <= 0L || record.isEmptyLanes) return false
+        val corrected = correctLanes(record)
+        if (corrected.songId <= 0L || corrected.isEmptyLanes) return false
         runCatching {
-            val entries = read().filterValues { it.songId != record.songId }.toMutableMap()
-            entries[record.songId] = record
+            val entries = read().filterValues { it.songId != corrected.songId }.toMutableMap()
+            entries[corrected.songId] = corrected
             write(entries.values.sortedByDescending { it.updatedAt }.take(MAX_SONGS))
             true
         }.getOrDefault(false)
@@ -174,6 +185,56 @@ internal class LyricsSourceOverlayPersistence(
         }
     }
 
+    /**
+     * 把一条记录的两条车道按 [LyricLaneClassifier] 重新归位。
+     *
+     * 盘上的车道也可能本身就是错位的：旧版本把 QQ 日语歌的 `trans`（假名／罗马音）
+     * 原样写进了 translation 车道，「补全歌词翻译与发音」随后把它当译文发布，重启
+     * 恢复后就是「翻译变成音译」。读盘和写盘各过一次这里，中文回 translation、假名
+     * 与罗马音回 romanization；行键 (begin, end, text) 和发音切片都不动，所以旧
+     * 记录不需要迁移就能救回来。
+     */
+    private fun correctLanes(record: Record): Record {
+        if (record.isEmptyLanes) return record
+        val translationsByKey = record.translations.associateBy { line ->
+            RowKey(line.begin, line.end, line.text)
+        }
+        val romanizationsByKey = record.romanizations.associateBy { line ->
+            RowKey(line.begin, line.end, line.text)
+        }
+        val keys = LinkedHashSet<RowKey>()
+        keys += translationsByKey.keys
+        keys += romanizationsByKey.keys
+        val rows = keys.map { key ->
+            LyricLaneClassifier.LaneRow(
+                begin = key.begin,
+                end = key.end,
+                text = key.text,
+                translation = translationsByKey[key]?.translation,
+                romanization = romanizationsByKey[key]?.romanization,
+            )
+        }
+        val corrected = LyricLaneClassifier.rebalanceRows(rows)
+        val translations = corrected.mapNotNull { row ->
+            val text = row.translation?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            TranslationLine(begin = row.begin, end = row.end, text = row.text, translation = text)
+        }
+        val romanizations = corrected.mapNotNull { row ->
+            val text = row.romanization?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            RomanizationLine(
+                begin = row.begin,
+                end = row.end,
+                text = row.text,
+                romanization = text,
+                spans = romanizationsByKey[RowKey(row.begin, row.end, row.text)]?.spans.orEmpty(),
+            )
+        }
+        return record.copy(translations = translations, romanizations = romanizations)
+    }
+
+    /** The (begin, end, text) triple both lanes are joined on. */
+    private data class RowKey(val begin: Long, val end: Long, val text: String)
+
     // -------------------------------------------------------------------- json
 
     private fun read(): Map<Long, Record> = runCatching {
@@ -185,40 +246,41 @@ internal class LyricsSourceOverlayPersistence(
             for (index in 0 until songs.length()) {
                 val entry = songs.optJSONObject(index) ?: continue
                 val songId = entry.optLong("songId", 0L).takeIf { it > 0L } ?: continue
-                put(
-                    songId,
-                    Record(
-                        songId = songId,
-                        translationSource = entry.optString("translationSource").takeIf { it.isNotBlank() },
-                        pronunciationSource = entry.optString("pronunciationSource").takeIf { it.isNotBlank() },
-                        originalSource = entry.optString("originalSource").takeIf { it.isNotBlank() },
-                        pronunciationLanguages = strings(entry.optJSONArray("pronunciationLanguages")),
-                        translations = lines(entry.optJSONArray("translations")) { json ->
-                            TranslationLine(
-                                begin = json.optLong("begin", 0L),
-                                end = json.optLong("end", 0L),
-                                text = json.optString("text"),
-                                translation = json.optString("translation"),
-                            )
-                        },
-                        romanizations = lines(entry.optJSONArray("romanizations")) { json ->
-                            RomanizationLine(
-                                begin = json.optLong("begin", 0L),
-                                end = json.optLong("end", 0L),
-                                text = json.optString("text"),
-                                romanization = json.optString("romanization"),
-                                spans = lines(json.optJSONArray("spans")) { span ->
-                                    NativePronunciationSpan(
-                                        begin = span.optLong("begin", 0L),
-                                        end = span.optLong("end", 0L),
-                                        text = span.optString("text"),
-                                    )
-                                },
-                            )
-                        },
-                        updatedAt = entry.optLong("updatedAt", 0L),
-                    ),
+                val record = Record(
+                    songId = songId,
+                    translationSource = entry.optString("translationSource").takeIf { it.isNotBlank() },
+                    pronunciationSource = entry.optString("pronunciationSource").takeIf { it.isNotBlank() },
+                    originalSource = entry.optString("originalSource").takeIf { it.isNotBlank() },
+                    pronunciationLanguages = strings(entry.optJSONArray("pronunciationLanguages")),
+                    translations = lines(entry.optJSONArray("translations")) { json ->
+                        TranslationLine(
+                            begin = json.optLong("begin", 0L),
+                            end = json.optLong("end", 0L),
+                            text = json.optString("text"),
+                            translation = json.optString("translation"),
+                        )
+                    },
+                    romanizations = lines(entry.optJSONArray("romanizations")) { json ->
+                        RomanizationLine(
+                            begin = json.optLong("begin", 0L),
+                            end = json.optLong("end", 0L),
+                            text = json.optString("text"),
+                            romanization = json.optString("romanization"),
+                            spans = lines(json.optJSONArray("spans")) { span ->
+                                NativePronunciationSpan(
+                                    begin = span.optLong("begin", 0L),
+                                    end = span.optLong("end", 0L),
+                                    text = span.optString("text"),
+                                )
+                            },
+                        )
+                    },
+                    updatedAt = entry.optLong("updatedAt", 0L),
                 )
+                // Old builds wrote a QQ Japanese song's reading (kana/romaji) into
+                // the translation lane; re-home both lanes on the way in so a
+                // restart cannot present a romanization as the translation.
+                put(songId, correctLanes(record))
             }
         }
     }.getOrDefault(emptyMap())

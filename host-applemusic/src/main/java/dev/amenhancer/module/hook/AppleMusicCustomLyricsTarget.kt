@@ -272,7 +272,8 @@ internal class AppleMusicCustomLyricsTarget(
                     // Apple's synced document and the online translation lane
                     // share the automatic chain: the displayed document is
                     // replaced only when it has no timing, otherwise only the
-                    // missing lane is merged.
+                    // missing lanes are merged into the overlay.
+                    val lanesOnly = displayedTtml != null && TtmlTimingPolicy.hasTiming(displayedTtml)
                     val fetched = selectAutoLyricsFetch(
                         enrich = enrich,
                         displayedTtml = displayedTtml,
@@ -282,9 +283,14 @@ internal class AppleMusicCustomLyricsTarget(
                     if (enrich != null) {
                         translationLog.log(
                             appleMusicId,
+                            // `lanesOnly=true` is the timed-document branch: the enricher
+                            // published its lanes into the native overlay and no document
+                            // was replaced, so `published=false` here means "no new body",
+                            // never "the completion did nothing".
                             "online-translation inject id=$appleMusicId " +
                                 "source=${fetched?.source ?: "none"} " +
-                                "published=${fetched != null}",
+                                "published=${fetched != null} " +
+                                "lanesOnly=$lanesOnly",
                         )
                     }
                     fetched?.let { candidate ->
@@ -726,6 +732,21 @@ internal fun shouldPrepareAutomaticLyrics(
  * translation toggle suppress a lyric supplement that otherwise worked.
  * Only the merged document produced by a successful enrichment is attributed to
  * [ONLINE_TRANSLATION_LYRIC_SOURCE].
+ *
+ * The document's timeline decides which half of the completion that is, and the
+ * two must never be confused by the lyrics-source panel — a replaced document is
+ * reported as 自定义文件 in the original lane, an overlay-only completion keeps
+ * Apple's document but names the provider of the lane it filled:
+ *
+ *  - **no document, or only unsynchronised text** → the resolver may replace the
+ *    body (a timed third-party document is a strict improvement), and a merged
+ *    document is published as a candidate;
+ *  - **a document that already carries line or word timing** → *lanes only*. The
+ *    enricher is invoked for its overlay side effect and the return value is
+ *    discarded, so Apple's body, its timeline and its original-lane attribution
+ *    survive; the lanes it publishes are the ones the lane classifier (core's
+ *    LyricLaneClassifier) has already separated, which is what keeps
+ *    「显示翻译」 and 「显示发音」 honest.
  */
 internal fun selectAutoLyricsFetch(
     enrich: ((Long, String) -> String?)?,
@@ -751,11 +772,12 @@ internal fun selectAutoLyricsFetch(
     return if (replacementFirst) {
         resolverFetch(appleMusicId) ?: enriched()
     } else {
-        // Apple already carries line or word timing. Enrichment must then only *add the
-        // translation lane* (its overlay side effect) while the document stays Apple's:
-        // returning the merged document here made the auto session publish a custom entry,
-        // so the sheet reported the original lane as 自定义文件. The resolver is not a
-        // fallback for the same reason -- it replaces the document.
+        // Apple already carries line or word timing. Enrichment must then only fill the
+        // *lanes* (its overlay side effect) while the document stays Apple's: returning the
+        // merged document here made the auto session publish a custom entry, so the sheet
+        // reported the original lane as 自定义文件 — and the provider it named described a
+        // document that was never installed. The resolver is not a fallback for the same
+        // reason: it replaces the document.
         runCatching { enrich?.invoke(appleMusicId, displayedTtml) }
         null
     }

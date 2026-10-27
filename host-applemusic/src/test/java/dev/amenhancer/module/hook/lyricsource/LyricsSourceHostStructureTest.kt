@@ -515,7 +515,7 @@ class LyricsSourceHostStructureTest {
         val persistence = source("LyricsSourceOverlayPersistence.kt")
         // one file in the module data folder, atomic replace, bounded
         assertTrue(persistence.contains("const val MAX_SONGS = 64"))
-        assertTrue(persistence.contains("const val MAX_TTML_BYTES = 512 * 1024"))
+        assertTrue(persistence.contains("const val MAX_LINES = "))
         assertTrue(persistence.contains("File(file.parentFile, file.name + \".tmp\")"))
         assertTrue(persistence.contains("pending.renameTo(file)"))
         // v2 keeps the two lanes apart instead of re-deriving them from one blob, so a stored

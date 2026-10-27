@@ -443,9 +443,10 @@ internal class LyricsSourceControllerImpl(
         lane: LyricLane,
         onDone: (Result<LyricsSourcePreview>) -> Unit,
     ) {
-        val durationMs = runCatching { snapshotOf()?.snapshot?.song?.durationMs }.getOrNull() ?: 0L
+        val song = runCatching { snapshotOf()?.snapshot?.song }.getOrNull()
+        val durationMs = song?.durationMs ?: 0L
         executor.execute {
-            val outcome = runCatching { previewOf(option, lane, durationMs) }
+            val outcome = runCatching { previewOf(option, lane, durationMs, song?.title, song?.artist) }
             mainHandler.post { onDone(outcome) }
         }
     }
@@ -454,12 +455,14 @@ internal class LyricsSourceControllerImpl(
         option: LyricSourceOption,
         lane: LyricLane,
         durationMs: Long,
+        songTitle: String?,
+        songArtist: String?,
     ): LyricsSourcePreview {
         // The preview and the apply read the same document, so what the user saw in
         // the three lines is exactly what gets published — including its precision,
         // which a search row cannot know but a fetched body can.
         val document = when (option.kind) {
-            LyricSourceKind.ONLINE -> search.documentFor(option, durationMs)
+            LyricSourceKind.ONLINE -> search.documentFor(option, durationMs, songTitle, songArtist)
             else -> null
         } ?: throw IllegalStateException("该来源无法预览")
         val lines = AppleLyricTtmlReader.read(document.ttml)
@@ -754,7 +757,8 @@ internal class LyricsSourceControllerImpl(
         // an Apple document directly, and the LRC sources are rendered into one by
         // the module's own writer (word spans preserved when the provider had
         // them, line timing otherwise). The precision is reported, never assumed.
-        val document = search.documentFor(option, envelope.snapshot.song.durationMs)
+        val song = envelope.snapshot.song
+        val document = search.documentFor(option, song.durationMs, song.title, song.artist)
             ?: return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, "该来源没有这首歌词")
         val ttml = document.ttml
         if (!TtmlInputPolicy.isAcceptable(ttml)) {

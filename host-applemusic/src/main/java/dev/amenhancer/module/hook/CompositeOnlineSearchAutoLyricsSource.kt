@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.InMemoryNeSessionStore
+import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.KuwoSource
 import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
@@ -803,7 +804,9 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         fallbackDurationMs: Long,
         appleMusicId: Long,
     ): String? = runCatching {
-        val lines = AppleLyricTtmlWriter.from(provider.source.getLyrics(song) ?: return null)
+        val result = provider.source.getLyrics(song) ?: return null
+        val clean = LyricLineFilter.filter(result, song.title, song.artist)
+        val lines = AppleLyricTtmlWriter.from(clean)
         if (lines.isEmpty()) return null
         // Zero here for a provider whose `trans` was a reading: the lane is left
         // empty instead of being filled with romaji.

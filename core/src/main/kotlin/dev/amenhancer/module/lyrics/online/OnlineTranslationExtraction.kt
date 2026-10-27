@@ -32,12 +32,16 @@ package dev.amenhancer.module.lyrics.online
 object OnlineTranslationExtraction {
 
     fun extract(result: LyricsResult): List<OnlineTranslationLine> {
-        val translationsByStart = result.translated.orEmpty().associate { line ->
+        // A translation lane opens with the platform's copyright notice and fills gaps with
+        // `//`; both would otherwise be aligned onto the first lyric line.
+        val clean = LyricLineFilter.filter(result)
+        val translationsByStart = clean.translated.orEmpty().associate { line ->
             line.start to text(line)
         }
-        val romanizationsByStart = result.romanization.orEmpty().associate { line ->
+        val romanizationsByStart = clean.romanization.orEmpty().associate { line ->
             line.start to text(line)
         }
+<<<<<<< HEAD
         return result.original.map { line ->
             val content = text(line)
             // The provider's field names are not the content: QQ's `trans` is the
@@ -47,11 +51,16 @@ object OnlineTranslationExtraction {
             // below sees a translation lane that really holds Chinese and a
             // romanization lane that really holds kana/romaji.
             val lanes = LyricLaneClassifier.rebalance(
-                translation = OnlineTranslationContentPolicy.sanitize(
-                    translationsByStart[line.start],
-                ),
-                romanization = romanizationsByStart[line.start]
-                    ?.takeIf(String::isNotEmpty),
+=======
+        return clean.original.map { line ->
+            val content = text(line)
+            // The provider's field names are not the content: QQ's \`trans\` is the reading
+            // (kana/romaji) for most Japanese songs, and a "roma" column occasionally holds a
+            // Chinese translation. [LyricLaneClassifier] decides from the text itself, so every
+            // consumer sees a translation lane that really holds Chinese.
+            val lanes = LyricLaneClassifier.rebalance(
+                translation = OnlineTranslationContentPolicy.sanitize(translationsByStart[line.start]),
+                romanization = romanizationsByStart[line.start]?.takeIf(String::isNotEmpty),
                 original = content,
             )
             OnlineTranslationLine(

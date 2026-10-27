@@ -1,17 +1,17 @@
 package dev.amenhancer.backdrop
 
 /**
- * Symmetric Gaussian taps for [textureBlur], expressed in **downsampled** pixels.
+ * Symmetric Gaussian taps for [textureBlur], in **full-resolution** pixels.
  *
- * The blur runs as one runtime-shader pass: the shader samples the captured content at
- * `xy ± offset * downscale` and weights each pair. Doing the low-pass on a coarser grid
- * (the same idea miuix-blur uses with its downsample shaders) means a handful of taps
- * covers a large visual radius, so the fragment shader never runs a long kernel.
+ * One runtime-shader pass samples the captured content at `xy ± offset` for every tap and
+ * weights the pair. Offsets are spaced [TextureBlurTaps.stepPx] apart so the same short
+ * kernel covers the whole 3σ reach of a large radius (the trick miuix-blur gets from its
+ * downsample shaders: fewer, wider samples instead of a long 1-pixel kernel).
  */
 class TextureBlurTaps(
-    /** Grid size the taps were computed for: 1 (full), 2 or 4. */
-    val downscale: Int,
-    /** Positive offsets in downsampled pixels; the shader samples ±offset. */
+    /** Distance between neighbouring taps, in pixels; 1 is a per-pixel kernel. */
+    val stepPx: Int,
+    /** Positive offsets in pixels; the shader samples ±offset. */
     val offsetsPx: FloatArray,
     /** Center weight followed by one weight per offset pair; sums to 1. */
     val weights: FloatArray,
@@ -28,41 +28,41 @@ object TextureBlurKernel {
     /** Upper bound on symmetric tap pairs; the shader is generated per count. */
     const val MAX_PAIRS = 7
 
+    /** How many sigmas the kernel must reach to look like a full blur. */
+    const val SIGMA_REACH = 3f
+
     /** Taps below this weight contribute less than one 8-bit level and are dropped. */
     const val WEIGHT_THRESHOLD = 0.002f
 
     /**
-     * Grid size for [radiusPx]: small radii keep full resolution (their kernel is short
-     * anyway), medium radii blur on a half grid, large ones on a quarter grid.
+     * Tap spacing for [radiusPx]: wide enough that [MAX_PAIRS] pairs still cover the 3σ
+     * reach, and never below one pixel (small radii stay exact).
      */
-    fun downscaleFor(radiusPx: Float): Int = when {
-        !radiusPx.isFinite() || radiusPx <= 0f -> 1
-        radiusPx >= 48f -> 4
-        radiusPx >= 12f -> 2
-        else -> 1
+    fun stepFor(radiusPx: Float): Int {
+        if (!radiusPx.isFinite() || radiusPx <= 0f) return 1
+        val sigma = radiusPx * RADIUS_TO_SIGMA
+        val reach = sigma * SIGMA_REACH
+        val step = kotlin.math.ceil(reach / MAX_PAIRS).toInt()
+        return step.coerceIn(1, 64)
     }
 
-    /**
-     * Gaussian taps for [radiusPx] on a [downscale] grid.
-     *
-     * The sigma is scaled into the coarse grid, the kernel is cut where a tap weight falls
-     * below [WEIGHT_THRESHOLD], and the pair count is capped at [MAX_PAIRS].
-     */
-    fun taps(radiusPx: Float, downscale: Int = downscaleFor(radiusPx)): TextureBlurTaps {
-        val grid = downscale.coerceIn(1, 4)
+    /** Gaussian taps for [radiusPx], spaced [stepPx] pixels apart. */
+    fun taps(radiusPx: Float, stepPx: Int = stepFor(radiusPx)): TextureBlurTaps {
+        val step = stepPx.coerceIn(1, 64)
         val safeRadius = if (radiusPx.isFinite() && radiusPx > 0f) radiusPx else 0f
-        val sigma = (safeRadius * RADIUS_TO_SIGMA / grid).coerceAtLeast(0.0001f)
+        val sigma = (safeRadius * RADIUS_TO_SIGMA).coerceAtLeast(0.0001f)
 
         val pairWeights = ArrayList<Float>(MAX_PAIRS)
         var reach = 0
         for (i in 1..MAX_PAIRS) {
-            val weight = kotlin.math.exp(-(i.toFloat() * i) / (2f * sigma * sigma))
+            val offset = (i * step).toFloat()
+            val weight = kotlin.math.exp(-(offset * offset) / (2f * sigma * sigma))
             if (weight < WEIGHT_THRESHOLD) break
             pairWeights += weight
             reach = i
         }
         if (reach == 0) {
-            return TextureBlurTaps(grid, FloatArray(0), floatArrayOf(1f))
+            return TextureBlurTaps(step, FloatArray(0), floatArrayOf(1f))
         }
 
         val total = 1f + 2f * pairWeights.sum()
@@ -72,8 +72,8 @@ object TextureBlurKernel {
         for (i in 0 until reach) weights[i + 1] = 2f * pairWeights[i] / total
 
         return TextureBlurTaps(
-            downscale = grid,
-            offsetsPx = FloatArray(reach) { index -> (index + 1).toFloat() },
+            stepPx = step,
+            offsetsPx = FloatArray(reach) { index -> ((index + 1) * step).toFloat() },
             weights = weights,
         )
     }

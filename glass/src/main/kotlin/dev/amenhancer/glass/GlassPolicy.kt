@@ -83,8 +83,8 @@ object GlassPolicy {
     const val TEXTURE_BLUR_ENABLED = true
     /** Adds a sub-LSB dither to the texture blur, which hides banding in dark scenes. */
     const val TEXTURE_BLUR_DITHER = true
-    /** Rasterises the effect layer at 1/this size, cutting blur fragment work quadratically. */
-    const val TEXTURE_BLUR_DOWNSCALE = 2
+    /** Upper bound on the adaptive layer downscale (the blur radius picks the actual factor). */
+    const val TEXTURE_BLUR_MAX_DOWNSCALE = 16
     /**
      * Additive brightness of the blurred backdrop, in the same 0..1 space as a colour matrix.
      * Negative values dim every glass surface; 0 keeps the previous look.

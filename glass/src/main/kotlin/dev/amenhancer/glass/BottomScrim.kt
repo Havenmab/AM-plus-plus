@@ -41,11 +41,14 @@ private fun fadeRamp(alpha: Float, color: Color) = Brush.verticalGradient(
 @Composable
 fun BottomScrim(backdrop: Backdrop) {
     val scrim = if (isSystemInDarkTheme()) Color(0xFF121212) else Color(0xFFFAFAFA)
+    val blurRadiusPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx()
+    }
     Spacer(
         Modifier.fillMaxSize().drawBackdrop(
             backdrop = backdrop,
             shape = { RectangleShape },
-            downscaleFactor = if (GlassPolicy.TEXTURE_BLUR_ENABLED) GlassPolicy.TEXTURE_BLUR_DOWNSCALE else 1,
+            downscaleFactor = glassDownscaleFactor(blurRadiusPx),
             effects = {
                 glassBackdropBlur(GlassPolicy.BOTTOM_SCRIM_BLUR_DP.dp.toPx(), null)
             },

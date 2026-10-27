@@ -21,7 +21,7 @@ import kotlin.math.max
  */
 fun BackdropEffectScope.textureBlur(
     radiusPx: Float,
-    stepPx: Int = TextureBlurKernel.stepFor(radiusPx),
+    stepPx: Int? = null,
     dither: Boolean = false,
     brightness: Float = 0f,
 ) {
@@ -34,7 +34,8 @@ fun BackdropEffectScope.textureBlur(
     // The effect runs in layer pixels, which may be downscaled by the draw path.
     val layerScale = if (rasterScale.isFinite() && rasterScale >= 1f) rasterScale else 1f
     val layerRadius = radiusPx / layerScale
-    val taps = TextureBlurKernel.taps(layerRadius, stepPx)
+    // The spacing belongs to the layer grid: a downscaled layer needs a dense kernel.
+    val taps = TextureBlurKernel.taps(layerRadius, stepPx ?: TextureBlurKernel.stepFor(layerRadius))
     val reach = max(layerRadius, taps.offsetsPx.lastOrNull() ?: 0f)
     padding = max(padding, reach * layerScale)
 

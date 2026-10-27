@@ -57,10 +57,10 @@ fun NativeLiquidButton(
     val highlight = remember(scope) { InteractiveHighlight(scope) }
     // A downscaled layer changes the pixel size the cached Skia blur was built for, so the
     // cached prefix steps aside and the texture path (which divides by rasterScale) takes over.
-    val downscale = if (GlassPolicy.TEXTURE_BLUR_ENABLED) GlassPolicy.TEXTURE_BLUR_DOWNSCALE else 1
+    val blurRadiusPx = with(LocalDensity.current) { panelBlur.toPx() }
+    val downscale = glassDownscaleFactor(blurRadiusPx)
     val material = if (minLayerSize != IntSize.Zero && downscale == 1) {
-        val radiusPx = with(LocalDensity.current) { panelBlur.toPx() }
-        remember(radiusPx) { VibrantBlur(radiusPx) }
+        remember(blurRadiusPx) { VibrantBlur(blurRadiusPx) }
     } else null
     DisposableEffect(input, highlight) {
         input.receiver = { action, x, y ->

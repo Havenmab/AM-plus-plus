@@ -437,16 +437,20 @@ fun LiquidBottomTabs(
             interactiveHighlight.releasePress()
         }
 
+        // The blur radius (which the settings slider changes) picks the layer rasterisation so
+        // a wide kernel still samples densely instead of leaving ghost copies of the backdrop.
+        val blurPx = with(density) { panelBlur.toPx() }
+        val blurDownscale = dev.amenhancer.glass.glassDownscaleFactor(blurPx)
         val panelMaterial = if (optimizeCollapseRendering) {
-            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize) {
-                glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize)
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize, blurDownscale) {
+                glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, panelLayerSize, blurDownscale)
             }
-        } else glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
+        } else glassPanelMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null, IntSize.Zero, blurDownscale)
         val refractionMaterial = if (optimizeCollapseRendering) {
-            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize) {
-                glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize)
+            remember(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize, blurDownscale) {
+                glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, material, refractionLayerSize, blurDownscale)
             }
-        } else glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null)
+        } else glassRefractionMaterial(backdrop, panelBlur, containerColor, dampedDragAnimation, null, IntSize.Zero, blurDownscale)
         // Keep the source nodes/layers alive, but do not measure or place their subtree when
         // the selection droplet has no need for it. Expanding places it again before drawing.
         val expandedVisible = gates.expandedVisible
@@ -649,10 +653,11 @@ private fun glassPanelMaterial(
     backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
     dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
     minLayerSize: IntSize = IntSize.Zero,
+    downscaleFactor: Int = 1,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
-    downscaleFactor = glassDownscaleFactor(),
+    downscaleFactor = downscaleFactor,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { GlassCollapseShapes.capsule(material != null) },
     effects = {
@@ -672,12 +677,13 @@ private fun glassRefractionMaterial(
     backdrop: Backdrop, panelBlur: androidx.compose.ui.unit.Dp, containerColor: Color,
     dampedDragAnimation: DampedDragAnimation, material: VibrantBlur?,
     minLayerSize: IntSize = IntSize.Zero,
+    downscaleFactor: Int = 1,
 ): Modifier = Modifier.drawBackdrop(
     backdrop = backdrop,
     minLayerSize = material?.paddedSize(minLayerSize) ?: minLayerSize,
+    downscaleFactor = downscaleFactor,
     clipCompositingStrategy = if (minLayerSize != IntSize.Zero) CompositingStrategy.Auto else CompositingStrategy.Offscreen,
     shape = { GlassCollapseShapes.capsule(material != null) },
-    downscaleFactor = glassDownscaleFactor(),
     effects = {
         val progress = dampedDragAnimation.pressProgress
         glassBackdropBlur(panelBlur.toPx(), material)

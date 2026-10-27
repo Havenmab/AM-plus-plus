@@ -53,7 +53,7 @@ import com.kyant.backdrop.shadow.ShadowElement
 import dev.amenhancer.backdrop.traceBackdrop
 
 /** Highest layer downscale the AM++ option accepts (1 = full resolution). */
-internal const val MAX_DOWNSCALE_FACTOR = 4
+internal const val MAX_DOWNSCALE_FACTOR = 16
 
 private val DefaultHighlight = { Highlight.Default }
 private val DefaultShadow = { Shadow.Default }

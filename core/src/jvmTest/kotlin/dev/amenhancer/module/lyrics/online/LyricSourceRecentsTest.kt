@@ -1,5 +1,6 @@
 package dev.amenhancer.module.lyrics.online
 
+import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics.online
 
+import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
+
 /** One source the user actually applied, remembered across sessions. */
 data class LyricRecentSource(
     val providerId: String,

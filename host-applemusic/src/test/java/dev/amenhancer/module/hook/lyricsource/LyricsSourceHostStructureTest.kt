@@ -535,7 +535,14 @@ class LyricsSourceHostStructureTest {
         // a restart must not turn a stored online key into "not supported": the apply
         // re-fetches the body from the key (provider id + remote id) every time
         assertTrue(text.contains("val lines = search.translationLines(option)"))
-        assertTrue(text.contains("val document = search.documentFor(option, envelope.snapshot.song.durationMs)"))
+        // the body is re-fetched from the stored key alone; the song's metadata only
+        // steers the match inside the search, never the identity of the option
+        assertTrue(text.contains("val song = envelope.snapshot.song"))
+        assertTrue(
+            text.contains(
+                "val document = search.documentFor(option, song.durationMs, song.title, song.artist)",
+            ),
+        )
     }
 
     @Test

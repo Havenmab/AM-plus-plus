@@ -113,12 +113,18 @@ class LyricsLaneSourceStructureTest {
             ),
         )
         // The whole-document path takes the same filtered lane, so a document this
-        // module installs never carries a reading in its translations track.
+        // module installs never carries a reading in its translations track: the
+        // provider body is fetched with its null guard, filtered with the song's own
+        // identity (the `歌名 - 歌手` header and credit blocks), and only then handed
+        // to the writer — whose `from(result)` re-homes the lanes through
+        // [OnlineTranslationExtraction] again.
+        assertTrue(composite.contains("val result = provider.source.getLyrics(song) ?: return null"))
         assertTrue(
             composite.contains(
-                "AppleLyricTtmlWriter.from(provider.source.getLyrics(song) ?: return null)",
+                "val clean = LyricLineFilter.filter(result, song.title, song.artist)",
             ),
         )
+        assertTrue(composite.contains("AppleLyricTtmlWriter.from(clean)"))
         assertTrue(composite.contains("translationLines="))
     }
 

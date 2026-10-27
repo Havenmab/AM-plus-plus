@@ -23,6 +23,7 @@ fun BackdropEffectScope.textureBlur(
     radiusPx: Float,
     stepPx: Int = TextureBlurKernel.stepFor(radiusPx),
     dither: Boolean = false,
+    brightness: Float = 0f,
 ) {
     if (!isRuntimeShaderSupported()) {
         blur(radiusPx)
@@ -50,6 +51,7 @@ fun BackdropEffectScope.textureBlur(
     }
     runCatching {
         shader.setFloatUniform("size", size.width / layerScale, size.height / layerScale)
+        shader.setFloatUniform("brightness", brightness)
         if (taps.pairCount > 0) shader.setFloatUniform("offsets", taps.offsetsPx)
         shader.setFloatUniform("weights", taps.weights)
     }
@@ -80,6 +82,7 @@ private fun shaderSource(pairCount: Int, dither: Boolean): String {
     }
     val header = "uniform shader content;\n" +
         "uniform float2 size;\n" +
+        "uniform float brightness;\n" +
         // AGSL rejects a zero-length uniform array, so the center-only kernel omits it.
         (if (pairCount > 0) "uniform float offsets[" + pairCount + "];\n" else "") +
         "uniform float weights[" + (pairCount + 1) + "];\n"
@@ -89,6 +92,7 @@ private fun shaderSource(pairCount: Int, dither: Boolean): String {
         "    float2 c = clamp(xy, lo, hi);\n" +
         "    half4 color = content.eval(c) * half(weights[0]);\n" +
         pairs + ditherLine +
+        "    color.rgb += half3(brightness * color.a);\n" +
         "    return color;\n" +
         "}\n"
     return header + body

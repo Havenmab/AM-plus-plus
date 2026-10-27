@@ -85,6 +85,11 @@ object GlassPolicy {
     const val TEXTURE_BLUR_DITHER = true
     /** Rasterises the effect layer at 1/this size, cutting blur fragment work quadratically. */
     const val TEXTURE_BLUR_DOWNSCALE = 2
+    /**
+     * Additive brightness of the blurred backdrop, in the same 0..1 space as a colour matrix.
+     * Negative values dim every glass surface; 0 keeps the previous look.
+     */
+    const val GLASS_BLUR_BRIGHTNESS = -0.06f
 
     fun supports(sdk: Int, verifiedHost: Boolean, tablet: Boolean) =
         !tablet && supports(sdk, verifiedHost, GlassHostForm.PhoneStacked)

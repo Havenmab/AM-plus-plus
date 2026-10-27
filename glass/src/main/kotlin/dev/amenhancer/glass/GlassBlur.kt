@@ -2,6 +2,7 @@ package dev.amenhancer.glass
 
 import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import dev.amenhancer.backdrop.VibrantBlur
 import dev.amenhancer.backdrop.textureBlur
@@ -16,7 +17,11 @@ import dev.amenhancer.backdrop.textureBlur
 internal fun BackdropEffectScope.glassBackdropBlur(radiusPx: Float, material: VibrantBlur?) {
     if (GlassPolicy.TEXTURE_BLUR_ENABLED) {
         vibrancy()
-        textureBlur(radiusPx, dither = GlassPolicy.TEXTURE_BLUR_DITHER)
+        textureBlur(
+            radiusPx,
+            dither = GlassPolicy.TEXTURE_BLUR_DITHER,
+            brightness = GlassPolicy.GLASS_BLUR_BRIGHTNESS,
+        )
         return
     }
     if (material != null) {
@@ -25,6 +30,7 @@ internal fun BackdropEffectScope.glassBackdropBlur(radiusPx: Float, material: Vi
         vibrancy()
         blur(radiusPx)
     }
+    colorControls(brightness = GlassPolicy.GLASS_BLUR_BRIGHTNESS)
 }
 
 /** Layer rasterisation factor the draw path should use for a glass surface. */

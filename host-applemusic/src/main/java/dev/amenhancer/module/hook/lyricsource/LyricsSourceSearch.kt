@@ -642,7 +642,7 @@ internal class LyricsSourceSearch(
                 return failedLines(Stage.FILTER, "取回的译文无法过滤")
             }
         if (!hasLyricLine(clean)) {
-            return failedLines(Stage.FILTER, emptyLaneReason(result))
+            return failedLines(Stage.FILTER, emptyLaneReason(result, clean))
         }
         // The same rule as the document: the lane reader is advisory. A body it
         // cannot classify carries no mergeable translation, which is an *empty lane*

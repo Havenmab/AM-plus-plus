@@ -480,7 +480,7 @@ internal class LyricsSourceSearch(
                 "lyrics-source document stage=filter before=" + result.original.size +
                     " after=" + clean.original.size,
             )
-            return failed(Stage.FILTER, emptyLaneReason(clean))
+            return failed(Stage.FILTER, emptyLaneReason(result, clean))
         }
         // Stage 3: the provider's translation/romanization columns.
         // The translation/romanization split is advisory: a classifier that cannot read a
@@ -519,11 +519,18 @@ internal class LyricsSourceSearch(
      * body had lines and the filter kept none of them (credits and platform
      * notices only). "该来源无法预览" said neither.
      */
-    private fun emptyLaneReason(result: LyricsResult): String =
-        // No line at all, or nothing but textless slots (`//`, `♪`, a lost LRC
-        // conversion): the body never carried a lyric. Only a body that really had
-        // lines, all of them credits, gets the other sentence.
-        if (result.original.isEmpty() || !hasLyricLine(result)) NO_LINES else CREDITS_ONLY
+    private fun emptyLaneReason(raw: LyricsResult, filtered: LyricsResult): String {
+        // Textless placeholders (blank, //, musical notes) never carried visible
+        // source text. Visible raw text that filtering removes is credits/noise.
+        if (raw.original.isEmpty() || !hasVisibleRawLine(raw)) return NO_LINES
+        if (!hasLyricLine(filtered)) return CREDITS_ONLY
+        return CREDITS_ONLY
+    }
+
+    private fun hasVisibleRawLine(result: LyricsResult): Boolean =
+        result.original.any { line ->
+            line.words.any { word -> word.text.any(Char::isLetter) }
+        }
 
     /**
      * True when the body still holds a line a document can be published from.

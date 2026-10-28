@@ -411,11 +411,12 @@ internal class LyricsSourceSearch(
             return failed(Stage.FILTER, emptyLaneReason(result))
         }
         // Stage 3: the provider's translation/romanization columns.
+        // The translation/romanization split is advisory: a classifier that cannot read a
+        // provider's column must not take the whole document away. The lyrics are publishable on
+        // their own, so a failure here degrades to "no auxiliary lanes".
         val lanes = runCatching { OnlineTranslationExtraction.extract(clean, alreadyFiltered = true) }
-            .getOrElse { error ->
-                logStageFailure("document", Stage.CLASSIFY, error)
-                return failed(Stage.CLASSIFY, "取回的歌词语种无法识别")
-            }
+            .onFailure { error -> logStageFailure("document", Stage.CLASSIFY, error) }
+            .getOrDefault(emptyList())
         // Stage 4: the Apple document itself.
         val lines = runCatching { AppleLyricTtmlWriter.from(clean, lanes) }
             .getOrElse { error ->

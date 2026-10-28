@@ -71,21 +71,19 @@ class LyricsSourceSnapshotTest {
      * `<transliterations>`. It is the body the completion hands the host record,
      * so the two lanes and the `ja-Latn` tag below are exactly what a device writes.
      */
-    private val mergedTtml = "<tt xmlns="http://www.w3.org/ns/ttml" " +
-        "xmlns:ttm="http://www.w3.org/ns/ttml#metadata" " +
-        "xmlns:itunes="http://music.apple.com/lyric-ttml-internal" " +
-        "itunes:timing="Word" xml:lang="ja"><head><metadata>" +
-        "<iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">" +
-        "<translations><translation type="subtitle" xml:lang="zh-Hans">" +
-        "<text for="L1">你的名字</text></translation></translations>" +
-        "<transliterations><transliteration xml:lang="ja-Latn">" +
-        "<text for="L1"><span begin="1.000" end="3.000">Kimi no na wa</span></text>" +
-        "</transliteration></transliterations></iTunesMetadata>" +
-        "</metadata></head><body><div>" +
-        "<p begin="1.000" end="3.000" itunes:key="L1">" +
-        "<span begin="1.000" end="2.000">君</span>" +
-        "<span begin="2.000" end="3.000">の名は</span></p>" +
-        "</div></body></tt>"
+    private val mergedTtml = """
+        <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" 
+            xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja">
+        <head><metadata><iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations><translation type="subtitle" xml:lang="zh-Hans">
+        <text for="L1">你的名字</text></translation></translations>
+        <transliterations><transliteration xml:lang="ja-Latn">
+        <text for="L1"><span begin="1.000" end="3.000">Kimi no na wa</span></text>
+        </transliteration></transliterations></iTunesMetadata></metadata></head>
+        <body><div><p begin="1.000" end="3.000" itunes:key="L1">
+        <span begin="1.000" end="2.000">君</span><span begin="2.000" end="3.000">の名は</span></p>
+        </div></body></tt>
+    """.trimIndent()
 
     private val executor = Executor { command -> command.run() }
     private var controller: LyricsSourceControllerImpl? = null

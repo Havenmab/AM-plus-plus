@@ -98,8 +98,18 @@ internal object LyricsSourceSheetText {
     fun restoreFailed(locale: Locale, message: String): String =
         format(pick("Restore failed: %1\$s", "恢复失败：%1\$s", locale), locale, message)
 
+    /**
+     * The read-failure card. A message that is already the whole sentence - which is
+     * what the controller now stores, mapped through
+     * [dev.amenhancer.module.lyrics.source.LyricSourceText.snapshotFailed] - is used
+     * as-is instead of being wrapped a second time.
+     */
     fun loadFailed(locale: Locale, message: String): String =
-        format(pick("Cannot read lyrics sources: %1\$s", "读取歌词源失败：%1\$s", locale), locale, message)
+        if (message.contains(pick("Cannot read the lyrics sources", "读取歌词源失败", locale))) {
+            message
+        } else {
+            format(pick("Cannot read lyrics sources: %1\$s", "读取歌词源失败：%1\$s", locale), locale, message)
+        }
 
     fun unavailable(locale: Locale): String =
         pick("Lyrics source service is unavailable", "歌词源服务不可用", locale)

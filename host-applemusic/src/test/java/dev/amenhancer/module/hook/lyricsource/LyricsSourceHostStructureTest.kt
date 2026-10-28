@@ -806,4 +806,31 @@ class LyricsSourceHostStructureTest {
         assertTrue(text.contains("NOT_SUPPORTED"))
         assertTrue(text.contains("换源需要 app 侧索引写入口"))
     }
+
+    @Test
+    fun `a failed search never hands a throwable to the sheet`() {
+        val text = controller()
+        // The reported regression: the sheet renders a failure's message verbatim, so
+        // a throwable whose message was a class name
+        // (dev.amenhancer.module.lyrics.online.LyricMatchPolicy) put that class name
+        // in the result area next to 「重试」. The host maps it and keeps the
+        // exception in the log, where its type and throw site belong.
+        assertFalse(
+            "the raw result must not leave the host",
+            text.contains("mainHandler.post { onDone(mapped) }"),
+        )
+        assertTrue(text.contains("LyricSourceText.searchFailed(Locale.getDefault(), error)"))
+        assertTrue(text.contains("LyricSourceDiagnostics.searchLine(songId, lane, query, 0, error)"))
+        // and the snapshot failure line carries the exception type plus its frames
+        assertTrue(text.contains("LyricSourceDiagnostics.failureTrace(error)"))
+    }
+
+    @Test
+    fun `the sheet never renders a host exception verbatim`() {
+        val sheet = appSource("ui/source/LyricsSourceSheetController.kt")
+        // Both edges: the search failure card and the snapshot failure card.
+        assertTrue(sheet.contains("LyricSourceText.searchFailed(locale, error)"))
+        assertTrue(sheet.contains("LyricSourceText.snapshotFailed(locale, error)"))
+        assertFalse(sheet.contains("error.message.orEmpty().ifBlank"))
+    }
 }

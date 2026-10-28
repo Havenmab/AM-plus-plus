@@ -720,6 +720,74 @@ class LyricMatchPolicyTest {
         )
     }
 
+    @Test
+    fun `artist identities expand every alias of a multi credit line`() {
+        assertEquals(
+            listOf("a", "アー", "b", "ビー"),
+            LyricMatchPolicy.artistIdentities("A (アー), B (ビー)"),
+        )
+        // The same performer written both ways in one line is one identity, not two.
+        assertEquals(
+            listOf("nanaoakari", "七音阿卡莉"),
+            LyricMatchPolicy.artistIdentities("NANAOAKARI (七音阿卡莉) & 七音阿卡莉"),
+        )
+    }
+
+    @Test
+    fun `artist identities survive empty and bracket only credits`() {
+        assertEquals(emptyList<String>(), LyricMatchPolicy.artistIdentities(""))
+        assertEquals(emptyList<String>(), LyricMatchPolicy.artistIdentities("   "))
+        assertEquals(emptyList<String>(), LyricMatchPolicy.artistIdentities("()"))
+        assertEquals(emptyList<String>(), LyricMatchPolicy.artistIdentities("() ()"))
+        // A credit that is only a bracketed name has no outer script to compare
+        // against, so the group itself is the identity rather than nothing at all.
+        assertEquals(listOf("nanaoakari"), LyricMatchPolicy.artistIdentities("(NANAOAKARI)"))
+    }
+
+    @Test
+    fun `artist identities never throw on unbalanced or repeated brackets`() {
+        assertEquals(
+            listOf("artist(live"),
+            LyricMatchPolicy.artistIdentities("Artist (Live"),
+        )
+        assertEquals(listOf("artist("), LyricMatchPolicy.artistIdentities("Artist ("))
+        assertTrue(LyricMatchPolicy.artistIdentities("]Artist[").isNotEmpty())
+        // Deeply nested brackets are the shape that could reach a substring past the
+        // end of the line; the scan treats them as text and stays total.
+        val nested = "(".repeat(64) + "NANAOAKARI" + ")".repeat(64)
+        assertTrue(LyricMatchPolicy.artistIdentities(nested).isNotEmpty())
+    }
+
+    @Test
+    fun `artist identity extraction is bounded for a hostile credit`() {
+        val manyBrackets = "Artist " + (1..40).joinToString(" ") { "(ア" + it + ")" }
+
+        val identities = LyricMatchPolicy.artistIdentities(manyBrackets)
+
+        // The plain identity plus at most the documented alias bound, so one credit
+        // line can never grow the comparison set without limit.
+        assertEquals(5, identities.size)
+        assertEquals("artist", identities.first())
+    }
+
+    @Test
+    fun `a broken credit line still earns the title channel`() {
+        val breakdown = LyricMatchPolicy.scoreBreakdown(
+            song = candidate(title = "恋愛脳", artist = "((((", album = "", duration = 0L),
+            cleanLocalTitle = LyricMatchPolicy.cleanString("恋愛脳"),
+            localArtists = listOf(LyricMatchPolicy.cleanString("NANAOAKARI")),
+            localFeatures = emptyList(),
+            localDurationMs = 0L,
+            cleanLocalAlbum = "",
+        )
+
+        // The artist channel degrades to zero, the rest of the breakdown still counts:
+        // one unreadable field must not fail the candidate (or the lane list).
+        assertEquals(50, breakdown.title)
+        assertEquals(0, breakdown.artist)
+        assertEquals(LyricMatchPolicy.STRONG_DURATION_SCORE, breakdown.duration)
+    }
+
     private fun candidate(
         title: String,
         artist: String = "Artist",

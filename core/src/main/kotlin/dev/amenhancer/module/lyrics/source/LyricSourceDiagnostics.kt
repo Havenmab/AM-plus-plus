@@ -80,7 +80,39 @@ object LyricSourceDiagnostics {
         append(" query=").append(quote(query))
         append(" candidates=").append(candidates)
         append(" result=").append(if (failure == null) "ok" else "failed")
-        if (failure != null) append(" error=").append(quote(failure.message ?: failure::class.java.simpleName))
+        if (failure != null) {
+            append(" error=").append(quote(failure.message ?: failure.javaClass.simpleName))
+            // The message alone is not enough: a class name as the message (which is
+            // what a linkage error carries) says nothing without the type and the
+            // frame it came from. The user never sees either - the sheet renders
+            // LyricSourceText.searchFailed - so the log is the only place they belong.
+            append(" trace=").append(quote(failureTrace(failure)))
+        }
+    }
+
+    /**
+     * The one-line description of a host throwable: its type, its message and the
+     * first [maxFrames] stack frames.
+     *
+     * One failure gets exactly one line here, so the line has to carry what a
+     * `message ?: simpleName` fallback throws away - the exception *type* (a
+     * `NoClassDefFoundError` and an `IllegalStateException` whose message is the
+     * same class name mean different things) and where it was thrown. It is log
+     * text only: no user-facing surface may render it.
+     */
+    fun failureTrace(error: Throwable?, maxFrames: Int = MAX_TRACE_FRAMES): String {
+        if (error == null) return "none"
+        val message = flatten(error.message.orEmpty()).trim()
+            .take(MAX_TRACE_MESSAGE)
+            .ifEmpty { "-" }
+        val frames = error.stackTrace.asSequence()
+            .take(maxFrames.coerceIn(0, MAX_TRACE_FRAMES))
+            .joinToString(" <- ") { frame ->
+                frame.className + "." + frame.methodName +
+                    "(" + (frame.fileName ?: "?") + ":" + frame.lineNumber + ")"
+            }
+            .ifEmpty { "-" }
+        return "type=" + error.javaClass.name + " message=" + message + " frames=" + frames
     }
 
     /**
@@ -104,12 +136,19 @@ object LyricSourceDiagnostics {
 
     private fun keyOf(option: LyricSourceOption?): String = option?.key ?: "none"
 
+    /** Bound on the stack frames one log line carries. */
+    private const val MAX_TRACE_FRAMES = 6
+
+    /** Bound on the message text inside a trace, so one line stays one line. */
+    private const val MAX_TRACE_MESSAGE = 200
+
     /** Quotes free text and strips line breaks so one record stays one line. */
-    private fun quote(value: String?): String {
-        val flat = value.orEmpty()
-            .replace("\r", " ")
-            .replace("\n", " ")
-            .replace("\"", "'")
-        return "\"" + flat + "\""
-    }
+    private fun quote(value: String?): String = "\"" + flatten(value.orEmpty()) + "\""
+
+    /** [value] flattened onto one line, with quotes that would break the shape folded. */
+    private fun flatten(value: String): String = value
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("\"", "'")
 }

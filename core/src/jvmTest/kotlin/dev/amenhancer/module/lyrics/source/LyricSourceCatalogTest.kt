@@ -852,6 +852,36 @@ class LyricSourceCatalogTest {
         assertEquals(LyricSourceProviders.APPLE, option.providerId)
     }
 
+    @Test
+    fun `a candidate with an unreadable credit still lists a row`() {
+        // The device case: a candidate whose artist line cannot be read must cost
+        // that row its alias, not the search list its rows.
+        val hostile = candidate(
+            title = "恋愛脳",
+            artist = "(".repeat(32) + "NANAOAKARI" + ")".repeat(32),
+            album = "]album[",
+        )
+        val input = input(onlineCandidates = listOf(hostile))
+
+        val options = LyricSourceCatalog.searchOptions(input, LyricLane.ORIGINAL, ZH)
+
+        assertEquals(2, options.size)
+        assertEquals(LyricSourceKeys.APPLE, options.first().key)
+        assertTrue(options.last().matchScore in 0..100)
+    }
+
+    @Test
+    fun `the snapshot always answers with one state per lane`() {
+        val input = input(
+            onlineCandidates = listOf(candidate(title = "恋愛脳", artist = "((((", album = "]x[")),
+        )
+
+        val snapshot = LyricSourceCatalog.build(input, emptyMap(), ZH)
+
+        assertEquals(LyricLane.ALL.toList(), snapshot.lanes.map { it.lane })
+        assertEquals(3, snapshot.lanes.size)
+    }
+
     private fun input(
         songId: Long = 42L,
         apple: AppleLyricsCapability = AppleLyricsCapability(),

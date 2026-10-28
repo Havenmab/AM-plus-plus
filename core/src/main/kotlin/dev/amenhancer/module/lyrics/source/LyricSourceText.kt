@@ -195,4 +195,77 @@ object LyricSourceText {
     /** Shown when a lane offers nothing at all. */
     fun noOptionsLabel(locale: Locale = Locale.getDefault()): String =
         pick("No source available", "暂无可选来源", locale)
+
+    /**
+     * What the sheet says when an online search could not run. This is the only
+     * wording a failed search may produce: the action, plus a short reason when the
+     * failure carries one a human can read.
+     */
+    fun searchFailed(locale: Locale = Locale.getDefault(), error: Throwable? = null): String =
+        withReason(pick("Search failed, please retry", "搜索失败，请重试", locale), locale, error)
+
+    /** The same shape for a snapshot read that could not answer. */
+    fun snapshotFailed(locale: Locale = Locale.getDefault(), error: Throwable? = null): String =
+        withReason(
+            pick("Cannot read the lyrics sources, please retry", "读取歌词源失败，请重试", locale),
+            locale,
+            error,
+        )
+
+    /** The same shape for an apply / preview / restore that could not run. */
+    fun operationFailed(locale: Locale = Locale.getDefault(), error: Throwable? = null): String =
+        withReason(pick("Cannot change the lyrics source", "无法切换歌词源", locale), locale, error)
+
+    /**
+     * True when [value] is a diagnostic rather than an explanation: a class name, a
+     * stack frame, a JDK/Kotlin exception message, or anything multi-line.
+     *
+     * A host exception's `message` is that about half the time, and no sheet may
+     * render it. The device regression this closes is exactly that shape: the search
+     * card showed `dev.amenhancer.module.lyrics.online.LyricMatchPolicy` as the
+     * "reason" the search failed, because the throwable's message *was* the class
+     * name and the sheet copied the message straight into the result area.
+     */
+    fun isDiagnosticText(value: String): Boolean {
+        val text = value.trim()
+        if (text.isEmpty()) return true
+        if (text.contains('\n') || text.contains('\r') || text.contains('\t')) return true
+        if (text.contains(" at ") || text.startsWith("at ") || text.contains("Caused by")) return true
+        if (text.contains("Exception") || text.contains("Error")) return true
+        if (INTERNAL_PREFIXES.any { prefix -> text.startsWith(prefix) }) return true
+        return FQCN.matches(text)
+    }
+
+    /**
+     * A short reason out of [error], or null when the throwable carries nothing a
+     * user can act on. Never a class name: those are diagnostics, and they belong in
+     * the device log ([LyricSourceDiagnostics.failureTrace]), not on the sheet.
+     */
+    fun readableReason(error: Throwable?): String? {
+        val raw = error?.message.orEmpty().trim()
+        if (raw.isEmpty() || isDiagnosticText(raw)) return null
+        return raw.take(MAX_REASON_CHARS).trim().ifEmpty { null }
+    }
+
+    private fun withReason(base: String, locale: Locale, error: Throwable?): String {
+        val reason = readableReason(error) ?: return base
+        // A host that already mapped the failure sends this very sentence back, so
+        // the sheet must not stack two of them ("搜索失败，请重试：搜索失败，请重试").
+        if (reason.contains(base)) return reason
+        return if (locale.language.equals("zh", ignoreCase = true)) {
+            base + "：" + reason
+        } else {
+            base + ": " + reason
+        }
+    }
+
+    /** Package prefixes no user-facing sentence ever starts with. */
+    private val INTERNAL_PREFIXES =
+        listOf("java.", "javax.", "kotlin.", "android.", "dalvik.", "dev.amenhancer")
+
+    /** A binary class name, possibly nested: the shape a stray exception message has. */
+    private val FQCN = Regex("^(?:[A-Za-z_$][\\w$]*\\.)+[A-Z][\\w$]*$")
+
+    /** Bound on a reason shown beside an action, so the card stays two lines. */
+    private const val MAX_REASON_CHARS = 60
 }

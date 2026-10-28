@@ -121,16 +121,25 @@ object LyricMatchPolicy {
         localDurationMs: Long,
         cleanLocalAlbum: String,
         toSimplified: (String) -> String = { it },
-    ): ScoreBreakdown {
-        val duration = when {
-            localDurationMs <= 0L -> STRONG_DURATION_SCORE
-            song.duration <= 0L -> STRONG_DURATION_SCORE
-            else -> durationScore(localDurationMs, song.duration)
-        }
+    ): ScoreBreakdown = ScoreBreakdown(
+        title = channel { titleScore(cleanLocalTitle, cleanString(song.title, toSimplified)) },
+        // Aliases count: a provider that localises the artist name keeps the
+        // original in brackets ("七音阿卡莉 (NANAOAKARI)"), and erasing that bracket
+        // is what made every such candidate score 70 against the 85 floor.
+        artist = channel { artistScore(localArtists, song.artist, toSimplified) },
+        album = channel {
+            albumScore(cleanLocalAlbum, normalizeAlbumForComparison(song.album, toSimplified))
+        },
+        // A length that cannot be read is neutral (never a penalty), so the
+        // fallback is the strong-identity credit rather than zero.
+        duration = runCatching { durationChannel(localDurationMs, song.duration) }
+            .getOrDefault(STRONG_DURATION_SCORE),
+        features = channel { featuresScore(localFeatures, song.title) },
+    )
 
-        val cleanSongTitle = cleanString(song.title, toSimplified)
-
-        val title = if (cleanLocalTitle == cleanSongTitle ||
+    /** The title channel: containment in either direction, as the scorer always done. */
+    private fun titleScore(cleanLocalTitle: String, cleanSongTitle: String): Int =
+        if (cleanLocalTitle == cleanSongTitle ||
             cleanSongTitle.contains(cleanLocalTitle) ||
             cleanLocalTitle.contains(cleanSongTitle)
         ) {
@@ -139,34 +148,51 @@ object LyricMatchPolicy {
             0
         }
 
-        // Aliases count: a provider that localises the artist name keeps the
-        // original in brackets ("七音阿卡莉 (NANAOAKARI)"), and erasing that bracket
-        // is what made every such candidate score 70 against the 85 floor.
-        val songArtists = artistIdentities(song.artist, toSimplified)
+    /**
+     * The artist channel, through [artistIdentities] so a bracketed alias counts.
+     *
+     * It runs once per candidate of every lane, so a credit line that cannot be
+     * parsed is worth zero points and never an exception: an escaping throw here
+     * used to take the whole sheet snapshot down with it, which is one song's
+     * rename away from 「暂无可选来源」 on every lane.
+     */
+    private fun artistScore(
+        localArtists: List<String>,
+        remoteCredit: String,
+        toSimplified: (String) -> String,
+    ): Int =
+        if (hasCommonArtist(localArtists, artistIdentities(remoteCredit, toSimplified))) 30 else 0
 
-        val artistIdentified = hasCommonArtist(localArtists, songArtists)
-        val artist = if (artistIdentified) 30 else 0
-
-        val remoteAlbum = normalizeAlbumForComparison(song.album, toSimplified)
-
-        val songFeatures = featuresOf(song.title)
-
-        val features = if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty() &&
+    /** The recording-marker channel, compared on top of the title match. */
+    private fun featuresScore(localFeatures: List<String>, songTitle: String): Int {
+        val songFeatures = featuresOf(songTitle)
+        return if (localFeatures.isNotEmpty() && songFeatures.isNotEmpty() &&
             localFeatures.intersect(songFeatures.toSet()).isNotEmpty()
         ) {
             20
         } else {
             0
         }
-
-        return ScoreBreakdown(
-            title = title,
-            artist = artist,
-            album = albumScore(cleanLocalAlbum, remoteAlbum),
-            duration = duration,
-            features = features,
-        )
     }
+
+    /**
+     * The duration channel. A length missing on either side is neutral, not
+     * evidence against the candidate.
+     */
+    private fun durationChannel(localDurationMs: Long, remoteDurationMs: Long): Int = when {
+        localDurationMs <= 0L -> STRONG_DURATION_SCORE
+        remoteDurationMs <= 0L -> STRONG_DURATION_SCORE
+        else -> durationScore(localDurationMs, remoteDurationMs)
+    }
+
+    /**
+     * One scoring channel can never fail its candidate: an unreadable field costs
+     * that channel's points, which is the same answer a non-match earns, and the
+     * rest of the breakdown still decides the match. This is the outer defence the
+     * policy needs, because [scoreBreakdown] is called for every candidate on the
+     * snapshot and search paths, where an exception degrades every lane at once.
+     */
+    private inline fun channel(block: () -> Int): Int = runCatching(block).getOrDefault(0)
 
     /** Recording/version markers that are compared on top of the title match. */
     val FEATURE_MARKERS = listOf("live", "remastered", "翻唱", "cover")
@@ -216,6 +242,7 @@ object LyricMatchPolicy {
     fun stripAlbumVersionSuffixes(value: String): String {
         var result = value.trim()
         var changed: Boolean
+        var passes = 0
         do {
             changed = false
             for (suffix in ALBUM_VERSION_SUFFIXES.sortedByDescending { it.length }) {
@@ -226,7 +253,10 @@ object LyricMatchPolicy {
                     break
                 }
             }
-        } while (changed)
+            // Each pass only shortens the value, so the loop cannot spin; the bound
+            // is there so a future suffix table cannot turn that into a hot loop.
+            passes++
+        } while (changed && passes < MAX_SUFFIX_STRIPS)
         return result
     }
 
@@ -302,6 +332,11 @@ object LyricMatchPolicy {
      * That is an alias, not a guess: `Artist (Live)` adds nothing because the
      * bracket is written in the same script as the name, while
      * `七音阿卡莉 (NANAOAKARI)` contributes both spellings of the one performer.
+     *
+     * The function is total: a credit line it cannot parse contributes its plain
+     * identity and no alias, and never propagates an exception. It runs for every
+     * candidate of every lane, so a throw here would cost the whole sheet its lane
+     * list instead of one row its alias.
      */
     fun artistIdentities(
         creditLine: String,
@@ -310,23 +345,104 @@ object LyricMatchPolicy {
         val names = splitArtists(creditLine).map { it.trim() }.filter { it.isNotEmpty() }
         val identities = LinkedHashSet<String>()
         names.forEach { name ->
-            cleanString(name, toSimplified).takeIf { it.isNotEmpty() }?.let(identities::add)
-            val outerScript = scriptOf(ALIAS_SEGMENT.replace(name, " "))
-            if (outerScript == Script.NONE) return@forEach
-            bracketedSegments(name).forEach { alias ->
-                if (scriptOf(alias) == outerScript) return@forEach
-                cleanString(alias, toSimplified).takeIf { it.isNotEmpty() }?.let(identities::add)
-            }
+            identityOf(name, toSimplified)?.let(identities::add)
+            // One malformed credit line costs only its own aliases: the plain
+            // identity above is already in, and nothing below may propagate. That is
+            // the per-line degradation the device log demanded - a single line used
+            // to fail the whole candidate, and with it every lane of the sheet.
+            runCatching { aliasIdentitiesOf(name, toSimplified) }
+                .getOrElse { emptyList() }
+                .forEach { alias -> identities.add(alias) }
         }
         return identities.toList()
     }
 
-    /** The raw content of every `(…)` / `（…）` / `[…]` / `【…】` group in [value]. */
-    private fun bracketedSegments(value: String): List<String> =
-        ALIAS_SEGMENT.findAll(value)
-            .map { match -> match.value.trim { it in BRACKET_CHARACTERS } }
-            .filter { it.any(Char::isLetter) }
+    /** The cleaned identity of one credit token, or null when nothing is left of it. */
+    private fun identityOf(value: String, toSimplified: (String) -> String): String? =
+        runCatching { cleanString(value, toSimplified) }
+            .getOrNull()
+            .orEmpty()
+            .takeIf { it.isNotEmpty() }
+
+    /**
+     * The aliases one credit token carries: every bracketed group written in a
+     * script different from the name around it.
+     *
+     * A credit that is nothing *but* a bracketed name has no outer script to
+     * compare against, so its groups are taken as the identities outright: that is
+     * the only spelling the token has ("(NANAOAKARI)").
+     */
+    private fun aliasIdentitiesOf(
+        name: String,
+        toSimplified: (String) -> String,
+    ): List<String> {
+        val segments = bracketedSegments(name)
+        if (segments.isEmpty()) return emptyList()
+        val outerScript = scriptOf(withoutBracketedSegments(name))
+        return segments.asSequence()
+            .filter { alias -> outerScript == Script.NONE || scriptOf(alias) != outerScript }
+            .mapNotNull { alias -> identityOf(alias, toSimplified) }
             .toList()
+    }
+
+    /** The raw content of every `(…)` / `（…）` / `[…]` / `【…】` group in [value]. */
+    private fun bracketedSegments(value: String): List<String> {
+        val segments = ArrayList<String>(2)
+        var index = 0
+        while (index < value.length) {
+            val closer = closingBracketFor(value[index])
+            if (closer == null) {
+                index++
+                continue
+            }
+            val end = value.indexOf(closer, index + 1)
+            if (end < 0) {
+                // Unbalanced opener: it is text, not a group.
+                index++
+                continue
+            }
+            val inner = value.substring(index + 1, end).trim()
+            if (inner.isNotEmpty() && inner.any { it.isLetter() }) {
+                segments.add(inner)
+                if (segments.size >= MAX_ALIAS_SEGMENTS) return segments
+            }
+            index = end + 1
+        }
+        return segments
+    }
+
+    /** [value] with every bracketed group removed, i.e. the name's own spelling. */
+    private fun withoutBracketedSegments(value: String): String {
+        val builder = StringBuilder(value.length)
+        var index = 0
+        while (index < value.length) {
+            val closer = closingBracketFor(value[index])
+            if (closer == null) {
+                builder.append(value[index])
+                index++
+                continue
+            }
+            val end = value.indexOf(closer, index + 1)
+            if (end < 0) {
+                builder.append(value[index])
+                index++
+                continue
+            }
+            index = end + 1
+        }
+        return builder.toString()
+    }
+
+    /** The closer matching an opener, or null when [open] is not a bracket at all. */
+    private fun closingBracketFor(open: Char): Char? = when (open) {
+        '(' -> ')'
+        '（' -> '）'
+        '[' -> ']'
+        '【' -> '】'
+        '{' -> '}'
+        '｛' -> '｝'
+        else -> null
+    }
 
     /** The script a credit token is written in, for the alias test above. */
     private enum class Script { NONE, LATIN, OTHER, MIXED }
@@ -338,8 +454,10 @@ object LyricMatchPolicy {
         while (index < value.length) {
             val codePoint = value.codePointAt(index)
             index += Character.charCount(codePoint)
-            if (!Character.isLetter(codePoint)) continue
-            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN) {
+            if (!Character.isValidCodePoint(codePoint) || !Character.isLetter(codePoint)) {
+                continue
+            }
+            if (isLatinLetter(codePoint)) {
                 latin = true
             } else {
                 other = true
@@ -351,6 +469,25 @@ object LyricMatchPolicy {
             other -> Script.OTHER
             else -> Script.NONE
         }
+    }
+
+    /**
+     * The letters of the Latin script a credit actually carries: Basic Latin,
+     * Latin-1 Supplement, Latin Extended-A/B and the full-width A-Z forms.
+     * Everything else that is a letter counts as a different script, which is the
+     * only distinction the alias rule needs.
+     *
+     * It deliberately avoids `Character.UnicodeScript`: that class is newer than
+     * this module's minimum API level, and a missing class fails at the *class*
+     * level - every later scoring call, and therefore every lane of the sheet, not
+     * just the one credit line that reached it.
+     */
+    private fun isLatinLetter(codePoint: Int): Boolean = when (codePoint) {
+        in 0x0041..0x005A, in 0x0061..0x007A -> true
+        in 0x00C0..0x024F -> true
+        in 0x1E00..0x1EFF -> true
+        in 0xFF21..0xFF3A, in 0xFF41..0xFF5A -> true
+        else -> false
     }
 
     /**
@@ -470,14 +607,11 @@ object LyricMatchPolicy {
     private val WHITESPACE = Regex("\\s+")
     private val BRACKETED_SEGMENT = Regex("\\(.*?\\)|\\[.*?]|\\{.*?\\}")
 
-    /**
-     * Every bracketed group an artist credit can carry, full-width forms included:
-     * a localised credit writes its alias in `（…）` as often as in `(…)`.
-     */
-    private val ALIAS_SEGMENT = Regex("\\([^)]*\\)|（[^）]*）|\\[[^\\]]*]|【[^】]*】|\\{[^}]*}")
+    /** Bound on the aliases one credit line can contribute, so a hostile line stays cheap. */
+    private const val MAX_ALIAS_SEGMENTS = 4
 
-    /** The bracket characters [ALIAS_SEGMENT] matches, trimmed off a captured segment. */
-    private val BRACKET_CHARACTERS = setOf('(', ')', '（', '）', '[', ']', '【', '】', '{', '}')
+    /** Bound on [stripAlbumVersionSuffixes] passes over one album name. */
+    private const val MAX_SUFFIX_STRIPS = 8
 
     private val ALBUM_SUFFIX_SEPARATOR_CHARS = setOf(' ', '-', '_', '~', '·', '|', '/')
 

@@ -36,6 +36,7 @@ import dev.amenhancer.module.lyrics.source.LyricsSourceController
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
+import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -182,7 +183,18 @@ internal class LyricsSourceControllerImpl(
         building.exceptionOrNull()?.let { error ->
             logSnapshotFailure(stage = "catalog", songId = songId, error = error)
         }
-        val snapshot = building.getOrNull() ?: return null
+        // The online candidates are the only volatile part of the input (they come
+        // from a search this session ran), so a catalog build that fails is retried
+        // without them before the sheet is degraded. Degrading is the last resort:
+        // it costs every lane its list, which reads as 「暂无可选来源」 / 「不显示」
+        // while a track is playing, and it hides the failure behind a normal state.
+        val snapshot = building.getOrNull()
+            ?: runCatching { LyricSourceCatalog.build(input.copy(onlineCandidates = emptyList()), selection) }
+                .onFailure { error ->
+                    logSnapshotFailure(stage = "catalog-retry", songId = songId, error = error, force = true)
+                }
+                .getOrNull()
+            ?: return null
         selection.forEach { (lane, key) ->
             val state = snapshot.lane(lane) ?: return@forEach
             if (state.selected?.key != key && !LyricSourceKeys.isHidden(key)) {
@@ -299,7 +311,19 @@ internal class LyricsSourceControllerImpl(
             }.onFailure { error ->
                 logger(LyricSourceDiagnostics.searchLine(songId, lane, query, 0, error))
             }
-            mainHandler.post { onDone(mapped) }
+            // A throwable never leaves this class: the sheet renders a failure's
+            // message as the reason, which is how a scoring helper's class name ended
+            // up in the result area. The full exception is already in the log above;
+            // what the user gets is the action plus a reason they can read.
+            val answer = mapped.fold(
+                onSuccess = { options -> Result.success(options) },
+                onFailure = { error ->
+                    Result.failure(
+                        IllegalStateException(LyricSourceText.searchFailed(Locale.getDefault(), error)),
+                    )
+                },
+            )
+            mainHandler.post { onDone(answer) }
         }
     }
 
@@ -1031,21 +1055,34 @@ internal class LyricsSourceControllerImpl(
         runCatching { currentSong.current()?.details?.appleMusicId }.getOrNull() ?: 0L
 
     /**
-     * One bounded line per probe/catalog failure, so a broken read is visible in a
-     * device log instead of silently becoming "no song". The dedupe window keeps a
-     * failing snapshot from flooding the log when the sheet re-reads on every
-     * host notification.
+     * One line per probe/catalog failure, so a broken read is visible in a device
+     * log instead of silently becoming "no song". The line carries the exception's
+     * type, message and first frames: the previous version logged `message ?:
+     * simpleName` only, so a failure whose message *was* a class name
+     * (`dev.amenhancer…LyricMatchPolicy`) arrived with no way to tell a linkage
+     * error from a scored-candidate throw - which is exactly the round this closes.
+     * The dedupe window keeps a failing snapshot from flooding the log when the
+     * sheet re-reads on every host notification; [force] is for the one retry that
+     * must be visible even inside that window.
      */
-    private fun logSnapshotFailure(stage: String, songId: Long, error: Throwable) {
-        val now = System.currentTimeMillis()
-        val previous = lastFailureLogAt.get()
-        if (now - previous < FAILURE_LOG_DEDUPE_MS) return
-        if (!lastFailureLogAt.compareAndSet(previous, now)) return
+    private fun logSnapshotFailure(
+        stage: String,
+        songId: Long,
+        error: Throwable,
+        force: Boolean = false,
+    ) {
+        if (!force) {
+            val now = System.currentTimeMillis()
+            val previous = lastFailureLogAt.get()
+            if (now - previous < FAILURE_LOG_DEDUPE_MS) return
+            if (!lastFailureLogAt.compareAndSet(previous, now)) return
+        }
         logger(
             "lyrics-source snapshot failed stage=" + stage +
                 " id=" + songId +
                 " error=" + (error.message?.takeIf { it.isNotBlank() }
-                    ?: error.javaClass.simpleName),
+                    ?: error.javaClass.simpleName) +
+                " trace=" + LyricSourceDiagnostics.failureTrace(error),
         )
     }
 

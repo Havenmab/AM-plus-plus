@@ -101,6 +101,40 @@ class LyricSourceDiagnosticsTest {
         assertEquals("lyrics-source selection id=42 original=- translation=none romanization=-", line)
     }
 
+    @Test
+    fun `a failed search line keeps the exception type and the throw site`() {
+        // The device line this pins: the message *was* a class name, and the old
+        // shape dropped the type and every frame, so a linkage error and a scored
+        // candidate throw looked identical in the log.
+        val error = NoClassDefFoundError("dev.amenhancer.module.lyrics.online.LyricMatchPolicy")
+
+        val line = LyricSourceDiagnostics.searchLine(42L, LyricLane.ORIGINAL, "恋愛脳", 0, error)
+
+        assertFalse(line.contains("\n"))
+        assertTrue(line.contains("result=failed"))
+        assertTrue(line.contains("type=java.lang.NoClassDefFoundError"))
+        assertTrue(line.contains("frames="))
+    }
+
+    @Test
+    fun `the failure trace names the type message and frames`() {
+        val trace = LyricSourceDiagnostics.failureTrace(IllegalStateException("网络不可用"))
+
+        assertTrue(trace.startsWith("type=java.lang.IllegalStateException"))
+        assertTrue(trace.contains("message=网络不可用"))
+        assertTrue(trace.contains("frames="))
+        assertEquals("none", LyricSourceDiagnostics.failureTrace(null))
+    }
+
+    @Test
+    fun `the failure trace stays on one line for a multi line message`() {
+        val trace = LyricSourceDiagnostics.failureTrace(IllegalStateException("first\nsecond\r\nthird"))
+
+        assertFalse(trace.contains("\n"))
+        assertFalse(trace.contains("\r"))
+        assertTrue(trace.contains("first second third"))
+    }
+
     private fun candidate(): OnlineLyricsCandidate = OnlineLyricsCandidate(
         providerId = LyricSourceProviders.QQ,
         result = dev.amenhancer.module.lyrics.online.SongSearchResult(

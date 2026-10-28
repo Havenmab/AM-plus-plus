@@ -59,15 +59,34 @@ object LyricSourceCatalog {
         selection: Map<LyricLane, String> = emptyMap(),
         locale: Locale = Locale.getDefault(),
     ): LyricsSourceSnapshot {
-        val lanes = LyricLane.ALL.map { lane ->
-            laneState(input, lane, selection[lane], locale)
-        }
+        val lanes = LyricLane.ALL.map { lane -> laneStateOrEmpty(input, lane, selection[lane], locale) }
         return LyricsSourceSnapshot(
             song = input.song,
             lanes = lanes,
             overriddenLanes = lanes.filter { it.overridden }.mapTo(linkedSetOf()) { it.lane },
         )
     }
+
+    /**
+     * [laneState] for one lane, with the whole lane as the unit of failure.
+     *
+     * The sheet renders three lanes from one call, so an option that cannot be
+     * built must cost *that lane* its options - never the other two, and never the
+     * song identity the card is showing. The device log's
+     * `lyrics-source snapshot failed stage=catalog` was exactly this: one lane's
+     * scoring threw, the snapshot became null, and the sheet degraded to
+     * 「暂无可选来源」 on all three lanes (「不显示」 for the two supplement lanes)
+     * while a track was playing.
+     */
+    private fun laneStateOrEmpty(
+        input: LyricSourceInput,
+        lane: LyricLane,
+        storedKey: String?,
+        locale: Locale,
+    ): LyricLaneState =
+        runCatching { laneState(input, lane, storedKey, locale) }.getOrElse {
+            LyricLaneState(lane = lane, selected = null, options = emptyList())
+        }
 
     /**
      * One lane: its options, its default and the state the stored key resolves
@@ -330,10 +349,14 @@ object LyricSourceCatalog {
         lane: LyricLane,
         locale: Locale = Locale.getDefault(),
     ): List<LyricSourceOption> {
-        val identity = input.song.scoringIdentity()
+        // The identity is the local song's normalized surface; a song whose metadata
+        // cannot be normalized leaves the lane with no online row rather than none at all.
+        val identity = runCatching { input.song.scoringIdentity() }.getOrNull()
+            ?: return emptyList()
         val ranked = input.onlineCandidates
             .asSequence()
             .filter { servesCandidate(it, lane) }
+            // One unscoreable row is worth zero, never the rest of the list.
             .map { it to score(it.result, identity) }
             .sortedWith(ONLINE_ORDER)
             .toList()
@@ -446,20 +469,28 @@ object LyricSourceCatalog {
      * option model promises a percentage.
      */
     fun score(result: SongSearchResult, song: LyricSongContext): Int =
-        score(result, song.scoringIdentity())
+        runCatching { score(result, song.scoringIdentity()) }.getOrDefault(MIN_MATCH_SCORE)
 
-    /** [score] against an identity that was already normalized for this search. */
-    fun score(result: SongSearchResult, identity: LyricScoringIdentity): Int {
-        val raw = LyricMatchPolicy.calculateScore(
+    /**
+     * [score] against an identity that was already normalized for this search.
+     *
+     * The policy is total, so this cannot fail for a candidate's own data; the guard
+     * is the seam that keeps a future scoring change from taking a whole lane (or
+     * the snapshot built from it) down with one unreadable row.
+     */
+    fun score(result: SongSearchResult, identity: LyricScoringIdentity): Int =
+        runCatching { scoreUnclamped(result, identity) }.getOrDefault(MIN_MATCH_SCORE)
+
+    /** One candidate's raw policy total, clamped to the option model's 0..100. */
+    private fun scoreUnclamped(result: SongSearchResult, identity: LyricScoringIdentity): Int =
+        LyricMatchPolicy.calculateScore(
             song = result,
             cleanLocalTitle = identity.cleanTitle,
             localArtists = identity.artists,
             localFeatures = identity.features,
             localDurationMs = identity.durationMs,
             cleanLocalAlbum = identity.cleanAlbum,
-        )
-        return raw.coerceIn(MIN_MATCH_SCORE, MAX_MATCH_SCORE)
-    }
+        ).coerceIn(MIN_MATCH_SCORE, MAX_MATCH_SCORE)
 
     /**
      * Resolves a persisted key to one of the lane's options, or null when the key

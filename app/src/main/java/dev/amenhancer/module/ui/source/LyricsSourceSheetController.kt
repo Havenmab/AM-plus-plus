@@ -9,6 +9,7 @@ import dev.amenhancer.module.lyrics.source.LyricSourceErrorCodes
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourceAccess
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
+import dev.amenhancer.module.lyrics.source.LyricSourceText
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
 import java.util.Locale
 
@@ -135,7 +136,9 @@ internal class LyricsSourceSheetController(
         val next = runCatching { controller.snapshot() }.getOrElse { error ->
             phase = LyricsSourceSheetPhase.ERROR
             snapshot = null
-            failureMessage = error.message.orEmpty().ifBlank { error.javaClass.simpleName }
+            // Never the throwable's own text: the read failure is a host diagnostic,
+            // and its message can be a class name (see LyricSourceText.isDiagnosticText).
+            failureMessage = LyricSourceText.snapshotFailed(locale, error)
             view.render()
             return
         }
@@ -276,7 +279,7 @@ internal class LyricsSourceSheetController(
                 searchState = result.fold(
                     onSuccess = { options -> LyricsSourceSearchState.Loaded(options) },
                     onFailure = { error ->
-                        LyricsSourceSearchState.Failed(errorText(error))
+                        LyricsSourceSearchState.Failed(LyricSourceText.searchFailed(locale, error))
                     },
                 )
                 view.render()
@@ -284,7 +287,7 @@ internal class LyricsSourceSheetController(
         }
         runCatching { controller.search(query, lane, onDone) }.onFailure { error ->
             if (!closed && searchToken.isCurrent(token)) {
-                searchState = LyricsSourceSearchState.Failed(errorText(error))
+                searchState = LyricsSourceSearchState.Failed(LyricSourceText.searchFailed(locale, error))
                 view.render()
             }
         }
@@ -470,9 +473,15 @@ internal class LyricsSourceSheetController(
         searchDebounce = null
     }
 
-    /** A host throwable already carries user-facing Chinese text; keep it verbatim. */
+    /**
+     * The wording for a failed write or preview: the sheet's own action sentence plus
+     * a reason a user can read, never the host exception's class name or stack.
+     *
+     * A well-behaved host already sends Chinese ("已切换", "该来源暂不支持预览"), and
+     * that text passes through untouched.
+     */
     private fun errorText(error: Throwable): String =
-        error.message.orEmpty().ifBlank { LyricsSourceSheetText.failedFallback(locale) }
+        LyricSourceText.operationFailed(locale, error)
 
     /**
      * The host owns the precise success wording ("已切换到自定义歌词", the

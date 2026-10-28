@@ -103,10 +103,8 @@ class LyricSourceDiagnosticsTest {
             assertTrue(apply.startsWith("lyrics-source apply failed stage=" + stage + " reason="))
         }
         // One line per failure, whatever the reason carries.
-        val multi = LyricSourceDiagnostics.documentFailedLine("preview", "fetch", "first
-second")
-        assertFalse(multi.contains("
-"))
+        val multi = LyricSourceDiagnostics.documentFailedLine("preview", "fetch", "first\nsecond")
+        assertFalse(multi.contains("\n"))
     }
 
     @Test

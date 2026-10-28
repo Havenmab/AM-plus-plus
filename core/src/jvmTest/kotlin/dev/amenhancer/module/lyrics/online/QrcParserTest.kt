@@ -131,8 +131,7 @@ class QrcParserTest {
         // lines, which the sheet rendered as 「该来源无法预览」 although the body
         // was there - the device report this pins.
         val result = QrcParser.parse(
-            original = "[00:00.730]遗憾要告诉你
-[00:04.120]一二三 改变世界",
+            original = "[00:00.730]遗憾要告诉你\n[00:04.120]一二三 改变世界",
         )
 
         assertEquals(2, result.original.size)

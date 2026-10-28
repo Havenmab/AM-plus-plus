@@ -185,22 +185,34 @@ private fun publishLanes(
     appleMusicId: Long,
     outcome: OnlineTranslationEnrichment.Outcome,
     lines: List<NativeLyricLine>,
-): Boolean = overlay?.update(
-    songId = appleMusicId.toString(),
-    lines = lines,
-    // Only a lane the winning provider really wrote is attributed; a lane the
-    // enrichment preserved from Apple's own document keeps no provider.
-    translationSource = laneProvider(outcome, outcome.translationSource),
-    pronunciationSource = laneProvider(outcome, outcome.pronunciationSource),
-    // The merged document is the document the page shows (Apple's on the
-    // automatic path, the custom one for the completion feed), so its
-    // <transliteration xml:lang> tags are the lane names the app's parser keys
-    // the pronunciation by.
-    pronunciationLanguages = AppleLyricTtmlReader.transliterationLanguages(outcome.ttml),
-    // The provider that actually supplied this document, so the source sheet can
-    // name it instead of "已写入歌词".
-    originalSource = customSourceTag(outcome.source),
-) ?: false
+): Boolean {
+    val translationSource = laneProvider(outcome, outcome.translationSource)
+    val pronunciationSource = laneProvider(outcome, outcome.pronunciationSource)
+    val languages = AppleLyricTtmlReader.transliterationLanguages(outcome.ttml)
+    val published = overlay?.update(
+        songId = appleMusicId.toString(),
+        lines = lines,
+        // Only a lane the winning provider really wrote is attributed; a lane the
+        // enrichment preserved from Apple's own document keeps no provider.
+        translationSource = translationSource,
+        pronunciationSource = pronunciationSource,
+        pronunciationLanguages = languages,
+        originalSource = customSourceTag(outcome.source),
+    ) ?: false
+    if (published) {
+        // The host owns the on-disk copy; without this write a restart forgot which provider
+        // supplied the translation until the page re-parsed the displayed document.
+        LyricsSourceOverlayCacheBridge.remember(
+            songId = appleMusicId,
+            mergedTtml = outcome.ttml,
+            translationSource = translationSource,
+            pronunciationSource = pronunciationSource,
+            originalSource = customSourceTag(outcome.source),
+            languages = languages,
+        )
+    }
+    return published
+}
 
 /**
  * [lines] with both lanes re-homed by [LyricLaneClassifier].

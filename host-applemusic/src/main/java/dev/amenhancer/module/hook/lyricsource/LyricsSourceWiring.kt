@@ -152,6 +152,19 @@ internal fun createLyricsSourceTarget(
     // The overlay store is memory only; this file is what survives a restart
     // (same directory as the selection, so one module data folder holds the state).
     val overlayPersistence = LyricsSourceOverlayPersistence(File(directory, OVERLAY_FILE_NAME))
+    // The automatic completion pipeline publishes lanes in memory only; write them through so a
+    // restart still knows which provider supplied a translation.
+    LyricsSourceOverlayCacheBridge.save = { songId, mergedTtml, translationSource, pronunciationSource,
+        originalSource, languages ->
+        overlayPersistence.saveMergedDocument(
+            songId = songId,
+            mergedTtml = mergedTtml,
+            translationSource = translationSource,
+            pronunciationSource = pronunciationSource,
+            originalSource = originalSource,
+            pronunciationLanguages = languages,
+        )
+    }
     val controller = LyricsSourceControllerImpl(
         currentSong = currentSong,
         overlay = overlay,

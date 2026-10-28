@@ -5,6 +5,7 @@ import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.hook.AutoLyricsRuntime
 import dev.amenhancer.module.hook.CurrentSongIdentityCache
+import dev.amenhancer.module.hook.LyricsSourceOverlayCacheBridge
 import dev.amenhancer.module.hook.LyricsSourceTarget
 import dev.amenhancer.module.hook.ModernXposedRuntime
 import dev.amenhancer.module.hook.NativeLyricsTarget

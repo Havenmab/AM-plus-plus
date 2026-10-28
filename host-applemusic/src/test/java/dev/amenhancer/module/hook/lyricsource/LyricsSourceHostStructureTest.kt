@@ -248,8 +248,8 @@ class LyricsSourceHostStructureTest {
             "songId,\n            outcome.ttml,\n            search.customSourceToken(option.providerId),\n            songDisplayName(song),",
         ))
         assertTrue("online translation success follows both disk writes", success > indexFailure)
-        val selected = text.indexOf("val selected = runCatching { store.select(songId, lane, option.key) }")
-        assertTrue("selection cannot happen before publishOnlineTranslation succeeds", selected > indexWrite)
+        val selectionAfterWrite = text.indexOf("val selected = runCatching { store.select(songId, lane, option.key) }")
+        assertTrue("selection cannot happen before publishOnlineTranslation succeeds", selectionAfterWrite > indexWrite)
 
         val original = text.substringAfter("private fun publishOnlineDocument(")
             .substringBefore("/** Translation lane: merge the provider's translation")

@@ -80,3 +80,14 @@ app：
 - 日志关键字：`lyrics-source snapshot|apply|document|overlay|recents`、`online-translation native-write`、`trace=type=…`。
 
 > 维护约定：所有「内部异常」只在日志出现（`trace=`），UI 只显示中文可读原因；新增过滤规则必须带真实样本单测；涉及 overlay 车道的改动必须同时更新持久化读写两侧。
+
+## 7. 2026-10-28 追加：一条关键真机结论
+
+- 真机日志出现 `lyrics-source document stage=classify type=java.lang.NoClassDefFoundError message=…LyricLaneClassifier`：
+  **安装包 dex 里没有 `LyricLaneClassifier` 这个类**（同进程的 `OnlineTranslationExtraction` 能加载，只缺该类），
+  于是所有来源的预览都走到 `failed(Stage.CLASSIFY, "取回的歌词语种无法识别")`，与语种无关。
+- 处理：`documentFor` / `translationOutcome` 的 classify 闸全部降级（分类失败=无辅助车道，不拒绝整篇），
+  唯一拒绝条件改为 `hasLyricLine(clean)==false`（0 行/全占位/全署名）；并在日志里保留 `stage=classify` 以便区分“缺类”与“真没歌词”。
+- **发布前必须 clean rebuild 并确认 APK 内含 `LyricLaneClassifier`**（`unzip -l` 或 `dexdump` grep），
+  否则 `OnlineTranslationEnrichment.enrich` 与 `AutoLyricsReplacementSession.lanePureLines` 里对它的直接调用仍会抛。
+- 该修复目前在 `fix/lyrics-overlay-source-display` 工作树（`worktrees/integ-merge`），尚未合并进 mainline。

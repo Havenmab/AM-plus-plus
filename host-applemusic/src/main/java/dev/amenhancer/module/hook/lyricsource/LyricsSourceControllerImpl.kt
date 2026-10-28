@@ -519,7 +519,7 @@ internal class LyricsSourceControllerImpl(
             logger(
                 LyricSourceDiagnostics.documentFailedLine(
                     action = "preview",
-                    stage = outcome.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    stage = outcome.stage?.token ?: "fetch",
                     reason = outcome.reason,
                 ),
             )
@@ -831,7 +831,7 @@ internal class LyricsSourceControllerImpl(
             logger(
                 LyricSourceDiagnostics.documentFailedLine(
                     action = "apply",
-                    stage = outcome.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    stage = outcome.stage?.token ?: "fetch",
                     reason = outcome.reason,
                 ),
             )
@@ -902,7 +902,7 @@ internal class LyricsSourceControllerImpl(
             logger(
                 LyricSourceDiagnostics.documentFailedLine(
                     action = "apply",
-                    stage = translated.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    stage = translated.stage?.token ?: "fetch",
                     reason = translated.reason,
                 ),
             )

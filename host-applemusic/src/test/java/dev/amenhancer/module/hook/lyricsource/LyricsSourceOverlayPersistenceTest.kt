@@ -190,7 +190,7 @@ class LyricsSourceOverlayPersistenceTest {
     }
 
     @Test
-    fun `the panel selects the persisted lane with its provider when the store is empty`() {
+    fun `the panel keeps translation provider while Apple-only romanization stays empty`() {
         val folder = directory()
         assertTrue(recordCompletion(persistenceOf(folder)))
         val persisted = persistenceOf(folder).sources(songId)
@@ -218,10 +218,10 @@ class LyricsSourceOverlayPersistenceTest {
         // The lane is the content the module already published, so it is not
         // reported as a user override.
         assertFalse(translation.overridden)
-        // The romanization lane is reported the same way instead of 「不显示」.
+        // Third-party romanization placeholders are suppressed by the Apple-only policy.
         val romanization = requireNotNull(snapshot.lane(LyricLane.ROMANIZATION))
-        assertEquals(LyricSourceKeys.overlay(LyricLane.ROMANIZATION), romanization.selected?.key)
-        assertEquals(LyricSourceProviders.QQ, romanization.selected?.providerId)
+        assertNull(romanization.selected)
+        assertTrue(romanization.options.none { it.providerId == LyricSourceProviders.QQ })
     }
 
     @Test

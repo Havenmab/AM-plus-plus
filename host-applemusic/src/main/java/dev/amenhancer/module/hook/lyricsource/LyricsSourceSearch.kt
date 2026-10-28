@@ -480,7 +480,7 @@ internal class LyricsSourceSearch(
                 "lyrics-source document stage=filter before=" + result.original.size +
                     " after=" + clean.original.size,
             )
-            return failed(Stage.FILTER, emptyLaneReason(result))
+            return failed(Stage.FILTER, emptyLaneReason(clean))
         }
         // Stage 3: the provider's translation/romanization columns.
         // The translation/romanization split is advisory: a classifier that cannot read a

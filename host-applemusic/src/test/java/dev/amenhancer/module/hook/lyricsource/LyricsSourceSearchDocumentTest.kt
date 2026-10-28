@@ -260,7 +260,7 @@ class LyricsSourceSearchDocumentTest {
     }
 
     @Test
-    fun `a body whose lines hold no text is the same empty answer`() {
+    fun `a body whose lines hold no text is a readable empty filter result`() {
         // Slots that survived the parser as whitespace or as `//` placeholders carry
         // no lyric, so this is the empty case — not a 语种 problem.
         val search = search(FakeSource(Source.QM, textlessBody()))

@@ -185,6 +185,19 @@ internal class LyricsSourceSheetController(
         view.render()
     }
 
+    /** Provider ids the user applied most recently, for the quick-pick row. */
+    fun recentProviders(): List<String> =
+        runCatching { LyricsSourceAccess.controller?.recentProviders().orEmpty() }.getOrDefault(emptyList())
+
+    /**
+     * Pins [providerId] and searches again, so tapping a quick pick surfaces that provider's rows
+     * without the user having to type anything.
+     */
+    fun selectRecentProvider(providerId: String) {
+        runCatching { LyricsSourceAccess.controller?.pinProvider(providerId) }
+        searchNow()
+    }
+
     fun toggleLaneCandidates(lane: LyricLane) {
         expandedLane = if (expandedLane == lane) null else lane
         if (expandedLane != null && searchLane != lane) {

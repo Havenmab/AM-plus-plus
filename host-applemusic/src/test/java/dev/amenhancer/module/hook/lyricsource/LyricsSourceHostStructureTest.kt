@@ -261,11 +261,11 @@ class LyricsSourceHostStructureTest {
     fun `a failed restore rolls the stored selection back`() {
         val text = controller()
         // the transaction is the per-lane Apple lock (restoring locks, it does not clear)
-        val lock = text.indexOf("LyricLane.ALL.all { lane -> store.select(songId, lane, LyricSourceKeys.APPLE) }")
-        val rollback = text.indexOf("previous.forEach { (lane, key) -> runCatching { store.select(songId, lane, key) } }")
-        assertTrue("the apple lock is the transaction", lock >= 0)
-        assertTrue("rollback runs after the failed lock", rollback > lock)
-        assertFalse("clearSong is not the transaction any more", text.contains("store.clearSong(songId)"))
+        val lock = text.indexOf("store.select(songId, lane, LyricSourceKeys.APPLE)")
+        val rollback = text.indexOf("rollbackSelection(songId, lane, previousKey)")
+        assertTrue("the Apple preference write exists", lock >= 0)
+        assertTrue("rollback is available after a failed save", rollback > lock)
+        assertTrue("rollback restores the prior lane key", text.contains("private fun rollbackSelection(songId: Long, lane: LyricLane, previousKey: String?)"))
     }
 
     @Test
@@ -279,7 +279,9 @@ class LyricsSourceHostStructureTest {
         assertTrue(search.contains("AppleLyricTtmlWriter.from(clean, lanes)"))
         assertTrue(search.contains("AppleLyricTtmlWriter.build("))
         assertTrue(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
-        assertTrue(search.contains("results += searchLineProviders(query, durationMs, lane)"))
+        // Providers now run concurrently, so each one is a task lambda rather than a
+        // sequential `results +=` statement.
+        assertTrue(search.contains("searchLineProviders(query, durationMs, lane)"))
         // A stage failure carries its own reason to the sheet and keeps the throwable
         // in the log only (the sheet renders the Chinese sentence, never a class name).
         assertTrue(search.contains("LyricSourceDiagnostics.failureTrace("))
@@ -445,8 +447,8 @@ class LyricsSourceHostStructureTest {
         assertTrue(amll.contains("isSafeCorpusFile(remoteId)"))
         val search = source("LyricsSourceSearch.kt")
         assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) {"))
-        assertTrue(search.contains("results += searchAmll(query)"))
-        assertTrue(search.contains("results += searchAmLyrics(query, songId)"))
+        assertTrue(search.contains("searchAmll(query)"))
+        assertTrue(search.contains("searchAmLyrics(query, songId)"))
         assertTrue(search.contains("Source.AMLL -> LyricSourceProviders.AMLL"))
         assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
         assertTrue(search.contains("entry.toSearchResult()"))

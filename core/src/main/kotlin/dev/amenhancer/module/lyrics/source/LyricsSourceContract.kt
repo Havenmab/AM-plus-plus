@@ -420,6 +420,18 @@ interface LyricsSourceController {
     fun snapshot(): LyricsSourceSnapshot?
 
     /**
+     * Provider ids the user applied most recently, newest first. The sheet renders them as
+     * quick picks; hosts without history simply return an empty list.
+     */
+    fun recentProviders(): List<String> = emptyList()
+
+    /**
+     * Moves [providerId]'s rows to the front of the current results. The next search also
+     * prefers it, so tapping a quick pick once is enough.
+     */
+    fun pinProvider(providerId: String) = Unit
+
+    /**
      * Searches the lane's providers for the query. The callback runs on the main
      * thread with either the ranked options (possibly empty) or the failure to
      * show. Implementations must call it exactly once, even when the request is

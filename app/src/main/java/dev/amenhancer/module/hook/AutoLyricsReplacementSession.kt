@@ -37,6 +37,7 @@ import dev.amenhancer.module.lyrics.FileLlmLyricsCache
 import dev.amenhancer.module.lyrics.LlmLyricsClient
 import dev.amenhancer.module.lyrics.LlmLyricsConfig
 import dev.amenhancer.module.lyrics.LlmLyricsDocument
+import dev.amenhancer.module.settings.LyricsSourceIndexWriter
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -159,7 +160,24 @@ internal fun translationEnricher(
                 if (!AutoLyricsReplacementBridge.isLocked(appleMusicId)) {
                     val lines = lanePureLines(outcome.lines)
                     val published = publishLanes(overlay, appleMusicId, outcome, lines)
-                    scoped.log(appleMusicId, publishLine(appleMusicId, outcome, lines, published))
+                    val providerSource = laneProvider(outcome, outcome.translationSource)
+                    val songName = currentTrack()
+                        ?.takeIf { it.appleMusicId == appleMusicId }
+                        ?.title
+                        .orEmpty()
+                    val saved = providerSource != null &&
+                        !AutoLyricsReplacementBridge.isLocked(appleMusicId) &&
+                        LyricsSourceCustomIndexBridge.saveAutomaticLyrics(
+                            songId = appleMusicId,
+                            ttml = outcome.ttml,
+                            source = providerSource,
+                            displayName = songName,
+                        )
+                    scoped.log(
+                        appleMusicId,
+                        publishLine(appleMusicId, outcome, lines, published) +
+                            " automaticFileSaved=$saved",
+                    )
                 }
                 outcome.ttml
             }
@@ -359,6 +377,9 @@ internal fun createAutoLyricsRuntime(
     val configuredContent = EmbeddedContentManager(
         session = EmbeddedConfigurationSession(HostPrivateEmbeddedStorage(application)),
     )
+    // Register automatic write-through before any cache migration work. This process-lifetime
+    // callback does not depend on the settings Activity being opened.
+    val unregisterAutomaticIndexWriter = LyricsSourceIndexWriter.registerAutomatic(configuredContent)
     val publisher = AutoLyricsPublisher { appleMusicId, candidate ->
         val existing = runCatching {
             configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
@@ -523,7 +544,10 @@ internal fun createAutoLyricsRuntime(
             refreshExecutor.queue.clear()
             refreshExecutor.execute(task)
         },
-        closeRefresh = { refreshExecutor.shutdownNow() },
+        closeRefresh = {
+            refreshExecutor.shutdownNow()
+            unregisterAutomaticIndexWriter()
+        },
         refreshSong = refresh@{ appleMusicId, isCancelled ->
             if (isCancelled()) return@refresh null
             var previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }

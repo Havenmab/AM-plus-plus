@@ -303,12 +303,27 @@ class NativeLyricOverlayStore {
         val next = build(
             id = id,
             entries = merged,
-            translationSource = if (lane == Lane.TRANSLATION) source else current?.translationSource,
+            // A non-empty lane refresh may not know its provider. Preserve the
+            // recorded token in that case; an explicit empty write reaches the
+            // clear branch above and removes the lane metadata.
+            translationSource = if (lane == Lane.TRANSLATION) {
+                if (incoming.isEmpty()) null else source ?: current?.translationSource
+            } else {
+                current?.translationSource
+            },
             originalSource = originalSource ?: current?.originalSource,
-            pronunciationSource =
-                if (lane == Lane.PRONUNCIATION) source else current?.pronunciationSource,
+            pronunciationSource = if (lane == Lane.PRONUNCIATION) {
+                if (incoming.isEmpty()) null else source ?: current?.pronunciationSource
+            } else {
+                current?.pronunciationSource
+            },
             pronunciationLanguages = if (lane == Lane.PRONUNCIATION) {
-                pronunciationLanguages.distinct()
+                if (incoming.isEmpty()) {
+                    emptyList()
+                } else {
+                    pronunciationLanguages.distinct()
+                        .ifEmpty { current?.pronunciationLanguages.orEmpty() }
+                }
             } else {
                 current?.pronunciationLanguages.orEmpty()
             },

@@ -187,6 +187,9 @@ object LyricSourceCatalog {
         key: String,
         locale: Locale = Locale.getDefault(),
     ): LyricSourceOption? = when {
+        // A persisted third-party pronunciation choice is stale under the
+        // Apple-only policy and must never be rebuilt as a visible placeholder.
+        lane == LyricLane.ROMANIZATION -> null
         LyricSourceKeys.onlineProvider(key) != null -> onlinePlaceholder(input, lane, key, locale)
         LyricSourceKeys.customFileId(key) != null -> documentPlaceholder(input, lane, key, locale)
         else -> null
@@ -203,6 +206,12 @@ object LyricSourceCatalog {
         lane: LyricLane,
         locale: Locale = Locale.getDefault(),
     ): List<LyricSourceOption> {
+        // Romanization is Apple-only. Keep the native option visible when Apple
+        // advertises its lane, but never offer an overlay, file, cache, or online
+        // provider as a third-party pronunciation source.
+        if (lane == LyricLane.ROMANIZATION) {
+            return listOfNotNull(appleOption(input, lane, locale))
+        }
         val options = LinkedHashMap<String, LyricSourceOption>()
         add(options, appleOption(input, lane, locale))
         add(options, overlayOption(input, lane, locale))
@@ -349,6 +358,10 @@ object LyricSourceCatalog {
         lane: LyricLane,
         locale: Locale = Locale.getDefault(),
     ): List<LyricSourceOption> {
+        // Pronunciation is supplied by Apple's native document only. Keep this
+        // guard at the catalog boundary so callers cannot expose provider rows by
+        // setting hasRomanization on an online candidate.
+        if (lane == LyricLane.ROMANIZATION) return emptyList()
         // The identity is the local song's normalized surface; a song whose metadata
         // cannot be normalized leaves the lane with no online row rather than none at all.
         val identity = runCatching { input.song.scoringIdentity() }.getOrNull()

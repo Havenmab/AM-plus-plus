@@ -90,7 +90,7 @@ internal class LyricsSourceSearchSection(
             setPadding(0, host.dp(activity, 10), 0, 0)
         }
         val phone = host.isEmbeddedPhone(activity)
-        LyricLane.ALL.forEach { lane ->
+        listOf(LyricLane.ORIGINAL, LyricLane.TRANSLATION).forEach { lane ->
             val chip = createChip(lane)
             chips[lane] = chip
             chipsRow.addView(chip, LinearLayout.LayoutParams(

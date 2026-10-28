@@ -123,6 +123,11 @@ internal class LyricsSourceProbes(
         return Probed(input = input, displayedTtml = displayedTtml, displayedIsCustom = customTtml != null)
     }
 
+    /** Raw Apple document captured by the native timing seam, even while a custom file is displayed. */
+    internal fun rawAppleTtml(songId: Long): String? = runCatching {
+        timing.rawTtmlOfAppleMusicId(songId)
+    }.getOrNull()
+
     /** One custom-lyrics body by index file id, bounded by the caller's read budget. */
     private fun readDocument(fileId: String): String? = runCatching {
         config.openFile(fileId)?.use { input -> input.readBytes().toString(Charsets.UTF_8) }

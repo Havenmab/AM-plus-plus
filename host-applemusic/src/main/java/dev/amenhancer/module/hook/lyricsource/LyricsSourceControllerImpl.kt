@@ -36,6 +36,7 @@ import dev.amenhancer.module.lyrics.source.LyricsSourceController
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreview
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
 import dev.amenhancer.module.lyrics.source.LyricsSourceSnapshot
+import dev.amenhancer.module.model.CustomLyricsSources
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executor
@@ -277,6 +278,15 @@ internal class LyricsSourceControllerImpl(
         lane: LyricLane,
         onDone: (Result<List<LyricSourceOption>>) -> Unit,
     ) {
+        // Apple's pronunciation lane is an explicit product boundary: unlike the
+        // translation lane, it must never search or fetch a third-party reading.
+        // Return the native restore action before probing or entering [LyricsSourceSearch].
+        if (lane == LyricLane.ROMANIZATION) {
+            mainHandler.post {
+                onDone(Result.success(listOf(LyricSourceCatalog.appleRestoreOption())))
+            }
+            return
+        }
         val probed = runCatching { probes.probe() }.getOrNull()
         if (probed == null) {
             onDone(Result.success(emptyList()))
@@ -330,6 +340,18 @@ internal class LyricsSourceControllerImpl(
     // --------------------------------------------------------------------- apply
 
     override fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult {
+        // A row from an older sheet instance must not reach a fetch path after this
+        // lane was made Apple-only. Reject before even probing the song.
+        if (lane == LyricLane.ROMANIZATION &&
+            (option.kind != LyricSourceKind.APPLE ||
+                option.key != LyricSourceKeys.APPLE ||
+                option.providerId != LyricSourceProviders.APPLE)
+        ) {
+            return ApplyResult.failed(
+                LyricSourceErrorCodes.NOT_SUPPORTED,
+                "音译只使用 Apple 官方音译，不支持第三方来源",
+            )
+        }
         val envelope = snapshotOf() ?: return noSong()
         val songId = envelope.snapshot.songId
         // The pinned search row "Apple Music（AM-Lyrics）" means one thing: drop this
@@ -426,8 +448,7 @@ internal class LyricsSourceControllerImpl(
         }
         if (result.ok) {
             notifyUserApplied(songId)
-            refreshHost(songId)
-            notifyListeners()
+            refreshHost(songId) { notifyListeners() }
         }
         logger(LyricSourceDiagnostics.applyLine(songId, lane, null, result))
         return result
@@ -446,8 +467,7 @@ internal class LyricsSourceControllerImpl(
         // and dropping it would grey out the other menu row in the same tap.
         dropOverlayLane(songId, lane)
         AutoLyricsReplacementBridge.restoreApple(songId)
-        refreshHost(songId)
-        notifyListeners()
+        refreshHost(songId) { notifyListeners() }
         val result = ApplyResult(ok = true, message = "已显示")
         logger(LyricSourceDiagnostics.applyLine(songId, lane, null, result))
         return result
@@ -478,8 +498,7 @@ internal class LyricsSourceControllerImpl(
             return result
         }
         notifyUserApplied(songId)
-        refreshHost(songId)
-        notifyListeners()
+        refreshHost(songId) { notifyListeners() }
         val result = ApplyResult(ok = true, message = "已恢复")
         logger(LyricSourceDiagnostics.applyLine(songId, LyricLane.ORIGINAL, null, result))
         return result
@@ -649,50 +668,91 @@ internal class LyricsSourceControllerImpl(
         val songId = envelope.snapshot.songId
         val state = envelope.snapshot.lane(lane)
         val appleServes = state?.appleAvailable == true
-        // Restoring is a *preference*, not an absence: the original lane stores the
-        // explicit "apple" choice so the automatic completion cannot silently replace
-        // the page again (it counts as a user lock, see hasManualSelection), while the
-        // catalog still resolves it to Apple — which is that lane's default, so the
-        // lane is not reported as overridden. A supplement lane Apple does not serve
-        // simply drops its override; that lane's default state is "nothing".
-        // Every lane, including a supplement lane Apple does not serve: the explicit
-        // "apple" key keeps the song locked (auto completion may not replace it), and
-        // the catalog resolves it to Apple, or to "nothing" on such a lane.
+        val input = envelope.probed.input
+        val displayedFileId = input.activeFileId
+        val activeFileId = displayedFileId.takeIf { lane == LyricLane.ORIGINAL }
+        val activeEntry = displayedFileId?.let { fileId -> input.customFiles.firstOrNull { it.fileId == fileId } }
+        if (activeFileId != null && (activeEntry == null || activeEntry.userEdited ||
+                activeEntry.originSource == CustomLyricsSources.MANUAL)
+        ) {
+            return ApplyResult.failed(
+                LyricSourceErrorCodes.NOT_SUPPORTED,
+                "当前自定义歌词由用户管理，请先在歌词管理中切换或删除",
+            )
+        }
+
+        val previousKey = runCatching { store.optionKey(songId, lane) }.getOrNull()
+        val activeAppleFile = activeEntry?.originSource == CustomLyricsSources.APPLE
+        val providerOwnedActive = displayedFileId != null && activeEntry != null &&
+            !activeEntry.userEdited && activeEntry.originSource != CustomLyricsSources.MANUAL &&
+            !activeAppleFile
+        val needsNativeCopy = providerOwnedActive
+        // The bridge replaces the one manifest row for this song, so a provider-owned
+        // original is replaced by the disabled APPLE row even for a supplement choice.
+        val shouldSaveNativeCopy = if (lane == LyricLane.ORIGINAL) {
+            displayedFileId == null || activeAppleFile || needsNativeCopy
+        } else {
+            displayedFileId == null || needsNativeCopy
+        }
+        val rawAppleTtml = if (shouldSaveNativeCopy) {
+            probes.rawAppleTtml(songId)?.takeIf(String::isNotBlank)
+                ?: envelope.probed.displayedTtml
+                    ?.takeUnless { envelope.probed.displayedIsCustom }
+                    ?.takeIf(String::isNotBlank)
+        } else {
+            null
+        }
+        if (needsNativeCopy && rawAppleTtml.isNullOrBlank()) {
+            return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "无法读取 Apple 原生歌词，已保留当前歌词文件")
+        }
+
         val stored = runCatching { store.select(songId, lane, LyricSourceKeys.APPLE) }
             .getOrDefault(false)
-        if (!stored) {
-            logger("lyrics-source: restore preference not stored id=" + songId + " lane=" + lane.key)
+        if (!stored) return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
+        if (shouldSaveNativeCopy && !rawAppleTtml.isNullOrBlank() &&
+            !saveAppleNativeCopy(songId, envelope.snapshot.song, rawAppleTtml)
+        ) {
+            rollbackSelection(songId, lane, previousKey)
+            return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存 Apple 原生歌词失败")
         }
-        // The page may be displaying a custom document from the index; clearing the
-        // selection and the overlay cannot undo that, the entry itself has to go.
-        val removed = if (lane == LyricLane.ORIGINAL && LyricsSourceCustomIndexBridge.canRemove) {
-            LyricsSourceCustomIndexBridge.removeLyrics(songId).also { ok ->
-                logger("lyrics-source: index entry removed id=" + songId + " ok=" + ok)
-            }
-        } else {
-            false
+
+        // saveAppleNativeCopy replaces a provider-owned entry with a disabled APPLE
+        // entry by song ID. It is deliberately never followed by removeLyrics.
+        if (lane == LyricLane.ORIGINAL || needsNativeCopy) {
+            AutoLyricsReplacementBridge.restoreApple(songId)
         }
-        // Restoring one lane returns *that* lane to Apple; the other lane's content
-        // stays published. Only the original lane replaces the whole document, so
-        // only it drops the whole overlay.
         val dropped = if (lane == LyricLane.ORIGINAL) {
             dropOverlayLanes(songId)
         } else {
             dropOverlayLane(songId, lane)
         }
-        if (lane == LyricLane.ORIGINAL) {
-            // Dropping the entry does not uninstall the pointer the page already has:
-            // the host re-publishes Apple's own document (index refresh + selector).
-            AutoLyricsReplacementBridge.restoreApple(songId)
-        }
-        refreshHost(songId)
-        notifyListeners()
+        refreshHost(songId) { notifyListeners() }
         val message = when {
             !lane.isSupplement || appleServes -> "已恢复"
-            dropped || removed -> "已关闭"
+            dropped -> "已关闭"
             else -> "该车道已是不显示状态"
         }
         return ApplyResult(ok = true, message = message)
+    }
+
+    private fun rollbackSelection(songId: Long, lane: LyricLane, previousKey: String?) {
+        if (previousKey == null) runCatching { store.clear(songId, lane) }
+        else runCatching { store.select(songId, lane, previousKey) }
+    }
+
+    private fun saveAppleNativeCopy(
+        songId: Long,
+        song: LyricSongContext,
+        rawAppleTtml: String,
+    ): Boolean {
+        if (rawAppleTtml.isBlank()) return false
+        val saved = LyricsSourceCustomIndexBridge.saveAppleNativeCopy(
+            songId = songId,
+            rawAppleTtml = rawAppleTtml,
+            songName = songDisplayName(song),
+        )
+        logger("lyrics-source: Apple native copy id=" + songId + " saved=" + saved)
+        return saved
     }
 
     private fun adoptOverlay(
@@ -706,8 +766,7 @@ internal class LyricsSourceControllerImpl(
         if (!store.select(songId, lane, option.key)) {
             return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
         }
-        refreshHost(songId)
-        notifyListeners()
+        refreshHost(songId) { notifyListeners() }
         return ApplyResult(ok = true, message = "已切换")
     }
 
@@ -732,8 +791,7 @@ internal class LyricsSourceControllerImpl(
                 if (!store.select(songId, lane, option.key)) {
                     return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
                 }
-                refreshHost(songId)
-                notifyListeners()
+                refreshHost(songId) { notifyListeners() }
                 return ApplyResult(ok = true, message = "已切换")
             }
             return ApplyResult.failed(
@@ -761,8 +819,7 @@ internal class LyricsSourceControllerImpl(
         // The same instant-install rule as the online path: the index write alone is
         // invisible until the page re-requests its lyrics.
         AutoLyricsReplacementBridge.reapply(songId)
-        refreshHost(songId)
-        notifyListeners()
+        refreshHost(songId) { notifyListeners() }
         return ApplyResult(ok = true, message = "已切换")
     }
 
@@ -802,13 +859,22 @@ internal class LyricsSourceControllerImpl(
             }
             mainHandler.post {
                 busy.set(false)
-                if (outcome.ok) {
+                val completed = if (outcome.ok) {
                     rememberAppliedCandidate(songId, option)
-                    runCatching { store.select(songId, lane, option.key) }
-                    refreshHost(songId)
-                    notifyListeners()
+                    val selected = runCatching { store.select(songId, lane, option.key) }
+                        .getOrDefault(false)
+                    if (selected) {
+                        // The refresh executor is asynchronous. Notify only after the
+                        // selection/persistence and host refresh have both completed.
+                        refreshHost(songId) { notifyListeners() }
+                        outcome
+                    } else {
+                        ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存选择失败")
+                    }
+                } else {
+                    outcome
                 }
-                logger(LyricSourceDiagnostics.applyLine(songId, lane, option, outcome))
+                logger(LyricSourceDiagnostics.applyLine(songId, lane, option, completed))
             }
         }
         return ApplyResult.accepted("正在获取该来源…")
@@ -933,7 +999,7 @@ internal class LyricsSourceControllerImpl(
         // `overlayPronunciation=true`, which left the toggle with no lane to name).
         val languages = AppleLyricTtmlReader.transliterationLanguages(outcome.ttml)
             .ifEmpty { overlay.pronunciationLanguages(songId.toString()) }
-        val changed = overlay.update(
+        overlay.update(
             songId = songId.toString(),
             lines = outcome.lines,
             translationSource = search.customSourceToken(option.providerId),
@@ -950,7 +1016,7 @@ internal class LyricsSourceControllerImpl(
         // Not gated on [changed]: "the store already held this" says nothing about the
         // disk copy, and a restart replays exactly that copy. Writing the same record
         // twice costs one atomic file replace.
-        runCatching {
+        val saved = runCatching {
             persistence.saveMergedDocument(
                 songId = songId,
                 mergedTtml = outcome.ttml,
@@ -959,12 +1025,21 @@ internal class LyricsSourceControllerImpl(
                 originalSource = overlay.originalSource(songId.toString()),
                 pronunciationLanguages = languages,
             )
-        }.onSuccess { saved -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + saved) }
-        return if (changed) {
-            ApplyResult(ok = true, message = "已切换")
-        } else {
-            ApplyResult(ok = true, message = "已切换")
+        }.onSuccess { ok -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + ok) }
+            .getOrDefault(false)
+        if (!saved) {
+            return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, "保存歌词覆盖层失败")
         }
+        val replaceFailure = LyricsSourceCustomIndexBridge.replaceLyrics(
+            songId,
+            outcome.ttml,
+            search.customSourceToken(option.providerId),
+            songDisplayName(song),
+        )
+        if (replaceFailure != null) {
+            return ApplyResult.failed(LyricSourceErrorCodes.STORAGE, replaceFailure)
+        }
+        return ApplyResult(ok = true, message = "已切换")
     }
 
     // -------------------------------------------------------------------- state
@@ -1028,7 +1103,7 @@ internal class LyricsSourceControllerImpl(
      * to recompute its overlay lanes, then let the module's own refresh session
      * re-import a changed custom document.
      */
-    private fun refreshHost(songId: Long) {
+    private fun refreshHost(songId: Long, onComplete: () -> Unit = {}) {
         // Diagnosis only (no behaviour change): the native 显示发音 row can be
         // greyed out while our own lane reports the lane as available, and the
         // next exported log has to answer which side said what.
@@ -1056,18 +1131,23 @@ internal class LyricsSourceControllerImpl(
                     " nativeMenu=[" + LyricsSourceNativeMenu.describe() + "]",
             )
         }
+        // Both refresh seams are asynchronous; queue completion after the native
+        // refresh request and the custom-document refresh task so observers read the
+        // newly selected provider on their first snapshot.
         runCatching { nativeRefresh()?.onCustomOverlayUpdated(songId) }
+        val refresh = runtime?.refreshSong
+        val refreshExecutor = runtime?.refreshExecutor
+        if (refresh == null) {
+            logger("lyrics-source refresh id=" + songId + " refreshSong=unavailable")
+            mainHandler.post { onComplete() }
+            return
+        }
+        if (refreshExecutor == null) {
+            logger("lyrics-source refresh id=" + songId + " executor=unavailable")
+            mainHandler.post { onComplete() }
+            return
+        }
         runCatching {
-            val refresh = runtime?.refreshSong
-            if (refresh == null) {
-                logger("lyrics-source refresh id=" + songId + " refreshSong=unavailable")
-                return@runCatching
-            }
-            val refreshExecutor = runtime.refreshExecutor
-            if (refreshExecutor == null) {
-                logger("lyrics-source refresh id=" + songId + " executor=unavailable")
-                return@runCatching
-            }
             refreshExecutor.execute {
                 val entry = runCatching { refresh.invoke(songId) { false } }.getOrNull()
                 // One line per refresh: whether the session had anything to re-import
@@ -1078,7 +1158,14 @@ internal class LyricsSourceControllerImpl(
                         " entry=" + (entry?.fileId ?: "none") +
                         " source=" + (entry?.source ?: "apple"),
                 )
+                mainHandler.post { onComplete() }
             }
+        }.onFailure { error ->
+            logger(
+                "lyrics-source refresh id=" + songId +
+                    " failed=" + (error.message ?: error.javaClass.simpleName),
+            )
+            mainHandler.post { onComplete() }
         }
     }
 

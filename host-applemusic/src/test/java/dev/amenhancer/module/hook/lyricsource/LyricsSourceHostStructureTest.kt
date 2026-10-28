@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook.lyricsource
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -191,6 +192,72 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `romanization search is Apple-only before probing providers`() {
+        val text = controller()
+        val search = text.substringAfter("override fun search(")
+            .substringBefore("// --------------------------------------------------------------------- apply")
+        val guard = search.indexOf("if (lane == LyricLane.ROMANIZATION)")
+        val probe = search.indexOf("val probed = runCatching { probes.probe() }")
+        assertTrue("romanization search guard exists", guard >= 0)
+        assertTrue("romanization search returns before probing", guard < probe)
+        assertTrue(search.contains("listOf(LyricSourceCatalog.appleRestoreOption())"))
+        assertTrue(search.contains("onDone(Result.success"))
+        // The provider-backed search API must remain after the Apple-only return.
+        assertTrue(search.indexOf("search.search(") > guard)
+    }
+
+    @Test
+    fun `direct non-Apple romanization apply is rejected before any fetch`() {
+        val text = controller()
+        val apply = text.substringAfter("override fun apply(")
+            .substringBefore("override fun clear(")
+        val guard = apply.indexOf("lane == LyricLane.ROMANIZATION")
+        val probe = apply.indexOf("val envelope = snapshotOf()")
+        assertTrue("romanization apply guard exists", guard >= 0)
+        assertTrue("unsupported romanization is rejected before probing", guard < probe)
+        assertTrue(apply.contains("option.kind != LyricSourceKind.APPLE"))
+        assertTrue(apply.contains("option.key != LyricSourceKeys.APPLE"))
+        assertTrue(apply.contains("option.providerId != LyricSourceProviders.APPLE"))
+        assertTrue(apply.contains("LyricSourceErrorCodes.NOT_SUPPORTED"))
+    }
+
+    @Test
+    fun `online apply persists and selects before refresh notification`() {
+        val text = controller()
+        val worker = text.substringAfter("private fun applyOnline(")
+            .substringBefore("/** Original lane: fetch the provider document")
+        val selected = worker.indexOf("val selected = runCatching { store.select(songId, lane, option.key) }")
+        val refresh = worker.indexOf("refreshHost(songId) { notifyListeners() }")
+        assertTrue("online completion checks the persisted selection", selected >= 0)
+        assertTrue("host refresh precedes observer notification", refresh > selected)
+        assertTrue("observer notification is completion-gated", worker.contains("refreshHost(songId) { notifyListeners() }"))
+        assertEquals("only the refresh completion notifies observers", 1, worker.split("notifyListeners()").size - 1)
+
+        val translation = text.substringAfter("private fun publishOnlineTranslation(")
+            .substringBefore("// -------------------------------------------------------------------- state")
+        val saved = translation.indexOf("val saved = runCatching")
+        val overlayFailure = translation.indexOf("保存歌词覆盖层失败")
+        val indexWrite = translation.indexOf("LyricsSourceCustomIndexBridge.replaceLyrics(")
+        val indexFailure = translation.indexOf("if (replaceFailure != null)")
+        val success = translation.indexOf("ApplyResult(ok = true, message = \"已切换\")")
+        assertTrue("online translation persists its overlay before success", saved >= 0)
+        assertTrue("persistence failure rejects the apply", overlayFailure > saved)
+        assertTrue("Lyrics Manager write follows overlay persistence", indexWrite > saved)
+        assertTrue("index failure rejects the apply", indexFailure > indexWrite)
+        assertTrue("the merged document, provider tag, and song title are indexed", translation.contains(
+            "songId,\n            outcome.ttml,\n            search.customSourceToken(option.providerId),\n            songDisplayName(song),",
+        ))
+        assertTrue("online translation success follows both disk writes", success > indexFailure)
+        val selected = text.indexOf("val selected = runCatching { store.select(songId, lane, option.key) }")
+        assertTrue("selection cannot happen before publishOnlineTranslation succeeds", selected > indexWrite)
+
+        val original = text.substringAfter("private fun publishOnlineDocument(")
+            .substringBefore("/** Translation lane: merge the provider's translation")
+        assertTrue("online original uses the provider token", original.contains("option.providerId,"))
+        assertTrue("online original uses the song display name", original.contains("songDisplayName(envelope.snapshot.song),"))
+    }
+
+    @Test
     fun `a failed restore rolls the stored selection back`() {
         val text = controller()
         // the transaction is the per-lane Apple lock (restoring locks, it does not clear)
@@ -287,9 +354,10 @@ class LyricsSourceHostStructureTest {
         val text = controller()
         val restore = text.substringAfter("private fun restoreLane(")
             .substringBefore("private fun adoptOverlay(")
-        assertFalse(
-            "clear() must drop the override, not fail",
-            restore.contains("LyricSourceErrorCodes.NOT_SUPPORTED"),
+        assertTrue(
+            "only a user-owned active original document is refused",
+            restore.contains("activeEntry.userEdited") &&
+                restore.contains("activeEntry.originSource == CustomLyricsSources.MANUAL"),
         )
         assertTrue(
             "the previously wrong message is gone",
@@ -334,7 +402,7 @@ class LyricsSourceHostStructureTest {
         assertTrue(text.contains("message = \"已隐藏\""))
         // restore assigns its copy through a when-branch, so the branch is what to pin
         assertTrue(text.contains("!lane.isSupplement || appleServes -> \"已恢复\""))
-        assertTrue(text.contains("dropped || removed -> \"已关闭\""))
+        assertTrue(text.contains("dropped -> \"已关闭\""))
         // no parenthetical explanations or counters in success copy
         assertFalse(text.contains("（匹配 "))
         assertFalse(text.contains("译文没有变化"))
@@ -468,14 +536,59 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
-    fun `the search list starts with Apple's own document and applying it always restores`() {
+    fun `the search list starts with Apple's own document and protects user files on restore`() {
         val text = controller()
-        // the pinned first row comes from core, so the sheet never loses the way back
         assertTrue(text.contains("LyricSourceCatalog.searchOptions(withCandidates, lane)"))
-        // it is an ordinary APPLE option, and restoreLane carries no availability guard
         assertTrue(text.contains("LyricSourceKind.APPLE -> restoreLane(envelope, lane)"))
         val restore = text.substringAfter("private fun restoreLane(").substringBefore("private fun adoptOverlay(")
-        assertFalse(restore.contains("NOT_SUPPORTED"))
+        val ownershipGuard = restore.indexOf("activeEntry.userEdited")
+        val selection = restore.indexOf("store.select(songId, lane, LyricSourceKeys.APPLE)")
+        val nativeCopy = restore.indexOf("saveAppleNativeCopy(songId, envelope.snapshot.song, rawAppleTtml)")
+        assertTrue("manual/user-edited entries are refused", ownershipGuard >= 0)
+        assertTrue("ownership is checked before selection", ownershipGuard < selection)
+        assertTrue("ownership is checked before native copy", ownershipGuard < nativeCopy)
+        assertTrue(restore.contains("activeEntry.originSource == CustomLyricsSources.MANUAL"))
+    }
+
+    @Test
+    fun `provider restore saves raw Apple TTML before replacing the active entry`() {
+        val text = controller()
+        val probes = source("LyricsSourceProbes.kt")
+        val restore = text.substringAfter("private fun restoreLane(").substringBefore("private fun adoptOverlay(")
+        val rawRead = restore.indexOf("probes.rawAppleTtml(songId)")
+        val shouldSave = restore.indexOf("val shouldSaveNativeCopy")
+        val missingGuard = restore.indexOf("if (needsNativeCopy && rawAppleTtml.isNullOrBlank())")
+        val save = restore.indexOf("saveAppleNativeCopy(songId, envelope.snapshot.song, rawAppleTtml)")
+        val selection = restore.indexOf("store.select(songId, lane, LyricSourceKeys.APPLE)")
+        val restoreApple = restore.indexOf("AutoLyricsReplacementBridge.restoreApple(songId)")
+        assertTrue("probe exposes raw Apple TTML independent of custom display", probes.contains("timing.rawTtmlOfAppleMusicId(songId)"))
+        assertTrue("provider restore reads raw Apple TTML first", rawRead >= 0)
+        assertTrue("save eligibility is derived before the missing-data guard", shouldSave > rawRead && missingGuard > shouldSave)
+        assertTrue("missing Apple TTML fails before selection", missingGuard < selection)
+        assertTrue("native copy follows selection and precedes native restore", save > selection && save < restoreApple)
+        assertFalse("disabled native replacement is not deleted", restore.contains("removeLyrics(songId)"))
+        assertTrue("the raw Apple probe is used directly", restore.contains("probes.rawAppleTtml(songId)"))
+        assertTrue("provider rows are replaced only by the saved disabled Apple entry", restore.contains("val needsNativeCopy = providerOwnedActive"))
+        assertTrue("custom displayed TTML is never used as Apple source", restore.contains("takeUnless { envelope.probed.displayedIsCustom }"))
+        assertTrue("provider-owned rows are recognized for replacement", restore.contains("val providerOwnedActive = displayedFileId != null && activeEntry != null"))
+
+        val api = apiSource("LyricsSourceTarget.kt")
+        assertTrue(api.contains("fun saveAppleNativeCopy(songId: Long, rawAppleTtml: String, songName: String): Boolean"))
+        val writer = appSource("settings/LyricsSourceIndexWriter.kt")
+        assertTrue(writer.contains("source = CustomLyricsSources.APPLE"))
+        assertTrue(writer.contains("enabled = false"))
+        assertTrue(writer.contains("userEdited = false"))
+        assertTrue(writer.contains("existing.userEdited || existing.source == CustomLyricsSources.MANUAL"))
+    }
+
+    @Test
+    fun `raw Apple probe works even when a custom document is active`() {
+        val probes = source("LyricsSourceProbes.kt")
+        val probe = probes.substringAfter("fun probe(): Probed?")
+            .substringBefore("/** Raw Apple document")
+        assertTrue(probes.contains("internal fun rawAppleTtml(songId: Long): String?"))
+        assertTrue(probe.contains("val appleTtml = runCatching { timing.rawTtmlOfAppleMusicId(songId) }"))
+        assertTrue(probe.contains("displayedTtml = displayedTtml, displayedIsCustom = customTtml != null"))
     }
 
     @Test
@@ -551,14 +664,26 @@ class LyricsSourceHostStructureTest {
         val text = controller()
         // apply: write the index and then ask the host to install it (no restart)
         assertTrue(text.contains("AutoLyricsReplacementBridge.reapply(songId)"))
-        // restore: drop the index entry, then re-show Apple's own document
-        assertTrue(text.contains("LyricsSourceCustomIndexBridge.removeLyrics(songId)"))
-        assertTrue(text.contains("AutoLyricsReplacementBridge.restoreApple(songId)"))
-        // restoring is the Apple *preference*, so a lane without a key is reported as
-        // "not stored" (info) rather than as a failed clear
-        assertTrue(text.contains("restore preference not stored"))
-        assertTrue(text.contains("unlock had no key"))
-        assertFalse(text.contains("selection clear failed"))
+        // restore writes a disabled APPLE copy and never deletes it afterward.
+        val restore = text.substringAfter("private fun restoreLane(")
+            .substringBefore("private fun adoptOverlay(")
+        assertTrue(restore.contains("saveAppleNativeCopy(songId, envelope.snapshot.song, rawAppleTtml)"))
+        assertTrue(restore.contains("AutoLyricsReplacementBridge.restoreApple(songId)"))
+        assertTrue(restore.contains("refreshHost(songId) { notifyListeners() }"))
+        assertFalse("restore must not delete the disabled APPLE replacement", restore.contains("removeLyrics(songId)"))
+        val hidden = text.substringAfter("override fun setLaneHidden(")
+            .substringBefore("private fun unhideLane(")
+        assertTrue("hidden state changes refresh before notifying", hidden.contains("refreshHost(songId) { notifyListeners() }"))
+        val unhidden = text.substringAfter("private fun unhideLane(")
+            .substringBefore("override fun clearAll()")
+        assertTrue("unhidden state changes refresh before notifying", unhidden.contains("refreshHost(songId) { notifyListeners() }"))
+
+        val overlayAdoption = text.substringAfter("private fun adoptOverlay(")
+            .substringBefore("private fun adoptDocument(")
+        assertTrue("overlay adoption refreshes before notifying", overlayAdoption.contains("refreshHost(songId) { notifyListeners() }"))
+        val documentAdoption = text.substringAfter("private fun adoptDocument(")
+            .substringBefore("private fun applyOnline(")
+        assertTrue("document adoption refreshes before notifying", documentAdoption.contains("refreshHost(songId) { notifyListeners() }"))
         val target = hookSource("AppleMusicCustomLyricsTarget.kt")
         // the host owns the two actions: re-parse the fresh entry, or refresh the index
         assertTrue(target.contains("installReapplyCustomLyrics("))

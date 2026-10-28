@@ -70,6 +70,7 @@ object LyricSourceProviders {
      */
     fun fromCustomLyricsSource(source: String?): String = when (source?.trim()?.lowercase(Locale.ROOT)) {
         CustomLyricsSources.MANUAL -> FILE
+        CustomLyricsSources.APPLE -> APPLE
         CustomLyricsSources.AUTO_CACHE -> CACHE
         CustomLyricsSources.AMLL -> AMLL
         CustomLyricsSources.AM_LYRICS -> AM_LYRICS
@@ -98,6 +99,7 @@ object LyricSourceProviders {
      * name the sheet wrote into it. This list is what [providerIdForLabel] matches.
      */
     val LABELLED_PROVIDERS: List<String> = listOf(
+        APPLE,
         QQ,
         NETEASE,
         KUWO,

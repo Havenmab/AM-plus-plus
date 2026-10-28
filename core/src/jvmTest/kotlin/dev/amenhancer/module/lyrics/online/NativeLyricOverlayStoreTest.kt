@@ -577,6 +577,63 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `a lane refresh with unknown provider keeps that lane's recorded source`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            translationSource = "qq",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        assertTrue(
+            store.updateLane(
+                songId = "77",
+                lane = NativeLyricOverlayStore.Lane.TRANSLATION,
+                lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字 updated")),
+                source = null,
+            ),
+        )
+        assertEquals("qq", store.translationSource("77"))
+        assertEquals("你的名字 updated", store.translation("77", 1_000L, 2_000L, "君の名は"))
+
+        assertTrue(
+            store.updateLane(
+                songId = "77",
+                lane = NativeLyricOverlayStore.Lane.PRONUNCIATION,
+                lines = listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa updated")),
+                source = null,
+            ),
+        )
+        assertEquals("displayed", store.pronunciationSource("77"))
+        assertEquals(listOf("ja-Latn"), store.pronunciationLanguages("77"))
+        assertEquals("Kimi no na wa updated", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+    }
+
+    @Test
+    fun `dropping the translation lane clears only its source and keeps pronunciation metadata`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            translationSource = "qq",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        assertTrue(store.dropLane("77", NativeLyricOverlayStore.Lane.TRANSLATION))
+
+        assertFalse(store.hasTranslation("77"))
+        assertNull(store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertNull(store.translationSource("77"))
+        assertTrue(store.hasPronunciation("77"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("displayed", store.pronunciationSource("77"))
+        assertEquals(listOf("ja-Latn"), store.pronunciationLanguages("77"))
+    }
+
+    @Test
     fun `dropping the last lane clears the overlay instead of keeping an empty shell`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

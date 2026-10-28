@@ -26,6 +26,14 @@ class CustomLyricsManifestCodecTest {
     }
 
     @Test
+    fun `Apple Music source survives manifest encode and decode`() {
+        val appleEntry = entry.copy(source = CustomLyricsSources.APPLE)
+        val encoded = CustomLyricsManifestCodec.encode(CustomLyricsManifest(listOf(appleEntry)))
+
+        assertEquals(appleEntry, CustomLyricsManifestCodec.decode(encoded).entries.single())
+    }
+
+    @Test
     fun `malformed or untrusted entries fail closed`() {
         assertEquals(CustomLyricsManifest.empty(), CustomLyricsManifestCodec.decode("not json"))
         assertEquals(

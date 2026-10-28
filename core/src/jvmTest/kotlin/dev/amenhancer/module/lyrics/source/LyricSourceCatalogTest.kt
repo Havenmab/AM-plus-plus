@@ -514,21 +514,35 @@ class LyricSourceCatalogTest {
     }
 
     @Test
-    fun `a placeholder keeps an unknown provider id readable`() {
-        val key = LyricSourceKeys.online("future-provider", "42")
-
-        val state = LyricSourceCatalog.laneState(
-            input(),
-            LyricLane.ROMANIZATION,
-            key,
-            ZH,
+    fun `third-party romanization candidates are excluded from every catalog surface`() {
+        val candidate = candidate(
+            id = "romanized",
+            hasTranslation = true,
+            hasRomanization = true,
         )
+        val withApple = input(
+            apple = AppleLyricsCapability(hasLyrics = true, hasRomanization = true),
+            onlineCandidates = listOf(candidate),
+        )
+        val onlineKey = LyricSourceKeys.online(LyricSourceProviders.QQ, "romanized")
 
-        assertEquals(key, state.selected?.key)
-        assertEquals("future-provider", state.selected?.providerId)
-        assertEquals("future-provider", state.selected?.label)
-        assertEquals("已应用的在线音译", state.selected?.detail)
-        assertTrue(state.overridden)
+        assertTrue(
+            LyricSourceCatalog.onlineOptions(withApple, LyricLane.ROMANIZATION, ZH).isEmpty(),
+        )
+        assertEquals(
+            listOf(LyricSourceKeys.APPLE),
+            LyricSourceCatalog.options(withApple, LyricLane.ROMANIZATION, ZH).map { it.key },
+        )
+        assertEquals(
+            listOf(LyricSourceKeys.APPLE),
+            LyricSourceCatalog.searchOptions(withApple, LyricLane.ROMANIZATION, ZH).map { it.key },
+        )
+        // The same candidate remains available for translation: the Apple-only
+        // restriction is scoped to the romanization lane.
+        assertEquals(
+            listOf(onlineKey),
+            LyricSourceCatalog.onlineOptions(withApple, LyricLane.TRANSLATION, ZH).map { it.key },
+        )
     }
 
     @Test

@@ -5,6 +5,7 @@ import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
+import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
 import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.KuwoSource
 import dev.amenhancer.module.lyrics.online.LyricsResult
@@ -62,6 +63,15 @@ internal class LyricsSourceSearch(
      * provider body can be replayed through [documentFor] without a network.
      */
     sources: List<SearchLyricsSource>? = null,
+    /**
+     * Reads a filtered provider body's auxiliary columns into the two lanes.
+     * [OnlineTranslationExtraction] on the device; injectable so a test can prove
+     * what a reader that cannot classify a body is allowed to cost — the lanes,
+     * never the document.
+     */
+    private val laneReader: (LyricsResult) -> List<OnlineTranslationLine> = { result ->
+        OnlineTranslationExtraction.extract(result, alreadyFiltered = true)
+    },
 ) {
 
     /** A provider document with the timing precision its own data supports. */
@@ -82,7 +92,15 @@ internal class LyricsSourceSearch(
         /** The filter left no lyric line (only credits/notices, or it threw). */
         FILTER("filter"),
 
-        /** The lane classifier could not read the provider's auxiliary columns. */
+        /**
+         * The lane reader could not read the provider's auxiliary columns.
+         *
+         * **Never a reason to stop.** Which lane a provider column belongs to is a
+         * presentation decision: the original body is the song, and a reader that
+         * cannot classify it (an unknown script, a missing class on the device)
+         * costs the translation track at most. The token still names the step in
+         * the exported log, which is where the misreading used to end a preview.
+         */
         CLASSIFY("classify"),
 
         /** The Apple TTML writer produced nothing publishable. */
@@ -401,7 +419,13 @@ internal class LyricsSourceSearch(
                 logStageFailure("document", Stage.FILTER, error)
                 return failed(Stage.FILTER, "取回的歌词无法过滤")
             }
-        if (clean.original.isEmpty()) {
+        // The only thing that may still stop the document: no lyric to publish.
+        // A line counts when it has visible text — the filter already dropped the
+        // credits, the platform notices and the placeholders, so what is left is the
+        // song. **Any script is a lyric**: Japanese (kana + Han) is not an "unknown
+        // language" to be refused, and neither is English or a body whose script
+        // nobody has taught the classifier yet.
+        if (!hasLyricLine(clean)) {
             // The one number that tells the two empty cases apart on a device: a body
             // that parsed to nothing never had a line to filter.
             logger(
@@ -414,9 +438,12 @@ internal class LyricsSourceSearch(
         // The translation/romanization split is advisory: a classifier that cannot read a
         // provider's column must not take the whole document away. The lyrics are publishable on
         // their own, so a failure here degrades to "no auxiliary lanes".
-        val lanes = runCatching { OnlineTranslationExtraction.extract(clean, alreadyFiltered = true) }
+        val lanes = runCatching { laneReader(clean) }
             .onFailure { error -> logStageFailure("document", Stage.CLASSIFY, error) }
-            .getOrDefault(emptyList())
+            .getOrDefault(emptyList<OnlineTranslationLine>())
+        // 语种 is a hint, never a verdict: it explains an empty lane in the log
+        // (script=latin beside lanes=none says "English song", not "failed").
+        logScriptHint("document", clean)
         // Stage 4: the Apple document itself.
         val lines = runCatching { AppleLyricTtmlWriter.from(clean, lanes) }
             .getOrElse { error ->
@@ -445,7 +472,41 @@ internal class LyricsSourceSearch(
      * notices only). "该来源无法预览" said neither.
      */
     private fun emptyLaneReason(result: LyricsResult): String =
-        if (result.original.isEmpty()) NO_LINES else CREDITS_ONLY
+        // No line at all, or nothing but textless slots (`//`, `♪`, a lost LRC
+        // conversion): the body never carried a lyric. Only a body that really had
+        // lines, all of them credits, gets the other sentence.
+        if (result.original.isEmpty() || !hasLyricLine(result)) NO_LINES else CREDITS_ONLY
+
+    /**
+     * True when the body still holds a line a document can be published from.
+     *
+     * The one publishable condition: at least one line with visible text. The filter
+     * has already dropped the credits, the platform notices and the placeholders, so
+     * what survives is the song — in whatever script it is written. This is the only
+     * gate left in front of the writer; the lane reader cannot close it.
+     */
+    private fun hasLyricLine(clean: LyricsResult): Boolean =
+        clean.original.any { line -> line.words.any { word -> word.text.isNotBlank() } }
+
+    /**
+     * The script the body is written in, for the log only.
+     *
+     * 「语种」 decides nothing here: which lane a provider column belongs to is the
+     * only thing the classifier is asked, and a song it does not recognise is still a
+     * song. Logged so an empty translations track on the device reads as "this is an
+     * English/Japanese/unknown-script body" instead of as a source that failed.
+     */
+    private fun logScriptHint(action: String, clean: LyricsResult) {
+        val first = clean.original.firstOrNull { line ->
+            line.words.any { word -> word.text.isNotBlank() }
+        } ?: return
+        val text = first.words.joinToString("") { word -> word.text }
+        val script = runCatching { LyricLaneClassifier.classify(text) }.getOrNull() ?: return
+        logger(
+            "lyrics-source " + action + " script=" + script.name.lowercase() +
+                " lines=" + clean.original.size,
+        )
+    }
 
     /** A failed document build with the stage that produced nothing and the user-facing reason. */
     private fun failed(stage: Stage, reason: String): DocumentOutcome =
@@ -525,14 +586,16 @@ internal class LyricsSourceSearch(
                 logStageFailure("document", Stage.FILTER, error)
                 return failedLines(Stage.FILTER, "取回的译文无法过滤")
             }
-        if (clean.original.isEmpty()) {
+        if (!hasLyricLine(clean)) {
             return failedLines(Stage.FILTER, emptyLaneReason(result))
         }
-        val lines = runCatching { OnlineTranslationExtraction.extract(clean, alreadyFiltered = true) }
-            .getOrElse { error ->
-                logStageFailure("document", Stage.CLASSIFY, error)
-                return failedLines(Stage.CLASSIFY, "取回的译文语种无法识别")
-            }
+        // The same rule as the document: the lane reader is advisory. A body it
+        // cannot classify carries no mergeable translation, which is an *empty lane*
+        // (「该来源没有译文」), not a failed fetch and never a 语种 rejection.
+        val lines = runCatching { laneReader(clean) }
+            .onFailure { error -> logStageFailure("document", Stage.CLASSIFY, error) }
+            .getOrDefault(emptyList<OnlineTranslationLine>())
+        logScriptHint("translation", clean)
         return LinesOutcome(lines)
     }
 

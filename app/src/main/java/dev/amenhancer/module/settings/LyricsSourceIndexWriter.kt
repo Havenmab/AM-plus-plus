@@ -1,8 +1,12 @@
 package dev.amenhancer.module.settings
 
+import dev.amenhancer.module.hook.AutoLyricsReplacementBridge
 import dev.amenhancer.module.hook.LyricsSourceCustomIndexBridge
 import dev.amenhancer.module.hook.ModernXposedRuntime
+import dev.amenhancer.module.config.EmbeddedContentManager
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
+import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
+import dev.amenhancer.module.model.CustomLyricsEntry
 import dev.amenhancer.module.lyrics.source.LyricSourceProviders
 import dev.amenhancer.module.lyrics.source.LyricSourceText
 import dev.amenhancer.module.model.CustomLyricsSources
@@ -26,6 +30,8 @@ import java.util.Locale
  */
 internal object LyricsSourceIndexWriter {
 
+    private var settingsAutomaticCleanup: (() -> Unit)? = null
+
     fun register(controller: EmbeddedSettingsController) {
         runCatching {
             LyricsSourceCustomIndexBridge.replace = { songId, ttml, providerSource, displayName ->
@@ -40,13 +46,61 @@ internal object LyricsSourceIndexWriter {
                 rename(controller, songId, displayName)
             }
         }.onFailure { error -> fail("register rename", error) }
+        if (!LyricsSourceCustomIndexBridge.canSaveAutomatic &&
+            !LyricsSourceCustomIndexBridge.canSaveAppleNative
+        ) {
+            settingsAutomaticCleanup?.invoke()
+            settingsAutomaticCleanup = registerAutomatic(controller)
+        }
     }
 
-    /** Mirrors uninstall(): a torn-down host must not leave callable writers behind. */
+    /** Registers the process-lifetime automatic writer independently of the settings host. */
+    fun registerAutomatic(controller: EmbeddedSettingsController): () -> Unit =
+        registerAutomatic(
+            entries = controller::lyricsEntries,
+            save = { draft, replacing ->
+                controller.saveLyrics(draft, replacing) is EmbeddedActionResult.Done
+            },
+        )
+
+    /** Runtime registration path; it does not require the settings Activity/host. */
+    fun registerAutomatic(content: EmbeddedContentManager): () -> Unit =
+        registerAutomatic(
+            entries = content::listLyrics,
+            save = { draft, replacing ->
+                content.saveLyrics(draft, replacing) is CustomLyricsSaveResult.Saved
+            },
+        )
+
+    private fun registerAutomatic(
+        entries: () -> List<CustomLyricsEntry>,
+        save: (CustomLyricsDraft, Long?) -> Boolean,
+    ): () -> Unit {
+        val automaticWriter: (Long, String, String, String) -> Boolean = { songId, ttml, source, songName ->
+            saveAutomatic(entries, save, songId, ttml, source, songName)
+        }
+        val appleWriter: (Long, String, String) -> Boolean = { songId, ttml, songName ->
+            saveAppleNative(entries, save, songId, ttml, songName)
+        }
+        LyricsSourceCustomIndexBridge.saveAutomatic = automaticWriter
+        LyricsSourceCustomIndexBridge.saveAppleNative = appleWriter
+        return {
+            if (LyricsSourceCustomIndexBridge.saveAutomatic === automaticWriter) {
+                LyricsSourceCustomIndexBridge.saveAutomatic = null
+            }
+            if (LyricsSourceCustomIndexBridge.saveAppleNative === appleWriter) {
+                LyricsSourceCustomIndexBridge.saveAppleNative = null
+            }
+        }
+    }
+
+    /** Mirrors uninstall(): a torn-down settings host must not leave manual writers behind. */
     fun unregister() {
         LyricsSourceCustomIndexBridge.replace = null
         LyricsSourceCustomIndexBridge.remove = null
         LyricsSourceCustomIndexBridge.rename = null
+        settingsAutomaticCleanup?.invoke()
+        settingsAutomaticCleanup = null
     }
 
     private fun replace(
@@ -89,6 +143,87 @@ internal object LyricsSourceIndexWriter {
         fail("replace", error)
         error.message ?: "写入自定义歌词索引失败"
     }
+
+    /** Saves automatic provider TTML without taking ownership of a user document. */
+    private fun saveAutomatic(
+        entries: () -> List<CustomLyricsEntry>,
+        save: (CustomLyricsDraft, Long?) -> Boolean,
+        songId: Long,
+        ttml: String,
+        providerSource: String,
+        songName: String,
+    ): Boolean = runCatching {
+        if (songId <= 0L || ttml.isBlank()) return false
+        val source = automaticLyricsSource(providerSource) ?: return false
+        if (AutoLyricsReplacementBridge.isLocked(songId)) return false
+        val existing = entries().firstOrNull { it.appleMusicId == songId }
+        if (existing != null && (!existing.enabled || existing.userEdited || existing.source == CustomLyricsSources.MANUAL)) {
+            return false
+        }
+        val displayName = songName.takeIf { it.isNotBlank() }
+            ?: existing?.displayName
+            ?: "歌曲 $songId"
+        save(
+            CustomLyricsDraft(
+                appleMusicId = songId,
+                displayName = displayName,
+                ttml = ttml,
+                source = source,
+                enabled = existing?.enabled ?: false,
+                userEdited = false,
+            ),
+            existing?.appleMusicId,
+        )
+    }.getOrElse { error ->
+        fail("automatic save", error)
+        false
+    }
+
+    /** Saves Apple's raw TTML as a disabled, provider-owned copy. */
+    private fun saveAppleNative(
+        entries: () -> List<CustomLyricsEntry>,
+        save: (CustomLyricsDraft, Long?) -> Boolean,
+        songId: Long,
+        ttml: String,
+        songName: String,
+    ): Boolean = runCatching {
+        if (songId <= 0L || ttml.isBlank()) return false
+        val existing = entries().firstOrNull { it.appleMusicId == songId }
+        if (existing != null && (existing.userEdited || existing.source == CustomLyricsSources.MANUAL)) {
+            return false
+        }
+        val displayName = songName.takeIf { it.isNotBlank() }
+            ?: existing?.displayName
+            ?: "歌曲 $songId"
+        save(
+            CustomLyricsDraft(
+                appleMusicId = songId,
+                displayName = displayName,
+                ttml = ttml,
+                source = CustomLyricsSources.APPLE,
+                enabled = false,
+                userEdited = false,
+            ),
+            existing?.appleMusicId,
+        )
+    }.getOrElse { error ->
+        fail("Apple native save", error)
+        false
+    }
+
+    /** Only provider tags accepted by the manifest may be written automatically. */
+    private fun automaticLyricsSource(providerSource: String): String? =
+        when (providerSource.trim().lowercase(Locale.ROOT)) {
+            LyricSourceProviders.APPLE -> CustomLyricsSources.APPLE
+            LyricSourceProviders.QQ, CustomLyricsSources.QQ -> CustomLyricsSources.QQ
+            LyricSourceProviders.NETEASE, CustomLyricsSources.NETEASE -> CustomLyricsSources.NETEASE
+            LyricSourceProviders.KUWO, CustomLyricsSources.KUWO -> CustomLyricsSources.KUWO
+            LyricSourceProviders.KUGOU, CustomLyricsSources.KUGOU -> CustomLyricsSources.KUGOU
+            LyricSourceProviders.LUNABEAT, CustomLyricsSources.LUNABEAT -> CustomLyricsSources.LUNABEAT
+            LyricSourceProviders.AMLL, CustomLyricsSources.AMLL -> CustomLyricsSources.AMLL
+            LyricSourceProviders.AM_LYRICS, CustomLyricsSources.AM_LYRICS -> CustomLyricsSources.AM_LYRICS
+            else -> null
+        }
 
     /**
      * Retitles an entry that still carries a provider label as its display name.
@@ -140,6 +275,7 @@ internal object LyricsSourceIndexWriter {
      */
     private fun customLyricsSource(providerSource: String): String =
         when (providerSource.trim().lowercase(Locale.ROOT)) {
+            LyricSourceProviders.APPLE -> CustomLyricsSources.APPLE
             LyricSourceProviders.QQ -> CustomLyricsSources.QQ
             LyricSourceProviders.NETEASE -> CustomLyricsSources.NETEASE
             LyricSourceProviders.KUWO -> CustomLyricsSources.KUWO

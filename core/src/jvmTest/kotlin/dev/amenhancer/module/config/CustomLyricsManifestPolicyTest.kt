@@ -50,6 +50,15 @@ class CustomLyricsManifestPolicyTest {
     }
 
     @Test
+    fun `sanitize keeps the Apple Music source`() {
+        val sanitized = CustomLyricsManifestPolicy.sanitize(
+            CustomLyricsManifest(listOf(entry(42L, "lyrics_apple", CustomLyricsSources.APPLE))),
+        )
+
+        assertEquals(CustomLyricsSources.APPLE, sanitized.entries.single().source)
+    }
+
+    @Test
     fun `sanitize keeps the am lyrics source`() {
         val sanitized = CustomLyricsManifestPolicy.sanitize(
             CustomLyricsManifest(listOf(entry(42L, "lyrics_am", CustomLyricsSources.AM_LYRICS))),

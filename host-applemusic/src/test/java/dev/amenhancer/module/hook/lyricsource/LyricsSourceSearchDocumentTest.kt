@@ -5,6 +5,8 @@ import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.LyricsLine
 import dev.amenhancer.module.lyrics.online.LyricsResult
 import dev.amenhancer.module.lyrics.online.LyricsWord
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
+import dev.amenhancer.module.lyrics.online.OnlineTranslationLine
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.SongSearchResult
 import dev.amenhancer.module.lyrics.online.Source
@@ -172,15 +174,121 @@ class LyricsSourceSearchDocumentTest {
         assertEquals("取回的歌词没有可用的歌词行", outcome.reason)
     }
 
+    @Test
+    fun `a japanese body publishes on its own, with no auxiliary lane`() {
+        // 仮名 + 漢字 and nothing else: the body the sheet refused as an
+        // unrecognisable 语种. It is a lyric, so it publishes — the script only
+        // decides which lane a column may fill, and this body has no columns.
+        val search = search(FakeSource(Source.QM, japaneseOnlyBody()))
+
+        val outcome = search.documentFor(
+            option = option(LyricSourceProviders.QQ),
+            durationMs = DURATION_MS,
+            songTitle = "恋愛脳",
+            songArtist = "七音阿卡莉",
+        )
+
+        val ttml = outcome.document?.ttml
+        assertNotNull(outcome.reason, ttml)
+        assertTrue(ttml!!.contains("恋愛脳 どうして"))
+        assertTrue(ttml.contains("夜が明けるまで"))
+        // No provider columns, so no translations track — and no failure either.
+        assertFalse(ttml.contains("<translations>"))
+        assertEquals(3, AppleLyricTtmlReader.read(ttml).size)
+        // 语种 is reported as a hint in the log, never as a verdict.
+        assertTrue(log.any { it.contains("script=mixed") })
+    }
+
+    @Test
+    fun `a pure english body publishes`() {
+        val search = search(FakeSource(Source.NE, englishBody()))
+
+        val outcome = search.documentFor(option(LyricSourceProviders.NETEASE), DURATION_MS)
+
+        val ttml = outcome.document?.ttml
+        assertNotNull(outcome.reason, ttml)
+        assertTrue(ttml!!.contains("Hello world"))
+        assertEquals(3, AppleLyricTtmlReader.read(ttml).size)
+        assertTrue(log.any { it.contains("script=latin") })
+    }
+
+    @Test
+    fun `a chinese body publishes`() {
+        val search = search(FakeSource(Source.KUWO, chineseBody()))
+
+        val outcome = search.documentFor(option(LyricSourceProviders.KUWO), DURATION_MS)
+
+        val ttml = outcome.document?.ttml
+        assertNotNull(outcome.reason, ttml)
+        assertTrue(ttml!!.contains("恋爱脑 为什么"))
+        assertEquals(3, AppleLyricTtmlReader.read(ttml).size)
+        assertTrue(log.any { it.contains("script=chinese") })
+    }
+
+    @Test
+    fun `a lane reader that cannot classify costs the lane, not the document`() {
+        // The device report: the classifier could not even be loaded, so every
+        // source answered 「取回的歌词语种无法识别」 and every row of the sheet died.
+        // A lane is presentation; the body is the song.
+        val search = search(FakeSource(Source.QM, japaneseBody())) { _ ->
+            throw NoClassDefFoundError("dev.amenhancer.module.lyrics.online.LyricLaneClassifier")
+        }
+
+        val outcome = search.documentFor(option(LyricSourceProviders.QQ), DURATION_MS)
+
+        val ttml = outcome.document?.ttml
+        assertNotNull(outcome.reason, ttml)
+        assertTrue(ttml!!.contains("恋愛脳 どうして"))
+        assertFalse(ttml.contains("<translations>"))
+        assertEquals(3, AppleLyricTtmlReader.read(ttml).size)
+        // The degraded step is still named in the log, so it stays diagnosable.
+        assertTrue(log.any { it.contains("stage=classify") })
+    }
+
+    @Test
+    fun `a lane reader that cannot classify leaves the translation lane empty`() {
+        val search = search(FakeSource(Source.NE, japaneseBody())) { _ ->
+            throw NoClassDefFoundError("dev.amenhancer.module.lyrics.online.LyricLaneClassifier")
+        }
+
+        val outcome = search.translationOutcome(option(LyricSourceProviders.NETEASE), DURATION_MS)
+
+        // "This body has no translation to merge", never "the fetch failed".
+        assertEquals(emptyList<OnlineTranslationLine>(), outcome.lines)
+        assertNull(outcome.stage)
+        assertTrue(outcome.reason.isEmpty())
+    }
+
+    @Test
+    fun `a body whose lines hold no text is the same empty answer`() {
+        // Slots that survived the parser as whitespace or as `//` placeholders carry
+        // no lyric, so this is the empty case — not a 语种 problem.
+        val search = search(FakeSource(Source.QM, textlessBody()))
+
+        val outcome = search.documentFor(option(LyricSourceProviders.QQ), DURATION_MS)
+
+        assertNull(outcome.document)
+        assertEquals(LyricsSourceSearch.Stage.FILTER, outcome.stage)
+        assertEquals("取回的歌词没有可用的歌词行", outcome.reason)
+    }
+
     // ------------------------------------------------------------------ fixtures
 
-    private fun search(source: SearchLyricsSource): LyricsSourceSearch = LyricsSourceSearch(
+    private fun search(
+        source: SearchLyricsSource,
+        laneReader: (LyricsResult) -> List<OnlineTranslationLine> = { result -> extractLanes(result) },
+    ): LyricsSourceSearch = LyricsSourceSearch(
         transport = null,
         lunabeat = null,
         executor = Executor { command -> command.run() },
         logger = { line -> log += line },
         sources = listOf(source),
+        laneReader = laneReader,
     )
+
+    /** The device lane reader, so the default path is the one these tests run. */
+    private fun extractLanes(result: LyricsResult): List<OnlineTranslationLine> =
+        OnlineTranslationExtraction.extract(result, alreadyFiltered = true)
 
     private fun option(providerId: String): LyricSourceOption = LyricSourceOption(
         key = LyricSourceKeys.online(providerId, REMOTE_ID),
@@ -203,6 +311,53 @@ class LyricsSourceSearchDocumentTest {
             line(8_000L, 11_000L, "呼唤着你的名字"),
             line(12_000L, 15_000L, "直到天明"),
         ),
+        romanization = null,
+    )
+
+    /** 仮名 + 漢字 only: a Japanese lyric with no auxiliary column at all. */
+    private fun japaneseOnlyBody(): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            line(1_000L, 3_000L, "恋愛脳 どうして"),
+            line(4_000L, 7_000L, "君の名前を呼んだ"),
+            line(8_000L, 11_000L, "夜が明けるまで"),
+        ),
+        translated = null,
+        romanization = null,
+    )
+
+    /** Latin script only: a script neither auxiliary lane wants. */
+    private fun englishBody(): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            line(1_000L, 3_000L, "Hello world"),
+            line(4_000L, 7_000L, "Second line"),
+            line(8_000L, 11_000L, "Clouds above the town"),
+        ),
+        translated = null,
+        romanization = null,
+    )
+
+    private fun chineseBody(): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            line(1_000L, 3_000L, "恋爱脑 为什么"),
+            line(4_000L, 7_000L, "呼唤着你的名字"),
+            line(8_000L, 11_000L, "直到天明"),
+        ),
+        translated = null,
+        romanization = null,
+    )
+
+    /** Timed slots that carry no letter: the parser kept the times, not a lyric. */
+    private fun textlessBody(): LyricsResult = LyricsResult(
+        tags = emptyMap(),
+        original = listOf(
+            line(0L, 1_000L, "   "),
+            line(1_000L, 2_000L, "//"),
+            line(2_000L, 3_000L, "♪"),
+        ),
+        translated = null,
         romanization = null,
     )
 

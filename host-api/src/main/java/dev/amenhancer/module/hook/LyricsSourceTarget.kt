@@ -107,11 +107,37 @@ object LyricsSourceCustomIndexBridge {
     @Volatile
     var rename: ((Long, String) -> Boolean)? = null
 
+    /** `(appleMusicId, mergedTtml, customSource, songName) -> saved`. */
+    @Volatile
+    var saveAutomatic: ((Long, String, String, String) -> Boolean)? = null
+
+    /** `(appleMusicId, rawAppleTtml, songName) -> saved as disabled Apple-native copy`. */
+    @Volatile
+    var saveAppleNative: ((Long, String, String) -> Boolean)? = null
+
     val canReplace: Boolean get() = replace != null
+
+    val canSaveAutomatic: Boolean get() = saveAutomatic != null
+
+    val canSaveAppleNative: Boolean get() = saveAppleNative != null
 
     val canRemove: Boolean get() = remove != null
 
     val canRename: Boolean get() = rename != null
+
+    /** Saves a successful automatic enrichment without taking a user-owned document. */
+    fun saveAutomaticLyrics(songId: Long, ttml: String, source: String, displayName: String): Boolean {
+        if (songId <= 0L || ttml.isBlank() || source.isBlank()) return false
+        val writer = saveAutomatic ?: return false
+        return runCatching { writer(songId, ttml, source, displayName) }.getOrDefault(false)
+    }
+
+    /** Saves a disabled Apple-native copy without changing the active lyric selection. */
+    fun saveAppleNativeCopy(songId: Long, rawAppleTtml: String, songName: String): Boolean {
+        if (songId <= 0L || rawAppleTtml.isBlank() || songName.isBlank()) return false
+        val writer = saveAppleNative ?: return false
+        return runCatching { writer(songId, rawAppleTtml, songName) }.getOrDefault(false)
+    }
 
     /** Replaces the song's custom-lyrics document; null on success, else the reason. */
     fun replaceLyrics(songId: Long, ttml: String, source: String, displayName: String): String? {

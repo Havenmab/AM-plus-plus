@@ -6,6 +6,7 @@ import dev.amenhancer.module.lyrics.source.LyricLaneState
 import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricsSourcePreviewLine
+import java.io.File
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,6 +21,18 @@ import org.junit.Test
  * preview row the state belongs to. The view layer is not touched.
  */
 class LyricsSourceSheetPolicyTest {
+
+    @Test
+    fun `search chips exclude the Apple-only romanization lane`() {
+        val source = sequenceOf(
+            File("app/src/main/java/dev/amenhancer/module/ui/source/LyricsSourceSearchSection.kt"),
+            File("../app/src/main/java/dev/amenhancer/module/ui/source/LyricsSourceSearchSection.kt"),
+        ).firstOrNull(File::isFile)?.readText()
+            ?: error("LyricsSourceSearchSection.kt was not found from the unit-test working directory")
+        assertTrue(source.contains("listOf(LyricLane.ORIGINAL, LyricLane.TRANSLATION).forEach { lane ->"))
+        assertFalse(source.contains("LyricLane.ALL.forEach { lane ->"))
+        assertFalse(source.contains("createChip(LyricLane.ROMANIZATION)"))
+    }
 
     @Test
     fun `query keeps the title first and the artist behind it`() {

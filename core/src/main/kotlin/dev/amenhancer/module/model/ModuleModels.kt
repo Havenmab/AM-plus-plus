@@ -346,6 +346,8 @@ data class CustomLyricsManifest(
 }
 
 object CustomLyricsSources {
+    /** Apple's own native lyric document. */
+    const val APPLE = "apple"
     const val MANUAL = "manual"
     const val AUTO_CACHE = "auto-cache"
     const val AMLL = "amll-ttml-db"

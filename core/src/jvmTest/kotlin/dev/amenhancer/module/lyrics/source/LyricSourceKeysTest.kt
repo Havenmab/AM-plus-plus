@@ -207,6 +207,7 @@ class LyricSourceKeysTest {
     fun `every custom-lyrics source maps to a provider id`() {
         val expected = mapOf(
             CustomLyricsSources.MANUAL to LyricSourceProviders.FILE,
+            CustomLyricsSources.APPLE to LyricSourceProviders.APPLE,
             CustomLyricsSources.AUTO_CACHE to LyricSourceProviders.CACHE,
             CustomLyricsSources.AMLL to LyricSourceProviders.AMLL,
             CustomLyricsSources.AM_LYRICS to LyricSourceProviders.AM_LYRICS,
@@ -227,6 +228,7 @@ class LyricSourceKeysTest {
     fun `a saved provider name identifies its origin`() {
         // The manifest downgrades an unsupported source tag to "manual", so the name
         // the sheet wrote is the only remaining evidence of the provider (bug B).
+        assertEquals(LyricSourceProviders.APPLE, LyricSourceProviders.providerIdForLabel("Apple Music"))
         assertEquals(LyricSourceProviders.QQ, LyricSourceProviders.providerIdForLabel("QQ 音乐"))
         assertEquals(LyricSourceProviders.QQ, LyricSourceProviders.providerIdForLabel(" qq music "))
         assertEquals(LyricSourceProviders.NETEASE, LyricSourceProviders.providerIdForLabel("网易云音乐"))

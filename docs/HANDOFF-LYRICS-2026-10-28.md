@@ -91,3 +91,29 @@ app：
 - **发布前必须 clean rebuild 并确认 APK 内含 `LyricLaneClassifier`**（`unzip -l` 或 `dexdump` grep），
   否则 `OnlineTranslationEnrichment.enrich` 与 `AutoLyricsReplacementSession.lanePureLines` 里对它的直接调用仍会抛。
 - 该修复目前在 `fix/lyrics-overlay-source-display` 工作树（`worktrees/integ-merge`），尚未合并进 mainline。
+
+## 8. 用户反馈问题与日志证据（按时间顺序）
+
+日志均为用户从 LSPosed 导出的 zip（路径为本机附件缓存，换机后请让用户重新导出）��hook 行在 `log/modules_*.log`；`full.log` 是系统日志，无 hook 行。
+
+| # | 用户反馈 | 诊断 / 根因 | 处理与状态 | 日志 |
+|---|---|---|---|---|
+| 1 | 「三个点菜单里没有歌词源选项，按钮也没有始终显示」 | 播放器「⋯」是**轨道操作菜单**（adapter 列表），我们跳过 adapter 菜单；该歌 Apple 只有静态歌词时，「更多」按钮本身不存在 | 加「原生按钮强制可见」+ 无车道时接管点击直达面板；删除浮动胶囊与长按入口（用户否决） | `…/58/58aadb62…/LSPosed_20261026_090338.zip` |
+| 2 | 「一直搜不到 AMLL 源」 | `raw.githubusercontent.com` 设备不可达 + 共享 transport 512KB 上限/gzip 不解压 | AMLL 专用 fetcher（gzip/15s/4MB）+ 三镜像回退（github→jsDelivr→ghfast）+ 24h 磁盘缓存 | `…/67/67ff0b5e…/LSPosed_20261026_115806.zip` |
+| 3 | 「搜索歌词后选择任意一项根本不生效」 | 自定义歌词索引对已有条目拒绝二次写入；bridge 只回 Boolean，UI 只能显示「写入失败」 | writer 先查 `lyricsEntries()` 再用 `replacingAppleMusicId` 覆盖；bridge 返回失败原因并透传到 UI | `…/01/01fcdd8a…/LSPosed_20261026_142740.zip` |
+| 4 | 「恢复到 Apple 原始歌词没用；选择完必须重启生效」 | restore 只清选择/overlay，没删索引条目；apply 只写索引、未发布到原生模型 | apply 走 `reapplyCustomLyrics`（`refreshEntry`→`publishReplacement`）；restore 删条目 + `session.start()` + 三次唤醒 | `…/c4/c46f28d7…/LSPosed_20261026_150421.zip` |
+| 5 | 「删除后歌词管理里显示平台名而不是歌名」 | writer 把 `providerLabel` 当 `displayName` | 写入用歌名（`歌名 - 歌手` 兜底），旧条目打开面板时自动 `rename` | 截图（10-26 20:18） |
+| 6 | 「自动补全的来源显示成『已写入歌词』；恢复 Apple 后又被覆盖」 | overlay 未记录 `originalSource`；restore 是清空而非「用户偏好」 | overlay 记录来源链；restore 写 `apple` 偏好键并计入 `isUserLocked`，自动链不再覆盖 | 截图（10-26 21:28） |
+| 7 | 「Fly to the moon 明明是静态歌词，被当成逐行」 | 模型只有 `hasWords`，无时间轴维度 | 新增 `hasTiming`（option/lane/preview），无时间轴显示「无时间轴」 | 截图（10-26 21:28） |
+| 8 | 「入口必须始终显示；不要浮动胶囊/长按」 | 原生按钮被 Apple 隐藏 → 无入口 | 仅保留「原生按钮强制可见 + 弹层 append」两个入口，删掉浮动/长按 | 截图（10-26 22:xx） |
+| 9 | 「选了翻译重启后翻译变成音译；自动补全后没有翻译来源；音译被识别成自定义文件」 | overlay 持久化用单 blob 反推两条车道；`DisplayedLyricPublication` 语义被误用；音译车道被自定义文档顶替 | 持久化 v2 按 `translations[]/romanizations[]` 分车道；`hasRomanization=false` 使音译回落 Apple；补全写穿 provider | `…/3a/3a88d19c…/LSPosed_20261027_152748.zip`、`…/9e/9e3ebd3d…/LSPosed_20261027_160319.zip` |
+| 10 | 「自动补全近乎失效；按钮多点几下发音就灰；重启后翻译显示不出来」 | ①艺术家身份通道把括注原名整段删掉 → `artist=0`、总分 <85、`candidates=0`；②hide/restore 调 `overlay.clear` 把两条车道一起清；③`restoreInto` 有任一车道就整体跳过 | `artistIdentities()` 支持异脚本括注别名；store 增加 `Lane/updateLane/dropLane` 单车道操作；restore 按车道补齐；换曲只清上一首；发布无条件写穿 | `…/6d/6dda9d1e…/LSPosed_20261028_102507.zip` |
+| 11 | 「面板打不开，显示『当前没有播放的歌曲』；搜索出现类名 `LyricMatchPolicy`」 | `snapshotOf()` 把探测失败与无歌塌缩成 null；`artistIdentities` 在设备上触发 `NoClassDefFoundError`（类初始化/链接）而 UI 直接渲染 `message` | 失败分阶段日志 + 降级快照（有歌不再报无歌）；匹配器改手写括号扫描（去 Regex/UnicodeScript）+ 逐通道兜底；错误文案中文化、异常只进日志 | `…/f4/f474b80f…/LSPosed_20261028_110358.zip`、`…/ad/ad806200…/LSPosed_20261028_123812.zip` |
+| 12 | 「自动补全完成但面板翻译仍『不显示』；放大字号后底栏重影；搜到的歌词无法预览」 | 面板只读内存 overlay；搜索用 option.key 反推请求丢掉 extras/元数据；QRC/YRC 解析 0 行无 LRC 兜底 | probes 读 store ∪ 盘；命中缓存按 key 回放完整元数据；解析器三级兜底；`documentFor` 返回 `stage+中文原因` | `…/8d/8d070694…/LSPosed_20261028_143437.zip` |
+| 13 | 「所有来源预览都报『取回的歌词语种无法识别』」 | 实为 `NoClassDefFoundError: LyricLaneClassifier`（安装包 dex 缺类）被 classify 闸升级成整篇拒绝 | classify 失败只降级（丢辅助车道），唯一拒绝条件＝没有可用歌词行；发布前需 clean rebuild 校验 dex 含该类 | `…/d4/d4afd554…/LSPosed_20261028_155518.zip` |
+
+### 复现与验证要点（供后续会话）
+
+- 复现面：歌词页「⋯/译文」→「歌词源…」；切换来源后重启 App；自动补全开关打开后播放无译文歌；播放器菜单连点「显示/隐藏发音」。
+- 关键日志：`lyrics-source snapshot|apply|document|overlay|recents|diag`、`online-translation native-write|candidate|inject|overlay`、`trace=type=…`。
+- 失败排查顺序：`stage=fetch`（网络/鉴权/缺 extras）→ `stage=filter`（全署名/占位）→ `stage=classify`（只影响车道，不再拒绝）→ `stage=write`（TTML 写入）。

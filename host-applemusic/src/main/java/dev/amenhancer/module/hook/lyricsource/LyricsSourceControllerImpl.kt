@@ -19,6 +19,7 @@ import dev.amenhancer.module.lyrics.online.SongSearchResult
 import dev.amenhancer.module.lyrics.online.Source
 import dev.amenhancer.module.lyrics.source.ApplyResult
 import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricLaneState
 import dev.amenhancer.module.lyrics.source.LyricSourceCatalog
 import dev.amenhancer.module.lyrics.source.LyricSourceDiagnostics
 import dev.amenhancer.module.lyrics.source.LyricSourceInput
@@ -101,6 +102,9 @@ internal class LyricsSourceControllerImpl(
     /** Last time an automatic publish was forwarded to the sheet (dedupe window). */
     private val lastPublishedNotify = AtomicLong(0L)
 
+    /** Last time a probe/catalog failure was reported, so the log stays bounded. */
+    private val lastFailureLogAt = AtomicLong(0L)
+
     /** Songs whose legacy display name has already been repaired in this process. */
     private val renamedSongs = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
@@ -141,10 +145,25 @@ internal class LyricsSourceControllerImpl(
 
     // ------------------------------------------------------------------ snapshot
 
-    override fun snapshot(): LyricsSourceSnapshot? = snapshotOf()?.snapshot
+    /**
+     * The current song's lanes, or null **only** when the host has no track.
+     *
+     * A failed probe is not "nothing is playing". Collapsing the two is what made
+     * the sheet render 「当前没有播放的歌曲」 for a song that was playing, with all
+     * three lanes empty, and it left no log line to say which side failed: both the
+     * probe and the catalog build were wrapped in `runCatching { }.getOrNull()`
+     * before the sheet ever saw the failure. A probe that cannot answer therefore
+     * degrades to the song's identity with empty lanes ([degradedSnapshot]) instead
+     * of null, and every failure is logged once ([logSnapshotFailure]).
+     */
+    override fun snapshot(): LyricsSourceSnapshot? = snapshotOf()?.snapshot ?: degradedSnapshot()
 
     private fun snapshotOf(): SnapshotEnvelope? {
-        val probed = runCatching { probes.probe() }.getOrNull() ?: return null
+        val probing = runCatching { probes.probe() }
+        probing.exceptionOrNull()?.let { error ->
+            logSnapshotFailure(stage = "probe", songId = currentSongIdOrZero(), error = error)
+        }
+        val probed = probing.getOrNull() ?: return null
         val songId = probed.input.song.songId
         lastSongId.compareAndSet(0L, songId)
         // The overlay store is process memory; after a restart the user's stored choice
@@ -159,8 +178,11 @@ internal class LyricsSourceControllerImpl(
         // persisted "online:..." selection stops resolving one snapshot after it
         // was applied.
         val input = probed.input.copy(onlineCandidates = rememberedCandidates(songId))
-        val snapshot = runCatching { LyricSourceCatalog.build(input, selection) }.getOrNull()
-            ?: return null
+        val building = runCatching { LyricSourceCatalog.build(input, selection) }
+        building.exceptionOrNull()?.let { error ->
+            logSnapshotFailure(stage = "catalog", songId = songId, error = error)
+        }
+        val snapshot = building.getOrNull() ?: return null
         selection.forEach { (lane, key) ->
             val state = snapshot.lane(lane) ?: return@forEach
             if (state.selected?.key != key && !LyricSourceKeys.isHidden(key)) {
@@ -992,8 +1014,65 @@ internal class LyricsSourceControllerImpl(
         }
     }
 
-    private fun noSong(): ApplyResult =
+    /**
+     * The apply-side answer when the probe produced nothing. A playing song whose
+     * lane state could not be read is a retryable read failure, not "no song":
+     * telling the user to start a track they are already playing is the same
+     * confusion the sheet's null snapshot caused.
+     */
+    private fun noSong(): ApplyResult = if (currentSongIdOrZero() > 0L) {
+        ApplyResult.failed(LyricSourceErrorCodes.NOT_AVAILABLE, "读取歌词源失败，请重试")
+    } else {
         ApplyResult.failed(LyricSourceErrorCodes.NO_SONG, "先播放一首歌")
+    }
+
+    /** The playing Adam ID from the identity cache, or 0 when no track is published. */
+    private fun currentSongIdOrZero(): Long =
+        runCatching { currentSong.current()?.details?.appleMusicId }.getOrNull() ?: 0L
+
+    /**
+     * One bounded line per probe/catalog failure, so a broken read is visible in a
+     * device log instead of silently becoming "no song". The dedupe window keeps a
+     * failing snapshot from flooding the log when the sheet re-reads on every
+     * host notification.
+     */
+    private fun logSnapshotFailure(stage: String, songId: Long, error: Throwable) {
+        val now = System.currentTimeMillis()
+        val previous = lastFailureLogAt.get()
+        if (now - previous < FAILURE_LOG_DEDUPE_MS) return
+        if (!lastFailureLogAt.compareAndSet(previous, now)) return
+        logger(
+            "lyrics-source snapshot failed stage=" + stage +
+                " id=" + songId +
+                " error=" + (error.message?.takeIf { it.isNotBlank() }
+                    ?: error.javaClass.simpleName),
+        )
+    }
+
+    /**
+     * The song card with three empty lanes: what the sheet can honestly show when
+     * the probe could not answer but a track is playing. Null only when there is
+     * genuinely no song, which is the one state the sheet renders as
+     * 「当前没有播放的歌曲」.
+     */
+    private fun degradedSnapshot(): LyricsSourceSnapshot? {
+        val details = runCatching { currentSong.current()?.details }.getOrNull() ?: return null
+        val songId = details.appleMusicId
+        if (songId <= 0L) return null
+        return LyricsSourceSnapshot(
+            song = LyricSongContext(
+                songId = songId,
+                title = details.title.orEmpty(),
+                artist = details.artist.orEmpty(),
+                durationMs = details.durationMs,
+            ),
+            // One state per lane is the catalog's contract; with nothing probed,
+            // every lane is simply 「暂无可选来源」 instead of missing.
+            lanes = LyricLane.ALL.map { lane ->
+                LyricLaneState(lane = lane, selected = null, options = emptyList())
+            },
+        )
+    }
 
     private companion object {
         const val PREVIEW_LINES = 3
@@ -1003,5 +1082,8 @@ internal class LyricsSourceControllerImpl(
 
         /** Collapses the automatic pipeline's publish bursts into one sheet refresh. */
         const val PUBLISH_NOTIFY_DEDUPE_MS = 400L
+
+        /** One "snapshot failed" line per window, even if the sheet re-reads in a burst. */
+        const val FAILURE_LOG_DEDUPE_MS = 2_000L
     }
 }

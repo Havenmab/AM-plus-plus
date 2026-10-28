@@ -37,6 +37,35 @@ class LyricsSourceHostStructureTest {
         File("src/main/java/dev/amenhancer/module/hook/" + name).readText()
 
     @Test
+    fun `a failed probe never reads as "no song"`() {
+        // The reported panel bug: a playing track rendered as「当前没有播放的歌曲」
+        // with three empty lanes, and the log had no line at all, because both the
+        // probe and the catalog build were swallowed into the same null the sheet
+        // reads as "nothing is playing". The two outcomes must stay distinct.
+        val text = controller()
+        assertFalse(
+            "a swallowed probe must not become the no-song state",
+            text.contains("runCatching { probes.probe() }.getOrNull() ?: return null"),
+        )
+        assertTrue(
+            "the sheet's snapshot degrades when the probe cannot answer",
+            text.contains("snapshotOf()?.snapshot ?: degradedSnapshot()"),
+        )
+        // A failure is logged, once per window, with the stage that failed.
+        assertTrue(text.contains("logSnapshotFailure(stage = \"probe\""))
+        assertTrue(text.contains("logSnapshotFailure(stage = \"catalog\""))
+        assertTrue(text.contains("\"lyrics-source snapshot failed stage=\""))
+        // The degraded state still carries the song and one state per lane, so the
+        // card names the track and the lanes render as「暂无可选来源」.
+        assertTrue(text.contains("private fun degradedSnapshot(): LyricsSourceSnapshot?"))
+        assertTrue(text.contains("LyricLane.ALL.map { lane ->"))
+        // And the apply side says "read failed, retry" for a playing song instead of
+        // telling the user to start a track that is already playing.
+        assertTrue(text.contains("读取歌词源失败，请重试"))
+        assertTrue(text.contains("LyricSourceErrorCodes.NO_SONG, \"先播放一首歌\""))
+    }
+
+    @Test
     fun `the menu row is only inserted when the sheet is registered`() {
         val text = menu()
         // A row that opens nothing must never appear: the guard runs both when the

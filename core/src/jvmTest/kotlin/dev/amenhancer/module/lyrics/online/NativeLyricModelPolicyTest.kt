@@ -218,20 +218,29 @@ class NativeLyricModelPolicyTest {
     )
 
     @Test
-    fun `pronunciation availability hides Mandarin and needs Apple's own value`() {
+    fun `pronunciation availability hides Mandarin but survives either lane hiding`() {
         assertFalse(
             pronunciationAvailability(original = true, validOfficial = true, mandarinHidden = true),
         )
-        // The module adds no lane any more: a song without Apple's own value is
-        // not advertised.
-        assertFalse(
+        // Apple's own lane is enough on its own: `original` and the official value
+        // are an OR now, so a lane the app stopped reporting as "on" (the user just
+        // hid 显示音译) stays clickable while our/Apple's data is still there —
+        // which is what lets 显示音译 be turned back on instead of going grey for
+        // good (the reported regression).
+        assertTrue(
             pronunciationAvailability(original = false, validOfficial = true, mandarinHidden = false),
         )
-        assertFalse(
+        // ... and so is our own published lane, even when Apple has no official
+        // value of its own.
+        assertTrue(
             pronunciationAvailability(original = true, validOfficial = false, mandarinHidden = false),
         )
         assertTrue(
             pronunciationAvailability(original = true, validOfficial = true, mandarinHidden = false),
+        )
+        // Only the empty case is unavailable: nothing Apple-side and nothing of ours.
+        assertFalse(
+            pronunciationAvailability(original = false, validOfficial = false, mandarinHidden = false),
         )
     }
 

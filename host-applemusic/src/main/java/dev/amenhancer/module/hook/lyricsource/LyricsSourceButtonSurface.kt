@@ -196,9 +196,13 @@ internal object LyricsSourceButtonSurface {
         val snapshot = runCatching { LyricsSourceAccess.snapshot() }.getOrNull() ?: return true
         // Unknown ("no snapshot yet") falls back to the native behaviour: never steal a
         // click we cannot justify.
-        return snapshot.lanes.any { state ->
-            state.lane != LyricLane.ORIGINAL && state.appleAvailable
-        }
+        val supplement = snapshot.lanes.filter { state -> state.lane != LyricLane.ORIGINAL }
+        if (supplement.isEmpty()) return true
+        // A degraded snapshot (the probe could not read the song) lists the three
+        // lanes with no options at all. That is "we do not know", not "Apple has
+        // nothing to toggle", so it must not take Apple's own popup over.
+        if (supplement.all { state -> state.options.isEmpty() }) return true
+        return supplement.any { state -> state.appleAvailable }
     }
 
     /** Puts every forced button back the way Apple left it. */

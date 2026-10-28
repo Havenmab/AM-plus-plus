@@ -1046,11 +1046,19 @@ object NativeLyricModelPolicy {
 
     /**
      * HLE's `hasPronunciation` / `setPronunciation` availability resolution. A
-     * Mandarin song is hidden outright. Otherwise Apple's own valid romanization
-     * advertises the lane, and — for a module supplement track only — the
-     * displayed document's own published romanization does too, so the app's
-     * pronunciation row is shown for the custom document whose Word-timed head
-     * track the model does not surface.
+     * Mandarin song is hidden outright. Otherwise the lane is available when
+     * **either** side has pronunciation data: Apple's own valid romanization
+     * ([hasValidOfficialPronunciation]) or the lane the module published
+     * ([hasOnlinePronunciation], the supplement document's own romanization), and
+     * — unchanged from HLE — Apple's own value ([original]).
+     *
+     * The two sources are an **or**, not an **and** (product decision): with
+     * `original && hasValidOfficialPronunciation` the menu row went grey for good
+     * after a hide, because hiding the lane is exactly what makes the app report
+     * `original = false` on the next query while our published lane — or Apple's
+     * own — is still there. "Hidden" is a presentation state the user must be able
+     * to leave again, so any remaining data keeps 「显示音译」 clickable and the row
+     * stays operable in both directions.
      */
     fun hasPronunciationAvailability(
         original: Boolean,
@@ -1060,7 +1068,7 @@ object NativeLyricModelPolicy {
     ): Boolean {
         if (mandarinHidden) return false
         if (hasOnlinePronunciation) return true
-        return original && hasValidOfficialPronunciation
+        return original || hasValidOfficialPronunciation
     }
 
     /**

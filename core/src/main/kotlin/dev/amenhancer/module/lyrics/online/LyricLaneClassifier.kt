@@ -94,15 +94,28 @@ object LyricLaneClassifier {
     }
 
     /**
-     * 这一行能不能当**中文译文**发布：必须含汉字，且不含假名、不含其他文字。
+     * 这一行能不能当**中文译文**发布：必须含汉字，且不含其他文字；假名只允许出现在
+     * **括注**里。
      *
      * 汉字＋拉丁（`感谢你曾来过 (Thanks)`）仍算译文——带外文词的译文很常见；
-     * 含假名的行一律不算——`君の名は`、`感谢你曾来过 (ありがとう)` 是日语原文或
-     * 带日语注音的行，把它写进译文车道正是这次要修的错位。
+     * 假名在正文里则不算——`君の名は` 是日语原文，把它写进译文车道正是要修的错位。
+     *
+     * 但括注是另一回事：译者常在译文后补上原文或专名，
+     * `别回头 (振り向かないで)`、`和 ミク 一起唱` 这类行正文是中文。整行丢弃会让
+     * 这首诗的译文少几行，只有这类行的歌更会因此 `translationLines=0`、整个候选被
+     * `reason=no_meaningful_lane` 排掉。所以规则是：**汉字在括注之外仍然存在、括注
+     * 之外没有假名**时才收——`夢ならば`（假名在正文）、`（振り向かないで）`（括注
+     * 外没有汉字）都仍然不算译文。标点（`，。！？「」`）从来不是字母，不影响判定，
+     * 中文译文带日文标点本来就能通过。
      */
     fun isTranslationLike(text: String?): Boolean {
-        val counts = countScripts(visibleLaneText(text)) ?: return false
-        return counts.han > 0 && counts.kana == 0 && counts.other == 0
+        val visible = visibleLaneText(text)
+        val counts = countScripts(visible) ?: return false
+        if (counts.han == 0 || counts.other > 0) return false
+        if (counts.kana == 0) return true
+        val outside = BRACKETED_SEGMENT.replace(visible, " ")
+        val outsideCounts = countScripts(outside) ?: return false
+        return outsideCounts.han > 0 && outsideCounts.kana == 0 && outsideCounts.other == 0
     }
 
     /** 这一行能不能当**罗马音**发布：只有假名，或只有像罗马音的拉丁字母。 */
@@ -355,6 +368,12 @@ object LyricLaneClassifier {
             }
         }
     }
+
+    /**
+     * 括注：`(…)`、`（…）`、`[…]`、`【…】`、`{…}`。半角与全角都要认，译文里的
+     * 补注两种写法都很常见。
+     */
+    private val BRACKETED_SEGMENT = Regex("\\([^)]*\\)|（[^）]*）|\\[[^\\]]*]|【[^】]*】|\\{[^}]*}")
 
     /** 行首的 `[key:value]` 标签；键必须以字母开头，所以时间戳不算标签。 */
     private val LEADING_TAGS = Regex("""^\s*(?:\[[A-Za-z][A-Za-z0-9_]*\s*:[^\[\]]*]\s*)+""")

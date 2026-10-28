@@ -185,6 +185,19 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `a track change only drops the track it is leaving`() {
+        // The native delivery's own currentSong listener used to clear the whole
+        // overlay on every track change. It can run *after* the sheet's listener
+        // replayed the new song's lanes from disk, so the restart memory was
+        // restored and then immediately wiped — one of the reasons 显示翻译 came back
+        // grey after a restart.
+        val text = hookSource("AppleMusicNativeLyricsTarget.kt")
+        assertTrue(text.contains("previousSongId?.let { overlay.clear(it.toString()) }"))
+        assertFalse("a whole-overlay clear would drop the just-restored lanes", text.contains("overlay.clear()"))
+        assertTrue(text.contains("lastPublishedSongId = nextSongId"))
+    }
+
+    @Test
     fun `hiding a lane Apple serves falls back to the native menu row`() {
         assertTrue(controller().contains("LyricsSourceNativeMenu.clickTranslationRow()"))
         assertTrue(controller().contains("LyricsSourceNativeMenu.clickPronunciationRow()"))
@@ -194,13 +207,44 @@ class LyricsSourceHostStructureTest {
     @Test
     fun `hiding a lane clears our own content before touching Apple's switch`() {
         val text = controller()
-        val overlayFirst = text.indexOf("if (overlayHadLane) dropOverlayLanes(songId)")
+        val overlayFirst = text.indexOf("if (overlayHadLane) dropOverlayLane(songId, lane)")
         val appleBranch = text.indexOf("appleServes && LyricsSourceNativeMenu.clickTranslationRow()")
         assertTrue("the overlay lane is cleared first", overlayFirst >= 0)
         assertTrue("Apple's own switch is handled after it", appleBranch > overlayFirst)
         // and a lane nobody serves is already hidden: no marker, no failure,
         // one word of feedback
         assertTrue(text.contains("message = \"已隐藏\""))
+    }
+
+    @Test
+    fun `hiding one lane never drops the other lane's content`() {
+        // The reported grey-out: 隐藏发音 went through the whole-overlay clear, so
+        // 显示翻译 lost its content in the same tap and both rows disabled
+        // themselves. Every single-lane path has to be lane scoped.
+        val text = controller()
+        assertTrue(text.contains("private fun dropOverlayLane(songId: Long, lane: LyricLane): Boolean"))
+        assertTrue(text.contains("overlay.dropLane(songId.toString(), overlayLane)"))
+        // the persisted copy is dropped in step, or the next track change replays
+        // the lane the user just hid
+        assertTrue(text.contains("persistence.dropLane(songId, overlayLane)"))
+        val restore = text.substringAfter("private fun restoreLane(")
+            .substringBefore("private fun adoptOverlay(")
+        assertTrue(
+            "restoring one lane drops only that lane",
+            restore.contains("dropOverlayLane(songId, lane)"),
+        )
+        val unhide = text.substringAfter("private fun unhideLane(")
+            .substringBefore("override fun clearAll()")
+        assertTrue(
+            "un-hiding one lane drops only that lane",
+            unhide.contains("dropOverlayLane(songId, lane)"),
+        )
+        val hide = text.substringAfter("override fun setLaneHidden(")
+            .substringBefore("override fun clearAll()")
+        assertTrue(hide.contains("if (overlayHadLane) dropOverlayLane(songId, lane)"))
+        // "restore Apple" for the whole song is still a full drop
+        assertTrue(text.contains("private fun dropOverlayLanes(songId: Long): Boolean"))
+        assertTrue(text.contains("dropOverlayLanes(songId)"))
     }
 
     @Test
@@ -512,6 +556,26 @@ class LyricsSourceHostStructureTest {
     }
 
     @Test
+    fun `the automatic publish writes its lanes through to disk every time`() {
+        val session = appSource("hook/AutoLyricsReplacementSession.kt")
+        val publish = session.substringAfter("private fun publishLanes(")
+            .substringBefore("private fun lanePureLines(")
+        assertTrue(publish.contains("LyricsSourceOverlayCacheBridge.remember("))
+        // Not gated on the in-memory change flag: update() returning false only says
+        // this process already held the lanes, which says nothing about the disk copy
+        // a restart replays — and a store that lost its lanes reports a change with
+        // nothing behind it. Gating on it is how a restart forgot the provider.
+        assertFalse(publish.contains("if (published) {"))
+        assertTrue(publish.contains("if (outcome.ttml.isNotBlank() && lines.isNotEmpty())"))
+        // and a "no change" update is only a log field, not a write decision
+        assertTrue(publish.contains("return published"))
+        // the host side installs the writer before any publish can happen
+        assertTrue(wiring().contains("LyricsSourceOverlayCacheBridge.save = {"))
+        assertTrue(wiring().contains("overlayPersistence.saveMergedDocument("))
+        assertTrue(apiSource("LyricsSourceOverlayCacheBridge.kt").contains("fun remember("))
+    }
+
+    @Test
     fun `the overlay survives a restart and a stored choice can re-apply by key`() {
         val persistence = source("LyricsSourceOverlayPersistence.kt")
         // one file in the module data folder, atomic replace, bounded
@@ -524,8 +588,7 @@ class LyricsSourceHostStructureTest {
         assertTrue(persistence.contains("\"translations\""))
         assertTrue(persistence.contains("\"romanizations\""))
         assertTrue(persistence.contains("AppleLyricTtmlReader.read("))
-        assertTrue(persistence.contains("overlay.update("))
-        assertTrue(persistence.contains("translationSource = record.translationSource"))
+        assertTrue(persistence.contains("overlay.updateLane("))
         assertTrue(persistence.contains("originalSource = record.originalSource"))
         // and the controller restores before probing, then saves after an apply
         val text = controller()
@@ -554,12 +617,20 @@ class LyricsSourceHostStructureTest {
         assertTrue(persistence.contains("\"translations\", JSONArray().apply"))
         assertTrue(persistence.contains("\"romanizations\", JSONArray().apply"))
         // and never derived from each other on restore
-        assertTrue(persistence.contains("translation = translation?.translation,"))
-        assertTrue(persistence.contains("roma = romanization?.romanization,"))
-        assertTrue(persistence.contains("translationSource = record.translationSource.takeIf { record.translations.isNotEmpty() }"))
-        assertTrue(persistence.contains("pronunciationSource = record.pronunciationSource.takeIf { record.romanizations.isNotEmpty() }"))
-        // both lanes go in ONE update call (a second call would replace the first)
-        assertTrue(persistence.contains("overlay.update("))
+        assertTrue(persistence.contains("translation = translationLine?.translation,"))
+        assertTrue(persistence.contains("roma = romanizationLine?.romanization,"))
+        // each lane is replayed on its own, only when the store is missing THAT lane
+        // (the old "skip the whole replay when either lane exists" rule is what left
+        // the translation behind after a restart)
+        assertTrue(persistence.contains("!overlay.hasTranslation(key)"))
+        assertTrue(persistence.contains("!overlay.hasPronunciation(key)"))
+        assertTrue(persistence.contains("source = record.translationSource"))
+        assertTrue(persistence.contains("source = record.pronunciationSource"))
+        // each lane goes in through the lane-scoped write, so the lane the store
+        // already holds is never replaced by the copy on disk
+        assertTrue(persistence.contains("lane = NativeLyricOverlayStore.Lane.TRANSLATION"))
+        assertTrue(persistence.contains("lane = NativeLyricOverlayStore.Lane.PRONUNCIATION"))
+        assertFalse("a whole-overlay write would drop the other lane", persistence.contains("overlay.update("))
         assertFalse(persistence.contains("publishDisplayed("))
         // the apply saves by splitting the merged document's two lanes
         assertTrue(controller().contains("persistence.saveMergedDocument("))

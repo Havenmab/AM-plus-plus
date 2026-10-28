@@ -57,6 +57,67 @@ class LyricMatchPolicyTest {
     }
 
     @Test
+    fun `a localised credit keeps the original name in brackets as an alias`() {
+        // 设备日志里的真实两条：本地 artist="NANAOAKARI"，提供方 artist 是本地化名 +
+        // 括注原名。旧 cleanString 把括注整段删掉，artist 通道恒 0，总分 70 < 85，
+        // 于是 decision … candidates=0 reason=no_candidates。
+        assertEquals(
+            listOf("七音阿卡莉", "nanaoakari"),
+            LyricMatchPolicy.artistIdentities("七音阿卡莉 (NANAOAKARI)"),
+        )
+        assertEquals(
+            listOf("nanaoakari", "七音阿卡莉"),
+            LyricMatchPolicy.artistIdentities("NANAOAKARI (七音阿卡莉)"),
+        )
+        // 全角括注同样能取出别名（cleanString 只剥半角括注，所以整串本身也留一个）。
+        assertTrue(
+            LyricMatchPolicy.artistIdentities("七音阿卡莉（NANAOAKARI）").contains("nanaoakari"),
+        )
+        // 同脚本的括注是版本/注释，不是别名（否则 "Artist (Live)" 会匹配 "Live"）。
+        assertEquals(listOf("artist"), LyricMatchPolicy.artistIdentities("Artist (Live)"))
+        assertEquals(listOf("artist"), LyricMatchPolicy.artistIdentities("Artist (feat. Other)"))
+    }
+
+    @Test
+    fun `the device rejected candidate clears the score floor through its bracketed alias`() {
+        // 精确复现日志：title="明日の私に幸あれ" artist="七音阿卡莉 (NANAOAKARI)"
+        // candidateDurationMs=214000，local 215000，本地 album 带 " - Single" 后缀。
+        val score = score(
+            song = candidate(
+                title = "明日の私に幸あれ",
+                artist = "七音阿卡莉 (NANAOAKARI)",
+                album = "明日の私に幸あれ - Single",
+                duration = 214_000L,
+                source = Source.QM,
+            ),
+            cleanLocalTitle = "明日の私に幸あれ",
+            localArtists = listOf("nanaoakari"),
+            localDurationMs = 215_000L,
+            cleanLocalAlbum = "明日の私に幸あれ",
+        )
+
+        // Before the alias rule this was exactly 70 (artist = 0) and the whole
+        // translation pass was rejected with reason=no_candidates.
+        assertEquals(50 + 30 + 5 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+        assertTrue("the device case must now pass the floor", score >= LyricMatchPolicy.PASS_SCORE)
+    }
+
+    @Test
+    fun `a same script bracket never turns into an artist identity`() {
+        // 反例保护：括注同脚本时不算别名，所以 "Artist (Live)" 不会因为
+        // 本地 artist 叫 "Live" 就通过。
+        val score = score(
+            song = candidate(title = "Song", artist = "Other Artist (Live)", album = "", duration = 0L),
+            cleanLocalTitle = "song",
+            localArtists = listOf("live"),
+            localDurationMs = 200_000L,
+            cleanLocalAlbum = "",
+        )
+
+        assertEquals(50 + 0 + 0 + LyricMatchPolicy.STRONG_DURATION_SCORE, score)
+    }
+
+    @Test
     fun `primary artist stops at each multi credit separator`() {
         assertEquals("A", LyricMatchPolicy.primaryArtist("A, B, C"))
         assertEquals("A", LyricMatchPolicy.primaryArtist("A，B"))

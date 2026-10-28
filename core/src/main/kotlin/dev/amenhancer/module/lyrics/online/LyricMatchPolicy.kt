@@ -139,16 +139,13 @@ object LyricMatchPolicy {
             0
         }
 
-        val songArtists = splitArtists(song.artist).map { cleanString(it, toSimplified) }
+        // Aliases count: a provider that localises the artist name keeps the
+        // original in brackets ("七音阿卡莉 (NANAOAKARI)"), and erasing that bracket
+        // is what made every such candidate score 70 against the 85 floor.
+        val songArtists = artistIdentities(song.artist, toSimplified)
 
-        val hasCommonArtist = localArtists.any { localArtist ->
-            songArtists.any { songArtist ->
-                localArtist == songArtist ||
-                    songArtist.contains(localArtist) ||
-                    localArtist.contains(songArtist)
-            }
-        }
-        val artist = if (hasCommonArtist) 30 else 0
+        val artistIdentified = hasCommonArtist(localArtists, songArtists)
+        val artist = if (artistIdentified) 30 else 0
 
         val remoteAlbum = normalizeAlbumForComparison(song.album, toSimplified)
 
@@ -288,6 +285,75 @@ object LyricMatchPolicy {
         value.split("&", ",", "，", "、", "/", "／")
 
     /**
+     * Every identity token one artist credit line carries, for the artist half of
+     * the score.
+     *
+     * A provider that localises a name keeps the original beside it in brackets —
+     * `七音阿卡莉 (NANAOAKARI)`, `NANAOAKARI (七音阿卡莉)` — while Apple may expose only
+     * one of the two. [cleanString] drops bracketed segments (correctly, for a
+     * title whose bracket is a version marker), so comparing the cleaned credit
+     * alone compared `nanaoakari` against `七音阿卡莉` and scored **zero** on the
+     * artist channel. The device log's rejected candidate is exactly that shape:
+     * `title="明日の私に幸あれ" artist="七音阿卡莉 (NANAOAKARI)" … artist=0 … total=70`
+     * against the 85 floor, and `decision … candidates=0 reason=no_candidates`.
+     *
+     * So the identity set is the split credit **plus** the content of every
+     * bracketed segment written in a different script than the name around it.
+     * That is an alias, not a guess: `Artist (Live)` adds nothing because the
+     * bracket is written in the same script as the name, while
+     * `七音阿卡莉 (NANAOAKARI)` contributes both spellings of the one performer.
+     */
+    fun artistIdentities(
+        creditLine: String,
+        toSimplified: (String) -> String = { it },
+    ): List<String> {
+        val names = splitArtists(creditLine).map { it.trim() }.filter { it.isNotEmpty() }
+        val identities = LinkedHashSet<String>()
+        names.forEach { name ->
+            cleanString(name, toSimplified).takeIf { it.isNotEmpty() }?.let(identities::add)
+            val outerScript = scriptOf(ALIAS_SEGMENT.replace(name, " "))
+            if (outerScript == Script.NONE) return@forEach
+            bracketedSegments(name).forEach { alias ->
+                if (scriptOf(alias) == outerScript) return@forEach
+                cleanString(alias, toSimplified).takeIf { it.isNotEmpty() }?.let(identities::add)
+            }
+        }
+        return identities.toList()
+    }
+
+    /** The raw content of every `(…)` / `（…）` / `[…]` / `【…】` group in [value]. */
+    private fun bracketedSegments(value: String): List<String> =
+        ALIAS_SEGMENT.findAll(value)
+            .map { match -> match.value.trim { it in BRACKET_CHARACTERS } }
+            .filter { it.any(Char::isLetter) }
+            .toList()
+
+    /** The script a credit token is written in, for the alias test above. */
+    private enum class Script { NONE, LATIN, OTHER, MIXED }
+
+    private fun scriptOf(value: String): Script {
+        var latin = false
+        var other = false
+        var index = 0
+        while (index < value.length) {
+            val codePoint = value.codePointAt(index)
+            index += Character.charCount(codePoint)
+            if (!Character.isLetter(codePoint)) continue
+            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN) {
+                latin = true
+            } else {
+                other = true
+            }
+        }
+        return when {
+            latin && other -> Script.MIXED
+            latin -> Script.LATIN
+            other -> Script.OTHER
+            else -> Script.NONE
+        }
+    }
+
+    /**
      * Introduces a featured performer who is not the primary artist. Ported from
      * HyperLyricsEnhanced's query surface: the credit list itself is still split
      * by [splitArtists] for identity comparison, but the search keyword must not
@@ -403,6 +469,15 @@ object LyricMatchPolicy {
 
     private val WHITESPACE = Regex("\\s+")
     private val BRACKETED_SEGMENT = Regex("\\(.*?\\)|\\[.*?]|\\{.*?\\}")
+
+    /**
+     * Every bracketed group an artist credit can carry, full-width forms included:
+     * a localised credit writes its alias in `（…）` as often as in `(…)`.
+     */
+    private val ALIAS_SEGMENT = Regex("\\([^)]*\\)|（[^）]*）|\\[[^\\]]*]|【[^】]*】|\\{[^}]*}")
+
+    /** The bracket characters [ALIAS_SEGMENT] matches, trimmed off a captured segment. */
+    private val BRACKET_CHARACTERS = setOf('(', ')', '（', '）', '[', ']', '【', '】', '{', '}')
 
     private val ALBUM_SUFFIX_SEPARATOR_CHARS = setOf(' ', '-', '_', '~', '·', '|', '/')
 

@@ -52,8 +52,14 @@ internal class AppleMusicNativeLyricsTarget(
             this.delivery = delivery
             val subscription = currentSong.addListener { song ->
                 val nextSongId = song?.details?.appleMusicId
-                if (nextSongId != lastPublishedSongId) {
-                    overlay.clear()
+                val previousSongId = lastPublishedSongId
+                if (nextSongId != previousSongId) {
+                    // Only the track we are **leaving** may be dropped. This listener
+                    // can run after the lyrics-source side already replayed the new
+                    // song's lanes from disk, and a whole-overlay clear here took the
+                    // just-restored translation with it — the restart that "forgot"
+                    // the translation was this clear, not the missing disk copy.
+                    previousSongId?.let { overlay.clear(it.toString()) }
                     lastPublishedSongId = nextSongId
                 }
             }

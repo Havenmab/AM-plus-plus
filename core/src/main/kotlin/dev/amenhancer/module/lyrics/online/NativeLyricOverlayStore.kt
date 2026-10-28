@@ -70,7 +70,35 @@ class NativeLyricOverlayStore {
          */
         val pronunciationSpans: List<NativePronunciationSpan> = emptyList(),
         val background: BackgroundContent? = null,
-    )
+    ) {
+        /** True when this line carries nothing either lane can serve. */
+        val isEmpty: Boolean
+            get() = translation == null &&
+                pronunciation == null &&
+                pronunciationSpans.isEmpty() &&
+                background == null
+
+        /** This line with [lane]'s content removed and the other lane intact. */
+        fun without(lane: Lane): Content = when (lane) {
+            Lane.TRANSLATION -> copy(translation = null)
+            // The background group belongs to the pronunciation half (its own
+            // romanization is what the small row renders), so hiding the lane
+            // takes it with it.
+            Lane.PRONUNCIATION -> copy(
+                pronunciation = null,
+                pronunciationSpans = emptyList(),
+                background = null,
+            )
+        }
+
+        /** This line's lanes plus [other]'s, used when one lane is written in place. */
+        fun mergedWith(other: Content): Content = Content(
+            translation = translation ?: other.translation,
+            pronunciation = pronunciation ?: other.pronunciation,
+            pronunciationSpans = pronunciationSpans.ifEmpty { other.pronunciationSpans },
+            background = background ?: other.background,
+        )
+    }
 
     private data class Entry(val text: String, val content: Content)
 
@@ -145,82 +173,187 @@ class NativeLyricOverlayStore {
         originalSource: String? = null,
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
-        val entries = lines.mapNotNull { line ->
-            val backgroundSpans = line.backgroundRomaSpans.filter { it.text.isNotBlank() }
-            val backgroundText = line.backgroundText?.takeIf(String::isNotBlank)
-            val background = if (backgroundText != null || backgroundSpans.isNotEmpty()) {
-                BackgroundContent(
-                    text = backgroundText,
-                    pronunciation = RomanizationPolicy.sanitize(backgroundText, line.backgroundRoma),
-                    pronunciationSpans = backgroundSpans,
-                    romanization = line.backgroundRoma?.takeIf(String::isNotBlank),
-                    begin = line.backgroundBegin,
-                    end = line.backgroundEnd,
-                )
-            } else {
-                null
-            }
-            val content = Content(
-                translation = OnlineTranslationContentPolicy.sanitize(line.translation),
-                pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
-                pronunciationSpans = line.romaSpans.filter { it.text.isNotBlank() },
-                background = background,
-            )
-            if (
-                content.translation == null &&
-                content.pronunciation == null &&
-                content.pronunciationSpans.isEmpty() &&
-                content.background == null
-            ) {
-                return@mapNotNull null
-            }
-            LineKey(TimingKey(line.begin, line.end), normalizeText(line.text)) to content
-        }
+        val entries = entriesOf(lines)
         if (entries.isEmpty()) return false
-        val next = Overlay(
-            songId = id,
-            exactContent = entries.toMap(),
-            contentByTiming = entries.groupBy(
-                keySelector = { it.first.timing },
-                valueTransform = { Entry(it.first.text, it.second) },
-            ),
-            contentByBegin = entries.groupBy(
-                keySelector = { it.first.timing.begin },
-                valueTransform = { Entry(it.first.text, it.second) },
-            ),
-            contentByText = entries
-                .filter { it.first.text.isNotEmpty() }
-                .groupBy(
-                    keySelector = { it.first.text },
-                    valueTransform = { Entry(it.first.text, it.second) },
-                ),
-            // The background's own extent is the second key the app's background
-            // getter can be matched by, independent of the line's own timing.
-            backgroundByTiming = entries
-                .mapNotNull { (key, content) ->
-                    val background = content.background ?: return@mapNotNull null
-                    if (background.end <= background.begin) return@mapNotNull null
-                    TimingKey(background.begin, background.end) to Entry(key.text, content)
-                }
-                .groupBy(
-                    keySelector = { it.first },
-                    valueTransform = { it.second },
-                ),
-            hasTranslation = entries.any { it.second.translation != null },
+        val next = build(
+            id = id,
+            entries = entries,
             translationSource = translationSource,
             // A null here means "this caller does not know the provider" (the automatic
             // enrichment republishes lanes it did not fetch), so the previously recorded
             // name survives instead of being wiped; only the same song can inherit it.
             originalSource = originalSource
                 ?: overlay?.takeIf { it.songId == id }?.originalSource,
-            hasPronunciation = entries.any {
-                it.second.pronunciation != null ||
-                    it.second.pronunciationSpans.isNotEmpty() ||
-                    it.second.background != null
-            },
             pronunciationSource = pronunciationSource,
             pronunciationLanguages = pronunciationLanguages.distinct(),
         )
+        return store(next)
+    }
+
+    /**
+     * Replaces **one** lane for [songId] and leaves the other exactly as stored.
+     *
+     * [update] replaces the whole overlay, so every caller that only meant one lane
+     * had to drop or re-supply the other: the sheet's 隐藏/恢复 did the former (and
+     * lost the translation when the user hid the pronunciation), the persistence
+     * replay and the automatic publish could only do the latter. This is the
+     * lane-scoped primitive both need — the translation lane and the pronunciation
+     * lane are independent, and 显示翻译 must not go grey because the user toggled
+     * 显示发音.
+     *
+     * [lines] carries the lane's new content; an empty list removes that lane.
+     * [source] names the provider for the lane being written (null = unknown, kept
+     * only for [Lane.TRANSLATION] semantics identical to [update]). [pronunciationLanguages]
+     * describes the pronunciation lane only. Returns true when the store changed;
+     * when the lane write leaves nothing at all, the overlay is cleared instead of
+     * kept as an empty shell.
+     */
+    @Synchronized
+    fun updateLane(
+        songId: String?,
+        lane: Lane,
+        lines: List<NativeLyricLine>,
+        source: String? = null,
+        pronunciationLanguages: List<String> = emptyList(),
+        /** Same "null keeps the same song's recorded provider" rule as [update]. */
+        originalSource: String? = null,
+    ): Boolean {
+        val id = songId?.takeIf(String::isNotBlank) ?: return false
+        val current = overlay?.takeIf { it.songId == id }
+        val incoming = laneEntries(lines, lane)
+        val merged = LinkedHashMap<LineKey, Content>()
+        current?.exactContent?.forEach { (key, content) ->
+            val stripped = content.without(lane)
+            if (!stripped.isEmpty) merged[key] = stripped
+        }
+        incoming.forEach { (key, content) ->
+            val existing = merged[key]
+            merged[key] = existing?.mergedWith(content) ?: content
+        }
+        if (merged.isEmpty()) {
+            // Nothing left for the song: an empty overlay is not a state the getters
+            // can answer from, so it is cleared rather than kept as a shell.
+            return clear(id)
+        }
+        val next = build(
+            id = id,
+            entries = merged,
+            translationSource = if (lane == Lane.TRANSLATION) source else current?.translationSource,
+            originalSource = originalSource ?: current?.originalSource,
+            pronunciationSource =
+                if (lane == Lane.PRONUNCIATION) source else current?.pronunciationSource,
+            pronunciationLanguages = if (lane == Lane.PRONUNCIATION) {
+                pronunciationLanguages.distinct()
+            } else {
+                current?.pronunciationLanguages.orEmpty()
+            },
+        )
+        return store(next)
+    }
+
+    /**
+     * Drops one lane for [songId], keeping the other lane, the recorded providers
+     * and the overlay's other lines untouched. The lane-scoped counterpart of
+     * [clear]: hiding 显示发音 must not take the 显示翻译 lane with it.
+     */
+    fun dropLane(songId: String?, lane: Lane): Boolean =
+        updateLane(songId = songId, lane = lane, lines = emptyList())
+
+    /** The lane a lane-scoped write ([updateLane] / [dropLane]) addresses. */
+    enum class Lane { TRANSLATION, PRONUNCIATION }
+
+    /** The per-line entries of [lines], restricted to [lane] when one is given. */
+    private fun entriesOf(lines: List<NativeLyricLine>): Map<LineKey, Content> =
+        lines.mapNotNull { line ->
+            val content = contentOf(line) ?: return@mapNotNull null
+            LineKey(TimingKey(line.begin, line.end), normalizeText(line.text)) to content
+        }.toMap()
+
+    /** [entriesOf] for one lane only: the other lane's fields are cleared. */
+    private fun laneEntries(lines: List<NativeLyricLine>, lane: Lane): Map<LineKey, Content> =
+        entriesOf(lines).mapValues { (_, content) ->
+            content.without(if (lane == Lane.TRANSLATION) Lane.PRONUNCIATION else Lane.TRANSLATION)
+        }.filterValues { !it.isEmpty }
+
+    /** One line's sanitized lanes, or null when it carries none. */
+    private fun contentOf(line: NativeLyricLine): Content? {
+        val backgroundSpans = line.backgroundRomaSpans.filter { it.text.isNotBlank() }
+        val backgroundText = line.backgroundText?.takeIf(String::isNotBlank)
+        val background = if (backgroundText != null || backgroundSpans.isNotEmpty()) {
+            BackgroundContent(
+                text = backgroundText,
+                pronunciation = RomanizationPolicy.sanitize(backgroundText, line.backgroundRoma),
+                pronunciationSpans = backgroundSpans,
+                romanization = line.backgroundRoma?.takeIf(String::isNotBlank),
+                begin = line.backgroundBegin,
+                end = line.backgroundEnd,
+            )
+        } else {
+            null
+        }
+        val content = Content(
+            translation = OnlineTranslationContentPolicy.sanitize(line.translation),
+            pronunciation = RomanizationPolicy.sanitize(line.text, line.roma),
+            pronunciationSpans = line.romaSpans.filter { it.text.isNotBlank() },
+            background = background,
+        )
+        return content.takeUnless { it.isEmpty }
+    }
+
+    /** [keys]/[values] with the indexes [Overlay] is looked up through. */
+    private fun build(
+        id: String,
+        entries: Map<LineKey, Content>,
+        translationSource: String?,
+        pronunciationSource: String?,
+        pronunciationLanguages: List<String>,
+        originalSource: String?,
+    ): Overlay = Overlay(
+        songId = id,
+        exactContent = entries,
+        contentByTiming = entries.map { (key, content) -> key to Entry(key.text, content) }
+            .groupBy(
+                keySelector = { it.first.timing },
+                valueTransform = { it.second },
+            ),
+        contentByBegin = entries.map { (key, content) -> key to Entry(key.text, content) }
+            .groupBy(
+                keySelector = { it.first.timing.begin },
+                valueTransform = { it.second },
+            ),
+        contentByText = entries
+            .filter { it.key.text.isNotEmpty() }
+            .map { (key, content) -> key to Entry(key.text, content) }
+            .groupBy(
+                keySelector = { it.first.text },
+                valueTransform = { it.second },
+            ),
+        // The background's own extent is the second key the app's background
+        // getter can be matched by, independent of the line's own timing.
+        backgroundByTiming = entries
+            .mapNotNull { (key, content) ->
+                val background = content.background ?: return@mapNotNull null
+                if (background.end <= background.begin) return@mapNotNull null
+                TimingKey(background.begin, background.end) to Entry(key.text, content)
+            }
+            .groupBy(
+                keySelector = { it.first },
+                valueTransform = { it.second },
+            ),
+        hasTranslation = entries.values.any { it.translation != null },
+        translationSource = translationSource,
+        originalSource = originalSource,
+        hasPronunciation = entries.values.any {
+            it.pronunciation != null ||
+                it.pronunciationSpans.isNotEmpty() ||
+                it.background != null
+        },
+        pronunciationSource = pronunciationSource,
+        pronunciationLanguages = pronunciationLanguages,
+    )
+
+    /** Swaps [next] in; true when it differs from what the store already holds. */
+    private fun store(next: Overlay): Boolean {
         if (overlay == next) return false
         overlay = next
         revision += 1

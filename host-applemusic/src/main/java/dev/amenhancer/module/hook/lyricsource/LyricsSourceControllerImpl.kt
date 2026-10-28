@@ -338,7 +338,8 @@ internal class LyricsSourceControllerImpl(
         // already hidden — writing a marker there would keep "restore" offering
         // something to undo forever.
         val overlayHadLane = overlayHasLane(songId, lane)
-        if (overlayHadLane) dropOverlayLanes(songId)
+        // Lane-scoped: hiding 显示发音 must not take the 显示翻译 lane with it.
+        if (overlayHadLane) dropOverlayLane(songId, lane)
         val result = when (lane) {
             LyricLane.ROMANIZATION -> {
                 // Apple's own pronunciation preference is the native 隐藏发音
@@ -395,7 +396,9 @@ internal class LyricsSourceControllerImpl(
         val songId = envelope.snapshot.songId
         val cleared = runCatching { store.clear(songId, lane) }.getOrDefault(false)
         if (!cleared) logger("lyrics-source: unlock had no key id=" + songId + " lane=" + lane.key)
-        dropOverlayLanes(songId)
+        // Only this lane's published content goes: the other lane is still showing,
+        // and dropping it would grey out the other menu row in the same tap.
+        dropOverlayLane(songId, lane)
         AutoLyricsReplacementBridge.restoreApple(songId)
         refreshHost(songId)
         notifyListeners()
@@ -612,7 +615,14 @@ internal class LyricsSourceControllerImpl(
         } else {
             false
         }
-        val dropped = dropOverlayLanes(songId)
+        // Restoring one lane returns *that* lane to Apple; the other lane's content
+        // stays published. Only the original lane replaces the whole document, so
+        // only it drops the whole overlay.
+        val dropped = if (lane == LyricLane.ORIGINAL) {
+            dropOverlayLanes(songId)
+        } else {
+            dropOverlayLane(songId, lane)
+        }
         if (lane == LyricLane.ORIGINAL) {
             // Dropping the entry does not uninstall the pointer the page already has:
             // the host re-publishes Apple's own document (index refresh + selector).
@@ -836,6 +846,13 @@ internal class LyricsSourceControllerImpl(
         if (outcome.lines.isEmpty()) {
             return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, "该来源没有对齐任何一行")
         }
+        // The lane tags come from the document that will be replayed, not from the
+        // store: this is the first publish for most songs, so the store has no tags
+        // yet and copying them would record an empty lane name beside a real
+        // pronunciation lane (the device log's `overlayLanguages=` was empty while
+        // `overlayPronunciation=true`, which left the toggle with no lane to name).
+        val languages = AppleLyricTtmlReader.transliterationLanguages(outcome.ttml)
+            .ifEmpty { overlay.pronunciationLanguages(songId.toString()) }
         val changed = overlay.update(
             songId = songId.toString(),
             lines = outcome.lines,
@@ -844,23 +861,25 @@ internal class LyricsSourceControllerImpl(
             // to be carried over or the sheet would forget where the lyrics came from.
             originalSource = overlay.originalSource(songId.toString()),
             pronunciationSource = overlay.pronunciationSource(songId.toString()),
-            pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
+            pronunciationLanguages = languages,
         )
         // Remember the merged document so the lanes can be replayed after a restart. The
         // store keeps translation and romanization as independent lanes, so the two are
         // split here and persisted apart (a single blob re-derived them wrongly).
-        if (changed) {
-            runCatching {
-                persistence.saveMergedDocument(
-                    songId = songId,
-                    mergedTtml = outcome.ttml,
-                    translationSource = search.customSourceToken(option.providerId),
-                    pronunciationSource = overlay.pronunciationSource(songId.toString()),
-                    originalSource = overlay.originalSource(songId.toString()),
-                    pronunciationLanguages = overlay.pronunciationLanguages(songId.toString()),
-                )
-            }.onSuccess { saved -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + saved) }
-        }
+        //
+        // Not gated on [changed]: "the store already held this" says nothing about the
+        // disk copy, and a restart replays exactly that copy. Writing the same record
+        // twice costs one atomic file replace.
+        runCatching {
+            persistence.saveMergedDocument(
+                songId = songId,
+                mergedTtml = outcome.ttml,
+                translationSource = search.customSourceToken(option.providerId),
+                pronunciationSource = overlay.pronunciationSource(songId.toString()),
+                originalSource = overlay.originalSource(songId.toString()),
+                pronunciationLanguages = languages,
+            )
+        }.onSuccess { saved -> logger("lyrics-source overlay: saved id=" + songId + " ok=" + saved) }
         return if (changed) {
             ApplyResult(ok = true, message = "已切换")
         } else {
@@ -884,6 +903,31 @@ internal class LyricsSourceControllerImpl(
     /** Drops everything this module published for the song; true when it had content. */
     private fun dropOverlayLanes(songId: Long): Boolean =
         runCatching { overlay.clear(songId.toString()) }.getOrDefault(false)
+
+    /**
+     * Drops **one** published lane and forgets it on disk, keeping the other lane.
+     *
+     * The two lanes are independent: 显示发音 and 显示翻译 are separate menu rows and
+     * separate switches, so a hide/restore of one must not remove the other's
+     * content. [NativeLyricOverlayStore.clear] removes the whole overlay — that is
+     * what made both rows go grey after a few taps, because the second row's lane
+     * vanished with the first one's. The persisted copy is dropped in step, or the
+     * next track change would replay the lane the user just hid.
+     */
+    private fun dropOverlayLane(songId: Long, lane: LyricLane): Boolean {
+        val overlayLane = overlayLaneOf(lane) ?: return false
+        val dropped = runCatching { overlay.dropLane(songId.toString(), overlayLane) }
+            .getOrDefault(false)
+        runCatching { persistence.dropLane(songId, overlayLane) }
+        return dropped
+    }
+
+    /** The overlay store's lane for a sheet lane; the original lane has none. */
+    private fun overlayLaneOf(lane: LyricLane): NativeLyricOverlayStore.Lane? = when (lane) {
+        LyricLane.TRANSLATION -> NativeLyricOverlayStore.Lane.TRANSLATION
+        LyricLane.ROMANIZATION -> NativeLyricOverlayStore.Lane.PRONUNCIATION
+        LyricLane.ORIGINAL -> null
+    }
 
     /** True when the overlay currently holds [lane] for this song (not another track's). */
     private fun overlayHasLane(songId: Long, lane: LyricLane): Boolean {

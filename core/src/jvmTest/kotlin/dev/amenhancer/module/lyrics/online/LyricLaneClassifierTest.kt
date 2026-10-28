@@ -57,12 +57,32 @@ class LyricLaneClassifierTest {
     @Test
     fun `a chinese line with a foreign aside is still a translation`() {
         val line = "感谢你曾来过 (Thanks)"
-        val withKana = "感谢你曾来过 (ありがとう)"
 
         assertEquals(LaneKind.MIXED, LyricLaneClassifier.classify(line))
         assertTrue(LyricLaneClassifier.isTranslationLike(line))
-        // 带假名注音的同一句不算译文：假名出现就说明这不是我们能发布的中文译文。
-        assertFalse(LyricLaneClassifier.isTranslationLike(withKana))
+        // 括注里的假名是「译文后面补的原名」，不是正文：整行丢掉会让这首诗少几行，
+        // 只有这类行的歌更会 translationLines=0、整个候选被 no_meaningful_lane 排掉。
+        assertTrue(LyricLaneClassifier.isTranslationLike("感谢你曾来过 (ありがとう)"))
+        assertTrue(LyricLaneClassifier.isTranslationLike("别回头（振り向かないで）"))
+        // 但假名在正文里（括注外）就仍然是日语原文，不能当译文发布。
+        assertFalse(LyricLaneClassifier.isTranslationLike("ありがとう (谢谢)"))
+        assertFalse(LyricLaneClassifier.isTranslationLike("夢ならば (Yume naraba)"))
+        // 括注外一个汉字都没有时也不是译文。
+        assertFalse(LyricLaneClassifier.isTranslationLike("(振り向かないで)"))
+    }
+
+    @Test
+    fun `a chinese translation with japanese punctuation is still a translation`() {
+        // 取证结论：标点从来不是字母，countScripts 只数 letter，所以「中文译文带日文
+        // 标点被判非中文」这个猜测不成立——这条用例把结论钉住。
+        listOf(
+            "不要回头，继续走下去。",
+            "「谢谢你」——她说。",
+            "等等！？为什么…",
+            "好想见你、好想见你",
+        ).forEach { line ->
+            assertTrue("line=$line", LyricLaneClassifier.isTranslationLike(line))
+        }
     }
 
     @Test

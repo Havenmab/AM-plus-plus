@@ -135,52 +135,131 @@ internal class LyricsSourceOverlayPersistence(
     }
 
     /**
-     * Replays the stored lanes into [overlay] when the store no longer holds them.
+     * Replays the stored lanes into [overlay], **per lane**.
      *
-     * Both lanes go into **one** [NativeLyricOverlayStore.update] call: that call
-     * replaces the whole overlay, so issuing it twice would drop the first lane.
+     * The old rule skipped the whole replay as soon as the store held *either*
+     * lane. After a restart that is the normal case rather than the exception: the
+     * custom/supplement path publishes the displayed document's own romanization
+     * (and the native write publishes Apple's) before the sheet ever probes, so the
+     * store had a pronunciation lane, the translation lane was refused, and the
+     * page came back from a restart with 显示翻译 grey while the disk copy still
+     * held the translation. Each lane is now restored only when the store is
+     * missing **that** lane, through [NativeLyricOverlayStore.updateLane] so the
+     * lane already present is never dropped on the way in.
+     *
+     * Returns true when at least one lane was replayed.
      */
     fun restoreInto(songId: Long, overlay: NativeLyricOverlayStore): Boolean {
         if (songId <= 0L) return false
         val key = songId.toString()
         val record = load(songId) ?: return false
-        if (overlay.hasTranslation(key) || overlay.hasPronunciation(key)) return false
-        val lines = mergeLanes(record)
-        if (lines.isEmpty()) return false
-        return runCatching {
-            overlay.update(
-                songId = key,
-                lines = lines,
-                translationSource = record.translationSource.takeIf { record.translations.isNotEmpty() },
-                pronunciationSource = record.pronunciationSource.takeIf { record.romanizations.isNotEmpty() },
-                originalSource = record.originalSource,
-                pronunciationLanguages = record.pronunciationLanguages,
-            )
+        val wantsTranslation = record.translations.isNotEmpty() && !overlay.hasTranslation(key)
+        val wantsPronunciation =
+            record.romanizations.isNotEmpty() && !overlay.hasPronunciation(key)
+        if (!wantsTranslation && !wantsPronunciation) return false
+        var restored = false
+        if (wantsTranslation) {
+            val lines = mergeLanes(record, translation = true, romanization = false)
+            if (lines.isNotEmpty()) {
+                restored = runCatching {
+                    overlay.updateLane(
+                        songId = key,
+                        lane = NativeLyricOverlayStore.Lane.TRANSLATION,
+                        lines = lines,
+                        source = record.translationSource,
+                        originalSource = record.originalSource,
+                    )
+                }.getOrDefault(false) || restored
+            }
+        }
+        if (wantsPronunciation) {
+            val lines = mergeLanes(record, translation = false, romanization = true)
+            if (lines.isNotEmpty()) {
+                restored = runCatching {
+                    overlay.updateLane(
+                        songId = key,
+                        lane = NativeLyricOverlayStore.Lane.PRONUNCIATION,
+                        lines = lines,
+                        source = record.pronunciationSource,
+                        pronunciationLanguages = record.pronunciationLanguages,
+                        originalSource = record.originalSource,
+                    )
+                }.getOrDefault(false) || restored
+            }
+        }
+        return restored
+    }
+
+    /**
+     * Forgets one lane of the song's memory, so a lane the user hid (or restored to
+     * Apple) is not replayed on the next track change. The other lane's record — and
+     * therefore the restart memory of the lane still showing — is kept; when both
+     * lanes are gone the record is dropped entirely rather than stored as an empty
+     * shell.
+     */
+    fun dropLane(songId: Long, lane: NativeLyricOverlayStore.Lane): Boolean = synchronized(lock) {
+        if (songId <= 0L) return false
+        runCatching {
+            val entries = read()
+            val existing = entries[songId] ?: return@runCatching false
+            val next = when (lane) {
+                NativeLyricOverlayStore.Lane.TRANSLATION -> existing.copy(
+                    translations = emptyList(),
+                    translationSource = null,
+                )
+
+                NativeLyricOverlayStore.Lane.PRONUNCIATION -> existing.copy(
+                    romanizations = emptyList(),
+                    pronunciationSource = null,
+                    pronunciationLanguages = emptyList(),
+                )
+            }
+            val remaining = entries.filterValues { it.songId != songId }.toMutableMap()
+            if (!next.isEmptyLanes) remaining[songId] = next.copy(updatedAt = clock())
+            write(remaining.values.sortedByDescending { it.updatedAt }.take(MAX_SONGS))
+            true
         }.getOrDefault(false)
     }
 
-    /** Joins the two persisted lanes back into the store's per-line model. */
-    private fun mergeLanes(record: Record): List<NativeLyricLine> {
-        val translations = record.translations.associateBy { Triple(it.begin, it.end, it.text) }
-        val romanizations = record.romanizations.associateBy { Triple(it.begin, it.end, it.text) }
+    /**
+     * Joins the persisted lanes back into the store's per-line model, keeping only
+     * the lanes the caller asks for: a lane the store already holds is never
+     * re-supplied, because [NativeLyricOverlayStore.updateLane] would otherwise
+     * overwrite it with the stale copy on disk.
+     */
+    private fun mergeLanes(
+        record: Record,
+        translation: Boolean = true,
+        romanization: Boolean = true,
+    ): List<NativeLyricLine> {
+        val translations: Map<Triple<Long, Long, String>, TranslationLine> = if (translation) {
+            record.translations.associateBy { Triple(it.begin, it.end, it.text) }
+        } else {
+            emptyMap()
+        }
+        val romanizations: Map<Triple<Long, Long, String>, RomanizationLine> = if (romanization) {
+            record.romanizations.associateBy { Triple(it.begin, it.end, it.text) }
+        } else {
+            emptyMap()
+        }
         val keys = LinkedHashSet<Triple<Long, Long, String>>()
         keys += translations.keys
         keys += romanizations.keys
         return keys.mapNotNull { key ->
-            val translation = translations[key]
-            val romanization = romanizations[key]
-            val begin = translation?.begin ?: romanization?.begin ?: return@mapNotNull null
-            val end = translation?.end ?: romanization?.end ?: return@mapNotNull null
-            val text = translation?.text ?: romanization?.text ?: return@mapNotNull null
+            val translationLine = translations[key]
+            val romanizationLine = romanizations[key]
+            val begin = translationLine?.begin ?: romanizationLine?.begin ?: return@mapNotNull null
+            val end = translationLine?.end ?: romanizationLine?.end ?: return@mapNotNull null
+            val text = translationLine?.text ?: romanizationLine?.text ?: return@mapNotNull null
             NativeLyricLine(
                 begin = begin,
                 end = end,
                 text = text,
                 // The lanes stay in their own fields: a translation never becomes a
                 // romanization and vice versa.
-                translation = translation?.translation,
-                roma = romanization?.romanization,
-                romaSpans = romanization?.spans.orEmpty(),
+                translation = translationLine?.translation,
+                roma = romanizationLine?.romanization,
+                romaSpans = romanizationLine?.spans.orEmpty(),
             )
         }
     }

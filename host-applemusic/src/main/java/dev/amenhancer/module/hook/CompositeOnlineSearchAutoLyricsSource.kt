@@ -742,7 +742,10 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         if (!retry.artistMissRequired) return retry.keyword
         val artistMatched = best != null && LyricMatchPolicy.hasCommonArtist(
             metadata.localArtists,
-            LyricMatchPolicy.splitArtists(best.song.artist).map { LyricMatchPolicy.cleanString(it) },
+            // Aliases count here too: the retry gate must see the same identity
+            // the score does, or a localised credit ("七音阿卡莉 (NANAOAKARI)")
+            // would keep the fallback search from ever running.
+            LyricMatchPolicy.artistIdentities(best.song.artist),
         )
         return if (!artistMatched) retry.keyword else null
     }

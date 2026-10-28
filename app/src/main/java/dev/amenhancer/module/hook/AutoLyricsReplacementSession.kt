@@ -199,9 +199,15 @@ private fun publishLanes(
         pronunciationLanguages = languages,
         originalSource = customSourceTag(outcome.source),
     ) ?: false
-    if (published) {
-        // The host owns the on-disk copy; without this write a restart forgot which provider
-        // supplied the translation until the page re-parsed the displayed document.
+    // The write-through is *not* conditioned on [published]: an update that reports "no
+    // change" only says this process already held these lanes, which is exactly the state
+    // a fresh start cannot have — while a store that lost them (a lane drop, a cleared
+    // overlay) reports a change with nothing on disk behind it. Gating the disk write on
+    // that flag left the restart memory empty for every song whose lanes were published
+    // once and then re-published unchanged. The host owns the on-disk copy; without this
+    // write a restart forgot which provider supplied the translation until the page
+    // re-parsed the displayed document.
+    if (outcome.ttml.isNotBlank() && lines.isNotEmpty()) {
         LyricsSourceOverlayCacheBridge.remember(
             songId = appleMusicId,
             mergedTtml = outcome.ttml,

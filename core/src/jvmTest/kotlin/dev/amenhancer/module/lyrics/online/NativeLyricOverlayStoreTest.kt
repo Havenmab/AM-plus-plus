@@ -394,6 +394,99 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `dropping the pronunciation lane keeps the translation lane and its source`() {
+        // The device failure this replaces: the sheet's 隐藏发音 called the whole-overlay
+        // clear, so 显示翻译 lost its content in the same tap and both menu rows went
+        // grey. The two lanes are independent and must stay so.
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "1787114805",
+            lines = listOf(
+                line(1_000L, 2_000L, "明日の私に幸あれ", translation = "愿明天的我幸福", roma = "ashita no watashi ni"),
+                line(2_000L, 3_000L, "振り向かないで", translation = "别回头", roma = "furimukanaide"),
+            ),
+            translationSource = "qq",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        assertTrue(store.dropLane("1787114805", NativeLyricOverlayStore.Lane.PRONUNCIATION))
+
+        assertFalse(store.hasPronunciation("1787114805"))
+        assertNull(store.pronunciation("1787114805", 1_000L, 2_000L, "明日の私に幸あれ"))
+        assertTrue("the translation lane must survive a pronunciation drop", store.hasTranslation("1787114805"))
+        assertEquals("愿明天的我幸福", store.translation("1787114805", 1_000L, 2_000L, "明日の私に幸あれ"))
+        assertEquals("qq", store.translationSource("1787114805"))
+        // The lane tags describe the pronunciation lane, so they go with it.
+        assertEquals(emptyList<String>(), store.pronunciationLanguages("1787114805"))
+        assertNull(store.pronunciationSource("1787114805"))
+    }
+
+    @Test
+    fun `dropping the translation lane keeps the pronunciation lane`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            translationSource = "QM",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        assertTrue(store.dropLane("77", NativeLyricOverlayStore.Lane.TRANSLATION))
+
+        assertFalse(store.hasTranslation("77"))
+        assertNull(store.translationSource("77"))
+        assertTrue("the pronunciation lane must survive a translation drop", store.hasPronunciation("77"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals(listOf("ja-Latn"), store.pronunciationLanguages("77"))
+    }
+
+    @Test
+    fun `a lane write keeps the other lane and never borrows another track`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", roma = "Kimi no na wa")),
+        )
+
+        // A translation lane arriving later (the enrichment's own publish) must not
+        // take the pronunciation lane with it.
+        assertTrue(
+            store.updateLane(
+                songId = "77",
+                lane = NativeLyricOverlayStore.Lane.TRANSLATION,
+                lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")),
+                source = "QM",
+            ),
+        )
+        assertEquals("你的名字", store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        // A different track's lane write cannot inherit this song's rows.
+        assertFalse(
+            store.updateLane(
+                songId = "88",
+                lane = NativeLyricOverlayStore.Lane.TRANSLATION,
+                lines = emptyList(),
+            ),
+        )
+        assertTrue(store.hasTranslation("77"))
+    }
+
+    @Test
+    fun `dropping the last lane clears the overlay instead of keeping an empty shell`() {
+        val store = NativeLyricOverlayStore()
+        store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))
+        val revision = store.revision()
+
+        assertTrue(store.dropLane("77", NativeLyricOverlayStore.Lane.TRANSLATION))
+        assertNull(store.currentSongId())
+        assertFalse(store.hasTranslation("77"))
+        assertFalse(store.hasPronunciation("77"))
+        assertTrue(store.revision() > revision)
+    }
+
+    @Test
     fun `clear only drops the matching track`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

@@ -150,6 +150,18 @@ class NativeLyricOverlayStore {
      * never reaches here as pronunciation: the enrichment layer only ever sets
      * [NativeLyricLine.roma] from the displayed document's own
      * `<transliterations>` entries.
+     *
+     * The write is **lane-preserving for the same song**: a lane the caller's body
+     * does not carry at all keeps what the store already held for it (see
+     * [mergeLanes]). The two lanes are independent switches in Apple's menu
+     * (显示翻译 / 显示发音), so a later publish that only brings a translation — the
+     * automatic completion re-publishing its merged body, a custom document that
+     * carries no romanization, a re-presentation — must not take the pronunciation
+     * lane with it, and a romanization-only body must not take the translation.
+     * Dropping a lane is an explicit act ([dropLane] / [clear]), never a side effect
+     * of an update that simply has nothing to say about that lane. Rows the new body
+     * does not mention are dropped: the body is the authoritative row set, only its
+     * missing lanes are inherited.
      */
     @Synchronized
     fun update(
@@ -173,21 +185,74 @@ class NativeLyricOverlayStore {
         originalSource: String? = null,
     ): Boolean {
         val id = songId?.takeIf(String::isNotBlank) ?: return false
-        val entries = entriesOf(lines)
-        if (entries.isEmpty()) return false
+        val incoming = entriesOf(lines)
+        if (incoming.isEmpty()) return false
+        val current = overlay?.takeIf { it.songId == id }
         val next = build(
             id = id,
-            entries = entries,
-            translationSource = translationSource,
-            // A null here means "this caller does not know the provider" (the automatic
-            // enrichment republishes lanes it did not fetch), so the previously recorded
-            // name survives instead of being wiped; only the same song can inherit it.
-            originalSource = originalSource
-                ?: overlay?.takeIf { it.songId == id }?.originalSource,
-            pronunciationSource = pronunciationSource,
-            pronunciationLanguages = pronunciationLanguages.distinct(),
+            entries = mergeLanes(current?.exactContent.orEmpty(), incoming),
+            // A null provider means "this caller does not know it" (the automatic
+            // enrichment republishes lanes it did not fetch, a displayed-document
+            // publish knows the document but not each lane's supplier), so the name
+            // already recorded for this song survives instead of being wiped. The
+            // getters below gate every name on its lane, so a name kept for a lane
+            // that is gone is never reported.
+            translationSource = translationSource ?: current?.translationSource,
+            originalSource = originalSource ?: current?.originalSource,
+            pronunciationSource = pronunciationSource ?: current?.pronunciationSource,
+            // The lane tags describe the pronunciation lane: a publish that carries
+            // none (a translated-only body, a document without a
+            // `<transliteration xml:lang>` tag) must not erase the tags the app's
+            // toggle reads to keep 显示发音 enabled.
+            pronunciationLanguages = pronunciationLanguages.distinct()
+                .ifEmpty { current?.pronunciationLanguages.orEmpty() },
         )
         return store(next)
+    }
+
+    /**
+     * [incoming] rows completed by the lane [incoming] does not carry **at all**.
+     *
+     * The unit is the lane, not the single line: a body that brings no translation
+     * (it is a romanization-only document, or a refresh that only re-published the
+     * reading) keeps the stored translation lane for the rows it still has, and a
+     * body that brings no pronunciation keeps the stored one. A body that *does*
+     * carry a lane replaces it completely — the user picked a source, and the lines
+     * that source did not translate must not keep the previous provider's text.
+     *
+     * Rows are authoritative either way: the caller's body decides which lines
+     * exist, and a stored lane is only inherited for a row the body still has.
+     */
+    private fun mergeLanes(
+        current: Map<LineKey, Content>,
+        incoming: Map<LineKey, Content>,
+    ): Map<LineKey, Content> {
+        if (current.isEmpty()) return incoming
+        val keepsTranslation = incoming.values.none { it.translation != null }
+        val keepsPronunciation = incoming.values.none {
+            it.pronunciation != null || it.pronunciationSpans.isNotEmpty() || it.background != null
+        }
+        if (!keepsTranslation && !keepsPronunciation) return incoming
+        val merged = LinkedHashMap<LineKey, Content>(incoming.size)
+        incoming.forEach { (key, content) ->
+            val stored = current[key]
+            merged[key] = if (stored == null) {
+                content
+            } else {
+                Content(
+                    translation = content.translation
+                        ?: stored.translation.takeIf { keepsTranslation },
+                    pronunciation = content.pronunciation
+                        ?: stored.pronunciation.takeIf { keepsPronunciation },
+                    pronunciationSpans = content.pronunciationSpans.ifEmpty {
+                        stored.pronunciationSpans.takeIf { keepsPronunciation }.orEmpty()
+                    },
+                    background = content.background
+                        ?: stored.background.takeIf { keepsPronunciation },
+                )
+            }
+        }
+        return merged
     }
 
     /**

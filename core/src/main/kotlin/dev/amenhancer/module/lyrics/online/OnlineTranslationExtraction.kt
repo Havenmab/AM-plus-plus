@@ -31,10 +31,20 @@ package dev.amenhancer.module.lyrics.online
  */
 object OnlineTranslationExtraction {
 
-    fun extract(result: LyricsResult): List<OnlineTranslationLine> {
+    /**
+     * [alreadyFiltered] is for callers that ran [LyricLineFilter] themselves (the
+     * lyrics-source sheet does, so a failure can name the stage it happened in).
+     * Filtering twice is not neutral: the opening-block sweep runs on the
+     * *filtered* list and can drop lines the first pass kept, which would shift
+     * every lane after the gap.
+     */
+    fun extract(
+        result: LyricsResult,
+        alreadyFiltered: Boolean = false,
+    ): List<OnlineTranslationLine> {
         // A translation lane opens with the platform's copyright notice and fills gaps with
         // \`//\`; both would otherwise be aligned onto the first lyric line.
-        val clean = LyricLineFilter.filter(result)
+        val clean = if (alreadyFiltered) result else LyricLineFilter.filter(result)
         val translationsByStart = clean.translated.orEmpty().associate { line ->
             line.start to text(line)
         }

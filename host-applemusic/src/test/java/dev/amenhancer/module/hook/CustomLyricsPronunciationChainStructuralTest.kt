@@ -128,9 +128,14 @@ class CustomLyricsPronunciationChainStructuralTest {
         // The lane gate: a supplement track with a published lane, nothing else.
         assertTrue(
             hooks.contains(
-                "id > 0L && isModuleSupplementSong(id) && overlay.hasPronunciation(songId)",
+                "id > 0L && isModuleSupplementSong(id) && overlayPronunciationLane(key)",
             ),
         )
+        // The lane is replayed from the module's own record before the gate gives up:
+        // the store holds one song, so a track change / restart must not turn a
+        // published lane into a permanently grey 显示发音 row.
+        assertTrue(hooks.contains("private fun overlayPronunciationLane(songId: String): Boolean"))
+        assertTrue(hooks.contains("LyricsSourceOverlayCacheBridge.restore(id, overlay)"))
         assertTrue(hooks.contains("overlay.lookupBackground("))
         assertTrue(hooks.contains("supplementPronunciationRow("))
         assertTrue(hooks.contains("hasSupplementPronunciationLine("))
@@ -138,7 +143,7 @@ class CustomLyricsPronunciationChainStructuralTest {
         assertTrue(
             hooks.contains(
                 "enabled && songId > 0L && isModuleSupplementSong(songId) &&\n" +
-                    "            overlay.hasPronunciation(songId.toString())",
+                    "            overlayPronunciationLane(songId.toString())",
             ),
         )
         // Apple-sourced tracks never read the overlay for pronunciation content.

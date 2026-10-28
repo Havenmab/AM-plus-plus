@@ -150,6 +150,31 @@ class NeSourceTest {
     }
 
     @Test
+    fun `a yrc body that is really lrc still yields lines`() {
+        // The lyric endpoint can answer with a plain LRC under the YRC key (and an
+        // older dialect that the YRC line pattern does not match). The lane used to
+        // come back with zero lines, which the sheet reported as 「该来源无法预览」
+        // for a body that was present.
+        val result = YrcParser.parse(yrc = "[00:01.00]恋愛脳 どうして\n[00:04.00]君の名前を呼んだ")
+
+        assertEquals(2, result!!.original.size)
+        assertEquals(1_000L, result.original[0].start)
+        assertEquals("恋愛脳 どうして", result.original[0].words.single().text)
+    }
+
+    @Test
+    fun `an unparseable yrc body falls back to the lrc field`() {
+        // A `yrc` value the word parser cannot read is not "no lyrics": the lane
+        // still has the plain LRC the same response carried.
+        val result = YrcParser.parse(
+            yrc = "not-a-yrc-body",
+            lrc = "[00:00.000]瞳映る",
+        )
+
+        assertEquals("瞳映る", result!!.original.single().words.single().text)
+    }
+
+    @Test
     fun `the anonymous session is persisted and reused without a second login`() {
         val store = InMemoryNeSessionStore()
         val transport = transport()

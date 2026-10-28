@@ -207,10 +207,16 @@ class LyricsSourceHostStructureTest {
         // LRC-style providers are converted, not filtered out: the writer keeps
         // word spans when the provider had them and declares line timing otherwise.
         // The result is cleaned of provider credit/notice lines before it is written.
-        assertTrue(search.contains("AppleLyricTtmlWriter.from(clean)"))
+        // The sheet filters and classifies once, then hands both to the writer, so a
+        // stage that failed can name itself instead of being re-run inside from().
+        assertTrue(search.contains("AppleLyricTtmlWriter.from(clean, lanes)"))
         assertTrue(search.contains("AppleLyricTtmlWriter.build("))
         assertTrue(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
         assertTrue(search.contains("results += searchLineProviders(query, durationMs, lane)"))
+        // A stage failure carries its own reason to the sheet and keeps the throwable
+        // in the log only (the sheet renders the Chinese sentence, never a class name).
+        assertTrue(search.contains("LyricSourceDiagnostics.failureTrace("))
+        assertTrue(search.contains("private fun failed(stage: Stage, reason: String): DocumentOutcome"))
     }
 
     @Test
@@ -626,15 +632,22 @@ class LyricsSourceHostStructureTest {
         assertTrue(source("LyricsSourceWiring.kt").contains("OVERLAY_FILE_NAME = \"overlay.json\""))
         // a restart must not turn a stored online key into "not supported": the apply
         // re-fetches the body from the key (provider id + remote id) every time
-        assertTrue(text.contains("val lines = search.translationLines(option)"))
+        assertTrue(
+            text.contains("search.translationOutcome(option, song.durationMs, song.title, song.artist)"),
+        )
         // the body is re-fetched from the stored key alone; the song's metadata only
         // steers the match inside the search, never the identity of the option
         assertTrue(text.contains("val song = envelope.snapshot.song"))
         assertTrue(
             text.contains(
-                "val document = search.documentFor(option, song.durationMs, song.title, song.artist)",
+                "val outcome = search.documentFor(option, song.durationMs, song.title, song.artist)",
             ),
         )
+        // and a failure names the stage it stopped at, so the exported log says
+        // where a row lost its lyrics instead of one generic sentence
+        assertTrue(text.contains("LyricSourceDiagnostics.documentFailedLine("))
+        assertTrue(text.contains("action = \"preview\""))
+        assertTrue(text.contains("action = \"apply\""))
     }
 
     @Test
@@ -682,8 +695,15 @@ class LyricsSourceHostStructureTest {
         assertTrue(text.contains("persistence.saveMergedDocument("))
         val probes = source("LyricsSourceProbes.kt")
         assertTrue(probes.contains("translationSource = overlay.translationSource(key)"))
+        // ...and the stored record answers with the same provider when the store has
+        // been replaced (a refresh, a track change, a restart).
+        assertTrue(probes.contains("val stored = runCatching { persistence.sources(songId) }.getOrNull()"))
+        assertTrue(
+            source("LyricsSourceOverlayLanes.kt")
+                .contains("translationSource = (snapshot.translationSource ?: persisted?.translationSource)"),
+        )
         // and the original lane is never claimed by the overlay
-        assertTrue(probes.contains("hasOriginal = false,"))
+        assertTrue(source("LyricsSourceOverlayLanes.kt").contains("hasOriginal = false,"))
     }
 
     @Test
@@ -692,8 +712,10 @@ class LyricsSourceHostStructureTest {
         // a custom document never serves that lane ...
         assertTrue(probes.contains("hasRomanization = false,"))
         assertFalse(probes.contains("parsed.any { !it.romanization.isNullOrBlank() }"))
-        // ... only content the store actually holds does
-        assertTrue(probes.contains("hasRomanization = overlay.hasPronunciation(key)"))
+        // ... only content the overlay actually holds does: the store's own lane, or
+        // the record on disk that is the single source of truth for it
+        assertTrue(probes.contains("hasPronunciation = overlay.hasPronunciation(key)"))
+        assertTrue(source("LyricsSourceOverlayLanes.kt").contains("hasRomanization = pronunciation,"))
     }
 
     @Test
@@ -704,9 +726,10 @@ class LyricsSourceHostStructureTest {
         assertTrue(target.contains("val replacementFirst = displayedTtml == null || !TtmlTimingPolicy.hasTiming(displayedTtml)"))
         assertTrue(target.contains("runCatching { enrich?.invoke(appleMusicId, displayedTtml) }"))
         // and the overlay must never claim to be the original document
-        val probes = source("LyricsSourceProbes.kt")
-        assertTrue(probes.contains("hasOriginal = false,"))
-        assertFalse(probes.contains("hasOriginal = current == key"))
+        val laneSources = source("LyricsSourceOverlayLanes.kt")
+        assertTrue(laneSources.contains("hasOriginal = false,"))
+        assertFalse(laneSources.contains("hasOriginal = current == key"))
+        assertFalse(source("LyricsSourceProbes.kt").contains("hasOriginal = current == key"))
     }
 
     @Test

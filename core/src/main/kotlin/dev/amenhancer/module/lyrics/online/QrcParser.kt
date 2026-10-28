@@ -31,7 +31,16 @@ object QrcParser {
         type: String = "qrc",
     ): LyricsResult {
         val originalLines = when (type) {
-            "qrc" -> original?.takeIf(String::isNotEmpty)?.let(::parseQrc) ?: emptyList()
+            // QQ answers a plain LRC body for songs without a QRC track (and for
+            // some accounts on every song). A QRC-only parser turned those into a
+            // result with ZERO lines, which every later stage then reported as "this
+            // source has no lyrics" - the device symptom was a lyrics-source row
+            // that could neither be previewed nor applied although the body was
+            // there. The same body is retried as LRC before it is called empty.
+            "qrc" -> original?.takeIf(String::isNotEmpty)
+                ?.let { body -> parseQrc(body).ifEmpty { LrcParser.parseLrc(body) } }
+                ?: emptyList()
+
             "lrc" -> original?.takeIf(String::isNotEmpty)?.let(LrcParser::parseLrc) ?: emptyList()
             else -> emptyList()
         }.sortedBy(LyricsLine::start)

@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook.lyricsource
 
 import dev.amenhancer.module.hook.TtmlTimingPolicy
+import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
@@ -18,6 +19,8 @@ import dev.amenhancer.module.lyrics.source.LunabeatClient
 import dev.amenhancer.module.lyrics.source.LunabeatSong
 import dev.amenhancer.module.lyrics.source.LyricHttpTransport
 import dev.amenhancer.module.lyrics.source.LyricLane
+import dev.amenhancer.module.lyrics.source.LyricSourceDiagnostics
+import dev.amenhancer.module.lyrics.source.LyricSourceKeys
 import dev.amenhancer.module.lyrics.source.LyricSourceKind
 import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceProviders
@@ -54,12 +57,55 @@ internal class LyricsSourceSearch(
     private val amLyrics: LyricsSourceAmLyricsProvider? = null,
     private val executor: Executor,
     private val logger: (String) -> Unit,
+    /**
+     * The LRC providers. Null builds the module's own four; a test pins one so a
+     * provider body can be replayed through [documentFor] without a network.
+     */
+    sources: List<SearchLyricsSource>? = null,
 ) {
 
     /** A provider document with the timing precision its own data supports. */
     internal data class Document(val ttml: String, val hasWords: Boolean)
 
-    private val lineSources: List<SearchLyricsSource> = if (transport == null) {
+    /**
+     * The four steps an online hit goes through before it becomes a document.
+     *
+     * A failure names the step that produced nothing. Every one of them used to
+     * collapse into the same `null`, which the sheet could only render as
+     * 「该来源无法预览」 and which left the log with no line at all — the reason a
+     * device report of "every row fails" was not diagnosable.
+     */
+    internal enum class Stage(val token: String) {
+        /** The provider answered nothing for this hit, or could not be reached. */
+        FETCH("fetch"),
+
+        /** The filter left no lyric line (only credits/notices, or it threw). */
+        FILTER("filter"),
+
+        /** The lane classifier could not read the provider's auxiliary columns. */
+        CLASSIFY("classify"),
+
+        /** The Apple TTML writer produced nothing publishable. */
+        WRITE("write"),
+    }
+
+    /** One [documentFor] outcome: a document, or the stage and Chinese reason that stopped it. */
+    internal data class DocumentOutcome(
+        val document: Document? = null,
+        val stage: Stage? = null,
+        val reason: String = "",
+    ) {
+        val failed: Boolean get() = document == null
+    }
+
+    /** One [translationOutcome] outcome, in the same shape. */
+    internal data class LinesOutcome(
+        val lines: List<OnlineTranslationLine>? = null,
+        val stage: Stage? = null,
+        val reason: String = "",
+    )
+
+    private val lineSources: List<SearchLyricsSource> = sources ?: if (transport == null) {
         emptyList()
     } else {
         listOf(
@@ -69,6 +115,20 @@ internal class LyricsSourceSearch(
             KugouSource(transport),
         )
     }
+
+    /**
+     * The provider hit each listed option came from, keyed by the option key.
+     *
+     * The key only carries the provider plus its remote id, but several providers
+     * need the rest of the hit to answer at all: KuGou's `getLyrics` returns null
+     * without the `accessKey`/`contentType` extras its own search attached, and
+     * QQ's `GetPlayLyricInfo` sends the song/album/artist names and the track
+     * duration. Rebuilding a bare [SongSearchResult] from the key is what made
+     * every KuGou row unpublishable and left QQ answering with an empty body; the
+     * hit is remembered here the same way [lunabeatHits] remembers a LunaBeat
+     * entry, so a preview and an apply fetch exactly what the search found.
+     */
+    private val lineHits = ConcurrentHashMap<String, SongSearchResult>()
 
     /** Lunabeat catalogue hits, keyed by the option's remote id (its content hash). */
     private val lunabeatHits = ConcurrentHashMap<String, LunabeatSong>()
@@ -189,6 +249,10 @@ internal class LyricsSourceSearch(
                 )
             }.getOrDefault(emptyList())
             hits.forEach { result ->
+                // Keep the hit itself: preview and apply re-fetch from the key, and
+                // the key does not carry KuGou's accessKey or the names QQ's lyric
+                // endpoint is asked with.
+                rememberHit(result)
                 results += OnlineLyricsCandidate(
                     providerId = providerIdOf(result.source),
                     result = result,
@@ -286,57 +350,160 @@ internal class LyricsSourceSearch(
 
     /**
      * The publishable document for [option]: TTML for the TTML sources, or the
-     * LRC body rendered through the module's own writer. Null when the provider
-     * no longer has the song.
+     * LRC body rendered through the module's own writer.
+     *
+     * The outcome carries the stage that stopped it. "The provider has no body",
+     * "the body held only credits", "the lanes could not be read" and "the writer
+     * produced nothing" are four different answers for the user and for the log;
+     * collapsing them into one `null` is what left the sheet saying
+     * 「该来源无法预览」 with no line to grep.
      */
     fun documentFor(
         option: LyricSourceOption,
         durationMs: Long,
         songTitle: String? = null,
         songArtist: String? = null,
-    ): Document? {
-        if (option.kind != LyricSourceKind.ONLINE) return null
-        if (option.providerId == LyricSourceProviders.AM_LYRICS) {
-            val entry = amLyrics?.entryFor(remoteIdOf(option)) ?: return null
-            val document = amLyrics.document(entry) ?: return null
-            return Document(ttml = document.ttml, hasWords = document.hasWords)
+    ): DocumentOutcome {
+        if (option.kind != LyricSourceKind.ONLINE) {
+            return failed(Stage.FETCH, "该来源不支持预览")
         }
-        if (option.providerId == LyricSourceProviders.AMLL) {
-            // AMLL ships its own TTML dialect; the repository's converter rewrites
-            // it into the shape Apple's parser reads before anything is published.
-            val document = amll?.document(remoteIdOf(option)) ?: return null
-            return Document(ttml = document.ttml, hasWords = document.hasWords)
+        when (option.providerId) {
+            LyricSourceProviders.AM_LYRICS -> {
+                val entry = amLyrics?.entryFor(remoteIdOf(option))
+                    ?: return failed(Stage.FETCH, NO_BODY)
+                val document = amLyrics.document(entry)
+                    ?: return failed(Stage.WRITE, "AM-Lyrics 文件校验失败")
+                return DocumentOutcome(Document(ttml = document.ttml, hasWords = document.hasWords))
+            }
+
+            LyricSourceProviders.AMLL -> {
+                // AMLL ships its own TTML dialect; the repository's converter rewrites
+                // it into the shape Apple's parser reads before anything is published.
+                val document = amll?.document(remoteIdOf(option))
+                    ?: return failed(Stage.FETCH, NO_BODY)
+                return DocumentOutcome(Document(ttml = document.ttml, hasWords = document.hasWords))
+            }
+
+            LyricSourceProviders.LUNABEAT -> {
+                val ttml = fetchDocument(option) ?: return failed(Stage.FETCH, NO_BODY)
+                val hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }.getOrDefault(false)
+                return DocumentOutcome(Document(ttml = ttml, hasWords = hasWords))
+            }
         }
-        if (option.providerId == LyricSourceProviders.LUNABEAT) {
-            val ttml = fetchDocument(option) ?: return null
-            val hasWords = runCatching { TtmlTimingPolicy.isWord(ttml) }.getOrDefault(false)
-            return Document(ttml = ttml, hasWords = hasWords)
+        // Stage 1: the provider body. The hit the search listed is replayed, so the
+        // provider-only fields (KuGou extras, QQ names/duration) survive the key.
+        val fetched = fetchOutcome(option, songTitle, songArtist, durationMs)
+        val result = fetched.result ?: return failed(Stage.FETCH, fetched.reason)
+        // Stage 2: filtering. The identity lets the rules drop the provider's
+        // `歌名 - 歌手` header, so it is passed here rather than left to the writer.
+        val clean = runCatching { LyricLineFilter.filter(result, songTitle, songArtist) }
+            .getOrElse { error ->
+                logStageFailure("document", Stage.FILTER, error)
+                return failed(Stage.FILTER, "取回的歌词无法过滤")
+            }
+        if (clean.original.isEmpty()) {
+            // The one number that tells the two empty cases apart on a device: a body
+            // that parsed to nothing never had a line to filter.
+            logger(
+                "lyrics-source document stage=filter before=" + result.original.size +
+                    " after=" + clean.original.size,
+            )
+            return failed(Stage.FILTER, emptyLaneReason(result))
         }
-        val result = fetchResult(option) ?: return null
-        val clean = LyricLineFilter.filter(result, songTitle, songArtist)
-        val lines = runCatching { AppleLyricTtmlWriter.from(clean) }.getOrNull() ?: return null
-        if (lines.isEmpty()) return null
-        val ttml = runCatching {
+        // Stage 3: the provider's translation/romanization columns.
+        val lanes = runCatching { OnlineTranslationExtraction.extract(clean, alreadyFiltered = true) }
+            .getOrElse { error ->
+                logStageFailure("document", Stage.CLASSIFY, error)
+                return failed(Stage.CLASSIFY, "取回的歌词语种无法识别")
+            }
+        // Stage 4: the Apple document itself.
+        val lines = runCatching { AppleLyricTtmlWriter.from(clean, lanes) }
+            .getOrElse { error ->
+                logStageFailure("document", Stage.WRITE, error)
+                return failed(Stage.WRITE, "取回的歌词无法写入歌词文档")
+            }
+        if (lines.isEmpty()) return failed(Stage.WRITE, "取回的歌词没有正文")
+        val built = runCatching {
             AppleLyricTtmlWriter.build(
                 lines = lines,
                 durationMs = durationMs.takeIf { it > 0L } ?: 0L,
             )
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
-        return Document(ttml = ttml, hasWords = lines.any { it.words.size >= 2 })
+        }.getOrNull()
+        val ttml = built?.takeIf { it.isNotBlank() }
+            ?: return failed(Stage.WRITE, "生成的歌词文档为空")
+        if (!TtmlInputPolicy.isAcceptable(ttml)) {
+            return failed(Stage.WRITE, "取回的歌词格式不被接受")
+        }
+        return DocumentOutcome(Document(ttml = ttml, hasWords = lines.any { it.words.size >= 2 }))
+    }
+
+    /**
+     * Why a lane ended up with no line, in the two shapes that need different
+     * answers: the body parsed to nothing at all (a parser/dialect problem) or the
+     * body had lines and the filter kept none of them (credits and platform
+     * notices only). "该来源无法预览" said neither.
+     */
+    private fun emptyLaneReason(result: LyricsResult): String =
+        if (result.original.isEmpty()) NO_LINES else CREDITS_ONLY
+
+    /** A failed document build with the stage that produced nothing and the user-facing reason. */
+    private fun failed(stage: Stage, reason: String): DocumentOutcome =
+        DocumentOutcome(stage = stage, reason = reason)
+
+    private fun failedLines(stage: Stage, reason: String): LinesOutcome =
+        LinesOutcome(stage = stage, reason = reason)
+
+    /** Why one stage threw: log only. The sheet only ever sees the Chinese reason. */
+    private fun logStageFailure(action: String, stage: Stage, error: Throwable) {
+        logger(
+            "lyrics-source " + action + " stage=" + stage.token + " " +
+                LyricSourceDiagnostics.failureTrace(error),
+        )
+    }
+
+    /**
+     * Remembers one search hit for the option key it will be applied with, so
+     * [fetchOutcome] can replay the hit instead of rebuilding a bare identity.
+     */
+    private fun rememberHit(result: SongSearchResult) {
+        val key = LyricSourceKeys.online(providerIdOf(result.source), result.id)
+        // Bound the cache: a session only ever applies what it just searched, and a
+        // long-lived sheet would otherwise keep every hit of every query.
+        if (lineHits.size > MAX_REMEMBERED_HITS) lineHits.clear()
+        lineHits[key] = result
     }
 
     /** The provider's translation lane, for a merge into the displayed document. */
-    fun translationLines(option: LyricSourceOption): List<OnlineTranslationLine>? {
-        if (option.kind != LyricSourceKind.ONLINE) return null
+    fun translationLines(option: LyricSourceOption): List<OnlineTranslationLine>? =
+        translationOutcome(option).lines
+
+    /**
+     * The same body as [translationLines], with the stage that produced nothing.
+     *
+     * The translation lane runs the same fetch/filter/classify chain as the
+     * original one, so it reports the same four stages; a lane the provider does
+     * not carry is a *fetch* answer, never a silent null.
+     */
+    fun translationOutcome(
+        option: LyricSourceOption,
+        durationMs: Long = 0L,
+        songTitle: String? = null,
+        songArtist: String? = null,
+    ): LinesOutcome {
+        if (option.kind != LyricSourceKind.ONLINE) return failedLines(Stage.FETCH, "该来源不支持译文")
         // Both GitHub corpora are listed for the original lane only, so they have no
         // translation body to merge here (see searchBlocking).
-        if (option.providerId == LyricSourceProviders.AMLL) return null
-        if (option.providerId == LyricSourceProviders.AM_LYRICS) return null
+        if (option.providerId == LyricSourceProviders.AMLL) {
+            return failedLines(Stage.FETCH, NO_TRANSLATION)
+        }
+        if (option.providerId == LyricSourceProviders.AM_LYRICS) {
+            return failedLines(Stage.FETCH, NO_TRANSLATION)
+        }
         if (option.providerId == LyricSourceProviders.LUNABEAT) {
             // Apple's own document shape: the reader already pairs every line with
             // its translation, so those lanes are reused verbatim.
-            val ttml = fetchDocument(option) ?: return null
-            return runCatching {
+            val ttml = fetchDocument(option) ?: return failedLines(Stage.FETCH, NO_BODY)
+            val lines = runCatching {
                 AppleLyricTtmlReader.read(ttml)
                     .filter { line -> !line.translation.isNullOrBlank() }
                     .map { line ->
@@ -347,9 +514,25 @@ internal class LyricsSourceSearch(
                         )
                     }
             }.getOrNull()?.takeIf { it.isNotEmpty() }
+                ?: return failedLines(Stage.FETCH, NO_TRANSLATION)
+            return LinesOutcome(lines)
         }
-        val result = fetchResult(option) ?: return null
-        return runCatching { OnlineTranslationExtraction.extract(result) }.getOrNull()
+        val fetched = fetchOutcome(option, songTitle, songArtist, durationMs)
+        val result = fetched.result ?: return failedLines(Stage.FETCH, fetched.reason)
+        val clean = runCatching { LyricLineFilter.filter(result) }
+            .getOrElse { error ->
+                logStageFailure("document", Stage.FILTER, error)
+                return failedLines(Stage.FILTER, "取回的译文无法过滤")
+            }
+        if (clean.original.isEmpty()) {
+            return failedLines(Stage.FILTER, emptyLaneReason(result))
+        }
+        val lines = runCatching { OnlineTranslationExtraction.extract(clean, alreadyFiltered = true) }
+            .getOrElse { error ->
+                logStageFailure("document", Stage.CLASSIFY, error)
+                return failedLines(Stage.CLASSIFY, "取回的译文语种无法识别")
+            }
+        return LinesOutcome(lines)
     }
 
     /** The TTML body of a Lunabeat hit, or null when the catalogue moved on. */
@@ -367,23 +550,42 @@ internal class LyricsSourceSearch(
     }
 
     /** One provider body for an LRC-style candidate, or null when unavailable. */
-    fun fetchResult(option: LyricSourceOption): LyricsResult? {
+    fun fetchResult(option: LyricSourceOption): LyricsResult? = fetchOutcome(option).result
+
+    /** One provider body plus, when there is none, the reason to show the user. */
+    private fun fetchOutcome(
+        option: LyricSourceOption,
+        songTitle: String? = null,
+        songArtist: String? = null,
+        durationMs: Long = 0L,
+    ): FetchOutcome {
         val remoteId = remoteIdOf(option)
-        if (remoteId.isEmpty()) return null
-        lineSources.forEach { source ->
-            if (providerIdOf(source.sourceType) != option.providerId) return@forEach
-            val result = SongSearchResult(
-                id = remoteId,
-                title = "",
-                artist = "",
-                album = "",
-                duration = 0L,
-                source = source.sourceType,
+        if (remoteId.isEmpty()) return FetchOutcome(null, "该来源的歌曲标识不完整")
+        val source = lineSources.firstOrNull { providerIdOf(it.sourceType) == option.providerId }
+            ?: return FetchOutcome(null, "该来源不在本机支持的来源列表里")
+        // The hit as the search listed it. A key restored from disk has no hit, so
+        // the song's own metadata stands in for the fields the key cannot carry.
+        val hit = lineHits[option.key] ?: SongSearchResult(
+            id = remoteId,
+            title = songTitle.orEmpty(),
+            artist = songArtist.orEmpty(),
+            album = "",
+            duration = durationMs.coerceAtLeast(0L),
+            source = source.sourceType,
+        )
+        val outcome = runCatching { source.getLyrics(hit) }
+        outcome.exceptionOrNull()?.let { error ->
+            logger(
+                "lyrics-source fetch: " + source.sourceType.name + " failed " +
+                    LyricSourceDiagnostics.failureTrace(error),
             )
-            return runCatching { source.getLyrics(result) }.getOrNull()
         }
-        return null
+        val result = outcome.getOrNull()
+        return if (result == null) FetchOutcome(null, NO_BODY) else FetchOutcome(result)
     }
+
+    /** One provider body plus, when it is missing, the Chinese reason to report. */
+    private data class FetchOutcome(val result: LyricsResult?, val reason: String = "")
 
     /** The module's own vocabulary for a provider id, used when publishing documents. */
     fun customSourceToken(providerId: String): String = when (providerId) {
@@ -413,6 +615,21 @@ internal class LyricsSourceSearch(
 
     private companion object {
         const val SEARCH_PAGE_SIZE = 20
+
+        /** Search hits remembered for re-fetch, so a long session cannot grow without bound. */
+        const val MAX_REMEMBERED_HITS = 200
+
+        /** The provider had no body for this hit (gone, or answered nothing). */
+        const val NO_BODY = "该来源没有这首歌词"
+
+        /** The body parsed to no line at all (a dialect the parser could not read). */
+        const val NO_LINES = "取回的歌词没有可用的歌词行"
+
+        /** The body had lines, and all of them were credits or platform notices. */
+        const val CREDITS_ONLY = "取回的歌词只有署名或版权信息"
+
+        /** The provider carries no translation lane for this hit. */
+        const val NO_TRANSLATION = "该来源没有译文"
 
         fun providerIdOf(source: Source): String = when (source) {
             Source.QM -> LyricSourceProviders.QQ

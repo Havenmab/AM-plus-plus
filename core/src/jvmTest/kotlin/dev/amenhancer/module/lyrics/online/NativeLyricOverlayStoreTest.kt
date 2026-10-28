@@ -474,6 +474,109 @@ class NativeLyricOverlayStoreTest {
     }
 
     @Test
+    fun `a refresh that carries one lane keeps the other one and its tags`() {
+        // The device failure this covers: 「显示发音」 went permanently grey a while
+        // after the lane had been published, because the next publish of the same
+        // song carried only a translation and replaced the whole overlay with it.
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            translationSource = "qq",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        // A later publish of the same lines, with the translation only.
+        assertTrue(
+            store.update(
+                songId = "77",
+                lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "换了个译文")),
+            ),
+        )
+
+        // The new translation wins for its own lane...
+        assertEquals("换了个译文", store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("qq", store.translationSource("77"))
+        // ...while the pronunciation lane, its provider and the language tag the
+        // app's toggle keys it by all survive.
+        assertTrue("a translation-only refresh must keep the pronunciation lane", store.hasPronunciation("77"))
+        assertEquals("Kimi no na wa", store.pronunciation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("displayed", store.pronunciationSource("77"))
+        assertEquals(listOf("ja-Latn"), store.pronunciationLanguages("77"))
+    }
+
+    @Test
+    fun `a body without a provider keeps the recorded name`() {
+        // Every publish that does not know a lane's supplier passes null (the
+        // automatic enrichment republishing its merged body, the displayed-document
+        // publish). Null means "unknown", never "forget".
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")),
+            translationSource = "qq",
+            originalSource = "amll-ttml-db",
+        )
+
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")),
+        )
+
+        assertEquals("qq", store.translationSource("77"))
+        assertEquals("amll-ttml-db", store.originalSource("77"))
+    }
+
+    @Test
+    fun `a row the new body drops does not keep the old lane alive`() {
+        // The body decides which lines exist: only the lanes of the rows it carries
+        // are inherited, so a genuinely different document cannot be served from the
+        // previous one.
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        store.update(
+            songId = "77",
+            lines = listOf(line(5_000L, 6_000L, "夢のあと", translation = "梦的痕迹")),
+        )
+
+        assertNull(store.translation("77", 1_000L, 2_000L, "君の名は"))
+        assertEquals("梦的痕迹", store.translation("77", 5_000L, 6_000L, "夢のあと"))
+        // The pronunciation lane has no row left, so it is genuinely gone.
+        assertFalse(store.hasPronunciation("77"))
+    }
+
+    @Test
+    fun `another track never inherits the previous one's lanes`() {
+        val store = NativeLyricOverlayStore()
+        store.update(
+            songId = "77",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字", roma = "Kimi no na wa")),
+            translationSource = "qq",
+            pronunciationSource = "displayed",
+            pronunciationLanguages = listOf("ja-Latn"),
+        )
+
+        store.update(
+            songId = "88",
+            lines = listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")),
+        )
+
+        // The new track's own body only carries a translation: nothing of the
+        // previous song's pronunciation lane may come with it.
+        assertEquals("你的名字", store.translation("88", 1_000L, 2_000L, "君の名は"))
+        assertFalse(store.hasPronunciation("88"))
+        assertNull(store.pronunciationSource("88"))
+        assertEquals(emptyList<String>(), store.pronunciationLanguages("88"))
+        assertNull(store.translationSource("88"))
+    }
+
+    @Test
     fun `dropping the last lane clears the overlay instead of keeping an empty shell`() {
         val store = NativeLyricOverlayStore()
         store.update("77", listOf(line(1_000L, 2_000L, "君の名は", translation = "你的名字")))

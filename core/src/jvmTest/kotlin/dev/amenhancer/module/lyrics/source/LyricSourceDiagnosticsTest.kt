@@ -82,6 +82,34 @@ class LyricSourceDiagnosticsTest {
     }
 
     @Test
+    fun `the document failure line names the stage and the chinese reason`() {
+        // The device regression: four different failures (no body, nothing but
+        // credits, unreadable lanes, empty write) all collapsed into one
+        // 「该来源无法预览」 and left no log line at all, so the report "every
+        // source fails" could not be diagnosed from the export.
+        val line = LyricSourceDiagnostics.documentFailedLine(
+            action = "preview",
+            stage = "filter",
+            reason = "取回的歌词只有署名或版权信息",
+        )
+
+        assertEquals(
+            "lyrics-source preview failed stage=filter reason=取回的歌词只有署名或版权信息",
+            line,
+        )
+        // The four stages are the greppable vocabulary of the whole chain.
+        listOf("fetch", "filter", "classify", "write").forEach { stage ->
+            val apply = LyricSourceDiagnostics.documentFailedLine("apply", stage, "该来源没有这首歌词")
+            assertTrue(apply.startsWith("lyrics-source apply failed stage=" + stage + " reason="))
+        }
+        // One line per failure, whatever the reason carries.
+        val multi = LyricSourceDiagnostics.documentFailedLine("preview", "fetch", "first
+second")
+        assertFalse(multi.contains("
+"))
+    }
+
+    @Test
     fun `the degraded line quotes the stored key`() {
         val line = LyricSourceDiagnostics.degradedLine(42L, LyricLane.TRANSLATION, "online:qm:999")
 

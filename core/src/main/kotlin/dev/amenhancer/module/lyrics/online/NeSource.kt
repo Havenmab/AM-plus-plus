@@ -34,11 +34,20 @@ object YrcParser {
     ): LyricsResult? {
         if (yrc.isNullOrEmpty() && lrc.isNullOrEmpty()) return null
 
-        val originalLines = (if (!yrc.isNullOrEmpty()) {
-            parseYrc(yrc)
-        } else {
-            LrcParser.parseLrc(lrc!!)
-        }).sortedBy(LyricsLine::start)
+        // A YRC body that does not parse (another dialect, or a plain LRC served
+        // under the same key) must not become "no lyrics": the lane falls back to
+        // the LRC parser and then to the plain `lrc` field before it is declared
+        // empty. Without that fallback a provider hit became a zero-line document
+        // and the sheet showed 「该来源无法预览」 for a body that was never missing.
+        val originalLines = when {
+            !yrc.isNullOrEmpty() -> parseYrc(yrc)
+                .ifEmpty { LrcParser.parseLrc(yrc) }
+                .ifEmpty { lrc?.takeIf(String::isNotEmpty)?.let(LrcParser::parseLrc).orEmpty() }
+
+            !lrc.isNullOrEmpty() -> LrcParser.parseLrc(lrc)
+
+            else -> emptyList()
+        }.sortedBy(LyricsLine::start)
 
         val translatedRaw = tlyric?.takeIf(String::isNotEmpty)?.let(LrcParser::parseLrc)
         val romanizationRaw = romalrc?.takeIf(String::isNotEmpty)?.let(LrcParser::parseLrc)

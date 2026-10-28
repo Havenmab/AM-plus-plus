@@ -32,6 +32,22 @@ import java.io.File
  * pronunciation spans are untouched, so old records are repaired without a
  * migration.
  *
+ * This file is also the **single source of truth for which provider supplies each
+ * lane**: the record carries `translationSource` / `pronunciationSource` /
+ * `originalSource` beside the two lanes, and every publish path — the automatic
+ * completion through [dev.amenhancer.module.hook.LyricsSourceOverlayCacheBridge],
+ * a manual pick in the sheet, the displayed custom document — writes the same
+ * record. [sources] is what the lyrics-source probes read, so the sheet names the
+ * provider that really supplied the text: after an automatic completion (the
+ * in-memory store may already have been replaced by a later refresh) and after a
+ * restart (the store is empty), not only while this process happens to still hold
+ * the lane.
+ *
+ * A null provider in a later save means "this caller does not know it", never
+ * "forget it" — the same rule the overlay store applies to its own records — so a
+ * re-save of the same merged body, or a displayed-document publish that knows only
+ * the document's origin, cannot erase the provider a completion recorded.
+ *
  * Bounds: one record per song, [MAX_SONGS] songs, [MAX_LINES] per lane,
  * [MAX_FILE_BYTES] for the file, atomic replace (temp file + rename); a corrupt file
  * reads as "no memory". Runs on the caller's background executor.
@@ -65,9 +81,47 @@ internal class LyricsSourceOverlayPersistence(
         val updatedAt: Long = 0L,
     ) {
         val isEmptyLanes: Boolean get() = translations.isEmpty() && romanizations.isEmpty()
+
+        /** True when the record still names at least one lane's provider or lane tags. */
+        val hasSources: Boolean
+            get() = !translationSource.isNullOrBlank() ||
+                !pronunciationSource.isNullOrBlank() ||
+                !originalSource.isNullOrBlank() ||
+                pronunciationLanguages.isNotEmpty()
+
+        /** The record's lane providers, without the lane bodies. */
+        fun sources(): LaneSources = LaneSources(
+            translationSource = translationSource,
+            pronunciationSource = pronunciationSource,
+            originalSource = originalSource,
+            pronunciationLanguages = pronunciationLanguages,
+            hasTranslations = translations.isNotEmpty(),
+            hasRomanizations = romanizations.isNotEmpty(),
+        )
     }
 
+    /**
+     * Which provider supplies each of a song's three lanes, plus whether the lane
+     * bodies are on disk at all.
+     *
+     * This is the projection the lyrics-source probes read: the sheet needs the
+     * provider names and the lane presence, never the lines themselves, so the
+     * answer stays cheap (an index built once per file read) and is available
+     * before — and without — replaying anything into the in-memory store.
+     */
+    internal data class LaneSources(
+        val translationSource: String? = null,
+        val pronunciationSource: String? = null,
+        val originalSource: String? = null,
+        val pronunciationLanguages: List<String> = emptyList(),
+        val hasTranslations: Boolean = false,
+        val hasRomanizations: Boolean = false,
+    )
+
     private val lock = Any()
+
+    /** Per-song lane providers, built from the file once and kept in step with every write. */
+    private var sourcesIndex: Map<Long, LaneSources>? = null
 
     /**
      * Splits a merged document into the two lanes and stores them.
@@ -85,7 +139,7 @@ internal class LyricsSourceOverlayPersistence(
         pronunciationLanguages: List<String>,
     ): Boolean {
         if (songId <= 0L || mergedTtml.isBlank()) return false
-        val lines = runCatching { AppleLyricTtmlReader.read(mergedTtml) }.getOrNull() ?: return false
+        val lines = runCatching { AppleLyricTtmlReader.read(mergedTtml) }.getOrNull().orEmpty()
         val translations = lines.mapNotNull { line ->
             val translation = line.translation?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             TranslationLine(line.begin, line.end, line.text, translation)
@@ -102,31 +156,96 @@ internal class LyricsSourceOverlayPersistence(
                 }.take(MAX_SPANS_PER_LINE),
             )
         }.take(MAX_LINES)
-        if (translations.isEmpty() && romanizations.isEmpty()) return false
-        return save(
-            Record(
-                songId = songId,
-                translationSource = translationSource,
-                pronunciationSource = pronunciationSource,
-                originalSource = originalSource,
-                pronunciationLanguages = pronunciationLanguages,
-                translations = translations,
-                romanizations = romanizations,
-                updatedAt = clock(),
-            ),
+        val existing = load(songId)
+        // A lane the incoming body does not carry is *not* a request to forget it: the
+        // automatic completion publishes a merged body that always carries both, while the
+        // displayed-document publish (the same song, the raw custom document) carries only
+        // what that document has. Dropping the richer lane there is what erased a completed
+        // translation — and its provider — every time the page re-published its document.
+        // Hiding a lane is explicit: [dropLane].
+        val record = Record(
+            songId = songId,
+            translationSource = translationSource ?: existing?.translationSource,
+            pronunciationSource = pronunciationSource ?: existing?.pronunciationSource,
+            originalSource = originalSource ?: existing?.originalSource,
+            // The lane tags name the pronunciation lane's language; a body without a
+            // `<transliteration xml:lang>` tag must not erase the tags the app's
+            // 显示发音 switch keys the published lane by.
+            pronunciationLanguages = pronunciationLanguages.distinct()
+                .ifEmpty { existing?.pronunciationLanguages.orEmpty() },
+            translations = translations.ifEmpty { existing?.translations.orEmpty() },
+            romanizations = romanizations.ifEmpty { existing?.romanizations.orEmpty() },
+            updatedAt = clock(),
+        )
+        return save(record)
+    }
+
+    /**
+     * Stores the document the page is showing (the user's custom lyrics) with its
+     * own origin as the fallback provider of the lanes it carries.
+     *
+     * The difference from [saveMergedDocument] is the attribution rule: a lane the
+     * record already names a provider for keeps that name. The displayed document's
+     * origin is a fact about the **file**, while a completion records which provider
+     * supplied the Chinese — and that completion may have merged a QQ translation
+     * into a document that came from AMLL. Overwriting the lane provider with the
+     * file's origin would make the sheet credit the wrong platform every time the
+     * page republished its document, so the origin only fills in what is unknown.
+     */
+    fun saveDisplayedDocument(
+        songId: Long,
+        ttml: String,
+        source: String?,
+        pronunciationLanguages: List<String>,
+    ): Boolean {
+        if (songId <= 0L || ttml.isBlank()) return false
+        val existing = load(songId)
+        return saveMergedDocument(
+            songId = songId,
+            mergedTtml = ttml,
+            translationSource = existing?.translationSource ?: source,
+            pronunciationSource = existing?.pronunciationSource ?: source,
+            originalSource = existing?.originalSource ?: source,
+            pronunciationLanguages = pronunciationLanguages,
         )
     }
 
-    /** Saves (or replaces) the memory for the record's song. */
+    /**
+     * Saves (or replaces) the memory for the record's song.
+     *
+     * A record that carries a provider (or the lane tags) but no lane body is kept
+     * on purpose: that is the state left by a body whose lanes the classifier
+     * refused, and the sheet still has to be able to name the provider instead of
+     * falling back to 「不显示」.
+     */
     fun save(record: Record): Boolean = synchronized(lock) {
         val corrected = correctLanes(record)
-        if (corrected.songId <= 0L || corrected.isEmptyLanes) return false
+        if (corrected.songId <= 0L) return false
+        if (corrected.isEmptyLanes && !corrected.hasSources) return false
         runCatching {
             val entries = read().filterValues { it.songId != corrected.songId }.toMutableMap()
             entries[corrected.songId] = corrected
             write(entries.values.sortedByDescending { it.updatedAt }.take(MAX_SONGS))
             true
         }.getOrDefault(false)
+    }
+
+    /**
+     * The lane providers stored for [songId], or null when this song has no record.
+     *
+     * Reads the index built from the file (see [LaneSources]) instead of the lanes,
+     * so the sheet can ask on the UI thread; the first call parses the file once and
+     * every later write keeps it in step.
+     */
+    fun sources(songId: Long): LaneSources? = synchronized(lock) {
+        if (songId <= 0L) null else sourcesIndexLocked()[songId]
+    }
+
+    private fun sourcesIndexLocked(): Map<Long, LaneSources> {
+        sourcesIndex?.let { return it }
+        val built = read().mapValues { (_, record) -> record.sources() }
+        sourcesIndex = built
+        return built
     }
 
     /** The stored memory for [songId], or null. */
@@ -215,7 +334,9 @@ internal class LyricsSourceOverlayPersistence(
                 )
             }
             val remaining = entries.filterValues { it.songId != songId }.toMutableMap()
-            if (!next.isEmptyLanes) remaining[songId] = next.copy(updatedAt = clock())
+            // A record whose other lane still has a body — or still names a provider — is
+            // kept: dropping it would take the surviving lane's provider from the sheet.
+            if (!next.isEmptyLanes || next.hasSources) remaining[songId] = next.copy(updatedAt = clock())
             write(remaining.values.sortedByDescending { it.updatedAt }.take(MAX_SONGS))
             true
         }.getOrDefault(false)
@@ -417,7 +538,10 @@ internal class LyricsSourceOverlayPersistence(
         val pending = File(file.parentFile, file.name + ".tmp")
         pending.writeText(body, Charsets.UTF_8)
         if (file.exists()) file.delete()
-        pending.renameTo(file)
+        if (!pending.renameTo(file)) return
+        // The file is the truth: the lane-provider index is rebuilt from what was just
+        // written, so a save/drop is visible to [sources] without another parse.
+        sourcesIndex = records.associate { record -> record.songId to record.sources() }
     }
 
     private fun strings(array: JSONArray?): List<String> {

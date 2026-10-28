@@ -510,10 +510,21 @@ internal class LyricsSourceControllerImpl(
         // The preview and the apply read the same document, so what the user saw in
         // the three lines is exactly what gets published — including its precision,
         // which a search row cannot know but a fetched body can.
-        val document = when (option.kind) {
-            LyricSourceKind.ONLINE -> search.documentFor(option, durationMs, songTitle, songArtist)
-            else -> null
-        } ?: throw IllegalStateException("该来源无法预览")
+        val outcome = search.documentFor(option, durationMs, songTitle, songArtist)
+        val document = outcome.document ?: run {
+            // The stage is the whole point of this line: "the provider has no body",
+            // "only credits were left", "the lanes are unreadable" and "the writer
+            // produced nothing" need different fixes, and the sheet can only show
+            // one generic sentence for all four.
+            logger(
+                LyricSourceDiagnostics.documentFailedLine(
+                    action = "preview",
+                    stage = outcome.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    reason = outcome.reason,
+                ),
+            )
+            throw IllegalStateException(outcome.reason)
+        }
         val lines = AppleLyricTtmlReader.read(document.ttml)
             .take(PREVIEW_LINES)
             .map { line ->
@@ -814,10 +825,21 @@ internal class LyricsSourceControllerImpl(
         // the module's own writer (word spans preserved when the provider had
         // them, line timing otherwise). The precision is reported, never assumed.
         val song = envelope.snapshot.song
-        val document = search.documentFor(option, song.durationMs, song.title, song.artist)
-            ?: return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, "该来源没有这首歌词")
+        val outcome = search.documentFor(option, song.durationMs, song.title, song.artist)
+        val document = outcome.document
+        if (document == null) {
+            logger(
+                LyricSourceDiagnostics.documentFailedLine(
+                    action = "apply",
+                    stage = outcome.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    reason = outcome.reason,
+                ),
+            )
+            return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, outcome.reason)
+        }
         val ttml = document.ttml
         if (!TtmlInputPolicy.isAcceptable(ttml)) {
+            logger(LyricSourceDiagnostics.documentFailedLine("apply", "write", "取回的歌词格式不被接受"))
             return ApplyResult.failed(LyricSourceErrorCodes.INVALID_DOCUMENT, "取回的歌词格式不被接受")
         }
         // The index bridge speaks provider ids ("qm"/"lb"/...); the publisher below
@@ -873,9 +895,21 @@ internal class LyricsSourceControllerImpl(
             ?: return ApplyResult.failed(LyricSourceErrorCodes.NOT_AVAILABLE, "当前没有可对齐的歌词文档")
         val source = search.sourceOf(option.providerId)
             ?: return ApplyResult.failed(LyricSourceErrorCodes.NOT_SUPPORTED, "该来源不能提供译文")
-        val lines = search.translationLines(option)
-            ?: return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, "该来源没有这首歌词")
+        val song = envelope.snapshot.song
+        val translated = search.translationOutcome(option, song.durationMs, song.title, song.artist)
+        val lines = translated.lines
+        if (lines == null) {
+            logger(
+                LyricSourceDiagnostics.documentFailedLine(
+                    action = "apply",
+                    stage = translated.stage?.token ?: LyricSourceSearch.Stage.FETCH.token,
+                    reason = translated.reason,
+                ),
+            )
+            return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, translated.reason)
+        }
         if (lines.none { !it.translation.isNullOrBlank() }) {
+            logger(LyricSourceDiagnostics.documentFailedLine("apply", "classify", "该来源没有译文"))
             return ApplyResult.failed(LyricSourceErrorCodes.FETCH_FAILED, "该来源没有译文")
         }
         val outcome = OnlineTranslationEnrichment.enrich(
@@ -1001,6 +1035,11 @@ internal class LyricsSourceControllerImpl(
         runCatching {
             val key = songId.toString()
             val probed = probes.probe()
+            // The stored record is what the panel and the native hooks fall back to
+            // when the store no longer holds a lane. Printing it beside the store's own
+            // state is what separates "the lane was never published" from "the store
+            // lost it" in the next exported log.
+            val stored = runCatching { persistence.sources(songId) }.getOrNull()
             logger(
                 "lyrics-source diag id=" + songId +
                     " appleLyrics=" + (probed?.input?.apple?.hasLyrics ?: false) +
@@ -1009,6 +1048,11 @@ internal class LyricsSourceControllerImpl(
                     " overlayPronunciation=" + overlay.hasPronunciation(key) +
                     " overlayTranslation=" + overlay.hasTranslation(key) +
                     " overlayLanguages=" + overlay.pronunciationLanguages(key).joinToString(",") +
+                    " storedTranslation=" + (stored?.translationSource ?: NONE) +
+                    " storedPronunciation=" + (stored?.pronunciationSource ?: NONE) +
+                    " storedHasTranslation=" + (stored?.hasTranslations ?: false) +
+                    " storedHasPronunciation=" + (stored?.hasRomanizations ?: false) +
+                    " storedLanguages=" + stored?.pronunciationLanguages?.joinToString(",").orEmpty() +
                     " nativeMenu=[" + LyricsSourceNativeMenu.describe() + "]",
             )
         }
@@ -1113,6 +1157,9 @@ internal class LyricsSourceControllerImpl(
 
     private companion object {
         const val PREVIEW_LINES = 3
+
+        /** The diag's placeholder for a provider the stored record does not name. */
+        const val NONE = "none"
 
         /** Bound on the per-song candidate memory; a session rarely exceeds a few. */
         const val MAX_REMEMBERED_CANDIDATES = 64

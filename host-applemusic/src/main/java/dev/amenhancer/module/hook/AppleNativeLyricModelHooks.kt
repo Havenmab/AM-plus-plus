@@ -402,9 +402,32 @@ internal class AppleNativeLyricModelHooks(
     @Volatile
     private var mandarinHidden: Boolean = false
 
+    /**
+     * The last lazy replay of a song's stored overlay lanes ([overlayPronunciationLane]).
+     * Keyed by (song, store revision) so a per-line getter asks the disk copy at most
+     * once per state instead of on every call.
+     */
+    @Volatile
+    private var overlayReplayAttempt: OverlayReplayAttempt? = null
+
     /** The song object the last successful native lane selections were applied to. */
     @Volatile
     private var selectedPronunciationSong: java.lang.ref.WeakReference<Any>? = null
+
+    /**
+     * The song id the accepted pronunciation selection belongs to.
+     *
+     * The model object is rebuilt for the **same** track (a re-presentation, a
+     * metadata/artwork refresh, a lyrics-page re-entry), so the identity check on
+     * [selectedPronunciationSong] alone stopped matching while Apple's own
+     * advertisement of the fresh model could be empty for one read — and
+     * `matchToSystemLyricsScript` then returned null, which is what turns
+     * 「显示发音」 grey on a track that never changed. The id keeps the accepted lane
+     * valid across that rebuild; it is reset with the selection on a track change,
+     * so a previous song's lane can never leak into the next one.
+     */
+    @Volatile
+    private var selectedPronunciationSongId: Long = 0L
 
     @Volatile
     private var selectedPronunciationLanguage: String? = null
@@ -2214,6 +2237,7 @@ internal class AppleNativeLyricModelHooks(
             // fallback language, or one-shot word render plan leak into this one.
             applePronunciationLanguages = emptyList()
             selectedPronunciationSong = null
+            selectedPronunciationSongId = 0L
             selectedPronunciationLanguage = null
             selectedTranslationSong = null
             selectedTranslationLanguage = null
@@ -2558,7 +2582,11 @@ internal class AppleNativeLyricModelHooks(
     private fun selectedPronunciationLaneForCurrentSong(): String? {
         val songNative = songNativeRef?.get() ?: return null
         if (!isCurrentSong(songNative)) return null
-        if (selectedPronunciationSong?.get() !== songNative) return null
+        // The accepted selection survives a rebuild of the same track's model
+        // ([selectedPronunciationSongId]); only a different song — or a model whose
+        // id is unknown — still needs the exact instance the setter accepted.
+        val sameSong = selectedPronunciationSongId > 0L && selectedPronunciationSongId == modelSongId
+        if (selectedPronunciationSong?.get() !== songNative && !sameSong) return null
         return selectedPronunciationLanguage
             ?.takeIf { NativeLyricModelPolicy.isOfficialPronunciationLanguage(it) }
     }
@@ -2729,6 +2757,8 @@ internal class AppleNativeLyricModelHooks(
                 (result.getOrNull() !is Boolean || result.getOrNull() == true)
             if (accepted) {
                 selectedPronunciationSong = java.lang.ref.WeakReference(songNative)
+                selectedPronunciationSongId = nativeSongId(songNative)
+                    .takeIf { it > 0L } ?: modelSongId
                 selectedPronunciationLanguage = language
                 if (appleLane) pronunciationSelectionOpen = false
                 confirmedLane = appleLane
@@ -3746,7 +3776,7 @@ internal class AppleNativeLyricModelHooks(
     /** [supplementLaneAvailable] for the model's own song, used by the refresh state. */
     private fun supplementPronunciationLane(songId: Long): Boolean =
         enabled && songId > 0L && isModuleSupplementSong(songId) &&
-            overlay.hasPronunciation(songId.toString())
+            overlayPronunciationLane(songId.toString())
 
     /**
      * Whether [songId] is a supplement track with a published romanization lane.
@@ -3756,9 +3786,38 @@ internal class AppleNativeLyricModelHooks(
      */
     private fun supplementLaneAvailable(songId: String?): Boolean {
         if (!enabled) return false
-        val id = songId?.toLongOrNull() ?: return false
-        return id > 0L && isModuleSupplementSong(id) && overlay.hasPronunciation(songId)
+        val key = songId ?: return false
+        val id = key.toLongOrNull() ?: return false
+        return id > 0L && isModuleSupplementSong(id) && overlayPronunciationLane(key)
     }
+
+    /**
+     * The overlay's pronunciation lane for [songId], replayed from the module's own
+     * on-disk copy when this process no longer holds it.
+     *
+     * The overlay store holds **one** song and is replaced by every publish, so the
+     * lane the app's 显示发音 row is enabled from could disappear underneath it:
+     * a track change (the store moves to the next song, and the previous song's
+     * lanes exist only on disk), a restart (the store is empty), or a later publish
+     * that carries only a translation. The record on disk is the single source of
+     * truth for that lane, so the lane is replayed before the hooks conclude it is
+     * missing — one attempt per (song, store revision), which is what keeps this
+     * bounded on a getter that runs for every rendered line.
+     */
+    private fun overlayPronunciationLane(songId: String): Boolean {
+        if (overlay.hasPronunciation(songId)) return true
+        val id = songId.toLongOrNull() ?: return false
+        if (id <= 0L) return false
+        val revision = overlay.revision()
+        val attempt = overlayReplayAttempt
+        if (attempt != null && attempt.songId == id && attempt.revision == revision) return false
+        overlayReplayAttempt = OverlayReplayAttempt(songId = id, revision = revision)
+        val restored = LyricsSourceOverlayCacheBridge.restore(id, overlay)
+        return restored && overlay.hasPronunciation(songId)
+    }
+
+    /** The last lazy overlay replay, so a getter never retries it in a loop. */
+    private data class OverlayReplayAttempt(val songId: Long, val revision: Long)
 
     /** True when the line's own timing/text resolves to a published supplement lane. */
     private fun hasSupplementPronunciationLine(line: Any, text: String?): Boolean {

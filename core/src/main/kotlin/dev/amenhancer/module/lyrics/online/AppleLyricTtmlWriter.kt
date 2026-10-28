@@ -101,13 +101,25 @@ object AppleLyricTtmlWriter {
         // Credits, platform notices and placeholder lines are never lyrics; drop them here so
         // every publisher (automatic completion, the lyrics-source sheet, enrichment) agrees.
         val clean = LyricLineFilter.filter(result)
-        val lanes = OnlineTranslationExtraction.extract(clean)
-        return clean.original.mapIndexed { index, line ->
-            val lane = lanes.getOrNull(index)
-            from(line).copy(
-                translation = lane?.translation,
-            )
-        }
+        return from(clean, OnlineTranslationExtraction.extract(clean, alreadyFiltered = true))
+    }
+
+    /**
+     * Adapts an **already filtered** result with its own pre-computed lanes.
+     *
+     * The lyrics-source sheet filters with the song's identity (the `歌名 - 歌手`
+     * header needs it) and runs the lane classifier itself, so that a failure can
+     * name the stage it happened in. Filtering again here would sweep the
+     * *filtered* list a second time and can shift the lane indices after a gap;
+     * this overload keeps one filter pass per document.
+     */
+    fun from(
+        result: LyricsResult,
+        lanes: List<OnlineTranslationLine>,
+    ): List<AppleTtmlLine> = result.original.mapIndexed { index, line ->
+        from(line).copy(
+            translation = lanes.getOrNull(index)?.translation,
+        )
     }
 
     fun build(lines: List<AppleTtmlLine>, durationMs: Long): String {

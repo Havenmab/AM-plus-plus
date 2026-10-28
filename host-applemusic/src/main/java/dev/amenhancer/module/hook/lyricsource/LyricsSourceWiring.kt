@@ -117,10 +117,17 @@ internal fun createLyricsSourceTarget(
             cache = LunabeatDiskCache(File(directory, LUNABEAT_DIRECTORY)),
         )
     }.getOrNull() }
+    // The overlay store is memory only; this file is what survives a restart
+    // (same directory as the selection, so one module data folder holds the state).
+    // It is created before the probes because they read the stored lane providers
+    // from it: the sheet must name the provider a completion recorded even when the
+    // in-memory store has since been replaced (or is empty, after a restart).
+    val overlayPersistence = LyricsSourceOverlayPersistence(File(directory, OVERLAY_FILE_NAME))
     val probes = LyricsSourceProbes(
         config = config,
         currentSong = currentSong,
         overlay = overlay,
+        persistence = overlayPersistence,
         timing = timing,
         metadataTitle = { id -> metadata(id)?.title },
         metadataArtist = { id -> metadata(id)?.artist },
@@ -150,9 +157,6 @@ internal fun createLyricsSourceTarget(
         executor = executor,
         logger = logger,
     )
-    // The overlay store is memory only; this file is what survives a restart
-    // (same directory as the selection, so one module data folder holds the state).
-    val overlayPersistence = LyricsSourceOverlayPersistence(File(directory, OVERLAY_FILE_NAME))
     // The automatic completion pipeline publishes lanes in memory only; write them through so a
     // restart still knows which provider supplied a translation.
     LyricsSourceOverlayCacheBridge.save = { songId, mergedTtml, translationSource, pronunciationSource,
@@ -166,6 +170,21 @@ internal fun createLyricsSourceTarget(
             pronunciationLanguages = languages,
         )
     }
+    // The displayed custom document is what the page shows, so its lanes and their origin
+    // are stored through the same record (the origin only fills in what is still unknown).
+    LyricsSourceOverlayCacheBridge.saveDisplayed = { songId, ttml, source, languages ->
+        overlayPersistence.saveDisplayedDocument(
+            songId = songId,
+            ttml = ttml,
+            source = source,
+            pronunciationLanguages = languages,
+        )
+    }
+    // The read-back half: the native-model hooks replay a song's stored lanes when this
+    // process lost them (a restart, a track change, a refresh that replaced the overlay
+    // with a body carrying one lane). Without it the app's 显示发音 row stays grey for
+    // good once the store no longer holds the lane, even though it was published once.
+    LyricsSourceOverlayCacheBridge.replay = overlayPersistence::restoreInto
     val controller = LyricsSourceControllerImpl(
         currentSong = currentSong,
         overlay = overlay,

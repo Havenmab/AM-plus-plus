@@ -23,8 +23,11 @@ import dev.amenhancer.module.lyrics.source.OverlayLyricsCapability
  * - Apple's lanes come from the raw TTML the model hooks already recorded for
  *   this Adam ID ([TtmlTimingObservationRegistry]), parsed with the same reader
  *   the replace path uses — so the flags agree with what the page renders.
- * - The overlay lanes come straight from [NativeLyricOverlayStore], which is the
- *   module's own record of what it published for the song.
+ * - The overlay lanes come from [NativeLyricOverlayStore] **and** from
+ *   [LyricsSourceOverlayPersistence], the record every publish path writes. The
+ *   store is one song in process memory, the record is per song on disk: a lane (and
+ *   its provider) that auto completion published survives both a later refresh and a
+ *   restart, and the sheet must report it either way.
  * - Custom documents come from the module's index through
  *   [TargetConfigClient.customLyricsManifest]; the entry that is currently
  *   enabled is what the page is showing, and that is what `activeFileId` reports.
@@ -33,6 +36,15 @@ internal class LyricsSourceProbes(
     private val config: TargetConfigClient,
     private val currentSong: CurrentSongIdentityCache,
     private val overlay: NativeLyricOverlayStore,
+    /**
+     * The on-disk copy of the overlay lanes. It is the single source of truth for
+     * *which provider supplies which lane*: the in-memory store is only this
+     * process's view of it, and after an automatic completion that view may already
+     * have been replaced by a later refresh (or be empty, after a restart). The
+     * sheet must still name the provider, so the probe reads both and the stored
+     * record is what answers when the store cannot.
+     */
+    private val persistence: LyricsSourceOverlayPersistence,
     private val timing: TtmlTimingObservationRegistry,
     private val metadataTitle: (Long) -> String? = { null },
     private val metadataArtist: (Long) -> String? = { null },
@@ -149,40 +161,39 @@ internal class LyricsSourceProbes(
      *    none": Apple's own lane is measured separately ([appleCapability]) and
      *    still serves the lane through its own option, so the lane falls back to
      *    Apple instead of disappearing from the sheet.
+     *
+     * Both halves are read: the in-memory store is this process's view, while
+     * [LyricsSourceOverlayPersistence] is the record every publish path writes and
+     * the only thing that survives a restart (see [overlayCapabilityOf]). Reading
+     * only the store is what made the sheet say 「不显示」 for a lane auto completion
+     * had just published — the completion's write is on disk, and the store may
+     * already have been replaced by the refresh that followed it.
      */
     fun overlayCapability(songId: Long, displayedTtml: String? = null): OverlayLyricsCapability {
+        if (songId <= 0L) return OverlayLyricsCapability()
         val key = songId.toString()
         return runCatching {
-            val revision = overlay.revision()
             val current = overlay.currentSongId()
-            if (current != null && current != key) {
-                // The store holds another song: report nothing for this one rather
-                // than the previous track's lanes.
-                return@runCatching OverlayLyricsCapability()
-            }
-            val romanizationSource = overlay.pronunciationSource(key)
-            OverlayLyricsCapability(
-                // The overlay never carries the original document: it holds the lanes the
-                // page shows *for* Apple's document. Reporting it as an original source made
-                // the sheet label Apple's own lyrics as 已写入歌词 / 自定义文件.
-                hasOriginal = false,
-                hasTranslation = overlay.hasTranslation(key),
-                hasRomanization = overlay.hasPronunciation(key),
-                hasWords = false,
+            // The store holds one song at a time. A store that belongs to another track
+            // says nothing about this one — but the stored record still does, so the
+            // lanes are reported as "not in memory" rather than as "nothing published".
+            val holdsSong = current == null || current == key
+            val stored = runCatching { persistence.sources(songId) }.getOrNull()
+            overlayCapabilityOf(
+                snapshot = OverlayLaneSnapshot(
+                    holdsSong = holdsSong,
+                    hasTranslation = overlay.hasTranslation(key),
+                    translationSource = overlay.translationSource(key),
+                    hasPronunciation = overlay.hasPronunciation(key),
+                    pronunciationSource = overlay.pronunciationSource(key),
+                    originalSource = overlay.originalSource(key),
+                ),
+                persisted = stored,
                 // The stored lanes belong to the document the page is showing, so its
                 // timeline is the overlay's timeline.
                 hasTiming = displayedTtml?.let { ttml ->
                     runCatching { TtmlTimingPolicy.hasTiming(ttml) }.getOrDefault(true)
                 } ?: true,
-                // The provider that published the displayed document (auto completion,
-                // a sheet pick, or the custom-document lane). Null when the store has no
-                // record, which the sheet shows as "已写入歌词".
-                originalSource = overlay.originalSource(key),
-                translationSource = overlay.translationSource(key),
-                // The provider named by the store, never inferred from the text: one
-                // without a name is content the module republished from the displayed
-                // document, which the sheet shows as 已写入歌词 rather than as a platform.
-                romanizationSource = romanizationSource,
             )
         }.getOrDefault(OverlayLyricsCapability())
     }

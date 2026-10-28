@@ -125,6 +125,22 @@ class QrcParserTest {
     }
 
     @Test
+    fun `a plain lrc body reaches the lrc fallback under the default type`() {
+        // QQ answers a plain LRC body for songs without a QRC track, and the sheet
+        // always asked for `qrc`. The QRC-only path returned a result with zero
+        // lines, which the sheet rendered as 「该来源无法预览」 although the body
+        // was there - the device report this pins.
+        val result = QrcParser.parse(
+            original = "[00:00.730]遗憾要告诉你
+[00:04.120]一二三 改变世界",
+        )
+
+        assertEquals(2, result.original.size)
+        assertEquals(730L, result.original[0].start)
+        assertEquals("遗憾要告诉你", result.original[0].words.single().text)
+    }
+
+    @Test
     fun `an empty body yields a result with no lines`() {
         val result = QrcParser.parse(original = null)
 

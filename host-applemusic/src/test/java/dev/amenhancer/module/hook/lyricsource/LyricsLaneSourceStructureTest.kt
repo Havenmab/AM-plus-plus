@@ -39,6 +39,11 @@ class LyricsLaneSourceStructureTest {
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/lyricsource/LyricsSourceProbes.kt",
     )
 
+    /** The pure merge of the live store with the record on disk, read by the probes. */
+    private val laneSources = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/lyricsource/LyricsSourceOverlayLanes.kt",
+    )
+
     private val classifier = projectFile(
         "core/src/main/kotlin/dev/amenhancer/module/lyrics/online/LyricLaneClassifier.kt",
     )
@@ -79,8 +84,13 @@ class LyricsLaneSourceStructureTest {
         assertTrue(session.contains("CustomLyricsSources.QQ"))
         // The read-back half: without it the record would be unreadable.
         assertTrue(probes.contains("translationSource = overlay.translationSource(key)"))
-        assertTrue(probes.contains("val romanizationSource = overlay.pronunciationSource(key)"))
-        assertTrue(probes.contains("romanizationSource = romanizationSource,"))
+        assertTrue(probes.contains("pronunciationSource = overlay.pronunciationSource(key)"))
+        // ...and the persisted copy answers when the store no longer holds the lane
+        // (auto completion followed by a refresh, or a restart).
+        assertTrue(probes.contains("private val persistence: LyricsSourceOverlayPersistence"))
+        assertTrue(probes.contains("val stored = runCatching { persistence.sources(songId) }.getOrNull()"))
+        assertTrue(laneSources.contains("translationSource = (snapshot.translationSource ?: persisted?.translationSource)"))
+        assertTrue(laneSources.contains("romanizationSource = (snapshot.pronunciationSource ?: persisted?.pronunciationSource)"))
     }
 
     @Test
@@ -130,8 +140,11 @@ class LyricsLaneSourceStructureTest {
 
     @Test
     fun `a romanization lane the overlay does not hold falls back to Apple`() {
-        // The overlay claims the lane only from content the store really holds ...
-        assertTrue(probes.contains("hasRomanization = overlay.hasPronunciation(key)"))
+        // The overlay claims the lane only from content the store really holds, or
+        // from the record on disk (the store may have been replaced since) ...
+        assertTrue(probes.contains("hasPronunciation = overlay.hasPronunciation(key)"))
+        assertTrue(laneSources.contains("val pronunciation = (snapshot.holdsSong && snapshot.hasPronunciation) ||"))
+        assertTrue(laneSources.contains("hasRomanization = pronunciation,"))
         // ... an empty store never turns into "the song has no romanization":
         // Apple's own lane is measured separately, from the document it served, so
         // the sheet still offers it.
@@ -141,10 +154,12 @@ class LyricsLaneSourceStructureTest {
             probes.contains("AppleLyricTtmlReader.transliterationLanguages(ttml).isNotEmpty()"),
         )
         // The lane's source is read from the store, never inferred from the text.
-        assertTrue(probes.contains("val romanizationSource = overlay.pronunciationSource(key)"))
-        // A store that belongs to another track reports nothing at all — the lane
-        // falls back instead of inheriting the previous song's romanization.
-        assertTrue(probes.contains("return@runCatching OverlayLyricsCapability()"))
+        assertTrue(probes.contains("pronunciationSource = overlay.pronunciationSource(key)"))
+        // A store that belongs to another track contributes nothing — the lane falls
+        // back instead of inheriting the previous song's romanization. The stored
+        // record is per song, so it still answers for this one.
+        assertTrue(probes.contains("val holdsSong = current == null || current == key"))
+        assertTrue(laneSources.contains("val translation = (snapshot.holdsSong && snapshot.hasTranslation) ||"))
         // And the completion never replaces the document that owns the lane: a
         // timed Apple document is completed through the overlay only.
         assertTrue(

@@ -5,6 +5,7 @@ import android.os.Looper
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
+import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.model.CustomLyricsEntry
 import java.util.concurrent.ArrayBlockingQueue
@@ -159,6 +160,19 @@ internal class AppleMusicCustomLyricsTarget(
                             appleMusicId,
                             ttml,
                             originalSource = providerSource,
+                        )
+                        // The same record the completion writes: this document is what the
+                        // page is showing, so its lanes and their origin are the panel's
+                        // truth after a restart. Without this write a custom document that
+                        // already carries its translation had no disk copy at all, and the
+                        // sheet showed 「不显示」 for a lane that is on screen. The origin only
+                        // fills in a lane provider the record does not name yet, so a
+                        // completion's own provider is never overwritten by the file's.
+                        LyricsSourceOverlayCacheBridge.rememberDisplayed(
+                            songId = appleMusicId,
+                            ttml = ttml,
+                            documentSource = providerSource,
+                            languages = AppleLyricTtmlReader.transliterationLanguages(ttml),
                         )
                     },
                 )

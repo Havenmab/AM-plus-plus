@@ -91,6 +91,20 @@ object LyricSourceDiagnostics {
     }
 
     /**
+     * One failed document build for [action] ("preview" or "apply"), with the
+     * [stage] that produced no document.
+     *
+     * `stage` is one of fetch / filter / classify / write and nothing else: the
+     * four steps an online hit goes through before it is a document. [reason] is
+     * the same Chinese sentence the sheet shows, so the log and the UI name one
+     * thing instead of the class name a swallowed `getOrNull()` used to leave
+     * behind (there was no line at all, which is why the device report said
+     * 「该来源无法预览」 for every row with nothing to grep for).
+     */
+    fun documentFailedLine(action: String, stage: String, reason: String): String =
+        PREFIX + " " + action + " failed stage=" + stage + " reason=" + flatten(reason)
+
+    /**
      * The one-line description of a host throwable: its type, its message and the
      * first [maxFrames] stack frames.
      *

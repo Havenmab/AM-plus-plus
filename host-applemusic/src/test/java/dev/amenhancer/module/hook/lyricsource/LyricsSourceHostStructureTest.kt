@@ -180,7 +180,9 @@ class LyricsSourceHostStructureTest {
         assertTrue(search.contains("AppleLyricTtmlWriter.from(result)"))
         assertTrue(search.contains("AppleLyricTtmlWriter.build("))
         assertTrue(search.contains("hasWords = lines.any { it.words.size >= 2 }"))
-        assertTrue(search.contains("results += searchLineProviders(query, durationMs, lane)"))
+        // Providers now run concurrently, so each one is a task lambda rather than a
+        // sequential `results +=` statement.
+        assertTrue(search.contains("searchLineProviders(query, durationMs, lane)"))
     }
 
     @Test
@@ -297,8 +299,8 @@ class LyricsSourceHostStructureTest {
         assertTrue(amll.contains("isSafeCorpusFile(remoteId)"))
         val search = source("LyricsSourceSearch.kt")
         assertTrue(search.contains("if (lane == LyricLane.ORIGINAL) {"))
-        assertTrue(search.contains("results += searchAmll(query)"))
-        assertTrue(search.contains("results += searchAmLyrics(query, songId)"))
+        assertTrue(search.contains("searchAmll(query)"))
+        assertTrue(search.contains("searchAmLyrics(query, songId)"))
         assertTrue(search.contains("Source.AMLL -> LyricSourceProviders.AMLL"))
         assertTrue(search.contains("LyricSourceProviders.AMLL -> Source.AMLL"))
         assertTrue(search.contains("entry.toSearchResult()"))

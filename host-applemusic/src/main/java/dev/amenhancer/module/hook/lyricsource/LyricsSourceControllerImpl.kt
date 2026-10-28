@@ -9,6 +9,7 @@ import dev.amenhancer.module.hook.AutoLyricsRuntime
 import dev.amenhancer.module.hook.CurrentSongIdentityCache
 import dev.amenhancer.module.hook.TtmlTimingPolicy
 import dev.amenhancer.module.hook.LyricsSourceCustomIndexBridge
+import dev.amenhancer.module.lyrics.online.LyricRecentSource
 import dev.amenhancer.module.hook.NativeLyricsTarget
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
@@ -76,8 +77,18 @@ internal class LyricsSourceControllerImpl(
     private val nativeRefresh: () -> NativeLyricsTarget?,
     private val pronunciationToggle: LyricsSourcePronunciationToggle,
     private val executor: Executor,
+    /** Remembers applied sources for the quick picks; null keeps the sheet history-free. */
+    private val recents: LyricsSourceRecentsStore? = null,
     private val logger: (String) -> Unit,
 ) : LyricsSourceController {
+
+    /** Provider the user pinned from a quick pick; the next search ranks it first. */
+    @Volatile
+    private var pinnedProvider: String? = null
+
+    /** The option the in-flight apply is switching to, consumed by [recordIfApplied]. */
+    @Volatile
+    private var lastAppliedOption: LyricSourceOption? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val busy = AtomicBoolean(false)
@@ -229,7 +240,16 @@ internal class LyricsSourceControllerImpl(
             return
         }
         val songId = probed.input.song.songId
-        search.search(query, lane, songId, probed.input.song.durationMs) { outcome ->
+        val song = probed.input.song
+        search.search(
+            query = query,
+            lane = lane,
+            songId = songId,
+            durationMs = song.durationMs,
+            songTitle = song.title,
+            songArtist = song.artist,
+            preferredProvider = pinnedProvider,
+        ) { outcome ->
             outcome.onSuccess { candidates -> rememberCandidates(songId, candidates) }
             val mapped = outcome.mapCatching { candidates ->
                 val withCandidates = probed.input.copy(
@@ -263,7 +283,11 @@ internal class LyricsSourceControllerImpl(
 
     // --------------------------------------------------------------------- apply
 
-    override fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult {
+    override fun apply(option: LyricSourceOption, lane: LyricLane): ApplyResult =
+        recordIfApplied(lane, applyInternal(option, lane))
+
+    private fun applyInternal(option: LyricSourceOption, lane: LyricLane): ApplyResult {
+        lastAppliedOption = option
         val envelope = snapshotOf() ?: return noSong()
         val songId = envelope.snapshot.songId
         // The pinned search row "Apple Music（AM-Lyrics）" means one thing: drop this
@@ -509,6 +533,41 @@ internal class LyricsSourceControllerImpl(
     private fun notifyUserApplied(appleMusicId: Long) {
         if (appleMusicId <= 0L) return
         AutoLyricsReplacementBridge.userApplied(appleMusicId)
+    }
+
+    // ------------------------------------------------------------ quick picks
+
+    override fun recentProviders(): List<String> = recents?.providers().orEmpty()
+
+    override fun pinProvider(providerId: String) {
+        pinnedProvider = providerId.takeIf(String::isNotBlank)
+        notifyListeners()
+    }
+
+    /** Records a successful switch so the next search can put that source first. */
+    private fun recordIfApplied(lane: LyricLane, result: ApplyResult): ApplyResult {
+        if (!result.ok) return result
+        val store = recents ?: return result
+        val option = lastAppliedOption ?: return result
+        lastAppliedOption = null
+        val song = runCatching { snapshotOf()?.snapshot?.song }.getOrNull() ?: return result
+        val remoteId = option.key.substringAfterLast(':').ifBlank { option.key }
+        if (option.providerId.isBlank() || remoteId.isBlank()) return result
+        runCatching {
+            store.record(
+                LyricRecentSource(
+                    providerId = option.providerId,
+                    label = option.label,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    remoteId = remoteId,
+                    usedAtMs = System.currentTimeMillis(),
+                ),
+            )
+        }.onFailure { error -> logger("lyrics-source recents record failed: " + error.message) }
+        logger("lyrics-source recents: provider=" + option.providerId + " lane=" + lane.key)
+        return result
     }
 
     /** Releases this controller's bridge registrations (only when it still owns them). */

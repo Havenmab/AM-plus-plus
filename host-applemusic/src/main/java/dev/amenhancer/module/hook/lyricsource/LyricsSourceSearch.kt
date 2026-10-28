@@ -4,6 +4,8 @@ import dev.amenhancer.module.hook.TtmlTimingPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
+import dev.amenhancer.module.lyrics.online.LyricRecentSource
+import dev.amenhancer.module.lyrics.online.LyricSourceRecents
 import dev.amenhancer.module.lyrics.online.KuwoSource
 import dev.amenhancer.module.lyrics.online.LyricsResult
 import dev.amenhancer.module.lyrics.online.NeSource
@@ -22,7 +24,9 @@ import dev.amenhancer.module.lyrics.source.LyricSourceOption
 import dev.amenhancer.module.lyrics.source.LyricSourceProviders
 import dev.amenhancer.module.lyrics.source.OnlineLyricsCandidate
 import dev.amenhancer.module.model.CustomLyricsSources
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 
 /**
@@ -52,11 +56,16 @@ internal class LyricsSourceSearch(
     private val amll: LyricsSourceAmllProvider? = null,
     private val amLyrics: LyricsSourceAmLyricsProvider? = null,
     private val executor: Executor,
+    /** Runs one provider each, so a slow catalogue cannot hold the first screen hostage. */
+    private val parallelExecutor: Executor = executor,
+    /** Recently applied sources, newest first (see [LyricSourceRecents]). */
+    private val recentSources: () -> List<LyricRecentSource> = { emptyList() },
     private val logger: (String) -> Unit,
 ) {
 
     /** A provider document with the timing precision its own data supports. */
     internal data class Document(val ttml: String, val hasWords: Boolean)
+
 
     private val lineSources: List<SearchLyricsSource> = if (transport == null) {
         emptyList()
@@ -90,6 +99,9 @@ internal class LyricsSourceSearch(
         lane: LyricLane,
         songId: Long,
         durationMs: Long,
+        songTitle: String = "",
+        songArtist: String = "",
+        preferredProvider: String? = null,
         onDone: (Result<List<OnlineLyricsCandidate>>) -> Unit,
     ) {
         val keyword = query.trim()
@@ -98,7 +110,11 @@ internal class LyricsSourceSearch(
             return
         }
         executor.execute {
-            onDone(runCatching { searchBlocking(keyword, lane, songId, durationMs) })
+            onDone(
+                runCatching {
+                    searchBlocking(keyword, lane, songId, durationMs, songTitle, songArtist, preferredProvider)
+                },
+            )
         }
     }
 
@@ -107,22 +123,66 @@ internal class LyricsSourceSearch(
         lane: LyricLane,
         songId: Long,
         durationMs: Long,
+        songTitle: String,
+        songArtist: String,
+        preferredProvider: String?,
     ): List<OnlineLyricsCandidate> {
-        // TTML sources come first: they can serve every lane and their precision
-        // is known before fetching. The LRC providers can replace the document as
-        // well (their word spans survive the writer), but their precision is only
-        // known after the body is read, so their rows never claim 逐词.
-        val results = mutableListOf<OnlineLyricsCandidate>()
-        results += searchLunabeat(query)
-        // AMLL serves a whole document only (its TTML carries translation lanes
-        // inside the same body, but this module's translation merge needs a parsed
-        // provider body), so it is offered for the original lane only.
-        if (lane == LyricLane.ORIGINAL) {
-            results += searchAmll(query)
-            results += searchAmLyrics(query, songId)
+        // Every catalogue runs at once: Lunabeat needs ~1.2 s while the GitHub corpora answer
+        // in ~100 ms, and running them in sequence made the fastest rows wait for the slowest.
+        // TTML sources keep provider priority for the ordering below, not for the clock.
+        val tasks = buildList<Pair<String, () -> List<OnlineLyricsCandidate>>> {
+            add("lunabeat" to { searchLunabeat(query) })
+            // AMLL / AM-Lyrics serve a whole document only, so they are original-lane rows.
+            if (lane == LyricLane.ORIGINAL) {
+                add("amll" to { searchAmll(query) })
+                add("am-lyrics" to { searchAmLyrics(query, songId) })
+            }
+            add("line" to { searchLineProviders(query, durationMs, lane) })
         }
-        results += searchLineProviders(query, durationMs, lane)
-        return results
+        val results = Collections.synchronizedList(mutableListOf<OnlineLyricsCandidate>())
+        val latch = CountDownLatch(tasks.size)
+        val startedAt = System.currentTimeMillis()
+        for ((name, task) in tasks) {
+            parallelExecutor.execute {
+                try {
+                    results += task()
+                } catch (error: Throwable) {
+                    logger("lyrics-source search: " + name + " failed: " + error.message)
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }
+        val finished = latch.await(SEARCH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if (!finished) {
+            logger("lyrics-source search: timeout after " + SEARCH_TIMEOUT_MS + "ms, using partial rows")
+        }
+        val rows = results.toList()
+        // TTML providers first inside the same batch, then whatever came back.
+        val ordered = rows.sortedBy { candidate -> providerPriority(candidate.providerId) }
+        val deduped = LyricSourceRecents.dedupe(ordered)
+        if (deduped.size != ordered.size) {
+            logger("lyrics-source search: deduped " + (ordered.size - deduped.size) + " duplicate row(s)")
+        }
+        val pinned = LyricSourceRecents.pin(
+            history = recentSources(),
+            candidates = deduped,
+            songTitle = songTitle,
+            songArtist = songArtist,
+            preferredProvider = preferredProvider,
+        )
+        logger(
+            "lyrics-source search: parallel rows=" + pinned.size +
+                " tookMs=" + (System.currentTimeMillis() - startedAt),
+        )
+        return pinned
+    }
+
+    private fun providerPriority(providerId: String): Int = when (providerId) {
+        LyricSourceProviders.LUNABEAT -> 0
+        LyricSourceProviders.AMLL -> 1
+        LyricSourceProviders.AM_LYRICS -> 2
+        else -> 3
     }
 
     private fun searchAmLyrics(query: String, songId: Long): List<OnlineLyricsCandidate> {
@@ -405,6 +465,9 @@ internal class LyricsSourceSearch(
         option.key.substringAfterLast(':').trim()
 
     private companion object {
+        /** Upper bound for one search batch; late providers still log and are discarded. */
+        const val SEARCH_TIMEOUT_MS = 2_600L
+
         const val SEARCH_PAGE_SIZE = 20
 
         fun providerIdOf(source: Source): String = when (source) {

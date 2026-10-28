@@ -183,8 +183,9 @@ class NativeLyricModelPolicyTest {
                 mandarinHidden = false,
             )
 
-        // The old build-time probe alone withdrew Apple's own value.
-        assertFalse(available(systemMatch = false, languages = emptyList()))
+        // `original` is Apple's own current state; hiding a lane must never make the row
+        // un-clickable, so it alone keeps the entry available.
+        assertTrue(available(systemMatch = false, languages = emptyList()))
         // Apple's advertised ja-Latn keeps it visible before the line probe is valid.
         assertTrue(available(systemMatch = false, languages = listOf("ja-Latn")))
     }

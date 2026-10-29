@@ -6,14 +6,14 @@ import org.junit.Test
 /**
  * Pure-JVM coverage of the automatic-path decision.
  *
- * The order depends on what Apple is already showing:
+ * The order is: fixed providers first, translation lane afterwards.
  *
- *  - **no document, or only unsynchronised text** (it does not scroll with playback) → the
- *    replacement path runs first, because a third-party document carrying a real timeline is a
- *    strict improvement, and enrichment is only the fallback;
- *  - **a document that already carries line or word timing** → never replaced by a search source;
- *    only a missing translation lane is added, and the resolver is consulted only when enrichment
- *    yields nothing (it may still reach the bundled providers, which are allowed to replace).
+ *  - **no document, unsynchronised text, or line-level timing** → the fixed providers
+ *    (AMLL → Lunabeat → AM-Lyrics) are asked first, because their documents carry word-level
+ *    timing and often their own translation/romanization; the four third-party search sources
+ *    only fill the translation lane when nothing replaced the document;
+ *  - **a word-timed Apple document** → already the finest timeline, so it is never replaced: the
+ *    translation lane is filled first and the resolver is only the fallback.
  *
  * A null or throwing enrichment must never suppress a replacement, and with the toggle off the
  * path is exactly the resolver.
@@ -92,7 +92,7 @@ class SelectAutoLyricsFetchTest {
                 seenTtml = ttml
                 "merged"
             },
-            displayedTtml = TIMED,
+            displayedTtml = WORD_TIMED,
             appleMusicId = 42L,
             resolverFetch = {
                 resolverCalls += 1
@@ -113,7 +113,7 @@ class SelectAutoLyricsFetchTest {
 
         val result = selectAutoLyricsFetch(
             enrich = { _, _ -> null },
-            displayedTtml = TIMED,
+            displayedTtml = WORD_TIMED,
             appleMusicId = 42L,
             resolverFetch = {
                 resolverCalls += 1
@@ -131,7 +131,7 @@ class SelectAutoLyricsFetchTest {
 
         val result = selectAutoLyricsFetch(
             enrich = { _, _ -> throw IllegalStateException("boom") },
-            displayedTtml = TIMED,
+            displayedTtml = WORD_TIMED,
             appleMusicId = 42L,
             resolverFetch = {
                 resolverCalls += 1
@@ -184,15 +184,62 @@ class SelectAutoLyricsFetchTest {
         assertEquals(1, resolverCalls)
     }
 
+    @Test
+    fun `a line-timed document asks the fixed providers first`() {
+        var resolverCalls = 0
+        var enricherCalls = 0
+
+        val result = selectAutoLyricsFetch(
+            enrich = { _, _ ->
+                enricherCalls += 1
+                "merged"
+            },
+            displayedTtml = TIMED,
+            appleMusicId = 42L,
+            resolverFetch = {
+                resolverCalls += 1
+                AutoLyricsCandidate("amll-ttml-db", "word")
+            },
+        )
+
+        // A word-timed document from a fixed provider beats a line-timed Apple one, so the
+        // resolver runs first and the translation lane is filled afterwards, not before.
+        assertEquals("word", result?.ttml)
+        assertEquals(1, resolverCalls)
+        assertEquals(0, enricherCalls)
+    }
+
+    @Test
+    fun `a line-timed document falls back to the translation lane when nothing replaces it`() {
+        var resolverCalls = 0
+
+        val result = selectAutoLyricsFetch(
+            enrich = { _, _ -> "merged" },
+            displayedTtml = TIMED,
+            appleMusicId = 42L,
+            resolverFetch = {
+                resolverCalls += 1
+                null
+            },
+        )
+
+        assertEquals("merged", result?.ttml)
+        assertEquals(ONLINE_TRANSLATION_LYRIC_SOURCE, result?.source)
+        assertEquals(1, resolverCalls)
+    }
+
     private companion object {
         /** Apple published only text: no line or word carries a begin time. */
         const val STATIC =
             "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"ja\">" +
                 "<body><div><p>hello</p></div></body></tt>"
 
-        /** Apple published synchronised lyrics: the line carries a begin time. */
+        /** Apple published line-timed lyrics: the line carries a begin time, the words do not. */
         const val TIMED =
             "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"ja\">" +
                 "<body><div><p begin=\"00:00:01.000\" end=\"00:00:03.000\">hello</p></div></body></tt>"
+
+        /** Apple published word-level timing: already the finest timeline, never replaced. */
+        const val WORD_TIMED = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:lang="ja"><body><div><p begin="00:00:01.000" end="00:00:03.000"><span begin="00:00:01.000" end="00:00:02.000">hel</span><span begin="00:00:02.000" end="00:00:03.000">lo</span></p></div></body></tt>"""
     }
 }

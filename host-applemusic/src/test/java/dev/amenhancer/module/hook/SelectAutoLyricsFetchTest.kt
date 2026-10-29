@@ -103,7 +103,7 @@ class SelectAutoLyricsFetchTest {
         assertEquals("merged", result?.ttml)
         assertEquals(ONLINE_TRANSLATION_LYRIC_SOURCE, result?.source)
         assertEquals(42L, seenId)
-        assertEquals(TIMED, seenTtml)
+        assertEquals(WORD_TIMED, seenTtml)
         assertEquals(0, resolverCalls)
     }
 

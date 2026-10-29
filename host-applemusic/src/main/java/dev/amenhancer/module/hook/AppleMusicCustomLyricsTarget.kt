@@ -759,7 +759,7 @@ internal fun shouldPrepareAutomaticLyrics(
  *    enricher is invoked for its overlay side effect and the return value is
  *    discarded, so Apple's body, its timeline and its original-lane attribution
  *    survive; the lanes it publishes are the ones the lane classifier (core's
- *    LyricLaneClassifier) has already separated, which is what keeps
+ *    OnlineTranslationExtraction.classifyLanes) has already separated, which is what keeps
  *    「显示翻译」 and 「显示发音」 honest.
  */
 internal fun selectAutoLyricsFetch(

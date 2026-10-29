@@ -1,7 +1,7 @@
 package dev.amenhancer.module.hook.lyricsource
 
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
-import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.NativeLyricLine
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
@@ -27,7 +27,7 @@ import java.io.File
  * wrong kind of text: an older build wrote QQ Music's `trans` - the kana/romaji
  * reading of a Japanese song - straight into the translation lane, so the restart
  * replayed a romanization as the translation. Every record therefore passes through
- * [LyricLaneClassifier] on the way in and on the way out: Chinese goes back to the
+ * [OnlineTranslationExtraction.classifyLanes] on the way in and on the way out: Chinese goes back to the
  * translation lane, kana/romaji back to the romanization lane, and the row keys and
  * pronunciation spans are untouched, so old records are repaired without a
  * migration.
@@ -386,7 +386,7 @@ internal class LyricsSourceOverlayPersistence(
     }
 
     /**
-     * 把一条记录的两条车道按 [LyricLaneClassifier] 重新归位。
+     * 把一条记录的两条车道按 [OnlineTranslationExtraction.classifyLanes] 重新归位。
      *
      * 盘上的车道也可能本身就是错位的：旧版本把 QQ 日语歌的 `trans`（假名／罗马音）
      * 原样写进了 translation 车道，「补全歌词翻译与发音」随后把它当译文发布，重启
@@ -406,7 +406,7 @@ internal class LyricsSourceOverlayPersistence(
         keys += translationsByKey.keys
         keys += romanizationsByKey.keys
         val rows = keys.map { key ->
-            LyricLaneClassifier.LaneRow(
+            LaneRow(
                 begin = key.begin,
                 end = key.end,
                 text = key.text,
@@ -414,7 +414,14 @@ internal class LyricsSourceOverlayPersistence(
                 romanization = romanizationsByKey[key]?.romanization,
             )
         }
-        val corrected = LyricLaneClassifier.rebalanceRows(rows)
+        val corrected = rows.map { row ->
+            val lanes = OnlineTranslationExtraction.classifyLanesOrDegrade(
+                translation = row.translation,
+                romanization = row.romanization,
+                original = row.text,
+            )
+            row.copy(translation = lanes.translation, romanization = lanes.romanization)
+        }
         val translations = corrected.mapNotNull { row ->
             val text = row.translation?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             TranslationLine(begin = row.begin, end = row.end, text = row.text, translation = text)
@@ -431,6 +438,15 @@ internal class LyricsSourceOverlayPersistence(
         }
         return record.copy(translations = translations, romanizations = romanizations)
     }
+
+    /** One line's two lanes, as the restart replay re-homes them. */
+    private data class LaneRow(
+        val begin: Long,
+        val end: Long,
+        val text: String,
+        val translation: String?,
+        val romanization: String?,
+    )
 
     /** The (begin, end, text) triple both lanes are joined on. */
     private data class RowKey(val begin: Long, val end: Long, val text: String)

@@ -6,7 +6,7 @@ import dev.amenhancer.module.lyrics.online.InMemoryNeSessionStore
 import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.KuwoSource
-import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore
@@ -499,7 +499,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      * made the page render romaji under 翻译, won the walk against a provider that
      * really had Chinese, and left the lyrics-source sheet naming QQ Music for a
      * translation it never supplied. [OnlineTranslationExtraction] re-homes the pair;
-     * [LyricLaneClassifier] is the shared verdict this chain trusts for lane presence
+     * [OnlineTranslationExtraction] is the shared verdict this chain trusts for lane presence
      * as well, so the counters below are the truth a device log can be read against.
      */
     private fun translationCandidate(
@@ -517,8 +517,8 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
             return null
         }
         val lines = OnlineTranslationExtraction.extract(result)
-        val translationLines = lines.count { LyricLaneClassifier.isTranslationLike(it.translation) }
-        val romanizationLines = lines.count { LyricLaneClassifier.isRomanizationLike(it.romanization) }
+        val translationLines = lines.count { OnlineTranslationExtraction.isTranslationLike(it.translation) }
+        val romanizationLines = lines.count { OnlineTranslationExtraction.isRomanizationLike(it.romanization) }
         val hasTranslation = translationLines > 0
         val hasPronunciation = romanizationLines > 0
         if (!hasTranslation && !hasPronunciation) {
@@ -552,12 +552,12 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
 
     /**
      * True when the candidate would fill the translation lane. Only Chinese counts
-     * ([LyricLaneClassifier.isTranslationLike]): a provider's reading stays in its own
+     * ([OnlineTranslationExtraction.isTranslationLike]): a provider's reading stays in its own
      * column, so it neither enters the translation lane nor wins the walk over a
      * provider that really has a translation.
      */
     private fun OnlineTranslationCandidate.hasTranslationLane(): Boolean =
-        lines.any { LyricLaneClassifier.isTranslationLike(it.translation) }
+        lines.any { OnlineTranslationExtraction.isTranslationLike(it.translation) }
 
     /**
      * Ordered walk, short-circuiting on the first provider with usable lyrics.
@@ -796,7 +796,7 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
      * The provider's whole document, for the replacement path only.
      *
      * The writer takes the translation column and nothing else, and extraction has
-     * already re-homed it through [LyricLaneClassifier]: a provider's reading never
+     * already re-homed it through [OnlineTranslationExtraction.classifyLanes]: a provider's reading never
      * becomes this document's `translations` track, so a document the module
      * installs cannot show romaji under 翻译 — not now, and not after the sheet
      * replays it from the custom index or the overlay memory.

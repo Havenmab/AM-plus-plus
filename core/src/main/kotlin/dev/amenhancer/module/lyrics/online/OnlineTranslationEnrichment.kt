@@ -26,9 +26,10 @@ private const val LANE_NONE = "none"
  * itself exposes no pronunciation the song therefore shows no romanization at
  * all.
  *
- * What each lane *holds* is not taken on trust. [LyricLaneClassifier] is the one
- * authority on "is this a Chinese translation or a reading": the merged lines and
- * the per-line lanes this outcome exposes to the overlay carry Chinese in
+ * What each lane *holds* is not taken on trust. [OnlineTranslationExtraction] is the
+ * one authority on "is this a Chinese translation or a reading" (the rule used to live
+ * in LyricLaneClassifier, which could not load on device): the merged lines and the
+ * per-line lanes this outcome exposes to the overlay carry Chinese in
  * `translation` and kana/romaji in `romanization` only. A provider — QQ Music's
  * `trans` on a Japanese song, the reported case — or a document an older build
  * already wrote with the two lanes swapped can therefore never make the page
@@ -299,7 +300,12 @@ object OnlineTranslationEnrichment {
         // reading (or a document an older build already wrote that way) from
         // rendering romaji as the translation, and a Chinese "transliteration"
         // from rendering as the pronunciation.
-        val lanes = LyricLaneClassifier.rebalance(
+        //
+        // The verdict comes from [OnlineTranslationExtraction] and never throws: on
+        // device the old [LyricLaneClassifier] could not be loaded, and an unguarded
+        // call here was swallowed by enrich() as a whole-document failure, so a manual
+        // translation was never published at all.
+        val lanes = OnlineTranslationExtraction.classifyLanesOrDegrade(
             translation = chosen,
             romanization = line.romanization,
             original = line.text,

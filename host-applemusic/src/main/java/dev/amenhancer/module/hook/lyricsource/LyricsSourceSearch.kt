@@ -5,7 +5,7 @@ import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
-import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.LyricRecentSource
 import dev.amenhancer.module.lyrics.online.LyricSourceRecents
@@ -556,7 +556,7 @@ internal class LyricsSourceSearch(
             line.words.any { word -> word.text.isNotBlank() }
         } ?: return
         val text = first.words.joinToString("") { word -> word.text }
-        val script = runCatching { LyricLaneClassifier.classify(text) }.getOrNull() ?: return
+        val script = runCatching { OnlineTranslationExtraction.classifyKind(text) }.getOrNull() ?: return
         logger(
             "lyrics-source " + action + " script=" + script.name.lowercase() +
                 " lines=" + clean.original.size,

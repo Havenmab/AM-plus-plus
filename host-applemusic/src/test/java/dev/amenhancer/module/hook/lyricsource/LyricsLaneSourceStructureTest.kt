@@ -102,19 +102,19 @@ class LyricsLaneSourceStructureTest {
         assertTrue(classifier.contains("fun rebalance("))
         // Extraction re-homes the provider's two columns before anything reads
         // them; the merge and the restart replay call the same function.
-        assertTrue(extraction.contains("LyricLaneClassifier.rebalance("))
-        assertTrue(enrichment.contains("LyricLaneClassifier.rebalance("))
+        assertTrue(extraction.contains("fun classifyLanes("))
+        assertTrue(enrichment.contains("OnlineTranslationExtraction.classifyLanesOrDegrade("))
         // The completion's overlay write applies it once more, because the overlay
         // is the value Apple's 显示翻译 / 显示发音 switches are computed from.
         assertTrue(session.contains("private fun lanePureLines("))
-        assertTrue(session.contains("LyricLaneClassifier.rebalance("))
+        assertTrue(session.contains("OnlineTranslationExtraction.classifyLanesOrDegrade("))
         assertTrue(session.contains("translation = lanes.translation,"))
         assertTrue(session.contains("roma = lanes.romanization,"))
         // The candidate walk decides lane presence from the text too, so a reading
         // can neither be published as a translation nor win the walk over a
         // provider that really has Chinese.
-        assertTrue(composite.contains("LyricLaneClassifier.isTranslationLike(it.translation)"))
-        assertTrue(composite.contains("LyricLaneClassifier.isRomanizationLike(it.romanization)"))
+        assertTrue(composite.contains("OnlineTranslationExtraction.isTranslationLike(it.translation)"))
+        assertTrue(composite.contains("OnlineTranslationExtraction.isRomanizationLike(it.romanization)"))
         assertTrue(composite.contains("private fun OnlineTranslationCandidate.hasTranslationLane()"))
         assertFalse(
             "a non-slash translation column is still not a translation",

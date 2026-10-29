@@ -20,13 +20,13 @@ import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
-import dev.amenhancer.module.lyrics.online.LyricLaneClassifier
 import dev.amenhancer.module.lyrics.online.NativeLyricLine
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NeSessionStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSelection
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.lyrics.online.OnlineTranslationEnrichment
+import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.SearchLyricsSource
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
@@ -113,7 +113,7 @@ internal fun buildOnlineLyricsChain(
  *
  * The single 「补全歌词翻译与发音」 opt-in fills the lanes of the document Apple is
  * showing. Which lane a piece of text belongs to is decided by
- * [LyricLaneClassifier], never by the provider's field name: QQ Music answers a
+ * [OnlineTranslationExtraction.classifyLanes], never by the provider's field name: QQ Music answers a
  * Japanese song's `trans` request with the **reading** (kana and romaji), and
  * writing that into the translation lane is what made the page render a
  * romanization under 翻译 while 「显示发音」 had nothing to show. A reading is
@@ -143,6 +143,13 @@ internal fun translationEnricher(
      * Apple renders no track from the document.
      */
     overlay: NativeLyricOverlayStore? = null,
+    /**
+     * Why the automatic index write cannot run for this song even though a provider
+     * supplied content — `disabled` / `userEdited` / `manual` — or null when nothing
+     * known forbids it. The writer re-checks the same flags; this only lets the one
+     * log line name the reason instead of a bare `automaticFileSaved=false`.
+     */
+    automaticSkipReason: (Long) -> String? = { null },
 ): (Long, String) -> String? {
     val scoped = TrackScopedDiagnostics(logger)
     return { appleMusicId, rawTtml ->
@@ -165,18 +172,28 @@ internal fun translationEnricher(
                         ?.takeIf { it.appleMusicId == appleMusicId }
                         ?.title
                         .orEmpty()
-                    val saved = providerSource != null &&
-                        !AutoLyricsReplacementBridge.isLocked(appleMusicId) &&
+                    // "Not saved" without a reason is what made this device report a guess:
+                    // every skip names its concrete cause, including the writer's own refusal.
+                    val skipReason = when {
+                        providerSource == null -> "source-null"
+                        AutoLyricsReplacementBridge.isLocked(appleMusicId) -> "locked"
+                        else -> automaticSkipReason(appleMusicId)
+                    }
+                    val saved = if (skipReason == null && providerSource != null) {
                         LyricsSourceCustomIndexBridge.saveAutomaticLyrics(
                             songId = appleMusicId,
                             ttml = outcome.ttml,
                             source = providerSource,
                             displayName = songName,
                         )
+                    } else {
+                        false
+                    }
                     scoped.log(
                         appleMusicId,
                         publishLine(appleMusicId, outcome, lines, published) +
-                            " automaticFileSaved=$saved",
+                            " automaticFileSaved=$saved" +
+                            " reason=" + (skipReason ?: if (saved) "ok" else "write-failed"),
                     )
                 }
                 outcome.ttml
@@ -192,7 +209,7 @@ internal fun translationEnricher(
  * Apple's own 显示翻译 / 显示发音 switches are computed from
  * ([NativeLyricOverlayStore.hasTranslation] / [NativeLyricOverlayStore.hasPronunciation]),
  * so the same verdict is applied once more at the write: a line's text is stored
- * as a translation only when [LyricLaneClassifier.isTranslationLike] accepts it,
+ * as a translation only when [OnlineTranslationExtraction.isTranslationLike] accepts it,
  * and as a pronunciation only when it is that line's reading. The recorded
  * sources speak the module's vocabulary, because
  * [dev.amenhancer.module.lyrics.source.LyricSourceProviders.fromCustomLyricsSource]
@@ -239,18 +256,27 @@ private fun publishLanes(
 }
 
 /**
- * [lines] with both lanes re-homed by [LyricLaneClassifier].
+ * [lines] with both lanes re-homed by [OnlineTranslationExtraction.classifyLanes].
  *
- * A reading the classifier moved (or dropped) also loses its timed slices:
+ * The verdict used to come from LyricLaneClassifier, which on device is present in the
+ * dex but cannot be loaded (`NoClassDefFoundError`). Unguarded, that one throw aborted
+ * the whole enricher before the overlay write and the index save ran, which is why the
+ * automatic path silently produced nothing. [OnlineTranslationExtraction.classifyLanesOrDegrade]
+ * is the shared, non-throwing entry point: a verdict that cannot run costs the
+ * re-homing only, and never falls back to the provider's fields as they are (QQ
+ * Music's `trans` is the **reading** for a Japanese song).
+ *
+ * A reading the verdict moved (or dropped) also loses its timed slices:
  * [NativeLyricLine.romaSpans] describe the reading that was there before, and the
  * native word getter would otherwise serve slices of a different text.
  */
 private fun lanePureLines(lines: List<NativeLyricLine>): List<NativeLyricLine> = lines.map { line ->
-    val lanes = LyricLaneClassifier.rebalance(
-        translation = line.translation,
-        romanization = line.roma,
-        original = line.text,
-    )
+    val lanes: OnlineTranslationExtraction.LanePair =
+        OnlineTranslationExtraction.classifyLanesOrDegrade(
+            translation = line.translation,
+            romanization = line.roma,
+            original = line.text,
+        )
     line.copy(
         translation = lanes.translation,
         roma = lanes.romanization,
@@ -454,6 +480,21 @@ internal fun createAutoLyricsRuntime(
         fetchLunabeatTtml = lunabeat::fetch,
         fetchAutoCache = resolver::fetch,
     )
+    // Why an automatic save may be skipped, answered from the index entry itself; the
+    // writer re-checks the same flags. `locked` / `source-null` are decided in the
+    // enricher, which is the only place that knows whether a lane was published.
+    val automaticSkipReason: (Long) -> String? = { appleMusicId ->
+        runCatching {
+            configuredContent.listLyrics().firstOrNull { entry -> entry.appleMusicId == appleMusicId }
+        }.getOrNull()?.let { entry ->
+            when {
+                !entry.enabled -> "disabled"
+                entry.userEdited -> "userEdited"
+                entry.source == CustomLyricsSources.MANUAL -> "manual"
+                else -> null
+            }
+        }
+    }
     // One overlay for the active track. The optional enricher writes it and the
     // independent native-lyrics target reads it back, so Apple's own lanes still
     // work when online completion is disabled.
@@ -465,8 +506,12 @@ internal fun createAutoLyricsRuntime(
                 currentTrack = currentTrack,
                 logger = logger,
                 overlay = nativeLyricOverlay,
+                automaticSkipReason = automaticSkipReason,
             )
         }
+    // Core has no log channel of its own: its one-shot degradation diagnostic goes to
+    // the module log instead of stderr.
+    OnlineTranslationExtraction.diagnostic = logger
     logger(
         "online-translation runtime supplement=$onlineLyricsSupplementEnabled " +
             "translation=$onlineLyricsTranslationEnabled " +

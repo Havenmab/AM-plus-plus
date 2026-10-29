@@ -9,6 +9,14 @@ import org.junit.Test
 
 class OnlineLyricClientsTest {
 
+    private companion object {
+        /** jsDelivr's GitHub mirror — the endpoint both clients try first. */
+        const val AMLL_TTML_URL =
+            "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/am-lyrics/42.ttml"
+        const val INDEX_URL = "https://cdn.jsdelivr.net/gh/Zennmn/am-lyrics@main/index.json"
+        const val AM_LYRICS_CDN_BASE = "https://cdn.jsdelivr.net/gh/Zennmn/am-lyrics@main"
+    }
+
     private class FakeTransport(
         var getResult: String? = null,
         val getResults: MutableList<String?> = mutableListOf(),
@@ -28,10 +36,7 @@ class OnlineLyricClientsTest {
         val client = AmllTtmlClient(transport)
 
         assertEquals("<tt>lyrics</tt>", client.fetch(42L))
-        assertEquals(
-            "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main/am-lyrics/42.ttml",
-            transport.getUrls.single(),
-        )
+        assertEquals(AMLL_TTML_URL, transport.getUrls.single())
     }
 
     @Test
@@ -60,8 +65,8 @@ class OnlineLyricClientsTest {
         assertEquals(ttml, AmLyricsClient(transport).fetch(1609445854L))
         assertEquals(
             listOf(
-                "https://raw.githubusercontent.com/Zennmn/am-lyrics/main/index.json",
-                "https://raw.githubusercontent.com/Zennmn/am-lyrics/main/" +
+                INDEX_URL,
+                AM_LYRICS_CDN_BASE + "/" +
                     "am-lyrics/%E5%85%AB%E7%A5%9E%E7%BA%AF%E5%AD%90%20-%20" +
                     "%E3%81%BF%E3%81%9A%E3%81%84%E3%82%8D%E3%81%AE%E9%9B%A8%20-%20" +
                     "1609445854.ttml",
@@ -89,8 +94,8 @@ class OnlineLyricClientsTest {
         assertEquals(ttml, AmLyricsClient(transport).fetch(7_335_408_332_109_193_189L))
         assertEquals(
             listOf(
-                AmLyricsClient.AM_LYRICS_INDEX_URL,
-                "https://raw.githubusercontent.com/Zennmn/am-lyrics/main/am-lyrics/42.ttml",
+                INDEX_URL,
+                AM_LYRICS_CDN_BASE + "/am-lyrics/42.ttml",
             ),
             transport.getUrls,
         )
@@ -143,7 +148,7 @@ class OnlineLyricClientsTest {
             ]}""",
         )
         assertNull(AmLyricsClient(missing).fetch(43L))
-        assertEquals(listOf(AmLyricsClient.AM_LYRICS_INDEX_URL), missing.getUrls)
+        assertEquals(listOf(INDEX_URL), missing.getUrls)
 
         val malformed = FakeTransport(
             getResult = """{"version":1,"layout":"artist-title-id","entries":[
@@ -151,14 +156,14 @@ class OnlineLyricClientsTest {
             ]}""",
         )
         assertNull(AmLyricsClient(malformed).fetch(42L))
-        assertEquals(listOf(AmLyricsClient.AM_LYRICS_INDEX_URL), malformed.getUrls)
+        assertEquals(listOf(INDEX_URL), malformed.getUrls)
     }
 
     @Test
     fun `am lyrics client fails open for malformed index and disabled entries`() {
         val malformed = FakeTransport(getResult = "not json")
         assertNull(AmLyricsClient(malformed).fetch(42L))
-        assertEquals(listOf(AmLyricsClient.AM_LYRICS_INDEX_URL), malformed.getUrls)
+        assertEquals(listOf(INDEX_URL), malformed.getUrls)
 
         val disabled = FakeTransport(
             getResult = """{"version":1,"layout":"artist-title-id","entries":[
@@ -167,7 +172,7 @@ class OnlineLyricClientsTest {
             ]}""",
         )
         assertNull(AmLyricsClient(disabled).fetch(42L))
-        assertEquals(listOf(AmLyricsClient.AM_LYRICS_INDEX_URL), disabled.getUrls)
+        assertEquals(listOf(INDEX_URL), disabled.getUrls)
     }
 
 }

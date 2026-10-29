@@ -113,12 +113,12 @@ class AutoLyricsSourceResolverTest {
         )
 
         assertNull(resolver.fetch(42L))
+        // Every GitHub-hosted source now walks its mirror list before giving up, so the
+        // recorded order is "all AMLL endpoints, Lunabeat, all AM-Lyrics index endpoints".
         assertEquals(
-            listOf(
-                "${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml",
-                LunabeatClient.MANIFEST_URL,
-                AmLyricsClient.AM_LYRICS_INDEX_URL,
-            ),
+            AmllTtmlClient(recordingTransport(mutableListOf())).urls(42L) +
+                listOf(LunabeatClient.MANIFEST_URL) +
+                AmLyricsClient(recordingTransport(mutableListOf())).urls("index.json"),
             fixedRequests,
         )
     }
@@ -142,7 +142,11 @@ class AutoLyricsSourceResolverTest {
         val candidate = resolver.fetch(42L)
 
         assertEquals(CustomLyricsSources.AMLL, candidate?.source)
-        assertEquals(listOf("${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml"), order)
+        // The first mirror endpoint answers, so exactly one request is made.
+        assertEquals(
+            AmllTtmlClient(answeringTransport(mutableListOf(), WORD_TTML)).urls(42L).first(),
+            order.single(),
+        )
     }
 
     @Test
@@ -165,12 +169,10 @@ class AutoLyricsSourceResolverTest {
 
         assertEquals("online-search", candidate?.source)
         assertEquals(
-            listOf(
-                "${AmllTtmlClient.AMLL_TTML_DB_BASE}/am-lyrics/42.ttml",
-                LunabeatClient.MANIFEST_URL,
-                AmLyricsClient.AM_LYRICS_INDEX_URL,
-                "online-search",
-            ),
+            AmllTtmlClient(recordingTransport(mutableListOf())).urls(42L) +
+                listOf(LunabeatClient.MANIFEST_URL) +
+                AmLyricsClient(recordingTransport(mutableListOf())).urls("index.json") +
+                listOf("online-search"),
             order,
         )
     }

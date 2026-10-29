@@ -17,11 +17,25 @@ import org.json.JSONObject
  */
 class AmllTtmlClient(private val transport: LyricHttpTransport) {
     fun fetch(adamId: Long): String? =
-        transport.get("$AMLL_TTML_DB_BASE/am-lyrics/$adamId.ttml")
+        transport.getFirstBytes(urls(adamId))?.toString(Charsets.UTF_8)
+
+    /**
+     * Every endpoint that can serve this track's TTML, most reachable first.
+     *
+     * The file name *is* the Adam ID, so the path needs no index and the fallback is
+     * purely about who serves it: jsDelivr, then the proxies, then raw.
+     */
+    fun urls(adamId: Long): List<String> =
+        GitHubContentEndpoints.urls(OWNER, REPO, REF, "am-lyrics/$adamId.ttml")
 
     companion object {
+        private const val OWNER = "amll-dev"
+        private const val REPO = "amll-ttml-db"
+        private const val REF = "main"
+
+        /** The historical raw base; kept because callers and tests name it. */
         const val AMLL_TTML_DB_BASE =
-            "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main"
+            "https://raw.githubusercontent.com/$OWNER/$REPO/refs/heads/main"
     }
 }
 
@@ -119,23 +133,37 @@ class AmLyricsClient(private val transport: LyricHttpTransport) {
     }
 
     fun fetchIndex(): AmLyricsIndex? = runCatching {
-        val bytes = transport.getBytes(AM_LYRICS_INDEX_URL) ?: return@runCatching null
+        val bytes = transport.getFirstBytes(urls(INDEX_PATH)) ?: return@runCatching null
         parseIndex(bytes.toString(Charsets.UTF_8))
     }.getOrNull()
 
     fun fetchTtml(entry: AmLyricsIndexEntry): String? {
         if (!entry.enabled) return null
         val path = encodePath(entry.path) ?: return null
-        val bytes = transport.getBytes("$AM_LYRICS_BASE/$path") ?: return null
+        val bytes = transport.getFirstBytes(urls(path)) ?: return null
         if (bytes.size.toLong() != entry.sizeBytes) return null
         if (!sha256(bytes).equals(entry.sha256, ignoreCase = true)) return null
         val ttml = bytes.toString(Charsets.UTF_8)
         return ttml.takeIf(TtmlInputPolicy::isAcceptable)
     }
 
+    /**
+     * Every endpoint that can serve [path] from the AM-Lyrics repository, most reachable
+     * first. The index and each document take the same fallback, because a network that
+     * resets raw resets both.
+     */
+    fun urls(path: String): List<String> =
+        GitHubContentEndpoints.urls(OWNER, REPO, REF, path)
+
     companion object {
-        const val AM_LYRICS_BASE = "https://raw.githubusercontent.com/Zennmn/am-lyrics/main"
-        const val AM_LYRICS_INDEX_URL = "$AM_LYRICS_BASE/index.json"
+        private const val OWNER = "Zennmn"
+        private const val REPO = "am-lyrics"
+        private const val REF = "main"
+        private const val INDEX_PATH = "index.json"
+
+        /** The historical raw base; kept because callers and tests name it. */
+        const val AM_LYRICS_BASE = "https://raw.githubusercontent.com/$OWNER/$REPO/$REF"
+        const val AM_LYRICS_INDEX_URL = "$AM_LYRICS_BASE/$INDEX_PATH"
         private const val AM_LYRICS_ROOT = "am-lyrics/"
         private const val INDEX_VERSION = 1
         private val SHA256_PATTERN = Regex("[0-9a-fA-F]{64}")

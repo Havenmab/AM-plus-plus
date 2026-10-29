@@ -634,21 +634,20 @@ internal fun selectAutoLyricsFetch(
                 ?.let { merged -> AutoLyricsCandidate(ONLINE_TRANSLATION_LYRIC_SOURCE, merged) }
         }
     }
-    // Apple has no lyrics, or only unsynchronised text that does not scroll with playback: a
-    // third-party document carrying a real timeline is a strict improvement (it can be followed
-    // and tapped), so the replacement path runs FIRST and enrichment is only the fallback.
-    // Previously enrichment was always tried first, which meant it always produced something for a
-    // document that merely lacked a translation -- so the replacement path never ran at all for an
-    // unsynchronised document, and that permission was empty.
-    val replacementFirst = displayedTtml == null || !TtmlTimingPolicy.hasTiming(displayedTtml)
-    return if (replacementFirst) {
-        resolverFetch(appleMusicId) ?: enriched()
-    } else {
-        // Apple already carries line or word timing: a search source must never replace it, so only
-        // the translation lane is added.  The resolver stays the fallback when enrichment yields
-        // nothing -- it may still reach the bundled providers, which are allowed to replace.
-        enriched() ?: resolverFetch(appleMusicId)
+    // The fixed providers (AMLL → Lunabeat → AM-Lyrics) are asked FIRST, because their documents
+    // carry word-level timing and often their own translation/romanization; the four third-party
+    // search sources exist to fill the translation lane afterwards.  Asking the enricher first used
+    // to short-circuit that: any song whose translation could be merged kept Apple's line-timed
+    // document, so a better word-timed one in AMLL was never even requested.
+    //
+    // Apple's own *word*-timed document is the one exception.  It is already the finest timeline
+    // available, so replacing it could only make playback worse; there the lanes are filled and
+    // the resolver is only the fallback when enrichment yields nothing.
+    val appleIsWord = displayedTtml != null && TtmlTimingPolicy.isWord(displayedTtml)
+    if (appleIsWord) {
+        return enriched() ?: resolverFetch(appleMusicId)
     }
+    return resolverFetch(appleMusicId) ?: enriched()
 }
 
 internal fun shouldExposeCustomLyrics(

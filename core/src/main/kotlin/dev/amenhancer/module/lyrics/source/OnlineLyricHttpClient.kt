@@ -29,6 +29,17 @@ interface LyricHttpTransport {
      */
     fun getBytes(url: String, headers: Map<String, String>): ByteArray? = getBytes(url)
 
+    /**
+     * The first body among [urls], tried in order — the GitHub fallback seam.
+     *
+     * Both GitHub-hosted sources name several interchangeable endpoints for the same
+     * bytes ([GitHubContentEndpoints]); the caller wants "the file, from whoever serves
+     * it", not a specific host. The default keeps every existing fake honest: it walks
+     * the list with [getBytes] and stops at the first answer.
+     */
+    fun getFirstBytes(urls: List<String>): ByteArray? =
+        urls.firstNotNullOfOrNull { url -> runCatching { getBytes(url) }.getOrNull() }
+
     /** Optional response metadata used by catalog clients for conditional GET. */
     fun getResponse(url: String, ifNoneMatch: String? = null): LyricHttpResponse? =
         getBytes(url)?.let { bytes -> LyricHttpResponse(HttpURLConnection.HTTP_OK, bytes) }
@@ -77,6 +88,28 @@ class HttpLyricTransport(
     override fun getResponse(url: String, ifNoneMatch: String?): LyricHttpResponse? =
         requestResponse(url, ifNoneMatch)
 
+    /**
+     * Walks the mirror list with the short mirror timeouts and stops at the first 200.
+     *
+     * A mirror is only worth trying if failing it is cheap: the caller is on the
+     * playback path, so waiting the normal 10 s/15 s for a dead host would make the
+     * fallback slower than the miss it is meant to repair. Each attempt therefore gets
+     * [MIRROR_CONNECT_TIMEOUT_MS]/[MIRROR_READ_TIMEOUT_MS], and the first answer ends
+     * the walk.
+     */
+    override fun getFirstBytes(urls: List<String>): ByteArray? {
+        for (url in urls) {
+            val body = requestResponse(
+                url = url,
+                ifNoneMatch = null,
+                connectTimeoutMsOverride = MIRROR_CONNECT_TIMEOUT_MS,
+                readTimeoutMsOverride = MIRROR_READ_TIMEOUT_MS,
+            )?.takeIf { response -> response.statusCode == HttpURLConnection.HTTP_OK }?.body
+            if (body != null) return body
+        }
+        return null
+    }
+
     override fun postFormResponse(
         url: String,
         body: String,
@@ -100,12 +133,14 @@ class HttpLyricTransport(
         headers: Map<String, String> = emptyMap(),
         method: String = "GET",
         formBody: ByteArray? = null,
+        connectTimeoutMsOverride: Int = connectTimeoutMs,
+        readTimeoutMsOverride: Int = readTimeoutMs,
     ): LyricHttpResponse? = runCatching {
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
-            connection.connectTimeout = connectTimeoutMs
-            connection.readTimeout = readTimeoutMs
+            connection.connectTimeout = connectTimeoutMsOverride
+            connection.readTimeout = readTimeoutMsOverride
             connection.instanceFollowRedirects = true
             effectiveRequestHeaders(headers).forEach { (name, value) ->
                 connection.setRequestProperty(name, value)
@@ -164,6 +199,16 @@ class HttpLyricTransport(
         const val DEFAULT_CONNECT_TIMEOUT_MS = 10_000
         const val DEFAULT_READ_TIMEOUT_MS = 15_000
         const val DEFAULT_MAX_RESPONSE_BYTES = 1 shl 20
+
+        /**
+         * Timeouts for one mirror attempt.
+         *
+         * They are deliberately shorter than the defaults: a fallback that costs as much
+         * as the normal request turns one slow host into a stall on the playback path.
+         */
+        private const val MIRROR_CONNECT_TIMEOUT_MS = 4_000
+        private const val MIRROR_READ_TIMEOUT_MS = 6_000
+
         private const val USER_AGENT = "AMPlusPlus/1.2.1"
         private val BASE_HEADERS = mapOf(
             "User-Agent" to USER_AGENT,

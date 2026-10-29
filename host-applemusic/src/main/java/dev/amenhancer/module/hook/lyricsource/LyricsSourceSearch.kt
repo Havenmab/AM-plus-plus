@@ -5,7 +5,6 @@ import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlReader
 import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.KugouSource
-import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.LyricRecentSource
 import dev.amenhancer.module.lyrics.online.LyricSourceRecents

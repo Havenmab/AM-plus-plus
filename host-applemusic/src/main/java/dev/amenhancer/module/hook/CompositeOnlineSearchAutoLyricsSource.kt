@@ -6,7 +6,6 @@ import dev.amenhancer.module.lyrics.online.InMemoryNeSessionStore
 import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.KuwoSource
-import dev.amenhancer.module.lyrics.online.OnlineTranslationExtraction
 import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore

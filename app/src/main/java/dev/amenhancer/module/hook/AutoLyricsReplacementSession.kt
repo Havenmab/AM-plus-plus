@@ -55,9 +55,6 @@ private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 /** The AM-Lyrics index cache lives next to the other private automatic-lyrics state. */
 private const val AM_LYRICS_CACHE_DIRECTORY = "ampp-amlyrics"
 
-/** The index file name inside the AM-Lyrics repository; the cache walks its client's URLs. */
-private const val AM_LYRICS_INDEX_PATH = "index.json"
-
 /**
  * The single online chain plus the composite that owns it. One object serves
  * both opt-ins: the supplement prepends it to the resolver, while the
@@ -207,7 +204,7 @@ internal fun createAutoLyricsRuntime(
         directory = File(application.filesDir, AM_LYRICS_CACHE_DIRECTORY),
         transport = indexTransport,
         // Same walk as the documents themselves, so a self-hosted mirror serves both.
-        indexUrls = { AmLyricsClient(indexTransport, customSourceBaseUrl).urls(AM_LYRICS_INDEX_PATH) },
+        indexUrls = { AmLyricsClient(indexTransport, customSourceBaseUrl).indexUrls() },
         executor = amLyricsIndexScheduler,
     )
     val amll = AmllTtmlClient(lyricTransport, customSourceBaseUrl)

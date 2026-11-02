@@ -216,6 +216,14 @@ class AmLyricsClient(
         return listOfNotNull(selfHosted) + GitHubContentEndpoints.urls(OWNER, REPO, REF, path)
     }
 
+    /**
+     * The index endpoints in priority order, for the app's disk-backed cache.
+     *
+     * Exposed instead of the literal `index.json` so the cache walks exactly the hosts this
+     * client would, including the self-hosted mirror.
+     */
+    fun indexUrls(): List<String> = urls(INDEX_PATH)
+
     companion object {
         private const val OWNER = "Zennmn"
         private const val REPO = "am-lyrics"

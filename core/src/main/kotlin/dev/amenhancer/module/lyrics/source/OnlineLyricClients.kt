@@ -64,8 +64,27 @@ class AmllTtmlClient(
 data class AutoLyricsSource(
     val name: String,
     val acceptsLineTiming: Boolean = false,
+    /**
+     * This source's id in the presence index ("a", "n", "l"), or null when it is a search
+     * provider. Only bundled repositories with an id are gated by the index; search sources
+     * are the translation lane and must keep running.
+     */
+    val presenceId: String? = null,
     val fetch: (Long) -> String?,
 )
+
+/**
+ * Which bundled repositories carry a track, according to the self-hosted presence index.
+ *
+ * Null means **unknown** — no index configured, not downloaded yet, or unreadable — and the
+ * resolver then behaves exactly as before, asking every repository. An **empty** set means the
+ * index answered and nothing carries the track: the resolver skips the repositories without a
+ * single request, so the translation lane starts immediately instead of after a stack of
+ * timeouts.
+ */
+fun interface LyricPresenceIndex {
+    fun sourcesFor(appleMusicId: Long): Set<String>?
+}
 
 /**
  * Fetches the first structurally valid TTML candidate. Source-specific
@@ -78,6 +97,8 @@ data class AutoLyricsSource(
  */
 class AutoLyricsSourceResolver(
     private val sources: List<AutoLyricsSource>,
+    /** Optional presence index; null keeps the "ask every repository" behaviour. */
+    private val presence: LyricPresenceIndex? = null,
 ) {
     /**
      * The first acceptable candidate, or null.
@@ -94,7 +115,13 @@ class AutoLyricsSourceResolver(
     ): AutoLyricsCandidate? {
         if (appleMusicId <= 0L) return null
         val deadline = System.nanoTime() + budgetMs.coerceAtLeast(0L) * 1_000_000L
+        val knownSources = presence?.sourcesFor(appleMusicId)
         sources.forEach { source ->
+            // The index answered and does not list this repository: skip it without a request.
+            // A null answer (unknown) falls through and keeps the old retry-everything path.
+            if (knownSources != null && source.presenceId != null && source.presenceId !in knownSources) {
+                return@forEach
+            }
             if (System.nanoTime() > deadline) return null
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
@@ -130,14 +157,25 @@ class AutoLyricsSourceResolver(
             lunabeat: LunabeatClient,
             leading: List<AutoLyricsSource> = emptyList(),
             trailing: List<AutoLyricsSource> = emptyList(),
+            /** Optional presence index; null keeps "ask every repository". */
+            presence: LyricPresenceIndex? = null,
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
-                AutoLyricsSource(CustomLyricsSources.AMLL) { raw ->
+                AutoLyricsSource(CustomLyricsSources.AMLL, presenceId = LyricPresence.AMLL) { raw ->
                     amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
                 },
-                AutoLyricsSource(CustomLyricsSources.LUNABEAT, fetch = lunabeat::fetch),
-                AutoLyricsSource(CustomLyricsSources.AM_LYRICS, fetch = amLyrics::fetch),
+                AutoLyricsSource(
+                    CustomLyricsSources.LUNABEAT,
+                    presenceId = LyricPresence.LUNABEAT,
+                    fetch = lunabeat::fetch,
+                ),
+                AutoLyricsSource(
+                    CustomLyricsSources.AM_LYRICS,
+                    presenceId = LyricPresence.AM_LYRICS,
+                    fetch = amLyrics::fetch,
+                ),
             ) + trailing,
+            presence = presence,
         )
     }
 }

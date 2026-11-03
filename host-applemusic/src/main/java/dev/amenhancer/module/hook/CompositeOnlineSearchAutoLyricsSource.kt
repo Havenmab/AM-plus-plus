@@ -5,6 +5,7 @@ import dev.amenhancer.module.lyrics.online.AppleLyricTtmlWriter
 import dev.amenhancer.module.lyrics.online.InMemoryNeSessionStore
 import dev.amenhancer.module.lyrics.online.KugouSource
 import dev.amenhancer.module.lyrics.online.KuwoSource
+import dev.amenhancer.module.lyrics.online.LyricLineFilter
 import dev.amenhancer.module.lyrics.online.LyricMatchPolicy
 import dev.amenhancer.module.lyrics.online.LyricSelectionMode
 import dev.amenhancer.module.lyrics.online.NeSessionStore
@@ -765,7 +766,9 @@ class CompositeOnlineSearchAutoLyricsSource private constructor(
         song: SongSearchResult,
         fallbackDurationMs: Long,
     ): String? = runCatching {
-        val lines = AppleLyricTtmlWriter.from(provider.source.getLyrics(song) ?: return null)
+        // Filter with the song identity so the provider's "歌名 - 歌手" header goes as well.
+        val raw = provider.source.getLyrics(song) ?: return null
+        val lines = AppleLyricTtmlWriter.from(LyricLineFilter.filter(raw, song.title, song.artist))
         if (lines.isEmpty()) return null
         AppleLyricTtmlWriter.build(
             lines = lines,

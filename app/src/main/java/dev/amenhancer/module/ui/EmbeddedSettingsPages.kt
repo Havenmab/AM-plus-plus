@@ -1008,6 +1008,34 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             // The LLM fallback tier sits below automatic completion.
             pageRefresh?.invoke()
         })
+        // The fixed AMLL / AM-Lyrics sources are what automatic completion normally hits, and a
+        // self-hosted mirror is tried before the public hosts: the same 50 KB document measured
+        // ~65 ms locally against 470-540 ms cross-border. Same row widget as the LLM endpoint,
+        // with the URL-specific notice.
+        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+        parent.addView(embeddedTextValueRow(
+            activity = activity,
+            title = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL),
+            value = settings.customLyricsSourceBaseUrl,
+            emptySummary = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_NOT_CONFIGURED),
+            hint = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_HINT),
+            maxLength = ModuleSettings.MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH,
+            notice = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_SUMMARY),
+        ) { value ->
+            val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(value)
+            // A half-typed or non-http value must never silently redirect every lyric request,
+            // so it is dropped and the user is told why instead.
+            if (value.isNotBlank() && normalized.isEmpty()) {
+                Toast.makeText(
+                    activity,
+                    localizedText(ModuleText.LLM_LYRICS_TEST_INVALID_ENDPOINT),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            onSettingsChanged(settings.copy(customLyricsSourceBaseUrl = normalized))
+            // Re-render so the row summary shows the saved address.
+            pageRefresh?.invoke()
+        })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
         parent.addView(embeddedNavigationRow(
             activity = activity,

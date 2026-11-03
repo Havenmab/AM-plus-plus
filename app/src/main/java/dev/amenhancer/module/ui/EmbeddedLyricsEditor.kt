@@ -660,7 +660,12 @@ internal fun EmbeddedSettingsHost.importEmbeddedOnlineLyrics(
 
 
 internal fun EmbeddedSettingsHost.embeddedOnlineLyricsImporter(): CustomLyricsOnlineImporter =
-        dev.amenhancer.module.lyrics.createEmbeddedOnlineLyricsImporter(application)
+        dev.amenhancer.module.lyrics.createEmbeddedOnlineLyricsImporter(
+            application = application,
+            // The same self-hosted mirror the playback chain uses, read at import time.
+            customSourceBaseUrl = runCatching { controller.currentSettings().customLyricsSourceBaseUrl }
+                .getOrDefault(""),
+        )
 
 
 internal fun EmbeddedSettingsHost.embeddedLyricsSourceName(source: String): String = when (source) {

@@ -396,4 +396,32 @@ class LyricLineFilterTest {
         val filtered = LyricLineFilter.filter(result(body))
         assertEquals(listOf("他说：别回头"), texts(filtered.original))
     }
+
+    // 1. 署名行：繁体与单字键（詞/曲/編/監製/唱）-----------------------------------
+
+    @Test
+    fun `traditional and single-character credit keys are removed`() {
+        val body = listOf(
+            line(0, "詞: emon"),
+            line(1_000, "曲: emon"),
+            line(2_000, "編曲：emon"),
+            line(3_000, "監製：emon"),
+            line(4_000, "監制：emon"),
+            line(5_000, "唱：emon"),
+            line(20_000, "この胸の中にある"),
+        )
+        val filtered = LyricLineFilter.filter(result(body))
+        assertEquals(listOf("この胸の中にある"), texts(filtered.original))
+    }
+
+    @Test
+    fun `a lyric that merely opens with a credit character survives`() {
+        // No colon and no whitespace after the key, so the credit shape does not match.
+        val body = listOf(
+            line(0, "唱着歌走在这条路上"),
+            line(1_000, "詞不达意的话"),
+        )
+        val filtered = LyricLineFilter.filter(result(body))
+        assertEquals(listOf("唱着歌走在这条路上", "詞不达意的话"), texts(filtered.original))
+    }
 }

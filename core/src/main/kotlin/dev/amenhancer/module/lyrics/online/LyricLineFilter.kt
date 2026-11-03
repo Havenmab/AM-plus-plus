@@ -16,15 +16,18 @@ package dev.amenhancer.module.lyrics.online
  * Every lane goes through the same rules, in this order:
  * 1. placeholder shells (`//`, `…`, `♪`, `00:12.30`, anything without a single letter) go;
  * 2. platform and copyright lines (`©`, `℗`, `QQ音乐`, `未经许可`, …) go wherever they sit;
- * 3. credit lines go while the lane opens with a credit block (≥ [CREDIT_BLOCK_MIN] credit
- *    shapes inside the first [CREDIT_BLOCK_SCAN] lines) and the line starts within
- *    [CREDIT_WINDOW_MS]; a lone credit shape without a block is only dropped inside
- *    [SINGLE_CREDIT_WINDOW_MS], so a real lyric such as `作曲：上帝` at 0:30 survives;
+ * 3. a credit shape (a known key opening the line, short, either inside [CREDIT_WINDOW_MS] or
+ *    within the first [CREDIT_BLOCK_SCAN] lines) goes wherever it sits: no song writes a
+ *    credit as a lyric, so there is no "credit block" precondition;
  * 4. the `歌名 - 歌手 (英文名)` header goes when it matches the known song identity or — with
  *    no identity at all — when it opens the lane (≤ [HEADER_WINDOW_MS]) in the `A - B` shape
  *    and stays short;
  * 5. a line repeating the previous kept line within [DUPLICATE_WINDOW_MS] (punctuation and
- *    casing ignored) is a provider duplicate and goes.
+ *    casing ignored) is a provider duplicate and goes;
+ * 6. **block sweep**: when the very first line was rejected, everything up to the last rejected
+ *    line inside the first [LEADING_SCAN] lines and [LEADING_WINDOW_MS] goes with it — including
+ *    lines no rule named — so an unrecognisable production note between credits cannot survive
+ *    as a fake first lyric. A lane whose first line is already a lyric is left alone.
  *
  * Credits only count when a key opens the line *and* carries a value (colon or whitespace +
  * content), so `曲终人散` and `词不达意` stay lyrics. Translation and romanization lanes run
@@ -39,17 +42,11 @@ object LyricLineFilter {
     /** A credit line is short; a longer line is treated as a lyric even inside the window. */
     const val CREDIT_MAX_LENGTH = 60
 
-    /** How many leading lines are inspected to decide whether a credit block exists. */
+    /** The opening lines that may carry a credit before its timestamp reaches the window. */
     const val CREDIT_BLOCK_SCAN = 20
-
-    /** How many credit-shaped lines inside that scan turn the lane into a "has credits" lane. */
-    const val CREDIT_BLOCK_MIN = 2
 
     /** Lines inspected for the opening credit/header block. */
     const val LEADING_SCAN = 20
-
-    /** A block sweep only applies when the junk starts within the first lines of the lane. */
-    const val OPENING_BLOCK_START = 4
 
     /** Only the first minute can open with a block; later lines are lyrics. */
     const val LEADING_WINDOW_MS = 60_000L
@@ -65,20 +62,18 @@ object LyricLineFilter {
     const val HEADER_MAX_LENGTH = 80
 
     /** A platform call to action is short; a lyric that merely mentions the word is not. */
-    const val CTA_MAX_LENGTH = 30
-
-    /** `关注` may run into a word this short (`关注我们`) before it stops being a CTA. */
-    const val CTA_OPEN_MAX_LENGTH = 6
+    const val CTA_MAX_LENGTH = 18
 
     /**
      * Credit keys, longest first so `制作人` wins over `制作` and `词曲` over `词`.
      * The alternation backtracks anyway; the order only keeps the pattern readable.
      */
     private val CREDIT_KEYS = listOf(
-        "作词人", "作詞人", "作曲人", "词曲", "编曲人", "編曲人", "制作人", "製作人", "监制", "出品", "发行",
+        "作词人", "作詞人", "作曲人", "词曲", "编曲人", "編曲人", "制作人", "製作人", "监制", "監製", "監制", "出品", "发行",
         "录音师", "录音室", "录音助理", "人声录音", "人声编辑", "混音师", "母带师", "和声编写",
         "LRC制作", "歌词制作", "翻译贡献者",
-        "作词", "作詞", "作曲", "编曲", "編曲", "制作", "製作", "訳詞", "OP", "SP", "词", "曲", "演唱", "原唱", "和声",
+        "作词", "作詞", "作曲", "编曲", "編曲", "制作", "製作", "訳詞", "OP", "SP", "词", "詞", "曲", "編", "唱",
+        "演唱", "原唱", "和声",
         "录音", "混音", "母带", "吉他", "贝斯", "鼓", "键盘", "弦乐", "统筹", "企划", "宣发",
         "翻译", "校对", "字幕", "后期",
     ).sortedByDescending { key -> key.length }
@@ -159,9 +154,6 @@ object LyricLineFilter {
     ): List<LyricsLine> {
         if (lines.isEmpty()) return lines
         val bodies = lines.map(::text)
-        val creditBlock = bodies.take(CREDIT_BLOCK_SCAN)
-            .withIndex()
-            .count { (index, body) -> isCreditShape(body, lines[index].start, index) } >= CREDIT_BLOCK_MIN
 
         // Pass 1: which lines do the rules reject?
         val rejected = BooleanArray(lines.size)
@@ -169,7 +161,7 @@ object LyricLineFilter {
             val body = bodies[index]
             rejected[index] = isPlaceholder(body) ||
                 isPlatformNoise(body) ||
-                isCredit(body, lines[index].start, index, creditBlock) ||
+                isCredit(body, lines[index].start, index) ||
                 (identityHeader && isHeader(body, lines[index].start, songTitle, songArtist))
         }
 
@@ -232,7 +224,7 @@ object LyricLineFilter {
         // (`我一直关注着你`, `关注着你的背影`) is not a CTA.
         if (trimmed == "关注" || trimmed == "订阅") return true
         if (!trimmed.startsWith("关注") && !trimmed.startsWith("订阅")) return false
-        if (trimmed.length > 18) return false
+        if (trimmed.length > CTA_MAX_LENGTH) return false
         return CTA_CONTEXT.any { marker -> trimmed.contains(marker) } ||
             trimmed.contains("：") || trimmed.contains(":")
     }
@@ -259,10 +251,12 @@ object LyricLineFilter {
         body.replace('\u3000', ' ').replace('\u00A0', ' ')
 
     /**
-     * A credit block removes its credit shapes up to [CREDIT_WINDOW_MS]; a lone credit shape is
-     * only removed inside [SINGLE_CREDIT_WINDOW_MS], which keeps `作曲：上帝` at 0:30 a lyric.
+     * A credit shape goes inside [CREDIT_WINDOW_MS] or the opening [CREDIT_BLOCK_SCAN] lines.
+     *
+     * Past that window a line with a credit shape is treated as a lyric, so a real line such as
+     * `作曲：上帝` at 0:30 survives.
      */
-    private fun isCredit(body: String, startMs: Long, index: Int, creditBlock: Boolean): Boolean =
+    private fun isCredit(body: String, startMs: Long, index: Int): Boolean =
         // No song writes a credit as a lyric, so a credit-shaped line goes wherever it appears.
         isCreditShape(body, startMs, index)
 

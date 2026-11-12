@@ -168,7 +168,7 @@ object LyricTokenMerger {
     private fun kindOfChar(ch: Char): Kind = when (ch) {
         in '\u30A1'..'\u30FA', '\u30FC', '\u30FD', '\u30FE' -> Kind.KATAKANA
         in '\u3041'..'\u3096', '\u309D', '\u309E' -> Kind.HIRAGANA
-        in '\u4E00'..'\u9FFF', '\u3400'..'\u4DBF', '\u3005', '\u3006' -> Kind.KANJI
+        in '\u4E00'..'\u9FFF', in '\u3400'..'\u4DBF', '\u3005', '\u3006' -> Kind.KANJI
         in 'a'..'z', in 'A'..'Z', in '\uFF21'..'\uFF3A', in '\uFF41'..'\uFF5A' -> Kind.LATIN
         in '0'..'9', in '\uFF10'..'\uFF19' -> Kind.DIGIT
         else -> Kind.OTHER

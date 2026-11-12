@@ -1024,6 +1024,7 @@ object AmllTtmlFormatConverter {
         val slices = childElements(ttml, roman)
         if (slices.size != lyrics.size) return null
         if (slices.any { !isSpanElement(ttml, it) || it.selfClosing }) return null
+        if (slices.any { attribute(it.attributes, ROLE_ATTRIBUTE) != null }) return null
         val tokens = mutableListOf<PronunciationToken>()
         val separators = mutableListOf<String>()
         lyrics.forEachIndexed { position, span ->
@@ -1215,6 +1216,9 @@ object AmllTtmlFormatConverter {
         val headSpans = childElements(ttml, entry)
         if (headSpans.size != lyrics.size) return null
         if (headSpans.any { !isSpanElement(ttml, it) || it.selfClosing }) return null
+        // A word span carries no role; a background translation inside the entry
+        // is that lane, not a reading, and must not be counted as one.
+        if (headSpans.any { attribute(it.attributes, ROLE_ATTRIBUTE) != null }) return null
         if (headSpans.any { attribute(it.attributes, BEGIN_ATTRIBUTE_VALUE) == null }) return null
         if (headSpans.any { childElements(ttml, it).isNotEmpty() }) return null
         val tokens = mutableListOf<PronunciationToken>()

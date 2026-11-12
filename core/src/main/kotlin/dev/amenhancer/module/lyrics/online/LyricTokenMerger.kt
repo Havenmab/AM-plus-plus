@@ -58,6 +58,18 @@ object LyricTokenMerger {
         'ぞ', 'ぜ', 'わ', 'ん',
     )
 
+    /**
+     * Katakana particle spellings. Lyrics written entirely in katakana spell their particles
+     * that way too, and a one-character token that is one of these is a particle, not the head
+     * of a loan word: `マジカル` `ト` `リック` must not become `マジカルト`.
+     *
+     * Deliberately shorter than [PARTICLE]: `カ` `エ` `ヤ` `サ` `ワ` also open ordinary loan
+     * words (`カード`, `エア`, `ヤング`), so listing them would split those words apart.
+     */
+    private val KATAKANA_PARTICLE = setOf(
+        'ト', 'デ', 'ハ', 'ヲ', 'ニ', 'ガ', 'モ', 'ノ', 'ネ', 'ヨ',
+    )
+
     /** Small kana, the sokuon and the long-vowel mark attach to whatever precedes them. */
     private val ATTACHING = setOf(
         'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ッ', 'ャ', 'ュ', 'ョ', 'ヮ', 'ヵ', 'ヶ', 'ー',
@@ -104,8 +116,12 @@ object LyricTokenMerger {
             when {
                 // Small kana / sokuon / long vowel follow whatever came before them.
                 attaches -> current += token
-                // A single-character hiragana particle always stands alone.
+                // A single-character particle always stands alone, in either script.
                 kind == Kind.HIRAGANA && token.text.length == 1 && token.text[0] in PARTICLE -> {
+                    flush()
+                    groups += single(token)
+                }
+                kind == Kind.KATAKANA && token.text.length == 1 && token.text[0] in KATAKANA_PARTICLE -> {
                     flush()
                     groups += single(token)
                 }

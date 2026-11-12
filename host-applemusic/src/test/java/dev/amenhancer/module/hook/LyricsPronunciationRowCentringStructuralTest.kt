@@ -64,7 +64,7 @@ class LyricsPronunciationRowCentringStructuralTest {
         val word = container.getChildAt(0)
         val pronunciation = container.getChildAt(1)
 
-        LyricsPronunciationRowCentring.apply(container)
+        LyricsPronunciationRowCentring.applyToInflatedLayout(container)
 
         assertEquals(Gravity.CENTER_HORIZONTAL, container.gravity)
         // Apple's own geometry is untouched: only the container's horizontal gravity moved.
@@ -81,7 +81,7 @@ class LyricsPronunciationRowCentringStructuralTest {
         assertEquals(0, container.paddingRight)
         assertEquals(0, container.paddingBottom)
         // Re-applying (a rebound row, a second dispatch) writes nothing new.
-        LyricsPronunciationRowCentring.apply(container)
+        LyricsPronunciationRowCentring.applyToInflatedLayout(container)
         assertEquals(Gravity.CENTER_HORIZONTAL, container.gravity)
     }
 
@@ -91,8 +91,8 @@ class LyricsPronunciationRowCentringStructuralTest {
         val notTheContainer = FrameLayout(activity)
         val unrelated = View(activity)
 
-        LyricsPronunciationRowCentring.apply(notTheContainer)
-        LyricsPronunciationRowCentring.apply(unrelated)
+        LyricsPronunciationRowCentring.applyToInflatedLayout(notTheContainer)
+        LyricsPronunciationRowCentring.applyToInflatedLayout(unrelated)
 
         // The guard is a cast, so nothing was written anywhere on a non-LinearLayout root.
         assertTrue(source.contains("val group = root as? LinearLayout ?: return"))
@@ -111,7 +111,7 @@ class LyricsPronunciationRowCentringStructuralTest {
         assertTrue(source.contains("if (!isFeatureEnabled()) return@register"))
         assertTrue(
             source.indexOf("if (!isFeatureEnabled()) return@register") <
-                source.indexOf("apply(view)"),
+                source.indexOf("applyToInflatedLayout(view)"),
         )
     }
 

@@ -37,7 +37,7 @@ internal object LyricsPronunciationRowCentring {
     fun install() {
         LayoutInflationRegistry.register(LAYOUT_NAME) { view ->
             if (!isFeatureEnabled()) return@register
-            apply(view)
+            applyToInflatedLayout(view)
         }
     }
 
@@ -53,7 +53,7 @@ internal object LyricsPronunciationRowCentring {
      * (Apple's layout is the only known shape, but a recycled or differently named root must never
      * be rewritten) is left alone, and an already-centred container is not written twice.
      */
-    fun apply(root: View) {
+    fun applyToInflatedLayout(root: View) {
         val group = root as? LinearLayout ?: return
         if (group.gravity == Gravity.CENTER_HORIZONTAL) return
         group.gravity = Gravity.CENTER_HORIZONTAL

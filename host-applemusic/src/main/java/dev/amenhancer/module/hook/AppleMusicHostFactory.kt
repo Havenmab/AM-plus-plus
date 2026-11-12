@@ -43,7 +43,11 @@ object AppleMusicHostFactory {
         DualPaneResourceHook.install()
         FragmentDualPaneResources.install()
     }
-    fun registerLyricAuxiliaryResources() = LyricCreditsRowResourceHook.install()
+    /** Auxiliary lyric resource hooks: credits row identity, plus the per-word romanization row. */
+    fun registerLyricAuxiliaryResources() {
+        LyricCreditsRowResourceHook.install()
+        LyricsPronunciationRowCentring.install()
+    }
     fun installLayoutCallbacks() = LayoutInflationRegistry.install()
     fun registerChromeResources(observer: (View) -> Unit) {
         listOf("bottom_navigation", "mini_player").forEach { name ->

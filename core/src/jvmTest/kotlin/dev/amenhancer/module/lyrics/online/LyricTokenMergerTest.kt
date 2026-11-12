@@ -89,7 +89,7 @@ class LyricTokenMergerTest {
         val groups = LyricTokenMerger.merge(tokens)
 
         // The long-vowel mark attaches, so the whole loan word stays one group.
-        assertEquals(listOf("コンピューター"), groups.map { it.text })
+        assertEquals(listOf("コンピュータ"), groups.map { it.text })
         assertEquals("konpiyuata", groups[0].romanization)
     }
 

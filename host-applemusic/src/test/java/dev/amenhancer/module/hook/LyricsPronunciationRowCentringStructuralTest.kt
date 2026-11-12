@@ -66,7 +66,11 @@ class LyricsPronunciationRowCentringStructuralTest {
 
         LyricsPronunciationRowCentring.applyToInflatedLayout(container)
 
-        assertEquals(Gravity.CENTER_HORIZONTAL, container.gravity)
+        // Compare the horizontal bits only: the framework may carry an unrelated bit alongside.
+        assertEquals(
+            Gravity.CENTER_HORIZONTAL,
+            container.gravity and Gravity.HORIZONTAL_GRAVITY_MASK,
+        )
         // Apple's own geometry is untouched: only the container's horizontal gravity moved.
         assertEquals(LinearLayout.VERTICAL, container.orientation)
         assertFalse(container.isBaselineAligned)
@@ -82,7 +86,10 @@ class LyricsPronunciationRowCentringStructuralTest {
         assertEquals(0, container.paddingBottom)
         // Re-applying (a rebound row, a second dispatch) writes nothing new.
         LyricsPronunciationRowCentring.applyToInflatedLayout(container)
-        assertEquals(Gravity.CENTER_HORIZONTAL, container.gravity)
+        assertEquals(
+            Gravity.CENTER_HORIZONTAL,
+            container.gravity and Gravity.HORIZONTAL_GRAVITY_MASK,
+        )
     }
 
     @Test

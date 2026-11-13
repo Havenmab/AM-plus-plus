@@ -43,7 +43,14 @@ object AppleMusicHostFactory {
         DualPaneResourceHook.install()
         FragmentDualPaneResources.install()
     }
-    fun registerLyricAuxiliaryResources() = LyricCreditsRowResourceHook.install()
+    /** Auxiliary lyric resource hooks: credits row identity, plus the per-word romanization row. */
+    fun registerLyricAuxiliaryResources() {
+        LyricCreditsRowResourceHook.install()
+        LyricsPronunciationRowCentring.install()
+        // POC: merged-romanization overlay. Registers unconditionally like the two hooks above;
+        // its own per-inflation gate (ModuleSettings.onlineLyricsTranslationEnabled) decides.
+        LyricsPronunciationOverlay.install()
+    }
     fun installLayoutCallbacks() = LayoutInflationRegistry.install()
     fun registerChromeResources(observer: (View) -> Unit) {
         listOf("bottom_navigation", "mini_player").forEach { name ->
@@ -70,6 +77,10 @@ object AppleMusicHostFactory {
             source = ApkTargetClassSource(application, classLoader),
         )
         val settings = config.settings()
+        // POC: the merged-romanization overlay reads the same overlay store the native
+        // lyric-model delivery writes, so it always sees the current track's row. The playback
+        // position is bound separately through LyricsPronunciationOverlay.bindPlaybackPosition.
+        LyricsPronunciationOverlay.bindStore(nativeLyricOverlay)
         // Exact-profile resolver for HLE's native lyric-model delivery. A plain
         // class-loader lookup is enough here: 1606 is a strict profile, so the
         // resolver never guesses by DexKit, and an unresolved target fails open.
@@ -162,7 +173,7 @@ object AppleMusicHostFactory {
                         "Modern Xposed module was not attached",
                     )
                 runCatching {
-                    HleMetadataRuntime(
+                    val runtime = HleMetadataRuntime(
                         module = activeModule,
                         application = application,
                         classLoader = classLoader,
@@ -173,7 +184,13 @@ object AppleMusicHostFactory {
                         // Live read: the settings page can clear the index at any
                         // time, so the runtime must not snapshot the generation.
                         metadataCacheClearSignal = { config.metadataCacheClearGeneration() },
-                    ).install()
+                    )
+                    // The overlay needs the playback clock; the runtime owns the only handle to
+                    // the active player, so the seam is bound here.
+                    LyricsPronunciationOverlay.bindPlaybackPosition {
+                        LyricsPronunciationOverlay.playbackPositionOf(runtime.activePlayer())
+                    }
+                    runtime.install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)
                     TargetCapabilityInstall.Degraded(

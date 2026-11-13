@@ -175,6 +175,14 @@ internal class HleMetadataRuntime(
         ::playbackCoordinator.isInitialized && mediaId == playbackCoordinator.currentMetadataId()
     }
 
+    /**
+     * The player Apple is currently driving, or null before playback attaches.
+     *
+     * Exposed so the pronunciation overlay can read the playback clock; the hooks object that owns
+     * it stays private otherwise.
+     */
+    internal fun activePlayer(): Any? = playbackHooks.activePlayer()
+
     fun install(): TargetCapabilityInstall {
         return try { installRuntime() } catch (error: Throwable) {
             installation.close()

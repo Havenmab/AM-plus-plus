@@ -29,7 +29,7 @@ import dev.amenhancer.module.lyrics.AppleRomanizationLanguage
  */
 class NativeLyricOverlayStore {
 
-    private data class TimingKey(val begin: Long, val end: Long)
+    data class TimingKey(val begin: Long, val end: Long)
 
     private data class LineKey(val timing: TimingKey, val text: String)
 
@@ -291,6 +291,35 @@ class NativeLyricOverlayStore {
         text: String?,
     ): List<NativePronunciationSpan> =
         content(songId, begin, end, text)?.pronunciationSpans.orEmpty()
+
+    /**
+     * The stored row whose line text matches [text], or null when none or several rows match.
+     *
+     * The main lookup is timing-keyed, but the pronunciation overlay sits on native views that
+     * only expose their text, so it needs a text-only entry point. Two rows sharing one text stay
+     * ambiguous rather than guessing.
+     */
+    fun rowForText(songId: String?, text: String?): OverlayRow {
+        val (content, _) = textRow(songId, text)
+        return content
+    }
+
+    /**
+     * [rowForText] plus the row's own line timing, for a caller that must fall back to the line's
+     * interval when the document's per-token slices carry no timing of their own.
+     */
+    fun textRow(songId: String?, text: String?): Pair<OverlayRow, TimingKey?> {
+        val current = overlay
+        if (current == null || songId.isNullOrBlank() || current.songId != songId) {
+            return OverlayRow(null, OverlayMatch.MISSING) to null
+        }
+        val needle = normalizeText(text)
+        if (needle.isEmpty()) return OverlayRow(null, OverlayMatch.MISSING) to null
+        val matches = current.exactContent.entries.filter { entry -> entry.key.text == needle }
+        if (matches.size != 1) return OverlayRow(null, OverlayMatch.MISSING) to null
+        val entry = matches.single()
+        return OverlayRow(entry.value, OverlayMatch.TEXT) to entry.key.timing
+    }
 
     /**
      * The stored row for a native line plus **which key matched it**, so a device

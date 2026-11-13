@@ -117,7 +117,8 @@ internal object LyricsPronunciationOverlay {
     const val SUNG_ALPHA = 0xF0
 
     /** How often the highlight is repainted while at least one overlay is alive. */
-    const val TICK_MS = 50L
+    /** One frame: the sweep is a continuous position, so it should move every frame. */
+    const val TICK_MS = 16L
 
     /** Guards the ancestor walk in [extentIn]; a deeper chain is not Apple's lyric tree. */
     private const val MAX_ANCESTOR_DEPTH = 32
@@ -539,14 +540,28 @@ internal object LyricsPronunciationOverlay {
             lineBegin = overlay.lineBegin,
             lineEnd = overlay.lineEnd,
         )
-        var total = 0
-        var lit = 0f
-        ranges.forEach { range ->
-            val length = (range.end - range.start).coerceAtLeast(0)
-            total += length
-            lit += length * range.progress
+        // Apple dims every row that is not the one being sung, so a finished line must not keep
+        // its highlight. Without line timing there is nothing to compare against, so the row is
+        // treated as current and its own progress decides.
+        val begin = overlay.lineBegin
+        val end = overlay.lineEnd
+        val current = begin == null || end == null ||
+            (positionMs != null && positionMs >= begin && positionMs <= end)
+        if (!current) {
+            overlay.view.setLitFraction(0f)
+            return
         }
-        val fraction = if (total > 0) (lit / total).coerceIn(0f, 1f) else 0f
+        // Apple drives one mask across the whole row, so the sweep advances with the row's clock
+        // rather than with each token's own length. Summing per-token progress stepped unevenly
+        // whenever a token's window was short or gapped; the group's own first..last span gives the
+        // same continuous motion the mask has.
+        val first = overlay.group.parts.firstOrNull()?.begin
+        val last = overlay.group.parts.lastOrNull()?.end
+        val fraction = if (first != null && last != null && last > first && positionMs != null) {
+            ((positionMs - first).toFloat() / (last - first)).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
         overlay.view.setLitFraction(fraction)
     }
 

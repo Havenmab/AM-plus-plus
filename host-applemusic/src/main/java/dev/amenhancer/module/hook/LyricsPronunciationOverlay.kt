@@ -102,10 +102,19 @@ internal object LyricsPronunciationOverlay {
     const val WORD_ROW_ID_NAME = "karaoke_line_flexbox"
 
     /** The alpha the still-unsung half of a merged romanization is painted at. */
-    const val DIM_ALPHA = 0x66
+    /** Apple's unsung mask keeps only 18% of the text (color/white_alpha_18). */
+    const val DIM_ALPHA = 0x2E
 
-    /** Width of the soft edge at the sweep, as a fraction of the text size. */
-    const val FEATHER_EM = 0.45f
+    /**
+     * Width of the sweep's gradient band, as a fraction of the rendered text width.
+     *
+     * Apple's mask is four evenly spaced stops (sung/sung/unsung/unsung), so the transition spans
+     * roughly a third of the row rather than a hairline.
+     */
+    const val FEATHER_WIDTH_FRACTION = 1f / 3f
+
+    /** Apple's sung text keeps 94% of the white (color/white_alpha_94). */
+    const val SUNG_ALPHA = 0xF0
 
     /** How often the highlight is repainted while at least one overlay is alive. */
     const val TICK_MS = 50L
@@ -491,9 +500,9 @@ internal object LyricsPronunciationOverlay {
         placement: Extent,
     ): SungRomanizationView {
         val template = source.pronunciation
-        // Apple's lyric row is white; the template's own colour can carry a theme tint or a
-        // parent alpha, which is what made a fully-lit word read yellow instead of white.
-        val brightColor = Color.WHITE
+        // Apple's lyric row is white at 94% alpha; the template's own colour can carry a theme
+        // tint or a parent alpha, which is what made a fully-lit word read yellow instead of white.
+        val brightColor = Color.argb(SUNG_ALPHA, 255, 255, 255)
         val overlay = SungRomanizationView(line.context)
         overlay.configure(
             text = group.romanization,
@@ -501,7 +510,7 @@ internal object LyricsPronunciationOverlay {
             typeface = template.typeface,
             brightColor = brightColor,
             dimColor = dimmedColor(brightColor),
-            featherPx = template.textSize * FEATHER_EM,
+            featherPx = 0f,
         )
         val params = if (line is FrameLayout) {
             FrameLayout.LayoutParams(placement.width, placement.height)
@@ -703,8 +712,10 @@ internal object LyricsPronunciationOverlay {
 
             // Continuous alpha ramp across the edge instead of a few stepped bands: a
             // LinearGradient from the lit colour to the dim one, clipped to the feather band.
-            if (featherPx > 0f && litX < startX + textWidth) {
-                val from = (litX - featherPx).coerceAtLeast(startX)
+            // Apple's mask transitions over roughly a third of the row, so the band is wide.
+            val feather = textWidth * FEATHER_WIDTH_FRACTION
+            if (feather > 0f && litX < startX + textWidth) {
+                val from = (litX - feather).coerceAtLeast(startX)
                 val shader = LinearGradient(
                     from,
                     0f,

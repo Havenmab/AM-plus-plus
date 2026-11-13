@@ -1,10 +1,6 @@
 package dev.amenhancer.module.lyrics
 
-import dev.amenhancer.module.lyrics.online.LyricTokenMerger
-import dev.amenhancer.module.lyrics.online.MergedPronunciation
-import dev.amenhancer.module.lyrics.online.PronunciationToken
 import java.math.BigDecimal
-import kotlin.math.roundToLong
 
 data class TtmlFormatConversion(
     val ttml: String,
@@ -83,19 +79,6 @@ data class TtmlFormatConversion(
  * the redundant timing on its wrapper, so the whole output is one shape. Both
  * rewrites only touch a shape that is not yet canonical, so running the
  * converter twice changes nothing the second time.
- *
- * A Word-timed line can carry its reading **per word**, either inline — an
- * `x-roman` span after each lyric span, or one `x-roman` wrapping one timed
- * span per lyric span — or in a head `<transliterations>` entry that already
- * holds one timed `<span>` per lyric span. Both lanes of such a line are
- * rebuilt from one [LyricTokenMerger] group list, because Apple pairs a body
- * word span with the head span at the same position: a kana run becomes one
- * `<span>` in the body and one timed `<span>` carrying its reading in the
- * head, so the romanization row reads words instead of characters. A line that
- * offers no per-word reading — a single plain `x-roman`, a head entry holding
- * plain text, or a head entry whose span count differs from the body's — is
- * left exactly as it is, body included; background groups take no part in the
- * pairing, and the whitespace between spans is never merged away.
  *
  * The root language is resolved per song, not pinned. The document's own
  * `xml:lang`, else the caller's explicit language, names the **lyrics** language;
@@ -191,18 +174,11 @@ object AmllTtmlFormatConverter {
         val unnamed = unnamedTransliterations(normalized)
         // The head already speaks for every kind the body carries, so this is
         // Apple's own document and nothing, the root included, is rewritten —
-        // save a declared per-token romanization, which is still merged with the
-        // body it times (see [mergeDeclaredPronunciationLane]); a legacy shape
-        // normalized above is still a conversion. Its timeline is still
-        // formatted: the sort is idempotent and Apple's own documents benefit
-        // from it too.
+        // but a legacy shape normalized above is still a conversion. Its
+        // timeline is still formatted: the sort is idempotent and Apple's own
+        // documents benefit from it too.
         if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(normalized, declared)) {
-            val pronounced = if (declared.transliterations) {
-                mergeDeclaredPronunciationLane(normalized)
-            } else {
-                normalized
-            }
-            val formatted = formatTimeline(pronounced)
+            val formatted = formatTimeline(normalized)
             return TtmlFormatConversion(formatted, formatted != ttml)
         }
         // Read before `normalizeTags` pins the root: the source document's own
@@ -212,22 +188,12 @@ object AmllTtmlFormatConverter {
         val writtenLanguage = transliterationLanguage(normalized, lyricLanguage)
         val rootLanguage = lyricsLanguage(normalized, lyricLanguage)
         val migrated = migrateAuxiliaryTracks(normalized, declared, writtenLanguage, unnamed)
-        // A head track the source already declared is authoritative and was left
-        // in place above; when its entries time one span per lyric token, that
-        // entry is a per-word reading like an inline one, so the body and the
-        // entry are merged together. An entry holding a plain whole-line string,
-        // or one with a different span count, cannot be paired and is untouched.
-        val pronounced = if (declared.transliterations) {
-            mergeDeclaredPronunciationLane(migrated)
-        } else {
-            migrated
-        }
         // Migrating a line's only auxiliary span away can leave its lyric bare
         // where the source hid it beside that span, so the body's lines are
         // wrapped once more. This pass is deliberately body-only: a head lane is
         // a `<text for=…>` entry, not a body `<p>`, and must never be given a
         // span — the app reads its translation text verbatim.
-        val canonical = wrapExposedBareLines(pronounced)
+        val canonical = wrapExposedBareLines(migrated)
         val body = nextElement(canonical, "body", 0)
         val normalizedRoot = normalizeTags(
             canonical,
@@ -852,15 +818,6 @@ object AmllTtmlFormatConverter {
         var backgroundRoman: String? = null
 
         val children = childElements(ttml, line)
-        // A line whose reading is written per word is rebuilt from the merger's
-        // groups, so the body word spans and the head spans this line migrates
-        // come from one group list and stay paired. A declared head track owns
-        // its entry instead, so only the inline shapes are handled here.
-        val rebuiltLanes = if (declared.transliterations) null else mergeLineLanes(ttml, children)
-        if (rebuiltLanes != null) {
-            roman = rebuiltLanes.romanization
-            edits += rebuiltLanes.edits
-        }
         children.forEach { child ->
             when (attribute(child.attributes, ROLE_ATTRIBUTE)) {
                 ROLE_TRANSLATION -> if (!declared.translations) {
@@ -915,327 +872,6 @@ object AmllTtmlFormatConverter {
 
         translations += TrackEntry(key, translation, backgroundTranslation)
         transliterations += TrackEntry(key, roman, backgroundRoman)
-    }
-
-    /** One line's rebuilt lanes: the body span edits and the head `<text>` body. */
-    private data class MergedLineLanes(
-        val edits: List<Edit>,
-        val romanization: String,
-    )
-
-    /** The two lanes of one line paired token by token, plus the gaps between tokens. */
-    private class WordPairing(
-        val tokens: List<PronunciationToken>,
-        val spans: List<Element>,
-        val separators: List<String>,
-    )
-
-    /**
-     * Rebuilds a line's lyric spans and the inline romanization this converter
-     * migrates into the head from one [LyricTokenMerger] group list, so the two
-     * lanes stay positionally paired: Apple puts the body word span and the head
-     * span at the same index onto one word.
-     *
-     * Two source shapes carry a per-word reading inline:
-     *
-     *  - the reading follows each lyric span (`<span>マ</span><span
-     *    ttm:role="x-roman">ma</span>…`), so the tokens are that alternation;
-     *  - one `x-roman` span wraps one timed `<span>` per lyric span, the shape
-     *    the reported メタモリボン document had.
-     *
-     * Anything else — no romanization, a lane with one span fewer than the other,
-     * a token without timing — is no per-word pairing, so the line is left
-     * exactly as the rest of the converter already renders it. A background
-     * group ends the pairing, so a merged span can never swallow one.
-     */
-    private fun mergeLineLanes(ttml: String, children: List<Element>): MergedLineLanes? {
-        alternatingWordPairing(ttml, children)?.let { pairing ->
-            // With one reading per word the old lane kept only the first
-            // `x-roman` span, so even a line the merger leaves per token is
-            // rebuilt: one head span per token is what keeps the lanes paired.
-            return mergedLanes(ttml, pairing, rebuildWithoutMerge = pairing.tokens.size > 1)
-        }
-        nestedWordPairing(ttml, children)?.let { pairing ->
-            // A single `x-roman` keeps every nested span it already had, so a
-            // line nothing merges on renders byte-for-byte as before.
-            return mergedLanes(ttml, pairing, rebuildWithoutMerge = false)
-        }
-        return null
-    }
-
-    /**
-     * The alternating shape: a lyric span, the `x-roman` span holding its
-     * reading, and so on. Every lyric span must be paired — a line whose other
-     * span is a translation or a background group is not this shape — and the
-     * pairing stops at the first element that is not a lyric span.
-     */
-    private fun alternatingWordPairing(ttml: String, children: List<Element>): WordPairing? {
-        val spans = mutableListOf<Element>()
-        val romans = mutableListOf<Element>()
-        var index = 0
-        while (index < children.size) {
-            val span = children[index]
-            if (!isLyricSpan(ttml, span)) break
-            if (span.selfClosing || childElements(ttml, span).isNotEmpty()) return null
-            val roman = children.getOrNull(index + 1) ?: return null
-            if (!isRomanSpan(ttml, roman) || roman.selfClosing) return null
-            if (childElements(ttml, roman).isNotEmpty()) return null
-            spans += span
-            romans += roman
-            index += 2
-        }
-        if (spans.isEmpty()) return null
-        if (children.drop(index).any { isLyricSpan(ttml, it) }) return null
-        val tokens = mutableListOf<PronunciationToken>()
-        val separators = mutableListOf<String>()
-        spans.forEachIndexed { position, span ->
-            val romanization = content(ttml, romans[position])
-            if (romanization.isBlank()) return null
-            tokens += pronunciationToken(ttml, span, romanization) ?: return null
-            // The removed span and the whitespace before it do not survive, so
-            // only the text after the `x-roman` separates two lyric tokens.
-            separators += if (position == 0) {
-                ""
-            } else {
-                ttml.substring(romans[position - 1].end, span.start)
-            }
-        }
-        return WordPairing(tokens, spans, separators)
-    }
-
-    /**
-     * The wrapped shape: exactly one `x-roman` span, holding one timed `<span>`
-     * per lyric span, after the lyric spans it reads. The body's lyric spans must
-     * be one uninterrupted run, so a background group cannot sit inside a group
-     * the merger merges.
-     */
-    private fun nestedWordPairing(ttml: String, children: List<Element>): WordPairing? {
-        val lyrics = children.filter { isLyricSpan(ttml, it) }
-        if (lyrics.size < 2) return null
-        val romans = children.filter { isRomanSpan(ttml, it) }
-        if (romans.size != 1) return null
-        val roman = romans.single()
-        if (roman.selfClosing) return null
-        val first = children.indexOf(lyrics.first())
-        val last = children.indexOf(lyrics.last())
-        if (children.subList(first, last + 1).size != lyrics.size) return null
-        if (children.indexOf(roman) <= last) return null
-        if (lyrics.any { it.selfClosing || childElements(ttml, it).isNotEmpty() }) return null
-        val slices = childElements(ttml, roman)
-        if (slices.size != lyrics.size) return null
-        if (slices.any { !isSpanElement(ttml, it) || it.selfClosing }) return null
-        if (slices.any { attribute(it.attributes, ROLE_ATTRIBUTE) != null }) return null
-        val tokens = mutableListOf<PronunciationToken>()
-        val separators = mutableListOf<String>()
-        lyrics.forEachIndexed { position, span ->
-            val romanization = content(ttml, slices[position])
-            if (romanization.isBlank()) return null
-            tokens += pronunciationToken(ttml, span, romanization) ?: return null
-            separators += if (position == 0) {
-                ""
-            } else {
-                val bodyGap = ttml.substring(lyrics[position - 1].end, span.start)
-                val romanGap = ttml.substring(slices[position - 1].end, slices[position].start)
-                bodyGap.ifEmpty { romanGap }
-            }
-        }
-        return WordPairing(tokens, lyrics, separators)
-    }
-
-    /**
-     * Merges [pairing]'s tokens once and rebuilds both lanes from the result.
-     * Every group of more than one token becomes one body `<span>` carrying the
-     * first token's `begin` through the last token's `end`, and one head span
-     * with the group's concatenated reading. A group of a single token keeps the
-     * body span it already has.
-     *
-     * Groups are split at every separator that survives between two tokens, so a
-     * merged span never swallows the whitespace that separates words; the head
-     * spans keep the same separator. Returns null when nothing changes.
-     */
-    private fun mergedLanes(
-        ttml: String,
-        pairing: WordPairing,
-        rebuildWithoutMerge: Boolean,
-    ): MergedLineLanes? {
-        val boundaries = pairing.separators.mapIndexed { index, separator ->
-            index == 0 || separator.isNotEmpty()
-        }
-        val groups = splitPronunciationGroups(LyricTokenMerger.merge(pairing.tokens), boundaries)
-        if (groups.none { it.isMerged } && !rebuildWithoutMerge) return null
-        val head = StringBuilder()
-        val edits = mutableListOf<Edit>()
-        var token = 0
-        groups.forEach { group ->
-            val firstSpan = pairing.spans[token]
-            val lastSpan = pairing.spans[token + group.parts.size - 1]
-            val begin = attribute(firstSpan.attributes, BEGIN_ATTRIBUTE_VALUE) ?: return null
-            val end = attribute(lastSpan.attributes, END_ATTRIBUTE_VALUE) ?: return null
-            if (token > 0) head.append(headSeparator(pairing.separators[token]))
-            head.append("<span").append(timingAttributes(begin, end)).append('>')
-            head.append(group.romanization).append("</span>")
-            if (group.parts.size > 1) {
-                val openTag = ttml.substring(firstSpan.start, firstSpan.contentStart)
-                val mergedTag = replaceAttribute(openTag, END_ATTRIBUTE_VALUE, end)
-                edits += Edit(firstSpan.start, lastSpan.end, "$mergedTag" + group.text + "</span>")
-            }
-            token += group.parts.size
-        }
-        return MergedLineLanes(edits, head.toString())
-    }
-
-    /**
-     * Re-splits [groups] wherever a separator between two tokens must survive in
-     * the body. The split only ever divides a group, never joins two, so the
-     * merger's own decision inside a run is kept.
-     */
-    private fun splitPronunciationGroups(
-        groups: List<MergedPronunciation>,
-        boundaries: List<Boolean>,
-    ): List<MergedPronunciation> {
-        val split = mutableListOf<MergedPronunciation>()
-        var token = 0
-        groups.forEach { group ->
-            var parts = mutableListOf<PronunciationToken>()
-            group.parts.forEach { part ->
-                if (parts.isNotEmpty() && boundaries[token]) {
-                    split += mergedPronunciation(parts)
-                    parts = mutableListOf()
-                }
-                parts += part
-                token += 1
-            }
-            if (parts.isNotEmpty()) split += mergedPronunciation(parts)
-        }
-        return split
-    }
-
-    private fun mergedPronunciation(parts: List<PronunciationToken>) = MergedPronunciation(
-        text = parts.joinToString("") { it.text },
-        romanization = parts.joinToString("") { it.romanization.orEmpty() },
-        begin = parts.first().begin,
-        end = parts.last().end,
-        parts = parts,
-    )
-
-    /** One lyric span as a merger token, or null when it has no readable timing. */
-    private fun pronunciationToken(
-        ttml: String,
-        span: Element,
-        romanization: String,
-    ): PronunciationToken? {
-        val begin = attribute(span.attributes, BEGIN_ATTRIBUTE_VALUE) ?: return null
-        val end = attribute(span.attributes, END_ATTRIBUTE_VALUE) ?: return null
-        val start = clockMilliseconds(begin) ?: return null
-        val finish = clockMilliseconds(end) ?: return null
-        val text = content(ttml, span)
-        if (text.isEmpty()) return null
-        return PronunciationToken(text, romanization, start, finish)
-    }
-
-    private fun clockMilliseconds(value: String): Long? =
-        clockSeconds(value)?.let { seconds -> (seconds * 1000.0).roundToLong() }
-
-    /** Only the whitespace of a gap belongs in the head lane; other text separates words. */
-    private fun headSeparator(gap: String): String =
-        if (gap.all { character -> character.isWhitespace() }) gap else ""
-
-    /** A main-lane syllable: a `<span>` carrying no auxiliary role. */
-    private fun isLyricSpan(ttml: String, element: Element): Boolean =
-        isSpanElement(ttml, element) &&
-            attribute(element.attributes, ROLE_ATTRIBUTE) !in AUXILIARY_ROLES
-
-    private fun isRomanSpan(ttml: String, element: Element): Boolean =
-        isSpanElement(ttml, element) &&
-            attribute(element.attributes, ROLE_ATTRIBUTE) == ROLE_ROMAN
-
-    private fun isSpanElement(ttml: String, element: Element): Boolean =
-        isElement(ttml, element.start, "span")
-
-    /**
-     * Merges a **declared** head `<transliterations>` track with the body spans
-     * it times, when its entries already hold one timed `<span>` per lyric token
-     * — the word-level shape the app reads back as its pronunciation words.
-     *
-     * Apple pairs the two lanes by position, so leaving the body per token while
-     * the head was merged (or the other way round) would shift every reading
-     * onto the wrong word. Both lanes are therefore rebuilt from one group list,
-     * exactly as [mergeLineLanes] does for an inline reading. An entry holding a
-     * plain whole-line string, or one whose span count differs from the body's
-     * token count, offers no per-word pairing and the line is left byte-for-byte
-     * as it was, body included.
-     *
-     * Only a single `<transliteration>` block is considered: the app keys one
-     * pronunciation lane per language, and a second block would have no word
-     * spans of its own to align.
-     */
-    private fun mergeDeclaredPronunciationLane(ttml: String): String {
-        val metadata = nextElement(ttml, "metadata", 0) ?: return ttml
-        val block = nextElement(ttml, "transliterations", metadata.contentStart)
-            ?.takeIf { it.end <= metadata.contentEnd }
-            ?: return ttml
-        val tracks = childElements(ttml, block)
-            .filter { isElement(ttml, it.start, "transliteration") }
-        if (tracks.size != 1) return ttml
-        val track = tracks.single()
-        if (track.selfClosing) return ttml
-        val entries = childElements(ttml, track)
-            .filter { isElement(ttml, it.start, "text") }
-        val byKey = entries.mapNotNull { entry ->
-            attribute(entry.attributes, FOR_ATTRIBUTE)
-                ?.takeIf(String::isNotBlank)
-                ?.let { key -> key to entry }
-        }.toMap()
-        if (byKey.isEmpty()) return ttml
-        val body = nextElement(ttml, "body", 0) ?: return ttml
-        val edits = mutableListOf<Edit>()
-        var cursor = body.contentStart
-        while (true) {
-            val line = nextElement(ttml, "p", cursor) ?: break
-            if (line.end > body.contentEnd) break
-            cursor = line.end
-            val key = attribute(line.attributes, KEY_ATTRIBUTE) ?: continue
-            val entry = byKey[key] ?: continue
-            if (entry.selfClosing) continue
-            val merged = declaredLineLane(ttml, line, entry) ?: continue
-            edits += merged.edits
-            edits += Edit(entry.contentStart, entry.contentEnd, merged.romanization)
-        }
-        return applyEdits(ttml, edits)
-    }
-
-    /** One body line paired with its declared head entry, or null when unpaired. */
-    private fun declaredLineLane(ttml: String, line: Element, entry: Element): MergedLineLanes? {
-        val children = childElements(ttml, line)
-        val lyrics = children.filter { isLyricSpan(ttml, it) }
-        if (lyrics.size < 2) return null
-        val first = children.indexOf(lyrics.first())
-        val last = children.indexOf(lyrics.last())
-        if (children.subList(first, last + 1).size != lyrics.size) return null
-        if (lyrics.any { it.selfClosing || childElements(ttml, it).isNotEmpty() }) return null
-        val headSpans = childElements(ttml, entry)
-        if (headSpans.size != lyrics.size) return null
-        if (headSpans.any { !isSpanElement(ttml, it) || it.selfClosing }) return null
-        // A word span carries no role; a background translation inside the entry
-        // is that lane, not a reading, and must not be counted as one.
-        if (headSpans.any { attribute(it.attributes, ROLE_ATTRIBUTE) != null }) return null
-        if (headSpans.any { attribute(it.attributes, BEGIN_ATTRIBUTE_VALUE) == null }) return null
-        if (headSpans.any { childElements(ttml, it).isNotEmpty() }) return null
-        val tokens = mutableListOf<PronunciationToken>()
-        val separators = mutableListOf<String>()
-        lyrics.forEachIndexed { position, span ->
-            val romanization = content(ttml, headSpans[position])
-            if (romanization.isBlank()) return null
-            tokens += pronunciationToken(ttml, span, romanization) ?: return null
-            separators += if (position == 0) {
-                ""
-            } else {
-                val bodyGap = ttml.substring(lyrics[position - 1].end, span.start)
-                val headGap = ttml.substring(headSpans[position - 1].end, headSpans[position].start)
-                bodyGap.ifEmpty { headGap }
-            }
-        }
-        return mergedLanes(ttml, WordPairing(tokens, lyrics, separators), rebuildWithoutMerge = false)
     }
 
     /**

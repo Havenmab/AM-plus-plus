@@ -232,9 +232,16 @@ class LyricsPronunciationOverlayTest {
 
     @Test
     fun `dimming keeps the colour and lowers the alpha`() {
-        // Apple's own pronunciation colour at 40%: same RGB, so the row still reads as one colour.
-        assertEquals(0x66FFFFFF.toInt(), LyricsPronunciationOverlay.dimmedColor(0xFFFFFFFF.toInt()))
-        assertEquals(0x66ABCDEF.toInt(), LyricsPronunciationOverlay.dimmedColor(0xFFABCDEF.toInt()))
+        // Apple's unsung mask keeps 18% (color/white_alpha_18): same RGB, so the row still reads as
+        // one colour, only much fainter.
+        assertEquals(
+            0x2EFFFFFF.toInt(),
+            LyricsPronunciationOverlay.dimmedColor(0xFFFFFFFF.toInt()),
+        )
+        assertEquals(
+            0x2EABCDEF.toInt(),
+            LyricsPronunciationOverlay.dimmedColor(0xFFABCDEF.toInt()),
+        )
     }
 
     // -----------------------------------------------------------------------------------

@@ -47,6 +47,9 @@ object AppleMusicHostFactory {
     fun registerLyricAuxiliaryResources() {
         LyricCreditsRowResourceHook.install()
         LyricsPronunciationRowCentring.install()
+        // POC: merged-romanization overlay. Registers unconditionally like the two hooks above;
+        // its own per-inflation gate (ModuleSettings.onlineLyricsTranslationEnabled) decides.
+        LyricsPronunciationOverlay.install()
     }
     fun installLayoutCallbacks() = LayoutInflationRegistry.install()
     fun registerChromeResources(observer: (View) -> Unit) {
@@ -74,6 +77,10 @@ object AppleMusicHostFactory {
             source = ApkTargetClassSource(application, classLoader),
         )
         val settings = config.settings()
+        // POC: the merged-romanization overlay reads the same overlay store the native
+        // lyric-model delivery writes, so it always sees the current track's row. The playback
+        // position is bound separately through LyricsPronunciationOverlay.bindPlaybackPosition.
+        LyricsPronunciationOverlay.bindStore(nativeLyricOverlay)
         // Exact-profile resolver for HLE's native lyric-model delivery. A plain
         // class-loader lookup is enough here: 1606 is a strict profile, so the
         // resolver never guesses by DexKit, and an unresolved target fails open.

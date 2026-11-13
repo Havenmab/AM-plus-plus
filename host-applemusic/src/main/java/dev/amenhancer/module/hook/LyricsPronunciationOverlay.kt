@@ -534,6 +534,11 @@ internal object LyricsPronunciationOverlay {
      * dimmed. A [Spannable] of per-sub-token [ForegroundColorSpan]s is enough for the POC.
      */
     private fun renderOverlay(overlay: Overlay, positionMs: Long?) {
+        // The ramp is measured against the row, so hand the view the row width and its own offset.
+        val row = overlay.view.parent as? View
+        if (row != null && row.width > 0) {
+            overlay.view.setLineMetrics(row.width.toFloat(), overlay.view.x)
+        }
         val ranges = characterRanges(
             group = overlay.group,
             positionMs = positionMs,
@@ -680,6 +685,10 @@ internal object LyricsPronunciationOverlay {
         private var dimColor = Color.GRAY
         private var featherPx = 0f
         private var tokens: List<TokenPaint> = emptyList()
+        /** The whole lyric row's width: Apple's ramp spans a third of the ROW, not of the word. */
+        private var lineWidthPx = 0f
+        /** This overlay's left edge inside the row, so the ramp can be expressed in row pixels. */
+        private var lineOffsetPx = 0f
 
         fun configure(
             text: String,
@@ -711,6 +720,21 @@ internal object LyricsPronunciationOverlay {
             invalidate()
         }
 
+        /**
+         * The row geometry the ramp is measured against.
+         *
+         * Apple's mask is one gradient across the whole row, so a short word like "tsuka" sits
+         * entirely inside the ramp and fades across all five letters, while a long word only
+         * crosses part of it. Measuring the ramp against this view instead made every word fade
+         * over its own width, which is why a five-letter word showed a band barely one letter wide.
+         */
+        fun setLineMetrics(widthPx: Float, offsetPx: Float) {
+            if (widthPx == lineWidthPx && offsetPx == lineOffsetPx) return
+            lineWidthPx = widthPx
+            lineOffsetPx = offsetPx
+            invalidate()
+        }
+
         override fun onDraw(canvas: Canvas) {
             if (labelText.isEmpty() || width == 0) return
             val metrics = label.fontMetrics
@@ -738,7 +762,10 @@ internal object LyricsPronunciationOverlay {
             // passes cannot express this — painting the bright text first and ramping on top of it
             // stacks white on white and reads as a hard edge.
             val span = (litX - startX).coerceIn(0f, textWidth)
-            val feather = textWidth * FEATHER_WIDTH_FRACTION
+            // Ramp over a third of the row; fall back to the word's own width when the row is not
+            // measured yet (first frame, or a detached view).
+            val rampBasis = if (lineWidthPx > 0f) lineWidthPx else textWidth
+            val feather = rampBasis * FEATHER_WIDTH_FRACTION
             val fadeStart = ((span - feather) / textWidth).coerceIn(0f, 1f)
             val fadeEnd = (span / textWidth).coerceIn(0f, 1f)
             val colours: IntArray

@@ -29,7 +29,7 @@ import dev.amenhancer.module.lyrics.AppleRomanizationLanguage
  */
 class NativeLyricOverlayStore {
 
-    private data class TimingKey(val begin: Long, val end: Long)
+    data class TimingKey(val begin: Long, val end: Long)
 
     private data class LineKey(val timing: TimingKey, val text: String)
 
@@ -300,17 +300,25 @@ class NativeLyricOverlayStore {
      * ambiguous rather than guessing.
      */
     fun rowForText(songId: String?, text: String?): OverlayRow {
-        val current = overlay ?: return OverlayRow(null, OverlayMatch.MISSING)
-        if (songId.isNullOrBlank() || current.songId != songId) {
-            return OverlayRow(null, OverlayMatch.MISSING)
+        val (content, _) = textRow(songId, text)
+        return content
+    }
+
+    /**
+     * [rowForText] plus the row's own line timing, for a caller that must fall back to the line's
+     * interval when the document's per-token slices carry no timing of their own.
+     */
+    fun textRow(songId: String?, text: String?): Pair<OverlayRow, TimingKey?> {
+        val current = overlay
+        if (current == null || songId.isNullOrBlank() || current.songId != songId) {
+            return OverlayRow(null, OverlayMatch.MISSING) to null
         }
         val needle = normalizeText(text)
-        if (needle.isEmpty()) return OverlayRow(null, OverlayMatch.MISSING)
+        if (needle.isEmpty()) return OverlayRow(null, OverlayMatch.MISSING) to null
         val matches = current.exactContent.entries.filter { entry -> entry.key.text == needle }
-        return when (matches.size) {
-            1 -> OverlayRow(matches.single().value, OverlayMatch.TEXT)
-            else -> OverlayRow(null, OverlayMatch.MISSING)
-        }
+        if (matches.size != 1) return OverlayRow(null, OverlayMatch.MISSING) to null
+        val entry = matches.single()
+        return OverlayRow(entry.value, OverlayMatch.TEXT) to entry.key.timing
     }
 
     /**

@@ -1,6 +1,10 @@
 package dev.amenhancer.module.hook
 
 import android.content.res.Resources
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.text.Spannable
@@ -98,6 +102,9 @@ internal object LyricsPronunciationOverlay {
     /** The alpha the still-unsung half of a merged romanization is painted at. */
     const val DIM_ALPHA = 0x66
 
+    /** Width of the soft edge at the sweep, as a fraction of the text size. */
+    const val FEATHER_EM = 0.45f
+
     /** How often the highlight is repainted while at least one overlay is alive. */
     const val TICK_MS = 50L
 
@@ -181,20 +188,47 @@ internal object LyricsPronunciationOverlay {
     fun characterRanges(
         group: MergedPronunciation,
         positionMs: Long?,
+        lineBegin: Long? = null,
+        lineEnd: Long? = null,
     ): List<CharacterRange> {
         val ranges = ArrayList<CharacterRange>(group.parts.size)
+        // A document may ship its readings without per-token timing (every span at 0/0). Spread the
+        // line's own interval across the tokens in order so the row still sweeps instead of being
+        // judged "finished" the moment position 0 >= end 0.
+        val timed = group.parts.any { part -> part.end > part.begin }
+        val fallback = if (!timed && lineBegin != null && lineEnd != null && lineEnd > lineBegin) {
+            spread(lineBegin, lineEnd, group.parts.size)
+        } else {
+            null
+        }
         var offset = 0
-        group.parts.forEach { part ->
+        group.parts.forEachIndexed { index, part ->
             val romanization = part.romanization.orEmpty()
             val end = offset + romanization.length
+            val window = fallback?.getOrNull(index)
             ranges += CharacterRange(
                 start = offset,
                 end = end,
-                progress = progressOf(part.begin, part.end, positionMs),
+                progress = if (window != null) {
+                    progressOf(window.first, window.second, positionMs)
+                } else {
+                    progressOf(part.begin, part.end, positionMs)
+                },
             )
             offset = end
         }
         return ranges
+    }
+
+    /** [count] equal sub-intervals of [begin]..[end], used when a row carries no token timing. */
+    fun spread(begin: Long, end: Long, count: Int): List<Pair<Long, Long>> {
+        if (count <= 0 || end <= begin) return emptyList()
+        val total = end - begin
+        return (0 until count).map { index ->
+            val from = begin + total * index / count
+            val to = begin + total * (index + 1) / count
+            from to to
+        }
     }
 
     /**
@@ -206,6 +240,9 @@ internal object LyricsPronunciationOverlay {
      */
     fun progressOf(begin: Long, end: Long, positionMs: Long?): Float {
         if (positionMs == null) return 0f
+        // A degenerate window carries no information; treating it as "already finished" is what
+        // made a whole merged word light up at position 0.
+        if (end <= begin) return 0f
         if (positionMs <= begin) return 0f
         if (positionMs >= end) return 1f
         val span = (end - begin).coerceAtLeast(1L)
@@ -401,9 +438,11 @@ internal object LyricsPronunciationOverlay {
         if (slots.isEmpty()) return
         val wordTexts = slots.map { it.word.text?.toString().orEmpty() }
         val currentStore = store ?: return
-        val content = runCatching {
-            currentStore.rowForText(currentStore.currentSongId(), lineText(wordTexts)).content
+        val lookup = runCatching {
+            currentStore.textRow(currentStore.currentSongId(), lineText(wordTexts))
         }.getOrNull() ?: return
+        val content = lookup.first.content ?: return
+        val lineTiming = lookup.second
         val groups = mergedGroups(wordTexts, content.pronunciationSpans) ?: return
         var index = 0
         groups.forEach { group ->
@@ -417,7 +456,7 @@ internal object LyricsPronunciationOverlay {
             val rowExtent = extentIn(line, groupSlots.first().pronunciation)
             val overlayPlacement = placement(containers, rowExtent) ?: return@forEach
             val overlay = addOverlay(parent, group, groupSlots.first(), overlayPlacement)
-            state.overlays += Overlay(group, overlay)
+            state.overlays += Overlay(group, overlay, lineTiming?.begin, lineTiming?.end)
         }
         renderLine(state)
         startTickerIfNeeded()
@@ -448,15 +487,18 @@ internal object LyricsPronunciationOverlay {
         group: MergedPronunciation,
         source: WordSlot,
         placement: Extent,
-    ): TextView {
-        val overlay = TextView(line.context)
+    ): SungRomanizationView {
         val template = source.pronunciation
-        overlay.typeface = template.typeface
-        overlay.setTextSize(TypedValue.COMPLEX_UNIT_PX, template.textSize)
-        overlay.setTextColor(template.currentTextColor)
-        overlay.includeFontPadding = false
-        overlay.gravity = Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL
-        overlay.text = group.romanization
+        val brightColor = template.currentTextColor
+        val overlay = SungRomanizationView(line.context)
+        overlay.configure(
+            text = group.romanization,
+            textSizePx = template.textSize,
+            typeface = template.typeface,
+            brightColor = brightColor,
+            dimColor = dimmedColor(brightColor),
+            featherPx = template.textSize * FEATHER_EM,
+        )
         val params = if (line is FrameLayout) {
             FrameLayout.LayoutParams(placement.width, placement.height)
         } else {
@@ -478,34 +520,21 @@ internal object LyricsPronunciationOverlay {
      * dimmed. A [Spannable] of per-sub-token [ForegroundColorSpan]s is enough for the POC.
      */
     private fun renderOverlay(overlay: Overlay, positionMs: Long?) {
-        val text = overlay.group.romanization
-        val spannable = SpannableString(text)
-        val base = overlay.baseColor
-        val dimmed = dimmedColor(base)
-        characterRanges(overlay.group, positionMs).forEach { range ->
-            val clipped = clip(range, text.length) ?: return@forEach
-            val length = clipped.end - clipped.start
-            // Advance within the token: a token being sung right now is already partly lit, so the
-            // colour walks character by character instead of jumping when the token ends.
-            val lit = (length * clipped.progress).toInt().coerceIn(0, length)
-            if (lit > 0) {
-                spannable.setSpan(
-                    ForegroundColorSpan(base),
-                    clipped.start,
-                    clipped.start + lit,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
-            if (lit < length) {
-                spannable.setSpan(
-                    ForegroundColorSpan(dimmed),
-                    clipped.start + lit,
-                    clipped.end,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
+        val ranges = characterRanges(
+            group = overlay.group,
+            positionMs = positionMs,
+            lineBegin = overlay.lineBegin,
+            lineEnd = overlay.lineEnd,
+        )
+        var total = 0
+        var lit = 0f
+        ranges.forEach { range ->
+            val length = (range.end - range.start).coerceAtLeast(0)
+            total += length
+            lit += length * range.progress
         }
-        overlay.view.text = spannable
+        val fraction = if (total > 0) (lit / total).coerceIn(0f, 1f) else 0f
+        overlay.view.setLitFraction(fraction)
     }
 
     /** The sampled playback position, or null while nothing is bound. */
@@ -603,9 +632,85 @@ internal object LyricsPronunciationOverlay {
     )
 
     /** One merged group's overlay view, keeping the group for the per-tick repaint. */
-    private class Overlay(val group: MergedPronunciation, val view: TextView) {
-        /** Apple's pronunciation colour, read once when the overlay was created. */
-        val baseColor: Int = view.currentTextColor
+    private class Overlay(
+        val group: MergedPronunciation,
+        val view: SungRomanizationView,
+        val lineBegin: Long?,
+        val lineEnd: Long?,
+    )
+
+    /**
+     * One merged reading, painted by hand so the sweep can be sub-character.
+     *
+     * Apple's own rows are a TextView lit through a whole-view animator; a merged word has to show
+     * several readings inside one string, so this draws the text twice - the dim colour once, then
+     * the bright colour clipped to the lit width - and feathers the boundary with a few alpha steps
+     * so the edge is a gradient instead of a hard cut.
+     */
+    private class SungRomanizationView(context: android.content.Context) : View(context) {
+        private val label = Paint(Paint.ANTI_ALIAS_FLAG)
+        private var labelText = ""
+        private var brightColor = Color.WHITE
+        private var dimColor = Color.GRAY
+        private var featherPx = 0f
+        private var litFraction = 0f
+
+        fun configure(
+            text: String,
+            textSizePx: Float,
+            typeface: Typeface?,
+            brightColor: Int,
+            dimColor: Int,
+            featherPx: Float,
+        ) {
+            this.labelText = text
+            this.brightColor = brightColor
+            this.dimColor = dimColor
+            this.featherPx = featherPx
+            label.textSize = textSizePx
+            label.typeface = typeface
+            invalidate()
+        }
+
+        fun setLitFraction(fraction: Float) {
+            val next = fraction.coerceIn(0f, 1f)
+            if (next == litFraction) return
+            litFraction = next
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (labelText.isEmpty() || width == 0) return
+            val metrics = label.fontMetrics
+            val baseline = height / 2f - (metrics.ascent + metrics.descent) / 2f
+            val textWidth = label.measureText(labelText)
+            val startX = (width - textWidth) / 2f
+
+            label.color = dimColor
+            canvas.drawText(labelText, startX, baseline, label)
+
+            val litX = startX + textWidth * litFraction
+            if (litX <= startX) return
+            canvas.save()
+            canvas.clipRect(0f, 0f, litX, height.toFloat())
+            label.color = brightColor
+            canvas.drawText(labelText, startX, baseline, label)
+            canvas.restore()
+
+            if (featherPx > 0f && litX < startX + textWidth) {
+                val steps = 4
+                for (step in 0 until steps) {
+                    val from = litX - featherPx + featherPx * step / steps
+                    val to = litX - featherPx + featherPx * (step + 1) / steps
+                    val alpha = ((1f - (step + 1f) / steps) * 255f).toInt().coerceIn(0, 255)
+                    canvas.save()
+                    canvas.clipRect(from, 0f, to, height.toFloat())
+                    label.color = (brightColor and 0x00FFFFFF) or (alpha shl 24)
+                    canvas.drawText(labelText, startX, baseline, label)
+                    canvas.restore()
+                }
+            }
+        }
     }
 
     /** Per-line bookkeeping: the overlays on screen and the rows this hook hid for them. */

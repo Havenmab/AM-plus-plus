@@ -315,14 +315,14 @@ class LyricsPronunciationOverlayTest {
     fun `the playback position comes from the existing reflection helper`() {
         // The POC must not invent a clock: it reuses PlaybackPositionSource#readPosition.
         assertTrue(source.contains("resolvePlaybackPositionSource(player)?.readPosition()"))
-        // The row overlay paints by hand: one LinearGradient across the whole row whose stops sit
-        // at the live pixel edge, instead of a per-character ForegroundColorSpan.
-        assertTrue(source.contains("label.shader = LinearGradient("))
+        // The readings are painted on the row container's own canvas: one LinearGradient across the
+        // whole row whose stops sit at the live pixel edge, instead of a per-character span.
+        assertTrue(source.contains("rowPaint.shader = LinearGradient("))
         assertTrue(source.contains("fadeStart"))
         assertTrue(source.contains("fadeEnd"))
-        // One mask per row, shared by every merged reading on it.
-        assertTrue(source.contains("pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baseline, label) }"))
-        assertTrue(source.contains("state.rowOverlay"))
+        // Painted from the container's dispatchDraw, so the canvas origin matches the body's.
+        assertTrue(source.contains("ViewGroup::class.java.getDeclaredMethod(\"dispatchDraw\""))
+        assertTrue(source.contains("state.sources.forEach { source ->"))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

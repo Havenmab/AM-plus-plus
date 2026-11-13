@@ -555,11 +555,18 @@ internal object LyricsPronunciationOverlay {
     private fun drawRow(row: ViewGroup, canvas: Canvas) {
         val state = lineStates[row] ?: return
         if (state.sources.isEmpty() || state.textSizePx <= 0f) return
+        // Apple's binding re-applies visibility on rebind, so the rows this hook replaces must be
+        // re-hidden right before painting, not only when the line was first built.
+        state.hidden.forEach { view ->
+            if (view.visibility != View.INVISIBLE) view.visibility = View.INVISIBLE
+        }
         val position = readPosition() ?: return
         val begin = state.lineBegin
         val end = state.lineEnd
         val current = begin == null || end == null || (position >= begin && position <= end)
-        val bright = Color.argb(SUNG_ALPHA, 255, 255, 255)
+        // Match the lyric body's own white: Apple's mask multiplies the text's alpha, so starting
+        // from anything less than full white made a fully sung reading look dimmer than the line.
+        val bright = Color.WHITE
         val dim = dimmedColor(bright)
         rowPaint.textSize = state.textSizePx
         rowPaint.typeface = state.typeface

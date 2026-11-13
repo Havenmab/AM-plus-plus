@@ -718,9 +718,6 @@ internal object LyricsPronunciationOverlay {
             val textWidth = label.measureText(labelText)
             val startX = (width - textWidth) / 2f
 
-            label.color = dimColor
-            canvas.drawText(labelText, startX, baseline, label)
-
             // The lit edge is the pixel width of the sub-tokens that already played, plus the
             // fraction of the one currently playing — never a fraction of the whole string, so a
             // gap between two readings genuinely holds the edge still.
@@ -735,36 +732,36 @@ internal object LyricsPronunciationOverlay {
                 }
                 cursor += width
             }
-            if (litX <= startX) return
-            canvas.save()
-            canvas.clipRect(0f, 0f, litX, height.toFloat())
-            label.color = brightColor
-            canvas.drawText(labelText, startX, baseline, label)
-            canvas.restore()
 
-            // Continuous alpha ramp across the edge instead of a few stepped bands: a
-            // LinearGradient from the lit colour to the dim one, clipped to the feather band.
-            // Apple's mask transitions over roughly a third of the row, so the band is wide.
+            // One gradient over the whole string, exactly like Apple's mask: four stops that keep
+            // the played part bright, ramp across the feather band, then hold the dim colour. Two
+            // passes cannot express this — painting the bright text first and ramping on top of it
+            // stacks white on white and reads as a hard edge.
+            val span = (litX - startX).coerceIn(0f, textWidth)
             val feather = textWidth * FEATHER_WIDTH_FRACTION
-            if (feather > 0f && litX < startX + textWidth) {
-                val from = (litX - feather).coerceAtLeast(startX)
-                val shader = LinearGradient(
-                    from,
-                    0f,
-                    litX,
-                    0f,
-                    brightColor,
-                    dimColor,
-                    Shader.TileMode.CLAMP,
-                )
-                canvas.save()
-                canvas.clipRect(from, 0f, litX, height.toFloat())
-                label.color = brightColor
-                label.shader = shader
-                canvas.drawText(labelText, startX, baseline, label)
-                label.shader = null
-                canvas.restore()
+            val fadeStart = ((span - feather) / textWidth).coerceIn(0f, 1f)
+            val fadeEnd = (span / textWidth).coerceIn(0f, 1f)
+            val colours: IntArray
+            val stops: FloatArray
+            if (fadeEnd <= fadeStart) {
+                colours = intArrayOf(if (span >= textWidth) brightColor else dimColor, if (span >= textWidth) brightColor else dimColor)
+                stops = floatArrayOf(0f, 1f)
+            } else {
+                colours = intArrayOf(brightColor, brightColor, dimColor, dimColor)
+                stops = floatArrayOf(0f, fadeStart, fadeEnd, 1f)
             }
+            label.color = brightColor
+            label.shader = LinearGradient(
+                startX,
+                0f,
+                startX + textWidth,
+                0f,
+                colours,
+                stops,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawText(labelText, startX, baseline, label)
+            label.shader = null
         }
     }
 

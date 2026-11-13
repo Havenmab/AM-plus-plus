@@ -293,6 +293,27 @@ class NativeLyricOverlayStore {
         content(songId, begin, end, text)?.pronunciationSpans.orEmpty()
 
     /**
+     * The stored row whose line text matches [text], or null when none or several rows match.
+     *
+     * The main lookup is timing-keyed, but the pronunciation overlay sits on native views that
+     * only expose their text, so it needs a text-only entry point. Two rows sharing one text stay
+     * ambiguous rather than guessing.
+     */
+    fun rowForText(songId: String?, text: String?): OverlayRow {
+        val current = overlay ?: return OverlayRow(null, OverlayMatch.MISSING)
+        if (songId.isNullOrBlank() || current.songId != songId) {
+            return OverlayRow(null, OverlayMatch.MISSING)
+        }
+        val needle = normalizeText(text)
+        if (needle.isEmpty()) return OverlayRow(null, OverlayMatch.MISSING)
+        val matches = current.exactContent.entries.filter { entry -> entry.key.text == needle }
+        return when (matches.size) {
+            1 -> OverlayRow(matches.single().value, OverlayMatch.TEXT)
+            else -> OverlayRow(null, OverlayMatch.MISSING)
+        }
+    }
+
+    /**
      * The stored row for a native line plus **which key matched it**, so a device
      * log can name the reason a row was served or missed instead of only
      * observing that nothing rendered.

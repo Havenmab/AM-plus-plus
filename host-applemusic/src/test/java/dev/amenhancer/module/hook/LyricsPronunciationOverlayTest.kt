@@ -190,10 +190,10 @@ class LyricsPronunciationOverlayTest {
 
     @Test
     fun `a range is clipped to the rendered text`() {
-        val range = LyricsPronunciationOverlay.CharacterRange(start = 4, end = 8, sung = true)
+        val range = LyricsPronunciationOverlay.CharacterRange(start = 4, end = 8, progress = 1f)
 
         assertEquals(
-            LyricsPronunciationOverlay.CharacterRange(start = 4, end = 6, sung = true),
+            LyricsPronunciationOverlay.CharacterRange(start = 4, end = 6, progress = 1f),
             LyricsPronunciationOverlay.clip(range, length = 6),
         )
         // Nothing of the range survives a shorter text, so nothing is painted.

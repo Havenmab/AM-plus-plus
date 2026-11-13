@@ -119,7 +119,10 @@ internal object LyricsPronunciationOverlay {
      * and [end] exclusive, so the slice can be handed straight to `Spannable.setSpan`; [sung] says
      * whether the sub-token's own interval has already elapsed at the sampled playback position.
      */
-    data class CharacterRange(val start: Int, val end: Int, val sung: Boolean)
+    data class CharacterRange(val start: Int, val end: Int, val progress: Float) {
+        /** True once the sub-token has finished; kept for the older assertions. */
+        val sung: Boolean get() = progress >= 1f
+    }
 
     /** The line text Apple's row would show: the word texts concatenated in order, no separator. */
     fun lineText(wordTexts: List<String>): String = wordTexts.joinToString("")
@@ -187,11 +190,26 @@ internal object LyricsPronunciationOverlay {
             ranges += CharacterRange(
                 start = offset,
                 end = end,
-                sung = positionMs != null && positionMs >= part.end,
+                progress = progressOf(part.begin, part.end, positionMs),
             )
             offset = end
         }
         return ranges
+    }
+
+    /**
+     * How far [positionMs] has travelled through [begin]..[end], clamped to 0..1.
+     *
+     * This is what makes the row advance smoothly: a sub-token that is being sung right now is
+     * already partly lit, so the colour moves character by character instead of jumping when the
+     * token ends.
+     */
+    fun progressOf(begin: Long, end: Long, positionMs: Long?): Float {
+        if (positionMs == null) return 0f
+        if (positionMs <= begin) return 0f
+        if (positionMs >= end) return 1f
+        val span = (end - begin).coerceAtLeast(1L)
+        return ((positionMs - begin).toFloat() / span).coerceIn(0f, 1f)
     }
 
     /** Clamps [range] to a text of [length] characters; null when nothing of it is left. */
@@ -199,7 +217,7 @@ internal object LyricsPronunciationOverlay {
         val start = range.start.coerceIn(0, length)
         val end = range.end.coerceIn(0, length)
         if (end <= start) return null
-        return CharacterRange(start = start, end = end, sung = range.sung)
+        return CharacterRange(start = start, end = end, progress = range.progress)
     }
 
     /** The union of [extents], or null when there is none. */
@@ -463,14 +481,29 @@ internal object LyricsPronunciationOverlay {
         val text = overlay.group.romanization
         val spannable = SpannableString(text)
         val base = overlay.baseColor
+        val dimmed = dimmedColor(base)
         characterRanges(overlay.group, positionMs).forEach { range ->
             val clipped = clip(range, text.length) ?: return@forEach
-            spannable.setSpan(
-                ForegroundColorSpan(if (clipped.sung) base else dimmedColor(base)),
-                clipped.start,
-                clipped.end,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
+            val length = clipped.end - clipped.start
+            // Advance within the token: a token being sung right now is already partly lit, so the
+            // colour walks character by character instead of jumping when the token ends.
+            val lit = (length * clipped.progress).toInt().coerceIn(0, length)
+            if (lit > 0) {
+                spannable.setSpan(
+                    ForegroundColorSpan(base),
+                    clipped.start,
+                    clipped.start + lit,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            if (lit < length) {
+                spannable.setSpan(
+                    ForegroundColorSpan(dimmed),
+                    clipped.start + lit,
+                    clipped.end,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
         }
         overlay.view.text = spannable
     }

@@ -317,6 +317,9 @@ internal object LyricsPronunciationOverlay {
     @Volatile
     private var positionSource: () -> Long? = { null }
 
+    /** Paint for [drawRow]; the container's dispatchDraw runs on the main thread only. */
+    private val rowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
     /**
      * Binds the live overlay store whose [NativeLyricOverlayStore.rowForText] this hook reads.
      * Called from `AppleMusicHostFactory.appleMusic` with the same instance the native lyric-model
@@ -376,6 +379,31 @@ internal object LyricsPronunciationOverlay {
                 if (!isFeatureEnabled()) return@register
                 observeLine(view)
             }
+        }
+        installRowPainter()
+    }
+
+    /**
+     * Paints on the line container itself rather than on a child view.
+     *
+     * The container is a ConstraintLayout, so a child added with plain layout params gets squeezed
+     * to the wrong size and its canvas no longer matches the coordinates the readings are measured
+     * in. Hooking dispatchDraw gives this hook the container's own canvas: the same origin Apple
+     * draws the body with, after the container's own scale has been applied to it.
+     */
+    private fun installRowPainter() {
+        val method = runCatching {
+            ViewGroup::class.java.getDeclaredMethod("dispatchDraw", Canvas::class.java)
+        }.getOrNull() ?: return
+        runCatching {
+            ModernXposedRuntime.hookMethod(method, object : ModernMethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val row = param.thisObject as? ViewGroup ?: return
+                    if (!lineStates.containsKey(row)) return
+                    val canvas = param.args.getOrNull(0) as? Canvas ?: return
+                    runCatching { drawRow(row, canvas) }
+                }
+            })
         }
     }
 
@@ -486,42 +514,19 @@ internal object LyricsPronunciationOverlay {
         }
         if (sources.isEmpty()) return
         val source = template ?: return
-        val bright = Color.argb(SUNG_ALPHA, 255, 255, 255)
-        val overlay = SungRowView(parent.context)
-        overlay.configure(
-            textSizePx = source.textSize,
-            typeface = source.typeface,
-            brightColor = bright,
-            dimColor = dimmedColor(bright),
-        )
-        parent.addView(
-            overlay,
-            if (parent is FrameLayout) {
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-            } else {
-                ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-            },
-        )
-        state.rowOverlay = overlay
+        state.row = parent
         state.sources = sources
+        state.textSizePx = source.textSize
+        state.typeface = source.typeface
         state.lineBegin = lookup.second?.begin
         state.lineEnd = lookup.second?.end
-        renderLine(state)
+        parent.invalidate()
         startTickerIfNeeded()
     }
 
     /** Removes a line's row overlay and gives back every pronunciation row this hook hid. */
     private fun clearLine(state: LineState) {
-        state.rowOverlay?.let { overlay ->
-            (overlay.parent as? ViewGroup)?.removeView(overlay)
-        }
-        state.rowOverlay = null
+        state.row = null
         state.sources = emptyList()
         state.hidden.forEach { view ->
             if (view.visibility == View.INVISIBLE) view.visibility = View.VISIBLE
@@ -536,30 +541,82 @@ internal object LyricsPronunciationOverlay {
         state.hidden += slot.pronunciation
     }
 
-    /** Recomputes every reading's progress for this row and hands the result to the painter. */
+    /** Repaints one row; the painting itself happens in [drawRow] during its dispatchDraw. */
     private fun renderLine(state: LineState, positionMs: Long? = readPosition()) {
-        val overlay = state.rowOverlay ?: return
+        state.row?.invalidate()
+    }
+
+    /**
+     * Paints every merged reading of [row] plus the row-wide gradient.
+     *
+     * This runs on the container's own canvas, so the coordinates are the ones the readings were
+     * measured in, and whatever scale the container carries has already been applied.
+     */
+    private fun drawRow(row: ViewGroup, canvas: Canvas) {
+        val state = lineStates[row] ?: return
+        if (state.sources.isEmpty() || state.textSizePx <= 0f) return
+        val position = readPosition() ?: return
         val begin = state.lineBegin
         val end = state.lineEnd
-        // Apple dims every row that is not the one being sung, so a finished line must not keep its
-        // highlight. Without line timing there is nothing to compare against, so the row is treated
-        // as current and its own progress decides.
-        val current = begin == null || end == null ||
-            (positionMs != null && positionMs >= begin && positionMs <= end)
-        val pieces = state.sources.map { source ->
-            RowPiece(
-                text = source.text,
-                x = source.x,
-                top = source.top,
-                tokens = source.parts.map { part ->
-                    TokenPaint(
-                        text = part.romanization.orEmpty(),
-                        progress = if (current) progressOf(part.begin, part.end, positionMs) else 0f,
-                    )
-                },
-            )
+        val current = begin == null || end == null || (position >= begin && position <= end)
+        val bright = Color.argb(SUNG_ALPHA, 255, 255, 255)
+        val dim = dimmedColor(bright)
+        rowPaint.textSize = state.textSizePx
+        rowPaint.typeface = state.typeface
+        val metrics = rowPaint.fontMetrics
+
+        fun progressOfPart(part: PronunciationToken): Float =
+            if (current) progressOf(part.begin, part.end, position) else 0f
+
+        // Dim pass over every reading.
+        rowPaint.color = dim
+        rowPaint.shader = null
+        state.sources.forEach { source ->
+            canvas.drawText(source.text, source.x, source.top - metrics.ascent, rowPaint)
         }
-        overlay.setPieces(pieces)
+
+        // One edge for the row: walk the readings in order, stop at the first unfinished token.
+        var litX = Float.NaN
+        outer@ for (source in state.sources) {
+            var cursor = source.x
+            for (part in source.parts) {
+                val width = rowPaint.measureText(part.romanization.orEmpty())
+                when (val progress = progressOfPart(part)) {
+                    in 1f..Float.MAX_VALUE -> {
+                        cursor += width
+                        litX = cursor
+                    }
+                    in 0.0001f..0.999f -> {
+                        litX = cursor + width * progress
+                        break@outer
+                    }
+                    else -> break@outer
+                }
+            }
+        }
+        if (litX.isNaN()) return
+
+        val rowWidth = row.width.toFloat()
+        if (rowWidth <= 0f) return
+        val feather = rowWidth * FEATHER_WIDTH_FRACTION
+        val fadeEnd = (litX / rowWidth).coerceIn(0f, 1f)
+        val fadeStart = ((litX - feather) / rowWidth).coerceIn(0f, 1f)
+        val colours: IntArray
+        val stops: FloatArray
+        if (fadeEnd <= fadeStart) {
+            val solid = if (litX >= rowWidth) bright else dim
+            colours = intArrayOf(solid, solid)
+            stops = floatArrayOf(0f, 1f)
+        } else {
+            colours = intArrayOf(bright, bright, dim, dim)
+            stops = floatArrayOf(0f, fadeStart, fadeEnd, 1f)
+        }
+        rowPaint.color = bright
+        rowPaint.shader = LinearGradient(0f, 0f, rowWidth, 0f, colours, stops, Shader.TileMode.CLAMP)
+        state.sources.forEach { source ->
+            canvas.drawText(source.text, source.x, source.top - metrics.ascent, rowPaint)
+        }
+        rowPaint.shader = null
     }
 
     /** The sampled playback position, or null while nothing is bound. */
@@ -571,7 +628,7 @@ internal object LyricsPronunciationOverlay {
      */
     private fun startTickerIfNeeded() {
         if (ticking) return
-        if (lineStates.values.none { it.rowOverlay != null }) return
+        if (lineStates.values.none { it.sources.isNotEmpty() }) return
         ticking = true
         mainHandler.post(ticker)
     }
@@ -582,7 +639,7 @@ internal object LyricsPronunciationOverlay {
             pruneDetachedLines()
             var alive = false
             lineStates.values.forEach { state ->
-                if (state.rowOverlay == null) return@forEach
+                if (state.sources.isEmpty()) return@forEach
                 alive = true
                 renderLine(state, position)
             }
@@ -656,24 +713,13 @@ internal object LyricsPronunciationOverlay {
         val pronunciation: TextView,
     )
 
-    /** One sub-token as the painter needs it: its text and how much of it already played. */
-    data class TokenPaint(val text: String, val progress: Float)
-
     /**
-     * One merged reading placed inside the row.
+     * One merged reading as the line remembers it.
      *
-     * [top] is the original pronunciation row's own y inside the container: the overlay spans the
-     * whole line, so it must not assume the reading sits at half the line's height — the lyric body,
-     * the reading and the translation each occupy their own band.
+     * [top] is the original pronunciation row's own y inside the container: the painter draws on the
+     * container's canvas, so it must not assume the reading sits at half the line's height — the
+     * body, the reading and the translation each occupy their own band.
      */
-    data class RowPiece(
-        val text: String,
-        val x: Float,
-        val top: Float,
-        val tokens: List<TokenPaint>,
-    )
-
-    /** One merged reading as the line remembers it, before per-tick progress is applied. */
     private data class RowSource(
         val text: String,
         val x: Float,
@@ -681,115 +727,12 @@ internal object LyricsPronunciationOverlay {
         val parts: List<PronunciationToken>,
     )
 
-    /**
-     * One merged reading, painted by hand so the sweep can be sub-character.
-     *
-     * Apple's own rows are a TextView lit through a whole-view animator; a merged word has to show
-     * several readings inside one string, so this draws the text twice - the dim colour once, then
-     * the bright colour clipped to the lit width - and feathers the boundary with a few alpha steps
-     * so the edge is a gradient instead of a hard cut.
-     */
-    private class SungRowView(context: android.content.Context) : View(context) {
-        private val label = Paint(Paint.ANTI_ALIAS_FLAG)
-        private var pieces: List<RowPiece> = emptyList()
-        private var brightColor = Color.WHITE
-        private var dimColor = Color.GRAY
-
-        fun configure(
-            textSizePx: Float,
-            typeface: Typeface?,
-            brightColor: Int,
-            dimColor: Int,
-        ) {
-            this.brightColor = brightColor
-            this.dimColor = dimColor
-            label.textSize = textSizePx
-            label.typeface = typeface
-            invalidate()
-        }
-
-        /**
-         * Every merged reading of the row with the progress of its sub-tokens.
-         *
-         * All readings share one mask, so the edge is computed across the whole row: a reading
-         * advances inside itself, holds still while the clock sits between two tokens, and the
-         * neighbouring reading continues from there — exactly the single edge Apple's row mask has.
-         */
-        fun setPieces(next: List<RowPiece>) {
-            if (next == pieces) return
-            pieces = next
-            invalidate()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            if (pieces.isEmpty() || width == 0) return
-            val metrics = label.fontMetrics
-            // Each reading keeps its own band: the overlay spans the whole line, so the baseline
-            // comes from the original pronunciation row's top, not from the line's centre.
-            fun baselineOf(piece: RowPiece): Float = piece.top - metrics.ascent
-
-            // Dim pass over every reading of the row.
-            label.color = dimColor
-            label.shader = null
-            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baselineOf(piece), label) }
-
-            // One edge for the whole row: walk the readings in order and stop at the first one that
-            // has not finished. A gap between two tokens leaves the edge sitting on their boundary.
-            var litX = Float.NaN
-            outer@ for (piece in pieces) {
-                var cursor = piece.x
-                for (token in piece.tokens) {
-                    val tokenWidth = label.measureText(token.text)
-                    when {
-                        token.progress >= 1f -> {
-                            cursor += tokenWidth
-                            litX = cursor
-                        }
-                        token.progress > 0f -> {
-                            litX = cursor + tokenWidth * token.progress
-                            break@outer
-                        }
-                        else -> break@outer
-                    }
-                }
-            }
-            if (litX.isNaN()) return
-
-            // Apple's mask: four stops across the row with the ramp spanning a third of it, so a
-            // short reading lies entirely inside the ramp and fades as a whole.
-            val rowWidth = width.toFloat()
-            val feather = rowWidth * FEATHER_WIDTH_FRACTION
-            val fadeEnd = (litX / rowWidth).coerceIn(0f, 1f)
-            val fadeStart = ((litX - feather) / rowWidth).coerceIn(0f, 1f)
-            val colours: IntArray
-            val stops: FloatArray
-            if (fadeEnd <= fadeStart) {
-                val solid = if (litX >= rowWidth) brightColor else dimColor
-                colours = intArrayOf(solid, solid)
-                stops = floatArrayOf(0f, 1f)
-            } else {
-                colours = intArrayOf(brightColor, brightColor, dimColor, dimColor)
-                stops = floatArrayOf(0f, fadeStart, fadeEnd, 1f)
-            }
-            label.color = brightColor
-            label.shader = LinearGradient(
-                0f,
-                0f,
-                rowWidth,
-                0f,
-                colours,
-                stops,
-                Shader.TileMode.CLAMP,
-            )
-            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baselineOf(piece), label) }
-            label.shader = null
-        }
-    }
-
-    /** Per-line bookkeeping: the row overlay on screen and the rows this hook hid for it. */
+    /** Per-line bookkeeping: where to paint and what this hook hid for it. */
     private class LineState {
-        var rowOverlay: SungRowView? = null
+        var row: ViewGroup? = null
         var sources: List<RowSource> = emptyList()
+        var textSizePx: Float = 0f
+        var typeface: Typeface? = null
         var lineBegin: Long? = null
         var lineEnd: Long? = null
         val hidden = ArrayList<TextView>(4)

@@ -315,10 +315,11 @@ class LyricsPronunciationOverlayTest {
     fun `the playback position comes from the existing reflection helper`() {
         // The POC must not invent a clock: it reuses PlaybackPositionSource#readPosition.
         assertTrue(source.contains("resolvePlaybackPositionSource(player)?.readPosition()"))
-        // The overlay paints by hand now: it clips the bright pass to the lit width and feathers
-        // the boundary, instead of setting a per-character ForegroundColorSpan.
-        assertTrue(source.contains("canvas.clipRect(0f, 0f, litX, height.toFloat())"))
-        assertTrue(source.contains("label.color = brightColor"))
+        // The overlay paints by hand now: one LinearGradient across the reading whose stops sit at
+        // the live pixel edge, instead of a per-character ForegroundColorSpan.
+        assertTrue(source.contains("label.shader = LinearGradient("))
+        assertTrue(source.contains("fadeStart"))
+        assertTrue(source.contains("fadeEnd"))
         assertTrue(source.contains("lineBegin = overlay.lineBegin"))
     }
 

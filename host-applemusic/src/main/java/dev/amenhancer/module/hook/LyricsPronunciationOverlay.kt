@@ -547,22 +547,17 @@ internal object LyricsPronunciationOverlay {
         val end = overlay.lineEnd
         val current = begin == null || end == null ||
             (positionMs != null && positionMs >= begin && positionMs <= end)
-        if (!current) {
-            overlay.view.setLitFraction(0f)
-            return
-        }
-        // Apple drives one mask across the whole row, so the sweep advances with the row's clock
-        // rather than with each token's own length. Summing per-token progress stepped unevenly
-        // whenever a token's window was short or gapped; the group's own first..last span gives the
-        // same continuous motion the mask has.
-        val first = overlay.group.parts.firstOrNull()?.begin
-        val last = overlay.group.parts.lastOrNull()?.end
-        val fraction = if (first != null && last != null && last > first && positionMs != null) {
-            ((positionMs - first).toFloat() / (last - first)).coerceIn(0f, 1f)
+        val text = overlay.group.romanization
+        val tokens = if (!current) {
+            overlay.group.parts.map { part -> TokenPaint(part.romanization.orEmpty(), 0f) }
         } else {
-            0f
+            ranges.mapNotNull { range ->
+                val start = range.start.coerceIn(0, text.length)
+                val end = range.end.coerceIn(start, text.length)
+                if (end <= start) null else TokenPaint(text.substring(start, end), range.progress)
+            }
         }
-        overlay.view.setLitFraction(fraction)
+        overlay.view.setTokenProgress(tokens)
     }
 
     /** The sampled playback position, or null while nothing is bound. */
@@ -660,6 +655,9 @@ internal object LyricsPronunciationOverlay {
     )
 
     /** One merged group's overlay view, keeping the group for the per-tick repaint. */
+    /** One sub-token as the painter needs it: its text and how much of it already played. */
+    data class TokenPaint(val text: String, val progress: Float)
+
     private class Overlay(
         val group: MergedPronunciation,
         val view: SungRomanizationView,
@@ -681,7 +679,7 @@ internal object LyricsPronunciationOverlay {
         private var brightColor = Color.WHITE
         private var dimColor = Color.GRAY
         private var featherPx = 0f
-        private var litFraction = 0f
+        private var tokens: List<TokenPaint> = emptyList()
 
         fun configure(
             text: String,
@@ -700,10 +698,16 @@ internal object LyricsPronunciationOverlay {
             invalidate()
         }
 
-        fun setLitFraction(fraction: Float) {
-            val next = fraction.coerceIn(0f, 1f)
-            if (next == litFraction) return
-            litFraction = next
+        /**
+         * Each sub-token with its own 0..1 progress.
+         *
+         * Per-token progress is what keeps a pause inside a merged word: while the clock sits
+         * between two tokens their progresses are 1 and 0, so the lit edge stops at the boundary
+         * instead of gliding across it.
+         */
+        fun setTokenProgress(next: List<TokenPaint>) {
+            if (next == tokens) return
+            tokens = next
             invalidate()
         }
 
@@ -717,7 +721,20 @@ internal object LyricsPronunciationOverlay {
             label.color = dimColor
             canvas.drawText(labelText, startX, baseline, label)
 
-            val litX = startX + textWidth * litFraction
+            // The lit edge is the pixel width of the sub-tokens that already played, plus the
+            // fraction of the one currently playing — never a fraction of the whole string, so a
+            // gap between two readings genuinely holds the edge still.
+            var cursor = startX
+            var litX = startX
+            tokens.forEach { token ->
+                val width = label.measureText(token.text)
+                litX = when {
+                    token.progress >= 1f -> cursor + width
+                    token.progress > 0f -> cursor + width * token.progress
+                    else -> litX
+                }
+                cursor += width
+            }
             if (litX <= startX) return
             canvas.save()
             canvas.clipRect(0f, 0f, litX, height.toFloat())

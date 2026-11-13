@@ -173,7 +173,7 @@ object AppleMusicHostFactory {
                         "Modern Xposed module was not attached",
                     )
                 runCatching {
-                    HleMetadataRuntime(
+                    val runtime = HleMetadataRuntime(
                         module = activeModule,
                         application = application,
                         classLoader = classLoader,
@@ -184,7 +184,13 @@ object AppleMusicHostFactory {
                         // Live read: the settings page can clear the index at any
                         // time, so the runtime must not snapshot the generation.
                         metadataCacheClearSignal = { config.metadataCacheClearGeneration() },
-                    ).install()
+                    )
+                    // The overlay needs the playback clock; the runtime owns the only handle to
+                    // the active player, so the seam is bound here.
+                    LyricsPronunciationOverlay.bindPlaybackPosition {
+                        LyricsPronunciationOverlay.playbackPositionOf(runtime.activePlayer())
+                    }
+                    runtime.install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)
                     TargetCapabilityInstall.Degraded(

@@ -160,7 +160,7 @@ internal object LyricsPronunciationOverlay {
         wordTexts: List<String>,
         spans: List<NativePronunciationSpan>,
     ): List<MergedPronunciation>? =
-        pairTokens(wordTexts, spans)?.let(LyricTokenMerger::merge)
+        pairTokens(wordTexts, spans)?.let { tokens -> LyricTokenMerger.merge(tokens) }
 
     /** The groups that actually merged more than one token and therefore need an overlay. */
     fun overlayGroups(groups: List<MergedPronunciation>): List<MergedPronunciation> =
@@ -397,8 +397,8 @@ internal object LyricsPronunciationOverlay {
             groupSlots.forEach { slot -> hidePronunciation(state, slot) }
             val containers = groupSlots.map { extentIn(line, it.container) }
             val rowExtent = extentIn(line, groupSlots.first().pronunciation)
-            val placement = placement(containers, rowExtent) ?: return@forEach
-            val overlay = addOverlay(parent, group, groupSlots.first(), placement)
+            val overlayPlacement = placement(containers, rowExtent) ?: return@forEach
+            val overlay = addOverlay(parent, group, groupSlots.first(), overlayPlacement)
             state.overlays += Overlay(group, overlay)
         }
         renderLine(state)

@@ -136,7 +136,7 @@ class LyricsPronunciationOverlayTest {
         val group = mergedGroup(
             texts = listOf("マ", "ジ", "カ"),
             romanizations = listOf("ma", "ji", "ka"),
-            ends = listOf(200, 400, 600),
+            ends = listOf(200L, 400L, 600L),
         )
         assertEquals("majika", group.romanization)
 
@@ -155,7 +155,7 @@ class LyricsPronunciationOverlayTest {
         val group = mergedGroup(
             texts = listOf("マ", "ジ", "カ"),
             romanizations = listOf("ma", "ji", "ka"),
-            ends = listOf(200, 400, 600),
+            ends = listOf(200L, 400L, 600L),
         )
 
         // Between the second and third token: only the first has elapsed.
@@ -179,7 +179,7 @@ class LyricsPronunciationOverlayTest {
         val group = mergedGroup(
             texts = listOf("マ", "ジ"),
             romanizations = listOf("ma", "ji"),
-            ends = listOf(200, 400),
+            ends = listOf(200L, 400L),
         )
 
         assertEquals(
@@ -301,7 +301,7 @@ class LyricsPronunciationOverlayTest {
     fun `the store row is looked up by the line text and its spans drive the overlay`() {
         assertTrue(source.contains("rowForText(currentStore.currentSongId(), lineText(wordTexts))"))
         assertTrue(source.contains("content.pronunciationSpans"))
-        assertTrue(source.contains("LyricTokenMerger::merge"))
+        assertTrue(source.contains("LyricTokenMerger.merge(tokens)"))
     }
 
     @Test

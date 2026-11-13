@@ -473,6 +473,7 @@ internal object LyricsPronunciationOverlay {
             sources += RowSource(
                 text = group.romanization,
                 x = groupPlacement.left.toFloat(),
+                top = groupPlacement.top.toFloat(),
                 parts = group.parts,
             )
         }
@@ -542,6 +543,7 @@ internal object LyricsPronunciationOverlay {
             RowPiece(
                 text = source.text,
                 x = source.x,
+                top = source.top,
                 tokens = source.parts.map { part ->
                     TokenPaint(
                         text = part.romanization.orEmpty(),
@@ -650,13 +652,25 @@ internal object LyricsPronunciationOverlay {
     /** One sub-token as the painter needs it: its text and how much of it already played. */
     data class TokenPaint(val text: String, val progress: Float)
 
-    /** One merged reading placed at a row-local x, with the sub-tokens the painter advances. */
-    data class RowPiece(val text: String, val x: Float, val tokens: List<TokenPaint>)
+    /**
+     * One merged reading placed inside the row.
+     *
+     * [top] is the original pronunciation row's own y inside the container: the overlay spans the
+     * whole line, so it must not assume the reading sits at half the line's height — the lyric body,
+     * the reading and the translation each occupy their own band.
+     */
+    data class RowPiece(
+        val text: String,
+        val x: Float,
+        val top: Float,
+        val tokens: List<TokenPaint>,
+    )
 
     /** One merged reading as the line remembers it, before per-tick progress is applied. */
     private data class RowSource(
         val text: String,
         val x: Float,
+        val top: Float,
         val parts: List<PronunciationToken>,
     )
 
@@ -703,12 +717,14 @@ internal object LyricsPronunciationOverlay {
         override fun onDraw(canvas: Canvas) {
             if (pieces.isEmpty() || width == 0) return
             val metrics = label.fontMetrics
-            val baseline = height / 2f - (metrics.ascent + metrics.descent) / 2f
+            // Each reading keeps its own band: the overlay spans the whole line, so the baseline
+            // comes from the original pronunciation row's top, not from the line's centre.
+            fun baselineOf(piece: RowPiece): Float = piece.top - metrics.ascent
 
             // Dim pass over every reading of the row.
             label.color = dimColor
             label.shader = null
-            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baseline, label) }
+            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baselineOf(piece), label) }
 
             // One edge for the whole row: walk the readings in order and stop at the first one that
             // has not finished. A gap between two tokens leaves the edge sitting on their boundary.
@@ -758,7 +774,7 @@ internal object LyricsPronunciationOverlay {
                 stops,
                 Shader.TileMode.CLAMP,
             )
-            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baseline, label) }
+            pieces.forEach { piece -> canvas.drawText(piece.text, piece.x, baselineOf(piece), label) }
             label.shader = null
         }
     }

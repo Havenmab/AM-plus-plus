@@ -3,7 +3,9 @@ package dev.amenhancer.module.hook
 import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -489,7 +491,9 @@ internal object LyricsPronunciationOverlay {
         placement: Extent,
     ): SungRomanizationView {
         val template = source.pronunciation
-        val brightColor = template.currentTextColor
+        // Apple's lyric row is white; the template's own colour can carry a theme tint or a
+        // parent alpha, which is what made a fully-lit word read yellow instead of white.
+        val brightColor = Color.WHITE
         val overlay = SungRomanizationView(line.context)
         overlay.configure(
             text = group.romanization,
@@ -697,18 +701,26 @@ internal object LyricsPronunciationOverlay {
             canvas.drawText(labelText, startX, baseline, label)
             canvas.restore()
 
+            // Continuous alpha ramp across the edge instead of a few stepped bands: a
+            // LinearGradient from the lit colour to the dim one, clipped to the feather band.
             if (featherPx > 0f && litX < startX + textWidth) {
-                val steps = 4
-                for (step in 0 until steps) {
-                    val from = litX - featherPx + featherPx * step / steps
-                    val to = litX - featherPx + featherPx * (step + 1) / steps
-                    val alpha = ((1f - (step + 1f) / steps) * 255f).toInt().coerceIn(0, 255)
-                    canvas.save()
-                    canvas.clipRect(from, 0f, to, height.toFloat())
-                    label.color = (brightColor and 0x00FFFFFF) or (alpha shl 24)
-                    canvas.drawText(labelText, startX, baseline, label)
-                    canvas.restore()
-                }
+                val from = (litX - featherPx).coerceAtLeast(startX)
+                val shader = LinearGradient(
+                    from,
+                    0f,
+                    litX,
+                    0f,
+                    brightColor,
+                    dimColor,
+                    Shader.TileMode.CLAMP,
+                )
+                canvas.save()
+                canvas.clipRect(from, 0f, litX, height.toFloat())
+                label.color = brightColor
+                label.shader = shader
+                canvas.drawText(labelText, startX, baseline, label)
+                label.shader = null
+                canvas.restore()
             }
         }
     }

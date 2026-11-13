@@ -484,6 +484,10 @@ internal object LyricsPronunciationOverlay {
         val content = lookup.first.content ?: return
         val groups = mergedGroups(wordTexts, content.pronunciationSpans) ?: return
 
+        state.allPronunciations = slots.map { slot ->
+            val extent = extentIn(line, slot.pronunciation)
+            PronRow(slot.pronunciation, extent.left.toFloat(), extent.right.toFloat())
+        }
         val sources = ArrayList<RowSource>(groups.size)
         var index = 0
         var template: TextView? = null
@@ -509,6 +513,7 @@ internal object LyricsPronunciationOverlay {
                 text = group.romanization,
                 x = groupPlacement.left.toFloat(),
                 top = bandTop.toFloat(),
+                width = groupPlacement.width.toFloat(),
                 parts = group.parts,
             )
         }
@@ -555,10 +560,16 @@ internal object LyricsPronunciationOverlay {
     private fun drawRow(row: ViewGroup, canvas: Canvas) {
         val state = lineStates[row] ?: return
         if (state.sources.isEmpty() || state.textSizePx <= 0f) return
-        // Apple's binding re-applies visibility on rebind, so the rows this hook replaces must be
-        // re-hidden right before painting, not only when the line was first built.
-        state.hidden.forEach { view ->
-            if (view.visibility != View.INVISIBLE) view.visibility = View.INVISIBLE
+        // Apple's binding re-applies visibility on rebind, and it may hand back a different view
+        // instance, so "hidden once" keeps coming back. Decide per frame from the spans instead:
+        // a pronunciation row inside a merged reading is hidden, every other one is left alone.
+        state.allPronunciations.forEach { pronunciation ->
+            val merged = state.sources.any { source ->
+                pronunciation.left >= source.x - 1f &&
+                    pronunciation.right <= source.x + source.width + 1f
+            }
+            val target = if (merged) View.INVISIBLE else View.VISIBLE
+            if (pronunciation.view.visibility != target) pronunciation.view.visibility = target
         }
         val position = readPosition() ?: return
         val begin = state.lineBegin
@@ -731,8 +742,12 @@ internal object LyricsPronunciationOverlay {
         val text: String,
         val x: Float,
         val top: Float,
+        val width: Float,
         val parts: List<PronunciationToken>,
     )
+
+    /** One pronunciation row of the line, with its horizontal span inside the container. */
+    private data class PronRow(val view: TextView, val left: Float, val right: Float)
 
     /** Per-line bookkeeping: where to paint and what this hook hid for it. */
     private class LineState {
@@ -743,6 +758,8 @@ internal object LyricsPronunciationOverlay {
         var lineBegin: Long? = null
         var lineEnd: Long? = null
         val hidden = ArrayList<TextView>(4)
+        /** Every pronunciation row of the line; which ones to hide is decided per frame. */
+        var allPronunciations: List<PronRow> = emptyList()
         var lastWidth = -1
         var lastHeight = -1
         var lastLeft = Int.MIN_VALUE

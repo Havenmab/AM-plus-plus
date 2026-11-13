@@ -470,10 +470,17 @@ internal object LyricsPronunciationOverlay {
             val rowExtent = extentIn(line, groupSlots.first().pronunciation)
             val groupPlacement = placement(containers, rowExtent) ?: return@forEach
             if (template == null) template = groupSlots.first().pronunciation
+            // A row Apple left without a pronunciation line reports a zero-height band; fall back to
+            // the body's bottom, which is where that band would have been.
+            val bandTop = if (rowExtent.height > 0) {
+                rowExtent.top
+            } else {
+                containers.first().bottom
+            }
             sources += RowSource(
                 text = group.romanization,
                 x = groupPlacement.left.toFloat(),
-                top = groupPlacement.top.toFloat(),
+                top = bandTop.toFloat(),
                 parts = group.parts,
             )
         }

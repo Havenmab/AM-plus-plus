@@ -299,7 +299,7 @@ class LyricsPronunciationOverlayTest {
 
     @Test
     fun `the store row is looked up by the line text and its spans drive the overlay`() {
-        assertTrue(source.contains("rowForText(currentStore.currentSongId(), lineText(wordTexts))"))
+        assertTrue(source.contains("textRow(currentStore.currentSongId(), lineText(wordTexts))"))
         assertTrue(source.contains("content.pronunciationSpans"))
         assertTrue(source.contains("LyricTokenMerger.merge(tokens)"))
     }
@@ -308,8 +308,11 @@ class LyricsPronunciationOverlayTest {
     fun `the playback position comes from the existing reflection helper`() {
         // The POC must not invent a clock: it reuses PlaybackPositionSource#readPosition.
         assertTrue(source.contains("resolvePlaybackPositionSource(player)?.readPosition()"))
-        assertTrue(source.contains("ForegroundColorSpan"))
-        assertTrue(source.contains("characterRanges(overlay.group, positionMs)"))
+        // The overlay paints by hand now: it clips the bright pass to the lit width and feathers
+        // the boundary, instead of setting a per-character ForegroundColorSpan.
+        assertTrue(source.contains("canvas.clipRect(0f, 0f, litX, height.toFloat())"))
+        assertTrue(source.contains("label.color = brightColor"))
+        assertTrue(source.contains("lineBegin = overlay.lineBegin"))
     }
 
     private fun projectFile(relativePath: String): String = sequenceOf(

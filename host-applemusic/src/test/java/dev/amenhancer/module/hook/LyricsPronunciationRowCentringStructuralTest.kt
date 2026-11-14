@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import android.app.Activity
+import android.text.TextPaint
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -139,6 +140,32 @@ class LyricsPronunciationRowCentringStructuralTest {
         }
         // One assignment (`==` reads are not writes, hence the lookahead).
         assertEquals(1, Regex("""\.gravity\s*=(?!=)""").findAll(source).count())
+    }
+
+    @Test
+    fun `trailing punctuation shifts the reading back under the kana`() {
+        val paint = TextPaint()
+        // キラキラ！ is wider than its reading because of the full-width mark: the reading must move
+        // left by half the mark's width, which is exactly what centring in the roomy container loses.
+        val trailing = LyricsPronunciationRowCentring.coreShift("キラキラ！", paint)
+        assertTrue("a trailing mark must pull the reading left", trailing < 0f)
+        assertEquals(-paint.measureText("！") / 2f, trailing, 0.01f)
+        // A leading mark pushes it the other way.
+        val leading = LyricsPronunciationRowCentring.coreShift("（だめ", paint)
+        assertTrue("a leading mark must push the reading right", leading > 0f)
+        assertEquals(paint.measureText("（") / 2f, leading, 0.01f)
+    }
+
+    @Test
+    fun `plain text and symmetrical marks need no correction`() {
+        val paint = TextPaint()
+        assertEquals(0f, LyricsPronunciationRowCentring.coreShift("キラキラ", paint), 0.01f)
+        // Marks on both sides cancel out.
+        val balanced = LyricsPronunciationRowCentring.coreShift("（だめ）", paint)
+        assertEquals(0f, balanced, 0.01f)
+        // A word that is nothing but marks is not shifted at all.
+        assertEquals(0f, LyricsPronunciationRowCentring.coreShift("！？", paint), 0.01f)
+        assertEquals(0f, LyricsPronunciationRowCentring.coreShift("", paint), 0.01f)
     }
 
     /** Apple's verified shape: vertical, wrap_content wide, fill_parent tall, baselineAligned off. */

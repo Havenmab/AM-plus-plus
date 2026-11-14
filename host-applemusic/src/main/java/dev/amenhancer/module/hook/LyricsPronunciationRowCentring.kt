@@ -93,8 +93,10 @@ internal object LyricsPronunciationRowCentring {
         val group = root as? LinearLayout ?: return
         if (group.gravity != Gravity.CENTER_HORIZONTAL) group.gravity = Gravity.CENTER_HORIZONTAL
         if (observed.put(group, Unit) != null) return
-        // The word's text arrives after inflation and changes again whenever Apple rebinds the row,
-        // so the correction is recomputed on every layout pass instead of only once.
+        // The text can already be there when this runs, can arrive a moment later, and changes again
+        // whenever Apple rebinds the row: try immediately, once more after the first layout, and on
+        // every later layout pass.
+        alignToCoreText(group)
         group.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
             (view as? ViewGroup)?.let(::alignToCoreText)
         }
@@ -106,8 +108,13 @@ internal object LyricsPronunciationRowCentring {
         val word = findChildByEntryName(group, WORD_ID_NAME) ?: wordChild(group) ?: return
         val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: readingChild(group) ?: return
         val text = word.text?.toString().orEmpty()
+        if (text.isEmpty()) return
         val shift = coreShift(text, word.paint)
         if (reading.translationX != shift) reading.translationX = shift
+        android.util.Log.i(
+            LOG_TAG,
+            "align word='$text' reading='${reading.text}' shift=$shift applied=${reading.translationX}",
+        )
     }
 
     /**

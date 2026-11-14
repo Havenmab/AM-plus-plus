@@ -125,15 +125,15 @@ class LyricsPronunciationRowCentringStructuralTest {
 
     @Test
     fun `only the horizontal gravity is written`() {
-        // No width, padding, text-size, weight or child rewrite anywhere in the hook.
+        // No width, padding, text-size, weight or child rewrite anywhere in the hook. Walking the
+        // container's children is read-only (the correction has to find the word and the reading),
+        // so childCount/getChildAt are allowed; every write is still forbidden.
         listOf(
             "setPadding",
             "setTextSize",
             "layoutParams",
             "setMinimumWidth",
             "setMinimumHeight",
-            "childCount",
-            "getChildAt",
             "setLayoutParams",
         ).forEach { token ->
             assertFalse("the hook must not write $token", source.contains(token))

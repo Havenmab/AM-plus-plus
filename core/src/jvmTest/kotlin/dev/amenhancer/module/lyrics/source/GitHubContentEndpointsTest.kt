@@ -68,6 +68,52 @@ class GitHubContentEndpointsTest {
         assertTrue(transport.requested.last().startsWith("https://raw.githubusercontent.com/"))
     }
 
+    @Test
+    fun `a self-hosted root is tried before every public mirror`() {
+        val transport = ScriptedTransport(failFirst = 0)
+
+        val amll = AmllTtmlClient(transport, customRoot = "https://lyrics.example.com/lyrics/")
+        // Trailing slash in the setting, no double slash in the URL.
+        assertEquals("https://lyrics.example.com/lyrics/amll/am-lyrics/42.ttml", amll.urls(42L).first())
+        assertEquals(5, amll.urls(42L).size)
+
+        val amLyrics = AmLyricsClient(transport, customRoot = "https://lyrics.example.com/lyrics")
+        assertEquals(
+            "https://lyrics.example.com/lyrics/amlyrics/index.json",
+            amLyrics.urls("index.json").first(),
+        )
+    }
+
+    @Test
+    fun `a blank custom root keeps the public mirrors unchanged`() {
+        assertEquals(4, AmllTtmlClient(ScriptedTransport(0), customRoot = "  ").urls(42L).size)
+        assertEquals(4, AmllTtmlClient(ScriptedTransport(0)).urls(42L).size)
+    }
+
+    @Test
+    fun `the chain budget stops before the next source is attempted`() {
+        var attempts = 0
+        val slow = AutoLyricsSource("slow") {
+            attempts += 1
+            Thread.sleep(120)
+            null
+        }
+        val second = AutoLyricsSource("second") {
+            attempts += 1
+            "<tt/>"
+        }
+        val resolver = AutoLyricsSourceResolver(listOf(slow, second))
+
+        val started = System.nanoTime()
+        val result = resolver.fetch(42L, budgetMs = 50)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+        // The budget is spent inside the slow source, so the second one is never asked.
+        assertNull(result)
+        assertEquals(1, attempts)
+        assertTrue("walk bounded: ${elapsedMs}ms", elapsedMs < 1_000)
+    }
+
     /** Answers `null` for the first [failFirst] requests, then [body]. */
     private class ScriptedTransport(
         private val failFirst: Int,

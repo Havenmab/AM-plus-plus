@@ -151,6 +151,9 @@ object ModuleSettingsSchema {
                 default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
             ),
             automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
+            customLyricsSourceBaseUrl = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(
+                values.string(KEY_CUSTOM_LYRICS_SOURCE_BASE_URL),
+            ),
             llmLyricsEnabled = values.boolean(KEY_LLM_LYRICS_ENABLED, default = false),
             llmLyricsBaseUrl = ModuleSettings.normalizeLlmLyricsBaseUrl(
                 values.string(KEY_LLM_LYRICS_BASE_URL),
@@ -284,6 +287,8 @@ object ModuleSettingsSchema {
                 settings.metadataCacheClearGeneration.coerceAtLeast(0L),
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
+            KEY_CUSTOM_LYRICS_SOURCE_BASE_URL to
+                ModuleSettings.normalizeCustomLyricsSourceBaseUrl(settings.customLyricsSourceBaseUrl),
             KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
             KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED to settings.onlineLyricsSourceNeteaseEnabled,
             KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED to settings.onlineLyricsSourceQqEnabled,
@@ -548,6 +553,7 @@ object ModuleSettingsSchema {
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
+        KEY_CUSTOM_LYRICS_SOURCE_BASE_URL,
         KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
         KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
         KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
@@ -628,6 +634,7 @@ object ModuleSettingsSchema {
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"
+    private const val KEY_CUSTOM_LYRICS_SOURCE_BASE_URL = "custom_lyrics_source_base_url"
     private const val KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED =
         "online_lyrics_supplement_enabled"
     private const val KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED =

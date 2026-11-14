@@ -130,6 +130,7 @@ class OrdinarySettingsWritePolicyTest {
                 "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "custom_lyrics_source_base_url" to "",
                 "online_lyrics_supplement_enabled" to false,
                 "online_lyrics_source_netease_enabled" to true,
                 "online_lyrics_source_qq_enabled" to true,

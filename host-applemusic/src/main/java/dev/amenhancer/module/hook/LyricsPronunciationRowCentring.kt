@@ -40,6 +40,9 @@ import java.util.WeakHashMap
  * is a no-op otherwise, so a module that is off leaves Apple's layout untouched.
  */
 internal object LyricsPronunciationRowCentring {
+    /** Log tag for the centring corrections; one line per layout pass per word. */
+    const val LOG_TAG = "AMPP-Centring"
+
     /** The verified per-word container Apple adds both lyric children to. */
     const val LAYOUT_NAME = "lyrics_pronunciation_vertical_group"
 
@@ -100,10 +103,36 @@ internal object LyricsPronunciationRowCentring {
 
     /** Shifts the reading so it sits under the word's core text rather than its marks. */
     fun alignToCoreText(group: ViewGroup) {
-        val word = findChildByEntryName(group, WORD_ID_NAME) ?: return
-        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: return
-        val shift = coreShift(word.text?.toString().orEmpty(), word.paint)
+        val word = findChildByEntryName(group, WORD_ID_NAME) ?: firstTextChild(group)
+        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: secondTextChild(group)
+        if (word == null || reading == null) {
+            android.util.Log.i(LOG_TAG, "centring: no word/reading under ${group.javaClass.simpleName}")
+            return
+        }
+        val text = word.text?.toString().orEmpty()
+        val shift = coreShift(text, word.paint)
         if (reading.translationX != shift) reading.translationX = shift
+        android.util.Log.i(LOG_TAG, "centring: text='$text' shift=$shift applied=${reading.translationX}")
+    }
+
+    /** First descendant that is a TextView, used when Apple's ids do not resolve. */
+    fun firstTextChild(group: ViewGroup): TextView? = textChildren(group).getOrNull(0)
+
+    /** Second descendant that is a TextView: Apple adds the reading after the word. */
+    fun secondTextChild(group: ViewGroup): TextView? = textChildren(group).getOrNull(1)
+
+    private fun textChildren(group: ViewGroup): List<TextView> {
+        val found = ArrayList<TextView>(2)
+        val pending = ArrayDeque<View>()
+        pending.addLast(group)
+        while (pending.isNotEmpty() && found.size < 2) {
+            val view = pending.removeFirst()
+            if (view is TextView) found += view
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) pending.addLast(view.getChildAt(index))
+            }
+        }
+        return found
     }
 
     /**

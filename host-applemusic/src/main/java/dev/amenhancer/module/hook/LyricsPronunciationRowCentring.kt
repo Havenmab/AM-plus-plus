@@ -117,6 +117,8 @@ internal object LyricsPronunciationRowCentring {
      */
     fun alignToCoreText(group: ViewGroup) {
         val reading = readingChild(group) ?: return
+        // A container can also carry a hidden per-kana reading; only the shown one is positioned.
+        if (reading.visibility != View.VISIBLE) return
         val readingText = reading.text?.toString().orEmpty()
         if (readingText.isEmpty()) return
         val parent = group.parent as? ViewGroup
@@ -143,8 +145,15 @@ internal object LyricsPronunciationRowCentring {
         for (index in start until siblings.size) {
             val sibling = siblings[index] as? ViewGroup ?: break
             if (index > start) {
+                // Only a reading Apple actually shows starts the next word. The containers of the
+                // remaining kana keep a hidden per-kana reading of their own, and treating those as
+                // word breaks cut every run down to its first container — which is why the measured
+                // shift stayed at half a pixel.
                 val next = readingChild(sibling)
-                if (next != null && !next.text.isNullOrEmpty()) break
+                val shown = next != null &&
+                    next.visibility == View.VISIBLE &&
+                    !next.text.isNullOrEmpty()
+                if (shown) break
             }
             val kana = wordChild(sibling)?.text?.toString().orEmpty()
             if (kana.isNotEmpty() && kana.any { it !in PUNCTUATION }) run += sibling
@@ -166,12 +175,18 @@ internal object LyricsPronunciationRowCentring {
      * position then measured the reading against itself, where there is no punctuation to find. The
      * word is the child whose text is made of Japanese characters.
      */
-    fun wordChild(group: ViewGroup): TextView? =
-        textChildren(group).firstOrNull { view -> view.text?.any(::isJapanese) == true }
+    fun wordChild(group: ViewGroup): TextView? {
+        val texts = textChildren(group)
+        return texts.firstOrNull { it.visibility == View.VISIBLE && it.text?.any(::isJapanese) == true }
+            ?: texts.firstOrNull { it.text?.any(::isJapanese) == true }
+    }
 
     /** The child holding the romanization: the one whose text is Latin letters. */
-    fun readingChild(group: ViewGroup): TextView? =
-        textChildren(group).firstOrNull { view -> view.text?.any(::isLatin) == true }
+    fun readingChild(group: ViewGroup): TextView? {
+        val texts = textChildren(group)
+        return texts.firstOrNull { it.visibility == View.VISIBLE && it.text?.any(::isLatin) == true }
+            ?: texts.firstOrNull { it.text?.any(::isLatin) == true }
+    }
 
     /** Japanese script, which a reading never uses. */
     fun isJapanese(character: Char): Boolean = when (character) {

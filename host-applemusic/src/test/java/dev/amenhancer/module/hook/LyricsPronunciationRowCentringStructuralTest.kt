@@ -143,6 +143,37 @@ class LyricsPronunciationRowCentringStructuralTest {
     }
 
     @Test
+    fun `a multi-character word shifts its reading by half the trailing mark`() {
+        // スアップ！ is five full-width characters; suappu is narrow Latin, so the container is sized
+        // by the word and centring alone would leave the reading half a mark to the right.
+        val (container, word, reading) = wordAndReading("スアップ！", "suappu")
+
+        LyricsPronunciationRowCentring.alignToCoreText(container)
+
+        val expected = -word.paint.measureText("！") / 2f
+        assertEquals("trailing mark must pull the reading left", expected, reading.translationX, 0.5f)
+    }
+
+    @Test
+    fun `a single character word shifts its reading by half the trailing mark too`() {
+        val (container, word, reading) = wordAndReading("の？", "no")
+
+        LyricsPronunciationRowCentring.alignToCoreText(container)
+
+        val expected = -word.paint.measureText("？") / 2f
+        assertEquals(expected, reading.translationX, 0.5f)
+    }
+
+    @Test
+    fun `a word without marks is not shifted`() {
+        val (container, _, reading) = wordAndReading("スアップ", "suappu")
+
+        LyricsPronunciationRowCentring.alignToCoreText(container)
+
+        assertEquals(0f, reading.translationX, 0.5f)
+    }
+
+    @Test
     fun `trailing punctuation shifts the reading back under the kana`() {
         val paint = TextPaint()
         // キラキラ！ is wider than its reading because of the full-width mark: the reading must move
@@ -166,6 +197,49 @@ class LyricsPronunciationRowCentringStructuralTest {
         // A word that is nothing but marks is not shifted at all.
         assertEquals(0f, LyricsPronunciationRowCentring.coreShift("！？", paint), 0.01f)
         assertEquals(0f, LyricsPronunciationRowCentring.coreShift("", paint), 0.01f)
+    }
+
+    /** A laid-out word container: the shape Apple inflates, with the given texts already in place. */
+    private fun wordAndReading(
+        wordText: String,
+        readingText: String,
+    ): Triple<LinearLayout, android.widget.TextView, android.widget.TextView> {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val container = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            isBaselineAligned = false
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        val word = android.widget.TextView(activity).apply {
+            text = wordText
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 40f)
+        }
+        val reading = android.widget.TextView(activity).apply {
+            text = readingText
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 24f)
+        }
+        container.addView(
+            word,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        container.addView(
+            reading,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        val width = 600
+        val height = 120
+        container.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
+        container.layout(0, 0, width, height)
+        return Triple(container, word, reading)
     }
 
     /** Apple's verified shape: vertical, wrap_content wide, fill_parent tall, baselineAligned off. */

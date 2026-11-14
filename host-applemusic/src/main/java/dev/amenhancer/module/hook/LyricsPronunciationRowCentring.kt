@@ -9,6 +9,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -59,10 +61,17 @@ internal object LyricsPronunciationRowCentring {
      */
     const val PUNCTUATION = "！？!?。、，,．.：:；;…‥・「」『』（）()【】〔〕〜～〝〟＂＇"
 
-    /** Tag used to install the layout listener once per container. */
-    private const val LISTENER_TAG = "amenhancer.pronunciation.centring"
-
     private val ids = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Containers this hook already listens to.
+     *
+     * A view tag cannot be used for this: DataBinding stores its own binding object in the view's
+     * tag and rejects anything else with "The tag for lyrics_pronunciation_vertical_group is
+     * invalid", which crashes the lyrics screen. A weak set keys the bookkeeping off the view
+     * itself and disappears together with it.
+     */
+    private val observed = Collections.synchronizedMap(WeakHashMap<View, Unit>())
 
     fun install() {
         LayoutInflationRegistry.register(LAYOUT_NAME) { view ->
@@ -87,8 +96,7 @@ internal object LyricsPronunciationRowCentring {
     fun applyToInflatedLayout(root: View) {
         val group = root as? LinearLayout ?: return
         if (group.gravity != Gravity.CENTER_HORIZONTAL) group.gravity = Gravity.CENTER_HORIZONTAL
-        if (group.tag == LISTENER_TAG) return
-        group.tag = LISTENER_TAG
+        if (observed.put(group, Unit) != null) return
         // The word's text arrives after inflation and changes again whenever Apple rebinds the row,
         // so the correction is recomputed on every layout pass instead of only once.
         group.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->

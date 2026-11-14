@@ -1,6 +1,5 @@
 package dev.amenhancer.module.hook
 
-import android.content.res.Resources
 import android.text.TextPaint
 import android.view.Gravity
 import android.view.View
@@ -11,7 +10,6 @@ import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
 import java.util.Collections
 import java.util.WeakHashMap
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Centres the per-word romanization row inside its own container, ignoring punctuation.
@@ -49,9 +47,6 @@ internal object LyricsPronunciationRowCentring {
     const val WORD_ID_NAME = "song_lyrics_word"
     const val PRONUNCIATION_ID_NAME = "pronunciation_word"
 
-    /** Apple's application package, needed to resolve the ids above by name. */
-    const val PACKAGE_NAME = "com.apple.android.music"
-
     /**
      * Marks that belong to the lyric text but never to a reading.
      *
@@ -60,8 +55,6 @@ internal object LyricsPronunciationRowCentring {
      * long-vowel mark ー is deliberately absent: it lengthens a reading.
      */
     const val PUNCTUATION = "！？!?。、，,．.：:；;…‥・「」『』（）()【】〔〕〜～〝〟＂＇"
-
-    private val ids = ConcurrentHashMap<String, Int>()
 
     /**
      * Containers this hook already listens to.
@@ -107,11 +100,35 @@ internal object LyricsPronunciationRowCentring {
 
     /** Shifts the reading so it sits under the word's core text rather than its marks. */
     fun alignToCoreText(group: ViewGroup) {
-        val resources = group.resources
-        val word = group.findViewById<TextView>(idOf(resources, WORD_ID_NAME)) ?: return
-        val reading = group.findViewById<TextView>(idOf(resources, PRONUNCIATION_ID_NAME)) ?: return
+        val word = findChildByEntryName(group, WORD_ID_NAME) ?: return
+        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: return
         val shift = coreShift(word.text?.toString().orEmpty(), word.paint)
         if (reading.translationX != shift) reading.translationX = shift
+    }
+
+    /**
+     * Finds one of Apple's children by its resource entry name.
+     *
+     * `resources.getIdentifier(name, "id", package)` is not usable here: it resolves against the
+     * resource package, which need not equal the application package, and when it misses it returns
+     * 0 silently — which is exactly how the first version of this correction ended up applied to
+     * nothing. Walking the (tiny) container tree and comparing entry names works regardless of how
+     * the resources are packaged.
+     */
+    fun findChildByEntryName(group: ViewGroup, entryName: String): TextView? {
+        val pending = ArrayDeque<View>()
+        pending.addLast(group)
+        while (pending.isNotEmpty()) {
+            val view = pending.removeFirst()
+            if (view is TextView && view.id != View.NO_ID) {
+                val name = runCatching { view.resources.getResourceEntryName(view.id) }.getOrNull()
+                if (name == entryName) return view
+            }
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) pending.addLast(view.getChildAt(index))
+            }
+        }
+        return null
     }
 
     /**
@@ -132,9 +149,5 @@ internal object LyricsPronunciationRowCentring {
         return (leadingWidth - trailingWidth) / 2f
     }
 
-    /** Resolves one of Apple's ids by name; ids are process-wide, so one lookup per name. */
-    private fun idOf(resources: Resources, name: String): Int =
-        ids.getOrPut(name) {
-            runCatching { resources.getIdentifier(name, "id", PACKAGE_NAME) }.getOrDefault(0)
-        }
+
 }

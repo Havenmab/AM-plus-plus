@@ -103,29 +103,42 @@ internal object LyricsPronunciationRowCentring {
 
     /** Shifts the reading so it sits under the word's core text rather than its marks. */
     fun alignToCoreText(group: ViewGroup) {
-        val word = findChildByEntryName(group, WORD_ID_NAME) ?: firstTextChild(group)
-        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: secondTextChild(group)
-        if (word == null || reading == null) {
-            android.util.Log.i(LOG_TAG, "centring: no word/reading under ${group.javaClass.simpleName}")
-            return
-        }
+        val word = findChildByEntryName(group, WORD_ID_NAME) ?: wordChild(group) ?: return
+        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: readingChild(group) ?: return
         val text = word.text?.toString().orEmpty()
         val shift = coreShift(text, word.paint)
         if (reading.translationX != shift) reading.translationX = shift
-        android.util.Log.i(LOG_TAG, "centring: text='$text' shift=$shift applied=${reading.translationX}")
     }
 
-    /** First descendant that is a TextView, used when Apple's ids do not resolve. */
-    fun firstTextChild(group: ViewGroup): TextView? = textChildren(group).getOrNull(0)
+    /**
+     * The child holding the kana/kanji.
+     *
+     * Child order is not reliable: a container can carry more than two text views, and picking by
+     * position then measured the reading against itself, where there is no punctuation to find. The
+     * word is the child whose text is made of Japanese characters.
+     */
+    fun wordChild(group: ViewGroup): TextView? =
+        textChildren(group).firstOrNull { view -> view.text?.any(::isJapanese) == true }
 
-    /** Second descendant that is a TextView: Apple adds the reading after the word. */
-    fun secondTextChild(group: ViewGroup): TextView? = textChildren(group).getOrNull(1)
+    /** The child holding the romanization: the one whose text is Latin letters. */
+    fun readingChild(group: ViewGroup): TextView? =
+        textChildren(group).firstOrNull { view -> view.text?.any(::isLatin) == true }
 
+    /** Japanese script, which a reading never uses. */
+    fun isJapanese(character: Char): Boolean = when (character) {
+        in '぀'..'ヿ', in '㐀'..'䶿', in '一'..'鿿', '々', '〆' -> true
+        else -> false
+    }
+
+    /** Latin letters, which the word never uses. */
+    fun isLatin(character: Char): Boolean = character in 'a'..'z' || character in 'A'..'Z'
+
+    /** Every TextView inside the container, in tree order. */
     private fun textChildren(group: ViewGroup): List<TextView> {
         val found = ArrayList<TextView>(2)
         val pending = ArrayDeque<View>()
         pending.addLast(group)
-        while (pending.isNotEmpty() && found.size < 2) {
+        while (pending.isNotEmpty()) {
             val view = pending.removeFirst()
             if (view is TextView) found += view
             if (view is ViewGroup) {

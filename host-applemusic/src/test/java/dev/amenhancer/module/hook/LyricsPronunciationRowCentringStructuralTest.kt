@@ -175,7 +175,8 @@ class LyricsPronunciationRowCentringStructuralTest {
 
     @Test
     fun `a reading with no kana run is left alone`() {
-        val row = karaokeRow(listOf("！" to "!"))
+        // A container whose kana is pure punctuation has no run to centre on; the reading stays put.
+        val row = karaokeRow(listOf("！" to "suappu"))
         val only = row.getChildAt(0) as ViewGroup
 
         LyricsPronunciationRowCentring.alignToCoreText(only)

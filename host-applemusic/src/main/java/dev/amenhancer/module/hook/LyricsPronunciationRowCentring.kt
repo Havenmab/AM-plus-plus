@@ -121,59 +121,84 @@ internal object LyricsPronunciationRowCentring {
         if (reading.visibility != View.VISIBLE) return
         val readingText = reading.text?.toString().orEmpty()
         if (readingText.isEmpty()) return
-        val parent = group.parent as? ViewGroup
-        val shift = if (parent != null) readingShift(parent, group, reading) else 0f
+        val shift = findRowContainer(group)?.let { row -> readingShift(row, group, reading) } ?: 0f
         if (reading.translationX != shift) reading.translationX = shift
         android.util.Log.i(
             LOG_TAG,
             "align reading='$readingText' group=${group.left},${group.width}" +
-                " reading=${reading.left},${reading.width}" +
-                " parent=${parent?.javaClass?.simpleName}/${parent?.childCount}" +
-                " shift=$shift",
+                " reading=${reading.left},${reading.width} shift=$shift",
         )
     }
 
+    /** Apple's verified line container; every karaoke word container lives inside one. */
+    const val LINE_CONTAINER_ID_NAME = "karaoke_lyrics_line_container"
+
     /**
-     * How far [reading] has to move so its centre lands on the centre of the kana run that starts at
-     * [group], in [parent]'s coordinates.
+     * How far [reading] must move so its centre lands on the centre of the word it belongs to.
      *
-     * The run ends at the next sibling that carries a reading of its own (the next word) or at the
-     * end of the row, and containers whose word is nothing but punctuation are skipped.
+     * The word is gathered from the row itself rather than from the container's parent: the
+     * containers are not necessarily siblings (the parent walk kept returning a single container,
+     * which is why every shift stayed at zero), while the row always holds them all in order. A
+     * word runs from this container to the next container that displays a reading of its own, and
+     * containers whose kana is pure punctuation are not part of it.
      */
-    fun readingShift(parent: ViewGroup, group: ViewGroup, reading: TextView): Float {
-        val siblings = (0 until parent.childCount).map { parent.getChildAt(it) }
-        val start = siblings.indexOf(group)
+    fun readingShift(row: ViewGroup, group: ViewGroup, reading: TextView): Float {
+        val containers = wordContainers(row)
+        val start = containers.indexOf(group)
         if (start < 0) return 0f
-        val run = ArrayList<View>(4)
-        for (index in start until siblings.size) {
-            val sibling = siblings[index] as? ViewGroup ?: break
-            if (index > start) {
-                // Only a reading Apple actually shows starts the next word. The containers of the
-                // remaining kana keep a hidden per-kana reading of their own, and treating those as
-                // word breaks cut every run down to its first container — which is why the measured
-                // shift stayed at half a pixel.
-                val next = readingChild(sibling)
-                val shown = next != null &&
-                    next.visibility == View.VISIBLE &&
-                    !next.text.isNullOrEmpty()
-                if (shown) break
+        var end = containers.size
+        for (index in start + 1 until containers.size) {
+            val next = readingChild(containers[index])
+            if (next != null && next.visibility == View.VISIBLE && !next.text.isNullOrEmpty()) {
+                end = index
+                break
             }
-            val kana = wordChild(sibling)?.text?.toString().orEmpty()
-            if (kana.isNotEmpty() && kana.any { it !in PUNCTUATION }) run += sibling
+        }
+        val run = containers.subList(start, end).filter { container ->
+            val kana = wordChild(container)?.text?.toString().orEmpty()
+            kana.isNotEmpty() && kana.any { it !in PUNCTUATION }
         }
         if (run.isEmpty()) return 0f
         val runLeft = run.first().left.toFloat()
         val runRight = run.last().left.toFloat() + run.last().width
-        android.util.Log.i(
-            LOG_TAG,
-            "run start=$start size=${run.size} siblings=${siblings.size}" +
-                " span=$runLeft..$runRight",
-        )
         val runCentre = (runLeft + runRight) / 2f
-        // The reading sits inside the first container; its centre in parent coordinates is the
-        // container's left plus its own centre, because the reading's parent is that container.
         val readingCentre = run.first().left + reading.left + reading.width / 2f
         return runCentre - readingCentre
+    }
+
+    /** The line container [group] belongs to, or null when the row cannot be resolved. */
+    fun findRowContainer(group: ViewGroup): ViewGroup? {
+        var current: View? = group
+        while (current != null) {
+            if (current is ViewGroup && hasEntryName(current, LINE_CONTAINER_ID_NAME)) return current
+            current = current.parent as? View
+        }
+        return null
+    }
+
+    /** Every karaoke word container inside [row], in tree order. */
+    fun wordContainers(row: ViewGroup): List<ViewGroup> {
+        val found = ArrayList<ViewGroup>(8)
+        val pending = ArrayDeque<View>()
+        pending.addLast(row)
+        while (pending.isNotEmpty()) {
+            val view = pending.removeFirst()
+            if (view !== row && view is ViewGroup && hasEntryName(view, LAYOUT_NAME)) found += view
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) pending.addLast(view.getChildAt(index))
+            }
+        }
+        if (found.isNotEmpty()) return found
+        // Fallback for a row whose ids carry no readable entry name (a differently packaged build, or
+        // a test double): its own children are then the karaoke containers.
+        return (0 until row.childCount).mapNotNull { row.getChildAt(it) as? ViewGroup }
+    }
+
+    /** Whether [view] carries the given resource entry name; ids are resolved by name, not package. */
+    private fun hasEntryName(view: View, name: String): Boolean {
+        if (view.id == View.NO_ID) return false
+        val entry = runCatching { view.resources.getResourceEntryName(view.id) }.getOrNull()
+        return entry == name
     }
 
     /**

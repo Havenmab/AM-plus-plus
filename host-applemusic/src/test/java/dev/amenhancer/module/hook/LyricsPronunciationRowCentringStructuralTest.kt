@@ -152,7 +152,8 @@ class LyricsPronunciationRowCentringStructuralTest {
         val first = row.getChildAt(0) as ViewGroup
         val reading = LyricsPronunciationRowCentring.readingChild(first)!!
 
-        LyricsPronunciationRowCentring.alignToCoreText(first)
+        val shift = LyricsPronunciationRowCentring.readingShift(row, first, reading)
+        reading.translationX = shift
 
         val runCentre = (row.getChildAt(0).left + row.getChildAt(3).left + row.getChildAt(3).width) / 2f
         val readingCentre = first.left + reading.left + reading.width / 2f
@@ -164,13 +165,20 @@ class LyricsPronunciationRowCentringStructuralTest {
         val withMark = karaokeRow(listOf("ス" to "suappu", "ア" to "", "！" to ""))
         val withoutMark = karaokeRow(listOf("ス" to "suappu", "ア" to ""))
 
-        LyricsPronunciationRowCentring.alignToCoreText(withMark.getChildAt(0) as ViewGroup)
-        LyricsPronunciationRowCentring.alignToCoreText(withoutMark.getChildAt(0) as ViewGroup)
-
         val a = LyricsPronunciationRowCentring.readingChild(withMark.getChildAt(0) as ViewGroup)!!
         val b = LyricsPronunciationRowCentring.readingChild(withoutMark.getChildAt(0) as ViewGroup)!!
+        val withMarkShift = LyricsPronunciationRowCentring.readingShift(
+            withMark,
+            withMark.getChildAt(0) as ViewGroup,
+            a,
+        )
+        val withoutMarkShift = LyricsPronunciationRowCentring.readingShift(
+            withoutMark,
+            withoutMark.getChildAt(0) as ViewGroup,
+            b,
+        )
         // The mark's container must not pull the reading towards it.
-        assertEquals(b.translationX, a.translationX, 0.5f)
+        assertEquals(withoutMarkShift, withMarkShift, 0.5f)
     }
 
     @Test
@@ -178,11 +186,11 @@ class LyricsPronunciationRowCentringStructuralTest {
         // A container whose kana is pure punctuation has no run to centre on; the reading stays put.
         val row = karaokeRow(listOf("！" to "suappu"))
         val only = row.getChildAt(0) as ViewGroup
-
-        LyricsPronunciationRowCentring.alignToCoreText(only)
-
         val reading = LyricsPronunciationRowCentring.readingChild(only)!!
-        assertEquals(0f, reading.translationX, 0.5f)
+
+        val shift = LyricsPronunciationRowCentring.readingShift(row, only, reading)
+
+        assertEquals(0f, shift, 0.5f)
     }
 
     @Test

@@ -27,6 +27,8 @@ import org.robolectric.annotation.Config
  *
  *  - a mark that shares the word's container pushes the reading by half the mark, behind the word
  *    as well as in front of it, and marks on both sides cancel out;
+ *  - a mark is regularly followed by the blank Apple appends to the word, and the correction still
+ *    lands on the kana: `up! `+`up` and `る？ `+`ru`;
  *  - a whole-word reading that sits in a one-kana container is centred on the word's kana run, and
  *    a mark container after the word changes nothing;
  *  - a per-kana reading never leaves its own container, which is what keeps `の?` and `ミラー`
@@ -150,6 +152,56 @@ class LyricsPronunciationRowCentringStructuralTest {
 
         assertEquals(0f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
         assertNull(LyricsPronunciationRowCentring.coreSpan(row, group, reading))
+    }
+
+    @Test
+    fun `a mark followed by the word's own blank still lands on the kana`() {
+        // Apple appends the whitespace that follows a word to the word's own text, so `up!` reaches
+        // the hook as `up! `: the mark is not the last character, and a trim that only looks at the
+        // last character sees no mark at all and leaves the reading (mark + blank) / 2 to the right —
+        // which is exactly the `up` of the `Wake up!` line on the device.
+        val row = karaokeRow(
+            chunkedWord(listOf("up" to 60, "!" to 20, " " to 10), "up", readingWidth = 40),
+        )
+        val group = row.getChildAt(0) as LinearLayout
+        val reading = LyricsPronunciationRowCentring.readingChild(group)!!
+
+        // The kana `up` is x=0..60 and the reading (x=25..65) sits at the container's centre.
+        assertEquals(-15f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
+    }
+
+    @Test
+    fun `a mark at the very end of the word needs only half a mark`() {
+        // The same word without the blank: half of the mark, not all of it.
+        val row = karaokeRow(chunkedWord(listOf("up" to 60, "!" to 20), "up", readingWidth = 40))
+        val group = row.getChildAt(0) as LinearLayout
+        val reading = LyricsPronunciationRowCentring.readingChild(group)!!
+
+        assertEquals(-10f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
+    }
+
+    @Test
+    fun `a lone blank at the end of the word is not part of its core`() {
+        // A blank the word carries but the reading does not shifts it by half a blank; on the device
+        // the reading carries the same blank, so the two halves cancel and mark-less rows stay put.
+        val row = karaokeRow(chunkedWord(listOf("up" to 60, " " to 10), "up", readingWidth = 40))
+        val group = row.getChildAt(0) as LinearLayout
+        val reading = LyricsPronunciationRowCentring.readingChild(group)!!
+
+        assertEquals(-5f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
+    }
+
+    @Test
+    fun `the reading of a kana plus a mark and a blank sits on the kana`() {
+        // The `聴こえる? 魔法の…` line on the device: `る？ ` with `ru`. The mark is full width, so
+        // leaving it in puts the reading 37px right of る at this size.
+        val row = karaokeRow(
+            chunkedWord(listOf("る" to 100, "?" to 50, " " to 25), "ru", readingWidth = 60),
+        )
+        val group = row.getChildAt(0) as LinearLayout
+        val reading = LyricsPronunciationRowCentring.readingChild(group)!!
+
+        assertEquals(-37f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
     }
 
     // ---- a whole-word reading over a split kana run -----------------------------------------------
@@ -313,6 +365,18 @@ class LyricsPronunciationRowCentringStructuralTest {
     }
 
     @Test
+    fun `the correction is re-run when the reading gets its text, not only when the container lays out`() {
+        // Apple sets the romanization through a text future. A reading narrower than its word does
+        // not move the container when that text lands, so a correction that only listened to the
+        // container's layout would never see the text and would leave the reading half a mark right.
+        assertTrue(source.contains("watchReading(group, reading)"))
+        assertTrue(source.contains("reading.addTextChangedListener("))
+        // A lambda follows the call directly, so there is no parenthesis to match here.
+        assertTrue(source.contains("reading.addOnLayoutChangeListener {"))
+        assertTrue(source.contains("watchedReadings.put(reading, Unit) != null"))
+    }
+
+    @Test
     fun `a hidden reading is not moved`() {
         // Apple also inflates a per-kana reading it then hides; only the shown one is positioned.
         val row = karaokeRow(word(listOf("の", "?"), "no"))
@@ -353,6 +417,19 @@ class LyricsPronunciationRowCentringStructuralTest {
         assertTrue(source.contains("ROW_ID_NAMES.any { hasEntryName(parent, it) }"))
     }
 
+    @Test
+    fun `containers are found by the id Apple puts on them`() {
+        // The layout is named `lyrics_pronunciation_vertical_group`, but the container view carries
+        // the id `lyrics_pronunciation_vertical_container`; looking the container up by the layout
+        // name can never match on the device.
+        assertEquals(
+            "lyrics_pronunciation_vertical_container",
+            LyricsPronunciationRowCentring.CONTAINER_ID_NAME,
+        )
+        assertTrue(source.contains("isContainer(view)"))
+        assertTrue(source.contains("hasEntryName(view, CONTAINER_ID_NAME)"))
+    }
+
     // ---- fixtures ---------------------------------------------------------------------------------
 
     /** One laid-out word: its glyphs, its reading, and the widths the row measures them at. */
@@ -361,13 +438,20 @@ class LyricsPronunciationRowCentringStructuralTest {
         reading: String?,
         glyphWidth: Int = 100,
         readingWidth: Int = 80,
-    ): Word = Word(kana, reading, glyphWidth, readingWidth)
+    ): Word = Word(kana, reading, readingWidth, kana.map { glyphWidth })
+
+    /** A word whose glyphs have widths of their own, so a mark and the blank after it are chunks. */
+    private fun chunkedWord(
+        chunks: List<Pair<String, Int>>,
+        reading: String?,
+        readingWidth: Int = 80,
+    ): Word = Word(chunks.map { it.first }, reading, readingWidth, chunks.map { it.second })
 
     private class Word(
         val kana: List<String>,
         val reading: String?,
-        val glyphWidth: Int,
         val readingWidth: Int,
+        val widths: List<Int>,
     )
 
     /**
@@ -395,10 +479,10 @@ class LyricsPronunciationRowCentringStructuralTest {
             clipToPadding = false
         }
         val glyphs = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        word.kana.forEach { text ->
+        word.kana.forEachIndexed { index, text ->
             glyphs.addView(
                 textView(activity, text),
-                LinearLayout.LayoutParams(word.glyphWidth, 40),
+                LinearLayout.LayoutParams(word.widths[index], 40),
             )
         }
         group.addView(

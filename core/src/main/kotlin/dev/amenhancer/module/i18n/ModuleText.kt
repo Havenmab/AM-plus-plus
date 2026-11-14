@@ -415,8 +415,8 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "自建 AMLL / AM-Lyrics 镜像地址，优先于公共源；留空则只使用公共源。更改后需重开 Apple Music 生效",
     ),
     CUSTOM_LYRICS_SOURCE_BASE_URL_HINT(
-        "https://havenmab.cc.cd:8443/lyrics",
-        "https://havenmab.cc.cd:8443/lyrics",
+        "https://example.com/lyrics",
+        "https://example.com/lyrics",
     ),
     CUSTOM_LYRICS_SOURCE_BASE_URL_NOT_CONFIGURED("Public sources", "公共源"),
     LLM_LYRICS_FALLBACK("LLM lyrics translation", "LLM 歌词翻译"),

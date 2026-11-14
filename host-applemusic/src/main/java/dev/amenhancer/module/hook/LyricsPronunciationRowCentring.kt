@@ -126,7 +126,10 @@ internal object LyricsPronunciationRowCentring {
         if (reading.translationX != shift) reading.translationX = shift
         android.util.Log.i(
             LOG_TAG,
-            "align reading='$readingText' shift=$shift applied=${reading.translationX}",
+            "align reading='$readingText' group=${group.left},${group.width}" +
+                " reading=${reading.left},${reading.width}" +
+                " parent=${parent?.javaClass?.simpleName}/${parent?.childCount}" +
+                " shift=$shift",
         )
     }
 
@@ -161,6 +164,11 @@ internal object LyricsPronunciationRowCentring {
         if (run.isEmpty()) return 0f
         val runLeft = run.first().left.toFloat()
         val runRight = run.last().left.toFloat() + run.last().width
+        android.util.Log.i(
+            LOG_TAG,
+            "run start=$start size=${run.size} siblings=${siblings.size}" +
+                " span=$runLeft..$runRight",
+        )
         val runCentre = (runLeft + runRight) / 2f
         // The reading sits inside the first container; its centre in parent coordinates is the
         // container's left plus its own centre, because the reading's parent is that container.

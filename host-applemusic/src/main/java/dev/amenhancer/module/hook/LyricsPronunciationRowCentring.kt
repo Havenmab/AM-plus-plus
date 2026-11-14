@@ -104,17 +104,59 @@ internal object LyricsPronunciationRowCentring {
     }
 
     /** Shifts the reading so it sits under the word's core text rather than its marks. */
+    /**
+     * Aligns a whole-word reading with the kana it belongs to.
+     *
+     * Apple gives every kana its own container, and only the first container of a word carries the
+     * reading — `ス` holds `suappu`, the `ア`/`ッ`/`プ` containers hold nothing. Centring inside one
+     * container therefore cannot put that reading under the whole word: the container is only one
+     * kana wide. The correction is computed across the container's siblings instead: the reading's
+     * own centre is moved onto the centre of the kana run it reads, with pure-punctuation containers
+     * (the `！` that trails `スアップ`) left out of the run, which is exactly the room they should
+     * not occupy.
+     */
     fun alignToCoreText(group: ViewGroup) {
-        val word = findChildByEntryName(group, WORD_ID_NAME) ?: wordChild(group) ?: return
-        val reading = findChildByEntryName(group, PRONUNCIATION_ID_NAME) ?: readingChild(group) ?: return
-        val text = word.text?.toString().orEmpty()
-        if (text.isEmpty()) return
-        val shift = coreShift(text, word.paint)
+        val reading = readingChild(group) ?: return
+        val readingText = reading.text?.toString().orEmpty()
+        if (readingText.isEmpty()) return
+        val parent = group.parent as? ViewGroup
+        val shift = if (parent != null) readingShift(parent, group, reading) else 0f
         if (reading.translationX != shift) reading.translationX = shift
         android.util.Log.i(
             LOG_TAG,
-            "align word='$text' reading='${reading.text}' shift=$shift applied=${reading.translationX}",
+            "align reading='$readingText' shift=$shift applied=${reading.translationX}",
         )
+    }
+
+    /**
+     * How far [reading] has to move so its centre lands on the centre of the kana run that starts at
+     * [group], in [parent]'s coordinates.
+     *
+     * The run ends at the next sibling that carries a reading of its own (the next word) or at the
+     * end of the row, and containers whose word is nothing but punctuation are skipped.
+     */
+    fun readingShift(parent: ViewGroup, group: ViewGroup, reading: TextView): Float {
+        val siblings = (0 until parent.childCount).map { parent.getChildAt(it) }
+        val start = siblings.indexOf(group)
+        if (start < 0) return 0f
+        val run = ArrayList<View>(4)
+        for (index in start until siblings.size) {
+            val sibling = siblings[index] as? ViewGroup ?: break
+            if (index > start) {
+                val next = readingChild(sibling)
+                if (next != null && !next.text.isNullOrEmpty()) break
+            }
+            val kana = wordChild(sibling)?.text?.toString().orEmpty()
+            if (kana.isNotEmpty() && kana.any { it !in PUNCTUATION }) run += sibling
+        }
+        if (run.isEmpty()) return 0f
+        val runLeft = run.first().left.toFloat()
+        val runRight = run.last().left.toFloat() + run.last().width
+        val runCentre = (runLeft + runRight) / 2f
+        // The reading sits inside the first container; its centre in parent coordinates is the
+        // container's left plus its own centre, because the reading's parent is that container.
+        val readingCentre = run.first().left + reading.left + reading.width / 2f
+        return runCentre - readingCentre
     }
 
     /**

@@ -143,33 +143,43 @@ class LyricsPronunciationRowCentringStructuralTest {
     }
 
     @Test
-    fun `a multi-character word shifts its reading by half the trailing mark`() {
-        // スアップ！ is five full-width characters; suappu is narrow Latin, so the container is sized
-        // by the word and centring alone would leave the reading half a mark to the right.
-        val (container, word, reading) = wordAndReading("スアップ！", "suappu")
+    fun `a whole-word reading is centred on its kana run, not on one kana`() {
+        // Apple gives each kana its own container and puts the reading of the whole word in the
+        // first one: ス holds suappu, ア/ッ/プ hold nothing. Centring there is one kana wide, so the
+        // reading has to be moved onto the centre of the ス..プ run instead.
+        val row = karaokeRow(listOf("ス" to "suappu", "ア" to "", "ッ" to "", "プ" to "", "！" to ""))
+        val first = row.getChildAt(0) as ViewGroup
+        val reading = LyricsPronunciationRowCentring.readingChild(first)!!
 
-        LyricsPronunciationRowCentring.alignToCoreText(container)
+        LyricsPronunciationRowCentring.alignToCoreText(first)
 
-        val expected = -word.paint.measureText("！") / 2f
-        assertEquals("trailing mark must pull the reading left", expected, reading.translationX, 0.5f)
+        val runCentre = (row.getChildAt(0).left + row.getChildAt(3).left + row.getChildAt(3).width) / 2f
+        val readingCentre = first.left + reading.left + reading.width / 2f
+        assertEquals(runCentre - readingCentre, reading.translationX, 0.5f)
     }
 
     @Test
-    fun `a single character word shifts its reading by half the trailing mark too`() {
-        val (container, word, reading) = wordAndReading("の？", "no")
+    fun `a trailing punctuation container is not part of the run`() {
+        val withMark = karaokeRow(listOf("ス" to "suappu", "ア" to "", "！" to ""))
+        val withoutMark = karaokeRow(listOf("ス" to "suappu", "ア" to ""))
 
-        LyricsPronunciationRowCentring.alignToCoreText(container)
+        LyricsPronunciationRowCentring.alignToCoreText(withMark.getChildAt(0) as ViewGroup)
+        LyricsPronunciationRowCentring.alignToCoreText(withoutMark.getChildAt(0) as ViewGroup)
 
-        val expected = -word.paint.measureText("？") / 2f
-        assertEquals(expected, reading.translationX, 0.5f)
+        val a = LyricsPronunciationRowCentring.readingChild(withMark.getChildAt(0) as ViewGroup)!!
+        val b = LyricsPronunciationRowCentring.readingChild(withoutMark.getChildAt(0) as ViewGroup)!!
+        // The mark's container must not pull the reading towards it.
+        assertEquals(b.translationX, a.translationX, 0.5f)
     }
 
     @Test
-    fun `a word without marks is not shifted`() {
-        val (container, _, reading) = wordAndReading("スアップ", "suappu")
+    fun `a reading with no kana run is left alone`() {
+        val row = karaokeRow(listOf("！" to "!"))
+        val only = row.getChildAt(0) as ViewGroup
 
-        LyricsPronunciationRowCentring.alignToCoreText(container)
+        LyricsPronunciationRowCentring.alignToCoreText(only)
 
+        val reading = LyricsPronunciationRowCentring.readingChild(only)!!
         assertEquals(0f, reading.translationX, 0.5f)
     }
 
@@ -197,6 +207,23 @@ class LyricsPronunciationRowCentringStructuralTest {
         // A word that is nothing but marks is not shifted at all.
         assertEquals(0f, LyricsPronunciationRowCentring.coreShift("！？", paint), 0.01f)
         assertEquals(0f, LyricsPronunciationRowCentring.coreShift("", paint), 0.01f)
+    }
+
+    /** A laid-out karaoke row: one container per kana, the reading only in the first one. */
+    private fun karaokeRow(entries: List<Pair<String, String>>): LinearLayout {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        entries.forEach { (kana, reading) ->
+            row.addView(wordAndReading(kana, reading).first)
+        }
+        val width = 800
+        val height = 160
+        row.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
+        row.layout(0, 0, width, height)
+        return row
     }
 
     /** A laid-out word container: the shape Apple inflates, with the given texts already in place. */

@@ -371,7 +371,8 @@ class LyricsPronunciationRowCentringStructuralTest {
         // container's layout would never see the text and would leave the reading half a mark right.
         assertTrue(source.contains("watchReading(group, reading)"))
         assertTrue(source.contains("reading.addTextChangedListener("))
-        assertTrue(source.contains("reading.addOnLayoutChangeListener("))
+        // A lambda follows the call directly, so there is no parenthesis to match here.
+        assertTrue(source.contains("reading.addOnLayoutChangeListener {"))
         assertTrue(source.contains("watchedReadings.put(reading, Unit) != null"))
     }
 

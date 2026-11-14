@@ -1,6 +1,8 @@
 package dev.amenhancer.module.hook
 
+import android.text.Editable
 import android.text.TextPaint
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -30,10 +32,17 @@ import java.util.WeakHashMap
  *
  * The correction is measured from the laid-out views instead of being assumed from a layout shape:
  * the container's glyph views are collected in tree order, their concatenated text is trimmed of
- * leading and trailing marks, and the reading is moved so its centre lands on the centre of what is
- * left over, in row coordinates. That covers a mark behind the word, in front of it, on both sides
- * or nowhere, and it is a no-op when the mark is its own container — Apple sometimes emits `?` as a
- * separate span, which is why `の?` already reads correctly on the device.
+ * the marks *and blanks* at both ends, and the reading is moved so the middle of its own visible
+ * text lands on the middle of what is left over, in row coordinates. Blanks count because Apple
+ * appends the whitespace that follows a word to that word's text and to its reading alike, so a
+ * mark is regularly not the last character: `up! `, `る？ `. The trim therefore covers a mark behind
+ * the word, in front of it, on both sides, behind a blank or nowhere, and it is a no-op when the
+ * mark is its own container — Apple sometimes emits `?` as a separate span, which is why `の?`
+ * already reads correctly on the device.
+ *
+ * The correction is re-run whenever the reading gets its text or its size, not only when the
+ * container is laid out: Apple sets both texts through futures, and a reading narrower than its word
+ * does not move the container when it arrives, so a container-only trigger would never see it.
  *
  * A word whose kana were split over several sibling containers is measured the same way. When the
  * reading is far wider than the glyphs of its own container (a whole-word reading sitting in a
@@ -60,6 +69,17 @@ internal object LyricsPronunciationRowCentring {
     /** The verified per-word container Apple adds both lyric children to. */
     const val LAYOUT_NAME = "lyrics_pronunciation_vertical_group"
 
+    /**
+     * The id Apple puts on that container itself.
+     *
+     * The layout is named `lyrics_pronunciation_vertical_group`, but its root view carries the id
+     * `lyrics_pronunciation_vertical_container` (`android:id="@id/lyrics_pronunciation_vertical_container"`
+     * in `res/layout/lyrics_pronunciation_vertical_group.xml`). Looking for containers by the
+     * layout name is therefore a comparison that can never match on the device, which is why the
+     * row walk has to look for this id.
+     */
+    const val CONTAINER_ID_NAME = "lyrics_pronunciation_vertical_container"
+
     /** Apple's ids for the two children of that container. */
     const val WORD_ID_NAME = "song_lyrics_word"
     const val PRONUNCIATION_ID_NAME = "pronunciation_word"
@@ -83,7 +103,22 @@ internal object LyricsPronunciationRowCentring {
      * counterparts, so a word like `だめ！` or `(NO)` is measured by its core. The katakana
      * long-vowel mark ー is deliberately absent: it lengthens a reading.
      */
-    const val PUNCTUATION = "！？!?。、，,．.：:；;…‥・「」『』（）()【】〔〕〜～〝〟＂＇\"'“”‘’"
+    const val PUNCTUATION = "！？!?。、，,．.：:；;…‥・「」『』（）()【】〔〕〜～〝〟＂＇“”‘’"
+
+    /**
+     * Blanks that a reading never covers either.
+     *
+     * Apple appends the whitespace that follows a word to that word's own text (`A.java`, the word
+     * loop copies the following whitespace entries into the same string) and does the same for the
+     * reading, so a mark is regularly followed by a space: `up! `, `る？ `. A trim that only looks
+     * at the very last character therefore sees no mark at all, and the reading keeps the mark's
+     * half plus the blank's half of offset to the right.
+     */
+    const val EDGE_BLANKS = " \u00A0\u3000\t"
+
+    /** Whether [character] is a mark or a blank — neither is text a reading covers. */
+    fun isEdgeIgnorable(character: Char): Boolean =
+        character in PUNCTUATION || character in EDGE_BLANKS
 
     /**
      * How much wider than its own container's glyphs a reading must be to read the whole word.
@@ -104,6 +139,9 @@ internal object LyricsPronunciationRowCentring {
      * itself and disappears together with it.
      */
     private val observed = Collections.synchronizedMap(WeakHashMap<View, Unit>())
+
+    /** Readings this hook already listens to, keyed weakly by the view itself (see [watchReading]). */
+    private val watchedReadings = Collections.synchronizedMap(WeakHashMap<TextView, Unit>())
 
     fun install() {
         LayoutInflationRegistry.register(LAYOUT_NAME) { view ->
@@ -140,6 +178,30 @@ internal object LyricsPronunciationRowCentring {
     }
 
     /**
+     * Re-runs the correction when [reading] gets its text or its size.
+     *
+     * Apple sets the romanization through a text future, so the text can arrive after the
+     * container's last layout pass — and the reading is usually narrower than the word it belongs
+     * to, so the container's own bounds do not change when it arrives: a correction scheduled only
+     * from the container's layout would never see the text at all and would leave the reading at
+     * the container's centre, half a mark right of the kana.
+     */
+    private fun watchReading(group: ViewGroup, reading: TextView) {
+        if (watchedReadings.put(reading, Unit) != null) return
+        reading.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> alignToCoreText(group) }
+        reading.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(text: Editable?) {
+                // The new text is not measured yet; the container's layout pass may also still be
+                // pending, so try now and again once the queue has run the layout.
+                alignToCoreText(group)
+                group.post { alignToCoreText(group) }
+            }
+        })
+    }
+
+    /**
      * Aligns a container's reading with the glyphs it reads.
      *
      * A container that shows no reading — the `！` of `スアップ！`, or a kana whose reading Apple put
@@ -147,6 +209,9 @@ internal object LyricsPronunciationRowCentring {
      */
     fun alignToCoreText(group: ViewGroup) {
         val reading = readingChild(group) ?: return
+        // The reading's text can still be on its way, so listen to the reading before looking at
+        // what it currently holds.
+        watchReading(group, reading)
         // A container can also carry a hidden per-kana reading; only the shown one is positioned.
         if (reading.visibility != View.VISIBLE) return
         val readingText = reading.text?.toString().orEmpty()
@@ -190,7 +255,7 @@ internal object LyricsPronunciationRowCentring {
         val ownGlyphs = wordChunks(group, reading)
         if (ownGlyphs.isEmpty()) return null
         val firstText = ownGlyphs.fold("") { text, glyph -> text + glyph.text.toString() }
-        val leading = leadingMarks(firstText).length
+        val leading = leadingEdge(firstText).length
         // A container whose glyphs are nothing but marks shows no reading of its own and has no core
         // text to centre on.
         if (leading >= firstText.length) return null
@@ -202,7 +267,7 @@ internal object LyricsPronunciationRowCentring {
         }
         if (lastGlyphs.isEmpty()) return null
         val lastText = lastGlyphs.fold("") { text, glyph -> text + glyph.text.toString() }
-        val trailing = trailingMarks(lastText).length
+        val trailing = trailingEdge(lastText).length
         val left = advanceFromStart(row, ownGlyphs, leading)
         val right = retreatFromEnd(row, lastGlyphs, trailing)
         if (right <= left) return null
@@ -234,7 +299,7 @@ internal object LyricsPronunciationRowCentring {
             if (shownReading(container) != null) break
             val next = wordChunks(container, reading = null)
             val text = next.fold("") { acc, glyph -> acc + glyph.text.toString() }
-            if (text.isEmpty() || text.all { it in PUNCTUATION }) continue
+            if (text.isEmpty() || text.all(::isEdgeIgnorable)) continue
             last = index
         }
         return last
@@ -247,9 +312,26 @@ internal object LyricsPronunciationRowCentring {
         return if (reading.text.isNullOrEmpty()) null else reading
     }
 
-    /** Where the centre of [reading] sits in [row]'s coordinates, before the correction. */
-    fun readingCentre(row: ViewGroup, reading: TextView): Float =
-        leftIn(row, reading) + reading.width / 2f
+    /**
+     * Where the middle of the reading's visible text sits in [row]'s coordinates, before the
+     * correction.
+     *
+     * The marks and blanks at the reading's own ends are not text it shows (Apple appends the
+     * following whitespace to it as well), so they are left out of the middle; otherwise the box
+     * measured here would be wider than the text the user sees and the correction would be short by
+     * half of that padding.
+     */
+    fun readingCentre(row: ViewGroup, reading: TextView): Float {
+        val text = reading.text?.toString().orEmpty()
+        val left = leftIn(row, reading).toFloat()
+        val right = left + reading.width
+        val leading = leadingEdge(text).length
+        val trailing = trailingEdge(text).length
+        if (text.isEmpty() || leading + trailing >= text.length) return (left + right) / 2f
+        val visibleLeft = left + advanceOf(reading, 0, leading)
+        val visibleRight = right - advanceOf(reading, text.length - trailing, text.length)
+        return (visibleLeft + visibleRight) / 2f
+    }
 
     /** The x, in [row]'s coordinates, reached after [count] characters of [chunks] from its start. */
     private fun advanceFromStart(row: ViewGroup, chunks: List<TextView>, count: Int): Float {
@@ -340,7 +422,7 @@ internal object LyricsPronunciationRowCentring {
     }
 
     private fun collectContainers(view: View, found: MutableList<ViewGroup>) {
-        if (view is ViewGroup && hasEntryName(view, LAYOUT_NAME)) {
+        if (view is ViewGroup && isContainer(view)) {
             found.add(view)
             return
         }
@@ -348,6 +430,15 @@ internal object LyricsPronunciationRowCentring {
             for (index in 0 until view.childCount) collectContainers(view.getChildAt(index), found)
         }
     }
+
+    /**
+     * Whether [view] is one of Apple's per-word containers.
+     *
+     * The id is the container's own (`lyrics_pronunciation_vertical_container`); the layout's name
+     * is accepted as well so a differently built tree — and the test doubles — still resolve.
+     */
+    fun isContainer(view: View): Boolean =
+        hasEntryName(view, CONTAINER_ID_NAME) || hasEntryName(view, LAYOUT_NAME)
 
     /**
      * The glyph views of the word [group] holds — its kana, kanji or letters, in reading order.
@@ -409,11 +500,11 @@ internal object LyricsPronunciationRowCentring {
         return entry == name
     }
 
-    /** The marks [text] opens with; a reading never covers them. */
-    fun leadingMarks(text: String): String = text.takeWhile { it in PUNCTUATION }
+    /** The run of marks and blanks [text] opens with; a reading never covers either. */
+    fun leadingEdge(text: String): String = text.takeWhile(::isEdgeIgnorable)
 
-    /** The marks [text] closes with; a reading never covers them. */
-    fun trailingMarks(text: String): String = text.takeLastWhile { it in PUNCTUATION }
+    /** The run of marks and blanks [text] closes with; a reading never covers either. */
+    fun trailingEdge(text: String): String = text.takeLastWhile(::isEdgeIgnorable)
 
     /** A stretch of one word in row coordinates: its first glyph's left, its last glyph's right. */
     class CoreSpan(val left: Float, val right: Float) {

@@ -13,6 +13,10 @@ import dev.amenhancer.module.lyrics.source.AutoLyricsSource
 import dev.amenhancer.module.lyrics.FileAmLyricsIndexCache
 import dev.amenhancer.module.lyrics.FileLyricPresenceCache
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import dev.amenhancer.module.lyrics.FilePronunciationBoundaryCache
+import dev.amenhancer.module.lyrics.online.PronunciationBoundaryStore
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
 import dev.amenhancer.module.config.EmbeddedContentManager
@@ -382,6 +386,51 @@ internal fun createAutoLyricsRuntime(
     )
     val llmCache = FileLlmLyricsCache(File(application.filesDir, "ampp-llm-lyrics"))
     val llmClient = LlmLyricsClient()
+    // Boundary planning rides the same channel: one request per (song, kana), cached on disk, and
+    // never on the playback path — a lyric row only ever reads the store.
+    val boundaryStore = PronunciationBoundaryStore()
+    val boundaryCache = FilePronunciationBoundaryCache(
+        File(application.filesDir, "ampp-llm-boundary"),
+    )
+    val boundaryExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        { task -> Thread(task, "ampp-llm-boundary").apply { isDaemon = true } },
+        ThreadPoolExecutor.DiscardOldestPolicy(),
+    )
+    val boundarySession = PronunciationBoundarySession(
+        runtime = PronunciationBoundaryRuntime(
+            configuration = {
+                configuration().let { settings ->
+                    if (!settings.llmPronunciationBoundaryEnabled) return@let null
+                    LlmLyricsConfig(
+                        baseUrl = settings.llmLyricsBaseUrl,
+                        apiKey = settings.llmLyricsApiKey,
+                        model = settings.llmLyricsModel,
+                        thinkingEnabled = settings.llmLyricsThinkingEnabled,
+                    ).takeIf { it.isConfigured }
+                }
+            },
+            cacheRead = boundaryCache::read,
+            cacheWrite = boundaryCache::write,
+            request = { config, request, cancelled ->
+                llmClient.segmentBoundaries(config, request, cancelled)
+            },
+            executor = Executor { task ->
+                boundaryExecutor.queue.clear()
+                boundaryExecutor.execute(task)
+            },
+            onInstalled = {
+                Handler(Looper.getMainLooper()).post {
+                    LyricsPronunciationRowCentring.reapplyObserved()
+                }
+            },
+            log = logger,
+            close = { boundaryExecutor.shutdownNow() },
+        ),
+        store = boundaryStore,
+    )
+    // The splice's only door to a plan: a lookup in memory, never a request.
+    LyricsPronunciationWordAlignment.boundaryPlans = { lineKey -> boundaryStore.planFor(lineKey) }
     val llm = LlmLyricsRuntime(
         configuration = {
             configuration().let { settings ->
@@ -397,6 +446,16 @@ internal fun createAutoLyricsRuntime(
         },
         translate = translate@{ request, isCancelled ->
             if (isCancelled()) return@translate null
+            // Hand the document to the boundary planner once. It queues its own work and returns
+            // immediately, so it cannot slow this fallback down.
+            runCatching {
+                boundarySession.onDocument(
+                    request.appleMusicId,
+                    request.originalTtml,
+                    request.title,
+                    request.artist,
+                )
+            }
             // Eligibility always precedes cache reads, including on later visits.
             val document = LlmLyricsDocument.prepare(request.originalTtml) ?: return@translate null
             if (isCancelled()) return@translate null

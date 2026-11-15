@@ -1411,6 +1411,19 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         pageRefresh?.invoke()
     })
     settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
+    // The boundary pass reuses the same channel; it is only meaningful once that channel is on.
+    settingsGroup.addView(embeddedSettingRow(
+        activity,
+        localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY),
+        localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY_SUMMARY),
+        settings.llmPronunciationBoundaryEnabled,
+        enabled = settings.llmLyricsEnabled,
+        compactWidePadding = true,
+    ) {
+        onSettingsChanged(settings.copy(llmPronunciationBoundaryEnabled = it))
+        pageRefresh?.invoke()
+    })
+    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
     // Page edits replace this config snapshot; detaching the old page cancels its check.
     addLlmConnectionTestButton(activity, settingsGroup, LlmLyricsConfig(
         baseUrl = settings.llmLyricsBaseUrl,

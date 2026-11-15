@@ -478,6 +478,19 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
+    fun `the pronunciation boundary switch defaults off and round trips`() {
+        assertEquals(
+            false,
+            ModuleSettingsSchema.decode(emptyMap<String, Any?>()).llmPronunciationBoundaryEnabled,
+        )
+        val encoded = ModuleSettingsSchema.encodeOrdinarySettings(
+            ModuleSettings(llmPronunciationBoundaryEnabled = true),
+        )
+        assertEquals(true, encoded["llm_pronunciation_boundary_enabled"])
+        assertEquals(true, ModuleSettingsSchema.decode(encoded).llmPronunciationBoundaryEnabled)
+    }
+
+    @Test
     fun `automatic lyrics defaults to enabled and round trips`() {
         assertEquals(
             true,

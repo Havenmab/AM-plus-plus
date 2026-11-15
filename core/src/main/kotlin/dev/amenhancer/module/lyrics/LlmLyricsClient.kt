@@ -5,6 +5,7 @@ package dev.amenhancer.module.lyrics
 // Upstream declares AGPL-3.0-only; the ported prompt text and request/validation
 // behaviour keep that provenance for THIRD_PARTY_NOTICES purposes.
 
+import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -119,6 +120,61 @@ class LlmLyricsClient(
         val content = messageContent(response) ?: return null
         return parseTranslation(content, texts)
     }
+
+    /**
+     * Asks the same endpoint the translation fallback uses for one line's word boundaries.
+     *
+     * The response is returned verbatim: the caller validates it with
+     * [PronunciationBoundary.parsePlan], which is the only place an answer may be trusted. Timeouts,
+     * the response cap, cancellation and the failure codes are the ones [post] already enforces, so a
+     * 4xx or an unreadable body reaches [onFailure] with its own reason and is never retried here.
+     */
+    fun segmentBoundaries(
+        config: LlmLyricsConfig,
+        request: PronunciationBoundary.BoundaryRequest,
+        isCancelled: () -> Boolean = { false },
+        onFailure: (reason: String, status: Int?) -> Unit = { _, _ -> },
+    ): String? {
+        if (request.lines.isEmpty()) return null
+        if (isCancelled()) return null
+        val endpoint = config.endpoint ?: run {
+            onFailure("invalid_endpoint", null)
+            return null
+        }
+        if (config.normalizedModel.isEmpty()) {
+            onFailure("invalid_model", null)
+            return null
+        }
+        val body = boundaryBody(config, request) ?: run {
+            onFailure("request_too_large", null)
+            return null
+        }
+        val response = post(endpoint, config.apiKey, body, isCancelled, onFailure) ?: return null
+        if (isCancelled()) return null
+        return messageContent(response) ?: run {
+            onFailure("invalid_response", null)
+            null
+        }
+    }
+
+    /** The boundary request body: the same envelope, prompt and thinking switch as a translation. */
+    private fun boundaryBody(
+        config: LlmLyricsConfig,
+        request: PronunciationBoundary.BoundaryRequest,
+    ): ByteArray? = runCatching {
+        val messages = JSONArray()
+            .put(
+                JSONObject()
+                    .put("role", "system")
+                    .put("content", PronunciationBoundary.buildSystemPrompt()),
+            )
+            .put(
+                JSONObject()
+                    .put("role", "user")
+                    .put("content", PronunciationBoundary.buildUserPrompt(request)),
+            )
+        encodeRequest(config, messages)
+    }.getOrNull()
 
     /** Only fixed reason codes/statuses may cross into the settings UI. */
     data class ConnectionResult(val failureReason: String? = null, val httpStatus: Int? = null) {

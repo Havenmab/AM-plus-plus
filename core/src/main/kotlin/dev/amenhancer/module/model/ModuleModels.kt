@@ -201,6 +201,14 @@ data class ModuleSettings(
     val llmLyricsModel: String = "",
     /** Send the user-selected thinking mode to the configured compatible endpoint. */
     val llmLyricsThinkingEnabled: Boolean = false,
+    /**
+     * Ask the same LLM channel for the word boundaries of the romanization row.
+     *
+     * Off by default, and off means nothing in that chain runs: no request, no cache read, and the
+     * splice keeps the rules' own grouping. It reuses the endpoint, key, model and thinking switch
+     * above, so it adds no configuration of its own.
+     */
+    val llmPronunciationBoundaryEnabled: Boolean = false,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
     val customLyricsManifest: CustomLyricsManifest = CustomLyricsManifest.empty(),
     val schemaVersion: Int = ModuleConstants.CONFIG_SCHEMA_VERSION,

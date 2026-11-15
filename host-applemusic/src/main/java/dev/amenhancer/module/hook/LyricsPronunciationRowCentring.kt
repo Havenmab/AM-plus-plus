@@ -276,6 +276,25 @@ internal object LyricsPronunciationRowCentring {
     }
 
     /**
+     * Re-runs the correction for every container that is still inflated.
+     *
+     * A plan arriving from the model changes how the rows of a song should be grouped, and the rows
+     * that are already laid out were grouped before it arrived. Walking the containers this hook
+     * already listens to is the cheapest way to bring them in line: the correction is idempotent, so a
+     * row whose target did not move is not written again, and a row that is no longer inflated has
+     * already fallen out of the weak map.
+     *
+     * Called on the main thread; it never touches the network and never waits for one.
+     */
+    fun reapplyObserved() {
+        val containers = synchronized(observed) { observed.keys.toList() }
+        for (view in containers) {
+            val group = view as? ViewGroup ?: continue
+            runCatching { alignToCoreText(group) }
+        }
+    }
+
+    /**
      * How far [reading] must move so its centre lands on the centre of the glyphs it reads.
      *
      * [row] is both the coordinate space and the scope the run may be extended in. Everything is

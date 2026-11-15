@@ -424,6 +424,11 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "Model, API Key",
         "模型、API Key",
     ),
+    LLM_PRONUNCIATION_BOUNDARY("Merge readings by word", "音译按词合并"),
+    LLM_PRONUNCIATION_BOUNDARY_SUMMARY(
+        "Let the same LLM decide where a romaji word begins and ends",
+        "让同一个 LLM 判断罗马音的词边界",
+    ),
     LLM_LYRICS_ENABLED("Enable translation", "启用翻译"),
     LLM_LYRICS_ENABLED_SUMMARY(
         "Translate to Simplified Chinese when automatic matching misses",

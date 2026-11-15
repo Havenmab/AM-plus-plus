@@ -168,6 +168,10 @@ object ModuleSettingsSchema {
                 KEY_LLM_LYRICS_THINKING_ENABLED,
                 default = false,
             ),
+            llmPronunciationBoundaryEnabled = values.boolean(
+                KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
+                default = false,
+            ),
             onlineLyricsSupplementEnabled = values.boolean(
                 KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
                 default = false,
@@ -311,6 +315,7 @@ object ModuleSettingsSchema {
             KEY_LLM_LYRICS_MODEL to
                 ModuleSettings.normalizeLlmLyricsModel(settings.llmLyricsModel),
             KEY_LLM_LYRICS_THINKING_ENABLED to settings.llmLyricsThinkingEnabled,
+            KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED to settings.llmPronunciationBoundaryEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
         return values
@@ -569,6 +574,7 @@ object ModuleSettingsSchema {
         KEY_LLM_LYRICS_API_KEY,
         KEY_LLM_LYRICS_MODEL,
         KEY_LLM_LYRICS_THINKING_ENABLED,
+        KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
         KEY_FONT_FILE_ID,
@@ -660,6 +666,7 @@ object ModuleSettingsSchema {
     private const val KEY_LLM_LYRICS_API_KEY = "llm_lyrics_api_key"
     private const val KEY_LLM_LYRICS_MODEL = "llm_lyrics_model"
     private const val KEY_LLM_LYRICS_THINKING_ENABLED = "llm_lyrics_thinking_enabled"
+    private const val KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED = "llm_pronunciation_boundary_enabled"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

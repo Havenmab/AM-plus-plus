@@ -72,7 +72,15 @@ class PronunciationBoundarySession(
         language: String? = null,
     ): Boolean {
         if (appleMusicId <= 0L || ttml.isBlank()) return false
-        val config = runtime.configuration() ?: return false
+        val config = runtime.configuration()
+        runtime.log(
+            "bndry doc song=" + appleMusicId + " lines=" + countLines(ttml) +
+                " enabled=" + (config != null),
+        )
+        if (config == null) {
+            runtime.log("bndry skip reason=noconfig")
+            return false
+        }
         val request = PronunciationBoundaryRequests.fromTtml(
             songId = appleMusicId.toString(),
             ttml = ttml,
@@ -131,7 +139,10 @@ class PronunciationBoundarySession(
                 when (val outcome = PronunciationBoundary.parsePlan(content, slice)) {
                     is PronunciationBoundary.Outcome.Accepted -> lines += outcome.plan.lines
                     is PronunciationBoundary.Outcome.Rejected -> {
-                        runtime.log("boundary rejected code=" + outcome.error.code)
+                        runtime.log(
+                            "bndry reject reason=" + outcome.error.code +
+                                " line=" + (slice.lines.firstOrNull()?.index ?: -1),
+                        )
                         return@runCatching
                     }
                 }
@@ -165,6 +176,9 @@ class PronunciationBoundarySession(
         runtime.log("boundary installed lines=" + lines.size)
         runCatching { runtime.onInstalled(appleMusicId) }
     }
+
+    /** A cheap line count for the entry log; the parser counts again when the request is built. */
+    private fun countLines(ttml: String): Int = ttml.split("<p").size - 1
 
     private fun isCurrent(appleMusicId: Long, stamp: Long): Boolean = synchronized(lock) {
         !closed && generation == stamp && activeSongId == appleMusicId

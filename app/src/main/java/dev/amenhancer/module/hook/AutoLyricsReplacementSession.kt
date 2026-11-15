@@ -140,6 +140,12 @@ internal fun translationEnricher(
      * the translation lane even when Apple renders no track from the document.
      */
     overlay: NativeLyricOverlayStore? = null,
+    /**
+     * Called with the merged document this enricher produced, once, just before it is returned. It is
+     * how the boundary planner sees the enrichment path — the document that lands on screen — rather
+     * than only the LLM fallback's.
+     */
+    onDocument: ((Long, String) -> Unit)? = null,
 ): (Long, String) -> String? {
     val scoped = TrackScopedDiagnostics(logger)
     return { appleMusicId, rawTtml ->
@@ -157,6 +163,7 @@ internal fun translationEnricher(
                     lines = outcome.lines,
                     translationSource = outcome.translationSource,
                 )
+                onDocument?.invoke(appleMusicId, outcome.ttml)
                 outcome.ttml
             }
         }.getOrNull()
@@ -334,7 +341,10 @@ internal fun createAutoLyricsRuntime(
                 ) {
                     AutoLyricsPublishResult.PUBLISHED,
                     AutoLyricsPublishResult.ALREADY_CONFIGURED,
-                    -> cache.delete(appleMusicId)
+                    -> {
+                        candidate?.let { boundaryOnDocument?.invoke(appleMusicId, it.ttml) }
+                        cache.delete(appleMusicId)
+                    }
                     AutoLyricsPublishResult.FAILED -> Unit
                 }
             }
@@ -358,6 +368,9 @@ internal fun createAutoLyricsRuntime(
     // One overlay for the active track. The optional enricher writes it and the
     // independent native-lyrics target reads it back, so Apple's own lanes still
     // work when online completion is disabled.
+    // Filled in once the boundary session exists below. Every path that publishes a document of ours
+    // hands it here, so the planner sees enrichment and replaced lyrics too, not just the LLM fallback.
+    var boundaryOnDocument: ((Long, String) -> Unit)? = null
     val enricher = chain.composite
         ?.takeIf { onlineLyricsTranslationEnabled }
         ?.let { composite ->
@@ -366,6 +379,7 @@ internal fun createAutoLyricsRuntime(
                 currentTrack = currentTrack,
                 logger = logger,
                 overlay = nativeLyricOverlay,
+                onDocument = { appleMusicId, ttml -> boundaryOnDocument?.invoke(appleMusicId, ttml) },
             )
         }
     logger(
@@ -431,6 +445,9 @@ internal fun createAutoLyricsRuntime(
     )
     // The splice's only door to a plan: a lookup in memory, never a request.
     LyricsPronunciationCentringBridge.setBoundaryPlans { lineKey -> boundaryStore.planFor(lineKey) }
+    boundaryOnDocument = { appleMusicId, ttml ->
+        boundarySession.onDocument(appleMusicId, ttml)
+    }
     val llm = LlmLyricsRuntime(
         configuration = {
             configuration().let { settings ->
@@ -516,6 +533,7 @@ internal fun createAutoLyricsRuntime(
                 val cached = cache.readCandidate(appleMusicId) ?: return@refresh null
                 if (isCancelled()) return@refresh null
                 if (publisher.publish(appleMusicId, cached) == AutoLyricsPublishResult.FAILED) return@refresh null
+                boundaryOnDocument?.invoke(appleMusicId, cached.ttml)
                 cache.delete(appleMusicId)
                 previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
             }

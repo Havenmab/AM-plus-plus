@@ -178,17 +178,73 @@ class PronunciationBoundaryPlanChainTest {
         assertEquals(listOf(0..1), harness.store.planFor("赤い")!!.groups)
     }
 
+    @Test
+    fun `every document logs one entry line`() {
+        val harness = Harness(answer())
+
+        harness.session.onDocument(77L, document())
+
+        println("[bndry-log] " + harness.logs)
+        val entry = harness.logs.firstOrNull { it.startsWith("bndry doc ") }
+        assertEquals("bndry doc song=77 lines=2 enabled=true", entry)
+    }
+
+    @Test
+    fun `a disabled chain logs the entry line and one skip`() {
+        val harness = Harness(answer(), configured = false)
+
+        assertTrue(!harness.session.onDocument(77L, document()))
+
+        println("[bndry-log] " + harness.logs)
+        assertEquals("bndry doc song=77 lines=2 enabled=false", harness.logs.first())
+        assertEquals("bndry skip reason=noconfig", harness.logs.last())
+        assertEquals(0, harness.requests)
+    }
+
+    @Test
+    fun `a rejected answer logs its reason and line`() {
+        val harness = Harness("{\"lines\":[{\"i\":0,\"g\":[[0,1]]}]}")
+
+        harness.session.onDocument(77L, document())
+
+        println("[bndry-log] " + harness.logs)
+        val reject = harness.logs.firstOrNull { it.startsWith("bndry reject ") }
+        assertNotNull(reject)
+        assertTrue(reject!!.contains("reason=line-count"))
+        assertTrue(reject.contains("line=0"))
+    }
+
+    @Test
+    fun `every publishing path hands its document to the planner`() {
+        // Structural on purpose: the wiring lives in the app's runtime factory, which this module
+        // cannot instantiate, so the test pins the three call sites instead of pretending to run them.
+        val app = sequenceOf(
+            java.io.File("app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
+            java.io.File("../app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
+        ).firstOrNull { it.isFile }?.readText()
+        assertNotNull(app)
+        println("[bndry-wiring] lines=" + app!!.lines().size)
+        // the enrichment path, the auto/custom publish path and the refresh path each report once
+        assertTrue(app.contains("onDocument = { appleMusicId, ttml -> boundaryOnDocument?.invoke"))
+        assertTrue(app.contains("boundaryOnDocument?.invoke(appleMusicId, it.ttml)"))
+        assertTrue(app.contains("boundaryOnDocument?.invoke(appleMusicId, cached.ttml)"))
+        // and the slot is filled by the one session, so every path shares its de-duplication
+        assertTrue(app.contains("boundaryOnDocument = { appleMusicId, ttml ->"))
+        assertTrue(app.contains("boundarySession.onDocument(appleMusicId, ttml)"))
+    }
+
     // ---- fixtures -------------------------------------------------------------------------
 
-    private inner class Harness(answer: String, maxCalls: Int = 20) {
+    private inner class Harness(answer: String, maxCalls: Int = 20, configured: Boolean = true) {
         val store = PronunciationBoundaryStore()
+        val logs = ArrayList<String>()
         var cached: List<PronunciationBoundary.BoundaryLine>? = null
         var requests = 0
         var installs = 0
         var writes = 0
         val session = PronunciationBoundarySession(
             runtime = PronunciationBoundaryRuntime(
-                configuration = { config },
+                configuration = { if (configured) config else null },
                 cacheRead = { _, _, _, _ -> cached },
                 cacheWrite = { _, _, _, _, lines ->
                     writes++
@@ -200,6 +256,7 @@ class PronunciationBoundaryPlanChainTest {
                 },
                 executor = Executor { task -> task.run() },
                 onInstalled = { installs++ },
+                log = { line -> logs += line },
             ),
             store = store,
             maxCallsPerSession = maxCalls,

@@ -421,7 +421,7 @@ internal fun createAutoLyricsRuntime(
             },
             onInstalled = {
                 Handler(Looper.getMainLooper()).post {
-                    LyricsPronunciationRowCentring.reapplyObserved()
+                    LyricsPronunciationCentringBridge.reapplyObservedRows()
                 }
             },
             log = logger,
@@ -430,7 +430,7 @@ internal fun createAutoLyricsRuntime(
         store = boundaryStore,
     )
     // The splice's only door to a plan: a lookup in memory, never a request.
-    LyricsPronunciationWordAlignment.boundaryPlans = { lineKey -> boundaryStore.planFor(lineKey) }
+    LyricsPronunciationCentringBridge.setBoundaryPlans { lineKey -> boundaryStore.planFor(lineKey) }
     val llm = LlmLyricsRuntime(
         configuration = {
             configuration().let { settings ->

@@ -7,7 +7,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
 import dev.amenhancer.module.lyrics.online.PronunciationBoundary
-import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

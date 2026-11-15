@@ -71,7 +71,14 @@ class PronunciationBoundarySession(
         artist: String? = null,
         language: String? = null,
     ): Boolean {
-        if (appleMusicId <= 0L || ttml.isBlank()) return false
+        if (appleMusicId <= 0L) {
+            runtime.log("bndry skip reason=no-id")
+            return false
+        }
+        if (ttml.isBlank()) {
+            runtime.log("bndry skip reason=no-ttml song=" + appleMusicId)
+            return false
+        }
         val config = runtime.configuration()
         runtime.log(
             "bndry doc song=" + appleMusicId + " lines=" + countLines(ttml) +
@@ -87,7 +94,10 @@ class PronunciationBoundarySession(
             title = title,
             artist = artist,
             language = language,
-        ) ?: return false
+        ) ?: run {
+            runtime.log("bndry skip reason=no-lines song=" + appleMusicId)
+            return false
+        }
         val kanaHash = PronunciationBoundaryRequests.kanaHash(request)
         val tokenCounts = PronunciationBoundaryRequests.tokenCounts(request)
         val stamp = synchronized(lock) {

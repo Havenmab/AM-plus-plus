@@ -439,7 +439,12 @@ internal fun createAutoLyricsRuntime(
                     LyricsPronunciationCentringBridge.reapplyObservedRows()
                 }
             },
-            log = logger,
+            // Xposed's log never reaches logcat, and the boundary chain is the one thing users are
+            // asked to trace: mirror every line with a fixed tag. Low volume (one or two per song).
+            log = { line ->
+                logger(line)
+                android.util.Log.i("AMPP-Bndry", line)
+            },
             close = { boundaryExecutor.shutdownNow() },
         ),
         store = boundaryStore,

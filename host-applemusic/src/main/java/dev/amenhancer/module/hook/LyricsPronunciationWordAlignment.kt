@@ -58,6 +58,9 @@ internal object LyricsPronunciationWordAlignment {
     /** Containers whose tops differ by no more than this are on the same wrapped line. */
     const val LINE_TOLERANCE_PX = 1
 
+    /** How many distinct lines the one-shot "no plan here" log remembers before it forgets them. */
+    const val BOUNDARY_MISS_LOG_LIMIT = 512
+
     /**
      * A line whose containers hold this many kana on average is already word-level
      * (`メイ` `キャップ` `ドレ` `スアップ`), so splicing it would join words the source kept
@@ -505,7 +508,10 @@ internal object LyricsPronunciationWordAlignment {
         val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
         if (isWordLevelLine(timed)) return false
 
-        val block = blockOf(group(timed, plan = boundaryPlans?.invoke(lineKey)), anchorIndex) ?: return false
+        val provider = boundaryPlans
+        val plan = provider?.invoke(lineKey)
+        if (provider != null && plan == null) logBoundaryMiss(lineKey)
+        val block = blockOf(group(timed, plan = plan), anchorIndex) ?: return false
         if (block.fragments.size < 2) return false
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it
@@ -578,6 +584,16 @@ internal object LyricsPronunciationWordAlignment {
             android.util.Log.i(LOG_TAG, "pinned container=${token.index} width=$width")
         }
         return pinnedAny
+    }
+
+    /** Lines already reported as having no plan, so one missing plan logs once, not per layout pass. */
+    private val boundaryMisses = Collections.synchronizedSet(HashSet<String>())
+
+    /** One logcat line per line that the provider has no plan for; the key is truncated, never read. */
+    private fun logBoundaryMiss(lineKey: String) {
+        if (boundaryMisses.size > BOUNDARY_MISS_LOG_LIMIT) boundaryMisses.clear()
+        if (!boundaryMisses.add(lineKey)) return
+        android.util.Log.i(LOG_TAG, "bndry miss key=" + lineKey.take(24))
     }
 
     /** The values the rules read, taken from one inflated container. */

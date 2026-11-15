@@ -12,6 +12,7 @@ import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.model.ModuleSettings
 import java.util.Collections
 import java.util.WeakHashMap
+import kotlin.math.roundToInt
 
 /**
  * Centres a per-word romanization row under the kana it reads, ignoring punctuation.
@@ -52,9 +53,17 @@ import java.util.WeakHashMap
  * reading may reach past its own container; a per-kana reading (`の`+`no`, `マ`+`ma`) is never
  * dragged onto a longer run.
  *
+ * A word the source split per mora is then spliced into one visual form by
+ * [LyricsPronunciationWordAlignment]: `su` `a` `ppu` move flush against each other and the block is
+ * centred on the whole word's glyphs, while every fragment keeps its own view — and therefore its own
+ * `begin`/`end`, its own highlight and its own share of the row's gradient mask. That splice can only
+ * be a placement: it writes no text, no width and no timing. It is tried first, and a container it
+ * cannot help falls through to the correction described here, unchanged.
+ *
  * Nothing else is written: the children's own attributes, the container's width/height/baseline
  * flags, its padding, the Flexbox parent and the text size all stay Apple's. Only the container's
- * horizontal gravity and the reading's translation change.
+ * horizontal gravity and the reading's position change, and the position has exactly one writer —
+ * [applyReadingOffset], which is what keeps the correction and the splice from overwriting each other.
  *
  * Gating follows the other lyric presentation hooks (`DualPaneResourceHook.hookTabletLyricTextLayout`):
  * the registration is fixed and the callback decides per inflation. It applies only while the
@@ -217,13 +226,53 @@ internal object LyricsPronunciationRowCentring {
         val readingText = reading.text?.toString().orEmpty()
         if (readingText.isEmpty()) return
         val row = findRowContainer(group) ?: group
+        // A word the source split per mora is spliced into one visual form first. Its fragments keep
+        // their own views, and therefore their own highlights and their own begin/end. A container
+        // this cannot help — a lone kana, a word whose reading Apple already put in one container, a
+        // source that is already word-level — falls through to the correction below, unchanged.
+        if (LyricsPronunciationWordAlignment.alignRow(row, group)) return
         val shift = readingShift(row, group, reading)
-        if (reading.translationX != shift) reading.translationX = shift
+        applyReadingOffset(
+            row,
+            reading,
+            LyricsPronunciationWordAlignment.shiftMode,
+            leftIn(row, reading) + shift,
+        )
         android.util.Log.i(
             LOG_TAG,
             "align reading='$readingText' shift=$shift" +
+                " mode=${LyricsPronunciationWordAlignment.shiftMode}" +
                 " group=${group.left},${group.width} reading=${reading.left},${reading.width}",
         )
+    }
+
+    /**
+     * The one place a reading's horizontal position is written.
+     *
+     * [targetLeft] is an absolute x in [row]'s coordinates — [readingShift]'s value added to the
+     * reading's own left — so both callers share one formula and repeated calls converge: [leftIn]
+     * never includes a translation, and in `LAYOUT` mode it follows the frame that was moved.
+     *
+     * `TRANSLATION` writes the draw-time offset; `LAYOUT` moves the reading's real frame, for a mask
+     * that reads `getLeft()` rather than `getX()` (see [LyricsPronunciationWordAlignment.ShiftMode]).
+     */
+    fun applyReadingOffset(
+        row: ViewGroup,
+        reading: TextView,
+        mode: LyricsPronunciationWordAlignment.ShiftMode,
+        targetLeft: Float,
+    ) {
+        val current = leftIn(row, reading).toFloat()
+        val offset = targetLeft - current
+        when (mode) {
+            LyricsPronunciationWordAlignment.ShiftMode.TRANSLATION -> {
+                if (reading.translationX != offset) reading.translationX = offset
+            }
+            LyricsPronunciationWordAlignment.ShiftMode.LAYOUT -> {
+                val delta = offset.roundToInt()
+                if (delta != 0) reading.offsetLeftAndRight(delta)
+            }
+        }
     }
 
     /**
@@ -334,7 +383,7 @@ internal object LyricsPronunciationRowCentring {
     }
 
     /** The x, in [row]'s coordinates, reached after [count] characters of [chunks] from its start. */
-    private fun advanceFromStart(row: ViewGroup, chunks: List<TextView>, count: Int): Float {
+    fun advanceFromStart(row: ViewGroup, chunks: List<TextView>, count: Int): Float {
         var remaining = count
         for (chunk in chunks) {
             val text = chunk.text?.toString().orEmpty()
@@ -348,7 +397,7 @@ internal object LyricsPronunciationRowCentring {
     }
 
     /** The x, in [row]'s coordinates, reached after [count] characters of [chunks] from its end. */
-    private fun retreatFromEnd(row: ViewGroup, chunks: List<TextView>, count: Int): Float {
+    fun retreatFromEnd(row: ViewGroup, chunks: List<TextView>, count: Int): Float {
         var remaining = count
         for (chunk in chunks.asReversed()) {
             val text = chunk.text?.toString().orEmpty()

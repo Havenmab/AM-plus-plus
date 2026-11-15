@@ -325,6 +325,10 @@ internal fun createAutoLyricsRuntime(
         { runnable -> Thread(runnable, "ampp-auto-lyrics").apply { isDaemon = true } },
         ThreadPoolExecutor.DiscardOldestPolicy(),
     )
+    // Every path that publishes a document of ours hands it here, so the planner sees enrichment and
+    // replaced lyrics too, not just the LLM fallback. The session it forwards to is created further
+    // down, so the slot is null until then and a call in that window is a no-op.
+    var boundaryOnDocument: ((Long, String) -> Unit)? = null
     runCatching {
         executor.execute {
             cache.cachedIds().forEach { appleMusicId ->
@@ -368,9 +372,6 @@ internal fun createAutoLyricsRuntime(
     // One overlay for the active track. The optional enricher writes it and the
     // independent native-lyrics target reads it back, so Apple's own lanes still
     // work when online completion is disabled.
-    // Filled in once the boundary session exists below. Every path that publishes a document of ours
-    // hands it here, so the planner sees enrichment and replaced lyrics too, not just the LLM fallback.
-    var boundaryOnDocument: ((Long, String) -> Unit)? = null
     val enricher = chain.composite
         ?.takeIf { onlineLyricsTranslationEnabled }
         ?.let { composite ->

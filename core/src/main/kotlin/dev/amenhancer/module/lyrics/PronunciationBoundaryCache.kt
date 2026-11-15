@@ -1,6 +1,5 @@
 package dev.amenhancer.module.lyrics
 
-import dev.amenhancer.module.config.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.io.File
 import java.io.FileOutputStream

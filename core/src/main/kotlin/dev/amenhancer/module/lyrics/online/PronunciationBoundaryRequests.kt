@@ -1,6 +1,6 @@
 package dev.amenhancer.module.lyrics.online
 
-import dev.amenhancer.module.config.CustomLyricsFilePolicy
+import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 
 /**
  * Turns a lyric document into the request [PronunciationBoundary] answers.

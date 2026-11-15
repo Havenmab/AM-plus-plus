@@ -57,6 +57,29 @@ object PronunciationBoundary {
      */
     const val KATAKANA_PARTICLES = "トデハヲニガモノネヨ"
 
+    /**
+     * Marks that belong to the lyric text but never to a reading, and the blanks Apple appends after
+     * a word. The same sets the host's centring correction uses; they live here so a document can be
+     * stripped without reaching into the view layer.
+     */
+    const val PUNCTUATION = "！？!?。、，,．.：:；;…‥・「」『』（）()【】〔〕〜～〝〟＂＇“”‘’"
+
+    /** Blanks a reading never covers either. */
+    const val EDGE_BLANKS = " \u00A0\u3000\t"
+
+    /** Whether [character] is a mark or a blank — neither is text a reading covers. */
+    fun isEdgeIgnorable(character: Char): Boolean =
+        character in PUNCTUATION || character in EDGE_BLANKS
+
+    /** [text] without the marks and blanks a reading never covers at its ends. */
+    fun coreText(text: String): String {
+        var start = 0
+        var end = text.length
+        while (start < end && isEdgeIgnorable(text[start])) start++
+        while (end > start && isEdgeIgnorable(text[end - 1])) end--
+        return text.substring(start, end)
+    }
+
     // ---------------------------------------------------------------------------------------
     // Model
     // ---------------------------------------------------------------------------------------

@@ -353,17 +353,23 @@ class LyricsPronunciationWordAlignmentTest {
     @Test
     fun `a plan joins what the rules had to split`() {
         val tokens = tomatoContainers()
-
-        // The rules: 赤+い merge, then the katakana particle ト closes a word of its own, マ+ト merge
-        // and を stands alone — four blocks for one word the model reads as 赤いトマト.
-        assertEquals(listOf("0..1", "2..3", "4..4", "5..5"), blockRanges(tokens))
+        val baselineBlocks = LyricsPronunciationWordAlignment.group(tokens)
+        val baseline = ranges(baselineBlocks)
 
         val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..4, 5..5))
-        val planned = LyricsPronunciationWordAlignment.group(tokens, plan = plan)
+        val plannedBlocks = LyricsPronunciationWordAlignment.group(tokens, plan = plan)
+        val planned = ranges(plannedBlocks)
+        println("[plan-test] 赤いトマトを baseline=" + baseline + " planned=" + planned)
 
-        assertEquals(listOf("0..4", "5..5"), planned.map { block -> block.firstIndex.toString() + ".." + block.lastIndex })
+        // One fact at a time, on 赤 い ト マ ト を: 赤+い merge (kanji into hiragana), the katakana
+        // particle ト closes the word before it *and* closes again after itself (so it is a block of
+        // its own), マ and the second ト are separate blocks for that same reason, and を follows a
+        // katakana so it stands alone — five blocks, not four.
+        assertEquals(listOf("0..1", "2..2", "3..3", "4..4", "5..5"), baseline)
+        // The model reads 赤いトマト as one word, so the free stretch 0..4 becomes a single block.
+        assertEquals(listOf("0..4", "5..5"), planned)
         // the block really covers five containers, so the splice will see five fragments
-        assertEquals(5, planned.first().tokens.size)
+        assertEquals(5, plannedBlocks.first().tokens.size)
     }
 
     @Test
@@ -375,30 +381,35 @@ class LyricsPronunciationWordAlignmentTest {
             token(2, "ジ", "ji"),
             token(3, "ル", "ru"),
         )
-        assertEquals(listOf("0..3"), blockRanges(tokens))
-
         val crossing = PronunciationBoundary.BoundaryLine("line", listOf(0..2, 3..3))
+        val baseline = blockRanges(tokens)
+        val planned = ranges(LyricsPronunciationWordAlignment.group(tokens, plan = crossing))
+        println("[plan-test] marked baseline=" + baseline + " planned=" + planned)
 
-        assertEquals(
-            listOf("0..3"),
-            LyricsPronunciationWordAlignment.group(tokens, plan = crossing)
-                .map { block -> block.firstIndex.toString() + ".." + block.lastIndex },
-        )
+        assertEquals(listOf("0..3"), baseline)
+        // refused whole, so the plan changes nothing at all
+        assertEquals(listOf("0..3"), planned)
     }
 
     @Test
     fun `no plan is exactly the rules' own grouping`() {
         // The golden pair: a null plan must not move a single boundary from the rules' answer.
         val tomato = tomatoContainers()
-        assertEquals(blockRanges(tomato), blockRanges(tomato, plan = null))
+        val tomatoRules = blockRanges(tomato)
+        val tomatoNull = blockRanges(tomato, plan = null)
+        println("[plan-test] tomato rules=" + tomatoRules + " nullPlan=" + tomatoNull)
+        assertEquals(tomatoRules, tomatoNull)
 
         val suappu = listOf(
             token(0, "ス", "suappu"),
             token(1, "アップ", null),
             token(2, "！", null),
         )
-        assertEquals(listOf("0..1"), blockRanges(suappu))
-        assertEquals(blockRanges(suappu), blockRanges(suappu, plan = null))
+        val suappuRules = blockRanges(suappu)
+        val suappuNull = blockRanges(suappu, plan = null)
+        println("[plan-test] suappu rules=" + suappuRules + " nullPlan=" + suappuNull)
+        assertEquals(listOf("0..1"), suappuRules)
+        assertEquals(suappuRules, suappuNull)
     }
 
     @Test
@@ -411,6 +422,11 @@ class LyricsPronunciationWordAlignmentTest {
         )
 
         val boundary = LyricsPronunciationWordAlignment.boundaryTokens(tokens)
+        println(
+            "[plan-test] ステージ kana=" + boundary.map { it.kanaCount } +
+                " markOnly=" + boundary.map { it.isMarkOnly } +
+                " blocks=" + blockRanges(tokens),
+        )
 
         // ー has no reading of its own but covers one kana; only a mark covers zero.
         assertEquals(listOf(1, 1, 1, 1), boundary.map { it.kanaCount })
@@ -438,6 +454,7 @@ class LyricsPronunciationWordAlignmentTest {
             LyricsPronunciationWordAlignment.boundaryPlans = null
         }
 
+        println("[plan-test] lineKey asked=" + asked)
         assertEquals(listOf("アイ"), asked)
     }
 
@@ -455,12 +472,15 @@ class LyricsPronunciationWordAlignmentTest {
         " katakanaParticle=" + tokens.map { it.isKatakanaParticle } +
         " kana=" + tokens.map { it.kanaCount }
 
-    /** The rules' grouping of [tokens] as `first..last` labels, optionally through a plan. */
+    /** A grouping as `first..last` labels. */
+    private fun ranges(blocks: List<LyricsPronunciationWordAlignment.Block>): List<String> =
+        blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
+
+    /** The rules' grouping of [tokens], optionally through a plan. */
     private fun blockRanges(
         tokens: List<LyricsPronunciationWordAlignment.ContainerToken>,
         plan: PronunciationBoundary.BoundaryLine? = null,
-    ): List<String> = LyricsPronunciationWordAlignment.group(tokens, plan = plan)
-        .map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
+    ): List<String> = ranges(LyricsPronunciationWordAlignment.group(tokens, plan = plan))
 
     /** 赤いトマトを, one container per mora, the way the AMLL source splits it. */
     private fun tomatoContainers(): List<LyricsPronunciationWordAlignment.ContainerToken> = listOf(

@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.view.ViewGroup
 import android.widget.TextView
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
+import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlin.math.abs
@@ -108,6 +109,15 @@ internal object LyricsPronunciationWordAlignment {
      * source: without timings the gap rule cannot be applied at all.
      */
     var lineSpans: ((String) -> List<NativePronunciationSpan>?)? = null
+
+    /**
+     * The model's plans for the current song, keyed by a line's kana join — the same key [alignRow]
+     * builds for [lineSpans].
+     *
+     * Null keeps every line on the rules. The provider is only ever asked from [alignRow], and it is
+     * expected to answer from memory: the playback path must never wait for a plan.
+     */
+    var boundaryPlans: ((String) -> PronunciationBoundary.BoundaryLine?)? = null
 
     /** Containers already pinned to their glyph width, so [ShiftMode.LAYOUT] pins each one once. */
     private val pinned = Collections.synchronizedMap(WeakHashMap<ViewGroup, Unit>())
@@ -244,15 +254,62 @@ internal object LyricsPronunciationWordAlignment {
      * The word blocks of [tokens], in order. Every token lands in exactly one block, so a caller maps
      * a block back onto containers through [Block.firstIndex]/[Block.lastIndex].
      *
-     * The order of the checks is what keeps the hard cases apart: nothing may cross a word boundary
-     * ([ContainerToken.trailingBlank], a wrapped line, a katakana particle), and a source that already
-     * wrote the whole word's reading in one container must not join its neighbour.
+     * [plan] is a line the model grouped (see [PronunciationBoundary]): when it is present and
+     * sound it decides inside the stretches the rules left open, and the rules keep everything they
+     * can prove. A plan that crosses one of those proofs is refused whole and the rules' own grouping
+     * is returned, so [plan] can only ever change a line the rules were guessing about. A null plan
+     * takes the rules' path unchanged.
      */
     fun group(
         tokens: List<ContainerToken>,
         mode: GroupingMode = GroupingMode.LOOSE,
         maxKana: Int = WORD_MAX_KANA,
         gapBreakMs: Long = GAP_BREAK_MS,
+        plan: PronunciationBoundary.BoundaryLine? = null,
+    ): List<Block> {
+        val baseline = groupByRules(tokens, mode, maxKana, gapBreakMs)
+        if (plan == null) return baseline
+        val boundaryTokens = boundaryTokens(tokens)
+        val outcome = PronunciationBoundary.mergeLine(
+            tokens = boundaryTokens,
+            baseline = baseline.map { block -> block.firstIndex..block.lastIndex },
+            plan = plan,
+            hard = PronunciationBoundary.hardBoundaries(boundaryTokens),
+            maxKana = maxKana,
+        )
+        return when (outcome) {
+            is PronunciationBoundary.MergeOutcome.Rejected -> {
+                android.util.Log.i(
+                    LOG_TAG,
+                    "plan rejected reason=" + outcome.error.code + " line=" + plan.lineKey,
+                )
+                baseline
+            }
+            is PronunciationBoundary.MergeOutcome.Groups -> {
+                if (outcome.softened.isNotEmpty()) {
+                    android.util.Log.i(
+                        LOG_TAG,
+                        "plan softened segments=" + outcome.softened + " line=" + plan.lineKey,
+                    )
+                }
+                blocksOf(tokens, outcome.groups)
+            }
+        }
+    }
+
+    /**
+     * The rules' own grouping, with no model involved: every call [group] makes with a null plan
+     * takes exactly this path, so the rules cannot drift behind the plan's back.
+     *
+     * The order of the checks is what keeps the hard cases apart: nothing may cross a word boundary
+     * ([ContainerToken.trailingBlank], a wrapped line, a katakana particle), and a source that already
+     * wrote the whole word's reading in one container must not join its neighbour.
+     */
+    private fun groupByRules(
+        tokens: List<ContainerToken>,
+        mode: GroupingMode,
+        maxKana: Int,
+        gapBreakMs: Long,
     ): List<Block> {
         val blocks = ArrayList<Block>(tokens.size)
         var current = ArrayList<ContainerToken>(4)
@@ -303,6 +360,37 @@ internal object LyricsPronunciationWordAlignment {
             current += token
         }
         flush()
+        return blocks
+    }
+
+    /**
+     * The view-tree tokens as [PronunciationBoundary] sees them.
+     *
+     * [PronunciationBoundary.BoundaryToken.kanaCount] is the core's own length and never "has a
+     * reading": the ー of ステージ and a Latin word Apple left unromanized are one kana each, while a
+     * container of nothing but marks (！) is the zero that makes it a token of its own. Passing a
+     * zero for a kana that merely lacks a reading would lock it as if it were punctuation.
+     */
+    fun boundaryTokens(tokens: List<ContainerToken>): List<PronunciationBoundary.BoundaryToken> =
+        tokens.map { token ->
+            PronunciationBoundary.BoundaryToken(
+                index = token.index,
+                kana = token.core,
+                kanaCount = token.core.length,
+                reading = token.readingCore.ifEmpty { null },
+                trailingBlank = token.trailingBlank,
+                lineTop = token.lineTop,
+                wholeWordReading = token.readingIsWholeWord,
+            )
+        }
+
+    /** The blocks a partition of container indices describes, in ascending order. */
+    fun blocksOf(tokens: List<ContainerToken>, groups: List<IntRange>): List<Block> {
+        val blocks = ArrayList<Block>(groups.size)
+        for (group in groups) {
+            val slice = tokens.filter { it.index in group }
+            if (slice.isNotEmpty()) blocks += Block(slice)
+        }
         return blocks
     }
 
@@ -412,10 +500,12 @@ internal object LyricsPronunciationWordAlignment {
         if (anchorIndex < 0) return false
 
         val tokens = containers.mapIndexed { index, container -> token(container, index) }
-        val timed = attachTimings(tokens, lineSpans?.invoke(tokens.joinToString("") { it.core }))
+        // One key for both lookups: the line's kana join is how a plan and a timing row are found.
+        val lineKey = tokens.joinToString("") { it.core }
+        val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
         if (isWordLevelLine(timed)) return false
 
-        val block = blockOf(group(timed), anchorIndex) ?: return false
+        val block = blockOf(group(timed, plan = boundaryPlans?.invoke(lineKey)), anchorIndex) ?: return false
         if (block.fragments.size < 2) return false
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it

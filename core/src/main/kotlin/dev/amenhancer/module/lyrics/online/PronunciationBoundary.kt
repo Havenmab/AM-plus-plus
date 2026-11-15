@@ -64,8 +64,11 @@ object PronunciationBoundary {
     /**
      * One lyric container as the planner sees it.
      *
-     * [kanaCount] is passed in rather than derived from [kana]: a container of nothing but marks
-     * holds ！ but covers zero kana, and that zero is what makes it a mark token.
+     * [kanaCount] is passed in rather than derived from [kana] because only the caller strips the
+     * marks: a container of nothing but marks holds ！ but covers zero kana, and that zero is what
+     * makes it a mark token. A container that merely has no reading of its own — the ー of a
+     * loan-word, or a Latin word Apple gave no romanization — still counts its kana, so a wrong zero
+     * here would lock a kana that is not a mark.
      */
     data class BoundaryToken(
         val index: Int,

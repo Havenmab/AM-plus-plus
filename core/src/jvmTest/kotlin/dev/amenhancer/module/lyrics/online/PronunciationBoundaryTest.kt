@@ -81,12 +81,14 @@ class PronunciationBoundaryTest {
         // sits after a katakana exactly like the trailing ト of トマト.
         val midWordTokens = majikaruTokens()
         val midWord = PronunciationBoundary.hardBoundaries(midWordTokens)
+        println("[bndry-test] midWord " + describe(midWordTokens, midWord))
         assertEquals(describe(midWordTokens, midWord), List(8) { false }, midWord.alone)
         assertEquals(describe(midWordTokens, midWord), listOf(0..7), midWord.segments())
 
         // 赤いトマトを: locking the trailing ト here would refuse the grouping the model got right.
         val tomato = tomatoTokens()
         val wordHead = PronunciationBoundary.hardBoundaries(tomato)
+        println("[bndry-test] tomato " + describe(tomato, wordHead))
         assertEquals(describe(tomato, wordHead), List(6) { false }, wordHead.alone)
         assertEquals(describe(tomato, wordHead), listOf(0..5), wordHead.segments())
 
@@ -98,6 +100,9 @@ class PronunciationBoundaryTest {
         // why the boundary is not computed from the neighbours at all.
         val twoWords = tomatoToCheeseTokens()
         val hard = PronunciationBoundary.hardBoundaries(twoWords)
+        println("[bndry-test] twoWords " + describe(twoWords, hard))
+        // A reading-less ー is still one kana; only a mark covers zero.
+        assertEquals(describe(twoWords, hard), listOf(1, 1, 1, 1, 1, 1, 1), twoWords.map { it.kanaCount })
         assertEquals(describe(twoWords, hard), List(7) { false }, hard.alone)
     }
 
@@ -245,9 +250,20 @@ class PronunciationBoundaryTest {
 
     @Test
     fun `V7 a group reaching over a locked token is refused`() {
+        // The lock has to come from one of the two facts the data proves — a mark of its own here.
+        // A katakana particle is no longer locked, so a group may span a ト freely.
+        val tokens = listOf(
+            token(0, "マ", reading = "ma"),
+            token(1, "！", kanaCount = 0),
+            token(2, "ジ", reading = "ji"),
+            token(3, "ル", reading = "ru"),
+        )
+        val hard = PronunciationBoundary.hardBoundaries(tokens)
+        println("[bndry-test] V7 " + describe(tokens, hard))
+
         assertEquals(
-            PronunciationBoundary.BoundaryError.CrossesHardBoundary(0, 4),
-            PronunciationBoundary.validateLine(majikaruTokens(), listOf(0..5, 6..7)),
+            PronunciationBoundary.BoundaryError.CrossesHardBoundary(0, 1),
+            PronunciationBoundary.validateLine(tokens, listOf(0..3), hard),
         )
     }
 
@@ -621,12 +637,19 @@ class PronunciationBoundaryTest {
 
     private fun nanishiteruTokens() = tokens("何" to "nani", "し" to "shi", "て" to "te", "る" to "ru", "の？" to "no")
 
+    /**
+     * A line's tokens from glyph/reading pairs.
+     *
+     * The kana count comes from the glyphs alone: a mark counts zero, and a token that merely has
+     * no reading of its own (ー) is still one kana. Deriving it from the reading would turn ー into a
+     * mark-only container and lock it.
+     */
     private fun tokens(vararg pairs: Pair<String, String?>): List<PronunciationBoundary.BoundaryToken> =
         pairs.mapIndexed { index, pair ->
             PronunciationBoundary.BoundaryToken(
                 index = index,
                 kana = pair.first,
-                kanaCount = if (pair.second == null) 0 else pair.first.count { it !in "！？" },
+                kanaCount = pair.first.count { it !in "！？" },
                 reading = pair.second,
             )
         }

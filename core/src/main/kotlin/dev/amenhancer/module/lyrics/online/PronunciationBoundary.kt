@@ -49,8 +49,11 @@ object PronunciationBoundary {
     const val MAX_INPUT_CHARS = 24_000
 
     /**
-     * Katakana particles: a word of their own inside a katakana word, a loanword's head at the start
-     * of one. Same set as the host splice uses.
+     * Katakana particles, as [SYSTEM_PROMPT]'s rule 4 names them: a word of their own inside a
+     * katakana word, a loanword's head at the start of one. Same set the host splice uses.
+     *
+     * Kept here as the one place the set is written down; [hardBoundaries] never locks on it (see
+     * there), because the containers cannot tell the two readings apart.
      */
     const val KATAKANA_PARTICLES = "トデハヲニガモノネヨ"
 
@@ -223,50 +226,26 @@ object PronunciationBoundary {
     // Hard boundaries, stretches, uncertainty
     // ---------------------------------------------------------------------------------------
 
-    /** Whether [index] is a katakana particle that ends a katakana word in front of it. */
-    private fun isMidWordKatakanaParticle(tokens: List<BoundaryToken>, index: Int): Boolean {
-        val token = tokens[index]
-        if (token.kanaCount != 1 || token.kana.length != 1) return false
-        if (token.kana[0] !in KATAKANA_PARTICLES) return false
-        val previous = tokens.getOrNull(index - 1) ?: return false
-        if (previous.isMarkOnly) return false
-        // トリック and トマト open a word: a particle only ends one when katakana precedes it.
-        return scriptOf(previous.kana) == Script.KATAKANA
-    }
-
-    private enum class Script { KATAKANA, HIRAGANA, KANJI, LATIN, DIGIT, OTHER, MIXED }
-
-    private fun scriptOf(core: String): Script {
-        if (core.isEmpty()) return Script.OTHER
-        var script: Script? = null
-        for (character in core) {
-            val next = scriptOfChar(character)
-            if (script == null) script = next else if (script != next) return Script.MIXED
-        }
-        return script ?: Script.OTHER
-    }
-
-    private fun scriptOfChar(character: Char): Script = when (character) {
-        in '\u30A1'..'\u30FA', '\u30FC', '\u30FD', '\u30FE' -> Script.KATAKANA
-        in '\u3041'..'\u3096', '\u309D', '\u309E' -> Script.HIRAGANA
-        in '\u4E00'..'\u9FFF', in '\u3400'..'\u4DBF', '\u3005', '\u3006' -> Script.KANJI
-        in 'a'..'z', in 'A'..'Z', in '\uFF21'..'\uFF3A', in '\uFF41'..'\uFF5A' -> Script.LATIN
-        in '0'..'9', in '\uFF10'..'\uFF19' -> Script.DIGIT
-        else -> Script.OTHER
-    }
-
     /**
      * The boundaries the rules can prove for [tokens].
      *
-     * ALONE is the only mark that forbids joining at all: a mark token, a container carrying the
-     * whole word's reading, and a katakana particle standing after a katakana word. START and END
-     * additionally carry the two facts that break only one side — Apple's trailing blank and a
-     * wrapped line.
+     * ALONE is the only mark that forbids joining at all, and it holds exactly the two facts the
+     * data settles on its own: a container of nothing but marks, and a container carrying the whole
+     * word's reading. START and END additionally carry the two facts that break only one side —
+     * Apple's trailing blank and a wrapped line.
+     *
+     * A katakana particle is deliberately **not** in that set. Whether a ト is a particle or part of
+     * a loanword cannot be read off the containers: マジカル ト リック has one ト after a katakana
+     * and so does the ト of トマト, and a rule keyed on the neighbour would lock the second one and
+     * refuse the grouping the model got right for 赤いトマトを. It is also not fixable by requiring
+     * both neighbours to be katakana: トマト ト チーズ has a trailing ト surrounded by katakana. The
+     * decision therefore stays with the model, where the request's own line text and the two
+     * contrasting examples in [SYSTEM_PROMPT] carry it, and [uncertain] reports those tokens as open.
      */
     fun hardBoundaries(tokens: List<BoundaryToken>): HardBoundaries {
         val alone = tokens.indices.map { index ->
             val token = tokens[index]
-            token.isMarkOnly || token.wholeWordReading || isMidWordKatakanaParticle(tokens, index)
+            token.isMarkOnly || token.wholeWordReading
         }
         val start = tokens.indices.map { index ->
             val token = tokens[index]

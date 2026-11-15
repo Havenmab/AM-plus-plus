@@ -76,19 +76,29 @@ class PronunciationBoundaryTest {
     }
 
     @Test
-    fun `a katakana particle inside a katakana word is alone but a word head is not`() {
-        val midWord = PronunciationBoundary.hardBoundaries(majikaruTokens())
-        // マ ジ カ ル | ト | リッ ク で
-        assertEquals(listOf(false, false, false, false, true, false, false, false), midWord.alone)
-        assertEquals(listOf(0..3, 4..4, 5..7), midWord.segments())
+    fun `a katakana particle is left to the model because the data cannot read it`() {
+        // マ ジ カ ル ト リッ ク で: the ト is a particle, but nothing in the containers says so — it
+        // sits after a katakana exactly like the trailing ト of トマト.
+        val midWordTokens = majikaruTokens()
+        val midWord = PronunciationBoundary.hardBoundaries(midWordTokens)
+        assertEquals(describe(midWordTokens, midWord), List(8) { false }, midWord.alone)
+        assertEquals(describe(midWordTokens, midWord), listOf(0..7), midWord.segments())
 
-        val wordHead = PronunciationBoundary.hardBoundaries(tomatoTokens())
-        // 赤いトマトを: the ト opens a word, so nothing is locked
-        assertEquals(listOf(false, false, false, false, false, false), wordHead.alone)
-        assertEquals(listOf(0..5), wordHead.segments())
+        // 赤いトマトを: locking the trailing ト here would refuse the grouping the model got right.
+        val tomato = tomatoTokens()
+        val wordHead = PronunciationBoundary.hardBoundaries(tomato)
+        assertEquals(describe(tomato, wordHead), List(6) { false }, wordHead.alone)
+        assertEquals(describe(tomato, wordHead), listOf(0..5), wordHead.segments())
 
-        val loanword = PronunciationBoundary.hardBoundaries(torikkuTokens())
-        assertEquals(listOf(false, false, false, false), loanword.alone)
+        val loanwordTokens = torikkuTokens()
+        val loanword = PronunciationBoundary.hardBoundaries(loanwordTokens)
+        assertEquals(describe(loanwordTokens, loanword), List(4) { false }, loanword.alone)
+
+        // トマト ト チーズ: even "katakana on both sides" would mislock the trailing ト, which is
+        // why the boundary is not computed from the neighbours at all.
+        val twoWords = tomatoToCheeseTokens()
+        val hard = PronunciationBoundary.hardBoundaries(twoWords)
+        assertEquals(describe(twoWords, hard), List(7) { false }, hard.alone)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -96,20 +106,31 @@ class PronunciationBoundaryTest {
     // ---------------------------------------------------------------------------------------
 
     @Test
-    fun `only a token inside a free stretch is up to the model`() {
+    fun `every token of a free line is up to the model`() {
         val tokens = majikaruTokens()
         val hard = PronunciationBoundary.hardBoundaries(tokens)
 
-        (0..3).forEach { index ->
+        tokens.indices.forEach { index ->
             assertTrue(
-                "token " + index + " should be uncertain",
+                describe(tokens, hard) + " token=" + index,
                 PronunciationBoundary.uncertain(tokens, hard, index),
             )
         }
-        assertFalse(PronunciationBoundary.uncertain(tokens, hard, 4))
-        (5..7).forEach { index ->
-            assertTrue(
-                "token " + index + " should be uncertain",
+    }
+
+    @Test
+    fun `a locked line is up to the model nowhere`() {
+        // A mark of its own splits the line into three one-token stretches, so no position is open.
+        val tokens = listOf(
+            token(0, "ス", reading = "su"),
+            token(1, "！", kanaCount = 0),
+            token(2, "ア", reading = "a"),
+        )
+        val hard = PronunciationBoundary.hardBoundaries(tokens)
+
+        tokens.indices.forEach { index ->
+            assertFalse(
+                describe(tokens, hard) + " token=" + index,
                 PronunciationBoundary.uncertain(tokens, hard, index),
             )
         }
@@ -134,9 +155,9 @@ class PronunciationBoundaryTest {
         val tokens = tomatoTokens()
         val hard = PronunciationBoundary.hardBoundaries(tokens)
 
-        (0..5).forEach { index ->
+        tokens.indices.forEach { index ->
             assertTrue(
-                "token " + index + " should be uncertain",
+                describe(tokens, hard) + " token=" + index,
                 PronunciationBoundary.uncertain(tokens, hard, index),
             )
         }
@@ -275,7 +296,29 @@ class PronunciationBoundaryTest {
         val merged = PronunciationBoundary.mergeLine(tokens, baseline, plan)
 
         assertEquals(
+            describe(tokens, PronunciationBoundary.hardBoundaries(tokens)) + " merged=" + merged,
             PronunciationBoundary.MergeOutcome.Groups(listOf(0..4, 5..5), emptyList()),
+            merged,
+        )
+    }
+
+    @Test
+    fun `the model may also split a word the rules kept`() {
+        // The other direction on the same line shape: inside a free stretch the answer decides, so a
+        // finer grouping than the rules' own is accepted too (it is what a dictionary-free rule
+        // cannot do and the model can).
+        val tokens = majikaruTokens()
+        val baseline = listOf(0..3, 4..4, 5..6, 7..7)
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..1, 2..3, 4..4, 5..6, 7..7))
+
+        val merged = PronunciationBoundary.mergeLine(tokens, baseline, plan)
+
+        assertEquals(
+            describe(tokens, PronunciationBoundary.hardBoundaries(tokens)) + " merged=" + merged,
+            PronunciationBoundary.MergeOutcome.Groups(
+                listOf(0..1, 2..3, 4..4, 5..6, 7..7),
+                emptyList(),
+            ),
             merged,
         )
     }
@@ -295,18 +338,35 @@ class PronunciationBoundaryTest {
     }
 
     @Test
-    fun `the model may regroup the stretch after a locked token`() {
-        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..3, 4..4, 5..7))
-
-        val merged = PronunciationBoundary.mergeLine(
-            majikaruTokens(),
-            listOf(0..3, 4..4, 5..6, 7..7),
-            plan,
+    fun `a whole word reading container cannot be joined by the model`() {
+        // The lock that is left: ス carries the reading of the whole word, so the model may not
+        // pull it into a neighbour — but it may still regroup everything after it.
+        val tokens = listOf(
+            token(0, "ス", reading = "suappu", wholeWord = true),
+            token(1, "ア", reading = "a"),
+            token(2, "ッ", reading = "ppu"),
         )
+        val hard = PronunciationBoundary.hardBoundaries(tokens)
+        assertEquals(describe(tokens, hard), listOf(true, false, false), hard.alone)
+        assertEquals(describe(tokens, hard), listOf(0..0, 1..2), hard.segments())
 
+        val joined = PronunciationBoundary.mergeLine(
+            tokens,
+            listOf(0..0, 1..2),
+            PronunciationBoundary.BoundaryLine("line", listOf(0..2)),
+        )
+        val rejected = joined as PronunciationBoundary.MergeOutcome.Rejected
+        assertEquals("crosses-boundary", rejected.error.code)
+
+        val kept = PronunciationBoundary.mergeLine(
+            tokens,
+            listOf(0..0, 1..1, 2..2),
+            PronunciationBoundary.BoundaryLine("line", listOf(0..0, 1..2)),
+        )
         assertEquals(
-            PronunciationBoundary.MergeOutcome.Groups(listOf(0..3, 4..4, 5..7), emptyList()),
-            merged,
+            describe(tokens, hard) + " merged=" + kept,
+            PronunciationBoundary.MergeOutcome.Groups(listOf(0..0, 1..2), emptyList()),
+            kept,
         )
     }
 
@@ -546,6 +606,17 @@ class PronunciationBoundaryTest {
 
     private fun torikkuTokens() = tokens("ト" to "to", "リッ" to "rik", "ク" to "ku", "を" to "o")
 
+    /** トマト ト チーズ: a trailing ト and a particle ト, both surrounded by katakana. */
+    private fun tomatoToCheeseTokens() = tokens(
+        "ト" to "to",
+        "マ" to "ma",
+        "ト" to "to",
+        "ト" to "to",
+        "チ" to "chi",
+        "ー" to null,
+        "ズ" to "zu",
+    )
+
     private fun kirakiraTokens() = tokens("キ" to "ki", "ラ" to "ra", "キ" to "ki", "ラ" to "ra", "！" to null)
 
     private fun nanishiteruTokens() = tokens("何" to "nani", "し" to "shi", "て" to "te", "る" to "ru", "の？" to "no")
@@ -592,6 +663,17 @@ class PronunciationBoundaryTest {
         previousLine = previous,
         nextLine = next,
     )
+
+    /** What the rules actually decided, so a failing assertion explains itself in the log. */
+    private fun describe(
+        tokens: List<PronunciationBoundary.BoundaryToken>,
+        hard: PronunciationBoundary.HardBoundaries,
+    ): String = "glyphs=" + tokens.map { it.kana } +
+        " kana=" + tokens.map { it.kanaCount } +
+        " alone=" + hard.alone +
+        " start=" + hard.start +
+        " end=" + hard.end +
+        " segments=" + hard.segments()
 
     private fun request(vararg lines: PronunciationBoundary.BoundaryRequestLine) =
         PronunciationBoundary.BoundaryRequest(

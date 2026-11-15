@@ -37,7 +37,12 @@ interface LyricHttpTransport {
      * it", not a specific host. The default keeps every existing fake honest: it walks
      * the list with [getBytes] and stops at the first answer.
      */
-    fun getFirstBytes(urls: List<String>): ByteArray? =
+    /**
+     * [totalBudgetMs] bounds the whole walk, not one request: a chain of mirrors must not cost
+     * the sum of every timeout when the song is simply not in the repository. Defaults to the
+     * transport's own budget.
+     */
+    fun getFirstBytes(urls: List<String>, totalBudgetMs: Long = 0L): ByteArray? =
         urls.firstNotNullOfOrNull { url -> runCatching { getBytes(url) }.getOrNull() }
 
     /** Optional response metadata used by catalog clients for conditional GET. */
@@ -97,13 +102,19 @@ class HttpLyricTransport(
      * [MIRROR_CONNECT_TIMEOUT_MS]/[MIRROR_READ_TIMEOUT_MS], and the first answer ends
      * the walk.
      */
-    override fun getFirstBytes(urls: List<String>): ByteArray? {
+    override fun getFirstBytes(urls: List<String>, totalBudgetMs: Long): ByteArray? {
+        val budgetMs = if (totalBudgetMs > 0L) totalBudgetMs else MIRROR_TOTAL_BUDGET_MS
+        val deadline = System.nanoTime() + budgetMs * 1_000_000L
         for (url in urls) {
+            // Each attempt gets at most the time left in the budget, so a dead host cannot
+            // spend the next host's allowance.
+            val remainingMs = (deadline - System.nanoTime()) / 1_000_000L
+            if (remainingMs <= 0L) return null
             val body = requestResponse(
                 url = url,
                 ifNoneMatch = null,
-                connectTimeoutMsOverride = MIRROR_CONNECT_TIMEOUT_MS,
-                readTimeoutMsOverride = MIRROR_READ_TIMEOUT_MS,
+                connectTimeoutMsOverride = minOf(MIRROR_CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt(),
+                readTimeoutMsOverride = minOf(MIRROR_READ_TIMEOUT_MS.toLong(), remainingMs).toInt(),
             )?.takeIf { response -> response.statusCode == HttpURLConnection.HTTP_OK }?.body
             if (body != null) return body
         }
@@ -208,6 +219,15 @@ class HttpLyricTransport(
          */
         private const val MIRROR_CONNECT_TIMEOUT_MS = 4_000
         private const val MIRROR_READ_TIMEOUT_MS = 6_000
+
+        /**
+         * The whole mirror walk, not one attempt.
+         *
+         * Four endpoints at their individual timeouts would be 24 s spent on a file that is
+         * simply absent; six seconds is enough for one reachable mirror to answer a 50 KB body
+         * and leaves the rest of the chain to the next source.
+         */
+        private const val MIRROR_TOTAL_BUDGET_MS = 6_000L
 
         private const val USER_AGENT = "AMPlusPlus/1.2.1"
         private val BASE_HEADERS = mapOf(

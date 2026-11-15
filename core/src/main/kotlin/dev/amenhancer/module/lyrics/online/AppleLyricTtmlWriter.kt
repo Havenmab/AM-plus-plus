@@ -98,8 +98,12 @@ object AppleLyricTtmlWriter {
      * romanization column is deliberately dropped: it is never published.
      */
     fun from(result: LyricsResult): List<AppleTtmlLine> {
-        val lanes = OnlineTranslationExtraction.extract(result)
-        return result.original.mapIndexed { index, line ->
+        // Credits, platform notices and placeholder lines are never lyrics: drop them once,
+        // here, so every publisher (automatic completion, source sheet, enrichment) agrees and
+        // the lane index stays aligned with the lines actually written.
+        val clean = LyricLineFilter.filter(result)
+        val lanes = OnlineTranslationExtraction.extract(clean, alreadyFiltered = true)
+        return clean.original.mapIndexed { index, line ->
             val lane = lanes.getOrNull(index)
             from(line).copy(
                 translation = lane?.translation,

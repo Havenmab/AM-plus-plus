@@ -10,6 +10,8 @@ import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
 import dev.amenhancer.module.lyrics.source.AmllTtmlClient
 import dev.amenhancer.module.lyrics.source.AmLyricsClient
 import dev.amenhancer.module.lyrics.source.AutoLyricsSource
+import dev.amenhancer.module.lyrics.FileAmLyricsIndexCache
+import dev.amenhancer.module.lyrics.FileLyricPresenceCache
 import android.app.Application
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
@@ -44,11 +46,18 @@ import java.util.LinkedHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 
 private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
+
+/** The AM-Lyrics index cache lives next to the other private automatic-lyrics state. */
+private const val AM_LYRICS_CACHE_DIRECTORY = "ampp-amlyrics"
+
+/** The presence index the self-hosted mirror publishes, also private automatic-lyrics state. */
+private const val LYRIC_PRESENCE_CACHE_DIRECTORY = "ampp-lyrics-presence"
 
 /**
  * The single online chain plus the composite that owns it. One object serves
@@ -181,8 +190,57 @@ internal fun createAutoLyricsRuntime(
         lyricsTransport = lyricTransport,
         cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
     )
-    val amll = AmllTtmlClient(lyricTransport)
-    val amLyrics = AmLyricsClient(lyricTransport)
+    // A self-hosted mirror root from the settings is tried before every public host: the same
+    // 50 KB file measured ~65 ms locally against 470-540 ms cross-border, so it is what an
+    // ordinary lookup normally pays. Read once at assembly; the settings page tells the user a
+    // restart applies a change, exactly like the other runtime switches.
+    val customSourceBaseUrl = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(
+        runCatching { configuration().customLyricsSourceBaseUrl }.getOrDefault(""),
+    ).takeIf(String::isNotEmpty)
+    val customSourceLabel = if (customSourceBaseUrl == null) "public" else "custom"
+    // The AM-Lyrics index is ~55 KB and changes rarely, so it is served from disk and refreshed
+    // in the background instead of being downloaded again for every track.
+    val amLyricsIndexScheduler = ScheduledThreadPoolExecutor(
+        1,
+        { runnable -> Thread(runnable, "ampp-amlyrics-index").apply { isDaemon = true } },
+    )
+    val amLyricsIndexCache = FileAmLyricsIndexCache(
+        directory = File(application.filesDir, AM_LYRICS_CACHE_DIRECTORY),
+        transport = indexTransport,
+        // Same walk as the documents themselves, so a self-hosted mirror serves both.
+        indexUrls = { AmLyricsClient(indexTransport, customSourceBaseUrl).indexUrls() },
+        executor = amLyricsIndexScheduler,
+    )
+    // The presence index (~48 KB, ~13 KB gzipped) says which bundled repository carries a song.
+    // Its subject is the miss, not the hit: without it a song no repository carries still walks
+    // every endpoint of every repository before the translation lane is attempted. Only the
+    // self-hosted mirror publishes it, so with a blank root the cache stays disabled and answers
+    // "unknown", which is exactly the previous retry-everything behaviour.
+    val lyricPresenceCache = FileLyricPresenceCache(
+        directory = File(application.filesDir, LYRIC_PRESENCE_CACHE_DIRECTORY),
+        transport = indexTransport,
+        customRoot = customSourceBaseUrl,
+        executor = amLyricsIndexScheduler,
+    )
+    val amll = AmllTtmlClient(lyricTransport, customSourceBaseUrl)
+    val amLyrics = AmLyricsClient(lyricTransport, customSourceBaseUrl, amLyricsIndexCache)
+    // The periodic TTL check: every 6h, look at the cached copy and refresh only when it is
+    // older than the 12h TTL. Daemon thread, shut down with the runtime below. The presence
+    // index shares the thread and the policy - it is the same 12h copy of a self-hosted file.
+    runCatching {
+        amLyricsIndexScheduler.scheduleWithFixedDelay(
+            { runCatching { amLyricsIndexCache.refreshIfStale() } },
+            0L,
+            FileAmLyricsIndexCache.PERIODIC_CHECK_MS,
+            TimeUnit.MILLISECONDS,
+        )
+        amLyricsIndexScheduler.scheduleWithFixedDelay(
+            { runCatching { lyricPresenceCache.refreshIfStale() } },
+            0L,
+            FileLyricPresenceCache.PERIODIC_CHECK_MS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
     val sessionStore: NeSessionStore by lazy { SharedPreferencesNeSessionStore(application) }
     val chain = buildOnlineLyricsChain(
         supplementEnabled = onlineLyricsSupplementEnabled,
@@ -209,6 +267,9 @@ internal fun createAutoLyricsRuntime(
         amLyrics = amLyrics,
         lunabeat = lunabeat,
         trailing = onlineSources,
+        // Null while unknown keeps the old "ask every repository" path; a loaded index that does
+        // not name the track skips the bundled repositories without a single request.
+        presence = lyricPresenceCache,
     )
     val cache = FileAutoLyricsCache(root)
     val configuredContent = EmbeddedContentManager(
@@ -282,7 +343,9 @@ internal fun createAutoLyricsRuntime(
     )
     val sources = CustomLyricsUpdateSources(
         fetchAmll = amll::fetch,
-        loadAmLyricsIndex = amLyrics::fetchIndex,
+        // The user-initiated update pass reads the cached index first and only fetches when the
+        // cache is still cold; otherwise it would re-download 55 KB on every tap.
+        loadAmLyricsIndex = { amLyricsIndexCache.index() ?: amLyrics.fetchIndex() },
         fetchAmLyricsTtml = amLyrics::fetchTtml,
         loadLunabeatCatalog = lunabeat::loadCatalog,
         fetchLunabeatTtml = lunabeat::fetch,
@@ -305,9 +368,11 @@ internal fun createAutoLyricsRuntime(
         "online-translation runtime supplement=$onlineLyricsSupplementEnabled " +
             "translation=$onlineLyricsTranslationEnabled " +
             "applePronunciationOnly=true " +
+            "customSource=$customSourceLabel " +
             "hideMandarinPinyin=$hideMandarinPronunciation " +
             "sources=${onlineLyricsSelection.sources.joinToString(",")} " +
             "enricher=${enricher != null} " +
+            "presence=${lyricPresenceCache.enabled} " +
             "build=${ModuleConstants.BUILD_TAG}",
     )
     val llmExecutor = ThreadPoolExecutor(
@@ -378,7 +443,12 @@ internal fun createAutoLyricsRuntime(
             refreshExecutor.queue.clear()
             refreshExecutor.execute(task)
         },
-        closeRefresh = { refreshExecutor.shutdownNow() },
+        // One lifecycle for both background lanes: the refresh executor and the index
+        // scheduler (which drives the AM-Lyrics and presence caches) stop with the runtime.
+        closeRefresh = {
+            refreshExecutor.shutdownNow()
+            amLyricsIndexScheduler.shutdownNow()
+        },
         refreshSong = refresh@{ appleMusicId, isCancelled ->
             if (isCancelled()) return@refresh null
             var previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }

@@ -174,19 +174,30 @@ internal class EmbeddedRuntimeSettingsController(
         }
     }
 
+    /**
+     * The user's self-hosted AMLL / AM-Lyrics mirror, or null when unset or unusable.
+     *
+     * The settings-process import and update actions take the same first endpoint as
+     * playback, so a mirror that serves repeat plays also speeds up a manual import.
+     */
+    private fun customSourceRoot(): String? = ModuleSettings
+        .normalizeCustomLyricsSourceBaseUrl(currentSettings().customLyricsSourceBaseUrl)
+        .takeIf(String::isNotEmpty)
+
     override fun importOnlineLyrics(
         source: EmbeddedOnlineSource,
         appleMusicId: Long,
         displayName: String,
     ): EmbeddedActionResult {
+        val customRoot = customSourceRoot()
         val lunabeat = LunabeatClient(
             indexTransport = HttpLyricTransport(maxResponseBytes = LunabeatClient.INDEX_MAX_BYTES),
             lyricsTransport = HttpLyricTransport(),
             cache = FileLunabeatCatalogCache(File(appContext.filesDir, "ampp-lunabeat-cache")),
         )
         val importer = CustomLyricsOnlineImporter(
-            fetchAmll = AmllTtmlClient(HttpLyricTransport())::fetch,
-            fetchAmLyrics = AmLyricsClient(HttpLyricTransport())::fetch,
+            fetchAmll = AmllTtmlClient(HttpLyricTransport(), customRoot)::fetch,
+            fetchAmLyrics = AmLyricsClient(HttpLyricTransport(), customRoot)::fetch,
             fetchLunabeat = lunabeat::fetch,
         )
         val imported = when (source) {
@@ -218,8 +229,9 @@ internal class EmbeddedRuntimeSettingsController(
         onProgress: (CustomLyricsUpdateProgress) -> Unit,
     ): CustomLyricsUpdateResult = runCatching {
         val transport = HttpLyricTransport()
-        val amll = AmllTtmlClient(transport)
-        val amLyrics = AmLyricsClient(transport)
+        val customRoot = customSourceRoot()
+        val amll = AmllTtmlClient(transport, customRoot)
+        val amLyrics = AmLyricsClient(transport, customRoot)
         val lunabeat = LunabeatClient(
             indexTransport = HttpLyricTransport(maxResponseBytes = LunabeatClient.INDEX_MAX_BYTES),
             lyricsTransport = HttpLyricTransport(),

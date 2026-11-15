@@ -177,6 +177,17 @@ data class ModuleSettings(
      */
     val onlineLyricsHideMandarinPinyinEnabled: Boolean = false,
     /**
+     * A self-hosted lyric mirror root such as `https://lyrics.example.com/lyrics`, or "" to
+     * use the public mirrors only.
+     *
+     * Tried before every public endpoint for both GitHub-hosted sources (AMLL and AM-Lyrics),
+     * so a nearby mirror turns a cross-border request into a same-city one: the same 50 KB
+     * file measured ~65 ms self-hosted versus 470-540 ms from the public mirrors. Only an
+     * absolute http(s) URL is kept — a half-typed value must not silently redirect every
+     * lyric request.
+     */
+    val customLyricsSourceBaseUrl: String = "",
+    /**
      * Last-resort tier of the automatic lyrics chain: translate the original lyrics through an
      * OpenAI-compatible endpoint, but only when the native lyrics and every configured source
      * missed. Per-song eligibility gates live in the LLM lyrics runtime.
@@ -256,6 +267,9 @@ data class ModuleSettings(
         const val MAX_LLM_LYRICS_API_KEY_LENGTH = 4096
         const val MAX_LLM_LYRICS_MODEL_LENGTH = 256
 
+        /** Long enough for a host plus a path prefix; short enough to reject junk. */
+        const val MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH = 300
+
         fun isValidAppleMusicDpi(value: Int): Boolean =
             value == FOLLOW_SYSTEM_APPLE_MUSIC_DPI || value in MIN_APPLE_MUSIC_DPI..MAX_APPLE_MUSIC_DPI
 
@@ -270,6 +284,26 @@ data class ModuleSettings(
 
         fun normalizeLlmLyricsModel(value: String): String =
             value.trim().take(MAX_LLM_LYRICS_MODEL_LENGTH)
+
+        /**
+         * The self-hosted mirror root, or "" when unset or unusable.
+         *
+         * Trailing slashes are dropped so callers can concatenate paths directly, and a value
+         * that is not an absolute http(s) URL becomes "" — the transport can only speak those,
+         * and silently accepting "lyrics.example.com" would make every request fail as a
+         * relative URL instead of falling back to the public mirrors.
+         */
+        fun normalizeCustomLyricsSourceBaseUrl(value: String): String {
+            val trimmed = value.trim().trimEnd('/')
+            if (trimmed.isEmpty() || trimmed.length > MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH) {
+                return ""
+            }
+            val lower = trimmed.lowercase(java.util.Locale.ROOT)
+            return when {
+                lower.startsWith("https://") || lower.startsWith("http://") -> trimmed
+                else -> ""
+            }
+        }
 
         fun normalizePhoneLiquidGlassBottomGapDp(value: Int): Int =
             value.coerceIn(MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP, MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)

@@ -15,18 +15,34 @@ import org.json.JSONObject
 /**
  * AMLL TTML DB client. Direct, fixed URL per Adam ID; failures return null.
  */
-class AmllTtmlClient(private val transport: LyricHttpTransport) {
+class AmllTtmlClient(
+    private val transport: LyricHttpTransport,
+    /**
+     * A self-hosted mirror root such as `https://lyrics.example.com/lyrics`, tried before
+     * every public endpoint. Null/blank keeps the shipped behaviour (public mirrors only).
+     *
+     * Measured on the reference device: the same 50 KB file took ~65 ms from a nearby
+     * self-hosted nginx versus 470-540 ms from the public mirrors, so the first entry is
+     * what a repeat play normally pays.
+     */
+    private val customRoot: String? = null,
+) {
     fun fetch(adamId: Long): String? =
         transport.getFirstBytes(urls(adamId))?.toString(Charsets.UTF_8)
 
     /**
-     * Every endpoint that can serve this track's TTML, most reachable first.
+     * Every endpoint that can serve this track's TTML, most reachable first: an optional
+     * self-hosted mirror, then jsDelivr, the proxies, and finally GitHub's raw host.
      *
      * The file name *is* the Adam ID, so the path needs no index and the fallback is
-     * purely about who serves it: jsDelivr, then the proxies, then raw.
+     * purely about who serves it.
      */
-    fun urls(adamId: Long): List<String> =
-        GitHubContentEndpoints.urls(OWNER, REPO, REF, "am-lyrics/$adamId.ttml")
+    fun urls(adamId: Long): List<String> {
+        val path = "am-lyrics/$adamId.ttml"
+        val selfHosted = customRoot?.trim()?.trimEnd('/')?.takeIf(String::isNotEmpty)
+            ?.let { root -> "$root/amll/$path" }
+        return listOfNotNull(selfHosted) + GitHubContentEndpoints.urls(OWNER, REPO, REF, path)
+    }
 
     companion object {
         private const val OWNER = "amll-dev"
@@ -48,8 +64,27 @@ class AmllTtmlClient(private val transport: LyricHttpTransport) {
 data class AutoLyricsSource(
     val name: String,
     val acceptsLineTiming: Boolean = false,
+    /**
+     * This source's id in the presence index ("a", "n", "l"), or null when it is a search
+     * provider. Only bundled repositories with an id are gated by the index; search sources
+     * are the translation lane and must keep running.
+     */
+    val presenceId: String? = null,
     val fetch: (Long) -> String?,
 )
+
+/**
+ * Which bundled repositories carry a track, according to the self-hosted presence index.
+ *
+ * Null means **unknown** — no index configured, not downloaded yet, or unreadable — and the
+ * resolver then behaves exactly as before, asking every repository. An **empty** set means the
+ * index answered and nothing carries the track: the resolver skips the repositories without a
+ * single request, so the translation lane starts immediately instead of after a stack of
+ * timeouts.
+ */
+fun interface LyricPresenceIndex {
+    fun sourcesFor(appleMusicId: Long): Set<String>?
+}
 
 /**
  * Fetches the first structurally valid TTML candidate. Source-specific
@@ -62,10 +97,32 @@ data class AutoLyricsSource(
  */
 class AutoLyricsSourceResolver(
     private val sources: List<AutoLyricsSource>,
+    /** Optional presence index; null keeps the "ask every repository" behaviour. */
+    private val presence: LyricPresenceIndex? = null,
 ) {
-    fun fetch(appleMusicId: Long): AutoLyricsCandidate? {
+    /**
+     * The first acceptable candidate, or null.
+     *
+     * [budgetMs] bounds the *whole chain*: a song that none of the repositories carries used to
+     * walk every endpoint of every source before the translation lane was even attempted, which
+     * is a minute of timeouts on a network that blackholes one host. Once the budget is spent
+     * the chain stops and the caller falls through to the search sources, so a missing song
+     * costs one bounded wait instead of a stack of them.
+     */
+    fun fetch(
+        appleMusicId: Long,
+        budgetMs: Long = DEFAULT_CHAIN_BUDGET_MS,
+    ): AutoLyricsCandidate? {
         if (appleMusicId <= 0L) return null
+        val deadline = System.nanoTime() + budgetMs.coerceAtLeast(0L) * 1_000_000L
+        val knownSources = presence?.sourcesFor(appleMusicId)
         sources.forEach { source ->
+            // The index answered and does not list this repository: skip it without a request.
+            // A null answer (unknown) falls through and keeps the old retry-everything path.
+            if (knownSources != null && source.presenceId != null && source.presenceId !in knownSources) {
+                return@forEach
+            }
+            if (System.nanoTime() > deadline) return null
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
             return AutoLyricsCandidate(source.name, ttml)
@@ -74,6 +131,15 @@ class AutoLyricsSourceResolver(
     }
 
     companion object {
+        /**
+         * How long the fixed-provider chain may take before the translation lane is attempted.
+         *
+         * Two self-hosted/one-public AMLL lookups plus one Lunabeat catalog and one AM-Lyrics
+         * index fit comfortably; a song nobody carries stops here instead of accumulating every
+         * source's own timeout.
+         */
+        const val DEFAULT_CHAIN_BUDGET_MS = 8_000L
+
         /**
          * Wires the fixed AMLL → Lunabeat → AM-Lyrics priority.
          *
@@ -91,14 +157,25 @@ class AutoLyricsSourceResolver(
             lunabeat: LunabeatClient,
             leading: List<AutoLyricsSource> = emptyList(),
             trailing: List<AutoLyricsSource> = emptyList(),
+            /** Optional presence index; null keeps "ask every repository". */
+            presence: LyricPresenceIndex? = null,
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
-                AutoLyricsSource(CustomLyricsSources.AMLL) { raw ->
+                AutoLyricsSource(CustomLyricsSources.AMLL, presenceId = LyricPresence.AMLL) { raw ->
                     amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
                 },
-                AutoLyricsSource(CustomLyricsSources.LUNABEAT, fetch = lunabeat::fetch),
-                AutoLyricsSource(CustomLyricsSources.AM_LYRICS, fetch = amLyrics::fetch),
+                AutoLyricsSource(
+                    CustomLyricsSources.LUNABEAT,
+                    presenceId = LyricPresence.LUNABEAT,
+                    fetch = lunabeat::fetch,
+                ),
+                AutoLyricsSource(
+                    CustomLyricsSources.AM_LYRICS,
+                    presenceId = LyricPresence.AM_LYRICS,
+                    fetch = amLyrics::fetch,
+                ),
             ) + trailing,
+            presence = presence,
         )
     }
 }
@@ -125,10 +202,29 @@ data class AmLyricsIndex(
     }
 }
 
-class AmLyricsClient(private val transport: LyricHttpTransport) {
+/**
+ * Where the AM-Lyrics index comes from.
+ *
+ * The index is ~55 KB of JSON that changes rarely, and the client used to download it
+ * again for every track. The app supplies a disk-backed implementation that keeps the
+ * parsed index in memory, refreshes it in the background once it is older than its TTL,
+ * and never makes a lookup wait for the network.
+ */
+fun interface AmLyricsIndexProvider {
+    fun index(): AmLyricsIndex?
+}
+
+class AmLyricsClient(
+    private val transport: LyricHttpTransport,
+    /** A self-hosted mirror root, tried before every public endpoint. */
+    private val customRoot: String? = null,
+    /** The cached index when the app has one; null falls back to a per-call fetch. */
+    private val indexProvider: AmLyricsIndexProvider? = null,
+) {
     fun fetch(adamId: Long): String? {
         if (adamId <= 0L) return null
-        val entry = fetchIndex()?.entryFor(adamId) ?: return null
+        val index = indexProvider?.index() ?: fetchIndex()
+        val entry = index?.entryFor(adamId) ?: return null
         return fetchTtml(entry)
     }
 
@@ -152,8 +248,19 @@ class AmLyricsClient(private val transport: LyricHttpTransport) {
      * first. The index and each document take the same fallback, because a network that
      * resets raw resets both.
      */
-    fun urls(path: String): List<String> =
-        GitHubContentEndpoints.urls(OWNER, REPO, REF, path)
+    fun urls(path: String): List<String> {
+        val selfHosted = customRoot?.trim()?.trimEnd('/')?.takeIf(String::isNotEmpty)
+            ?.let { root -> "$root/amlyrics/$path" }
+        return listOfNotNull(selfHosted) + GitHubContentEndpoints.urls(OWNER, REPO, REF, path)
+    }
+
+    /**
+     * The index endpoints in priority order, for the app's disk-backed cache.
+     *
+     * Exposed instead of the literal `index.json` so the cache walks exactly the hosts this
+     * client would, including the self-hosted mirror.
+     */
+    fun indexUrls(): List<String> = urls(INDEX_PATH)
 
     companion object {
         private const val OWNER = "Zennmn"

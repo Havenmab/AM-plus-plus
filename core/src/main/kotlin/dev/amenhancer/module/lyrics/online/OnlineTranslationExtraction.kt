@@ -22,14 +22,20 @@ package dev.amenhancer.module.lyrics.online
  */
 object OnlineTranslationExtraction {
 
-    fun extract(result: LyricsResult): List<OnlineTranslationLine> {
-        val translationsByStart = result.translated.orEmpty().associate { line ->
+    fun extract(
+        result: LyricsResult,
+        alreadyFiltered: Boolean = false,
+    ): List<OnlineTranslationLine> {
+        // A translation lane opens with the platform's copyright notice and its empty slots
+        // arrive as "//"; both would otherwise be aligned onto the first real lyric line.
+        val clean = if (alreadyFiltered) result else LyricLineFilter.filter(result)
+        val translationsByStart = clean.translated.orEmpty().associate { line ->
             line.start to text(line)
         }
-        val romanizationsByStart = result.romanization.orEmpty().associate { line ->
+        val romanizationsByStart = clean.romanization.orEmpty().associate { line ->
             line.start to text(line)
         }
-        return result.original.map { line ->
+        return clean.original.map { line ->
             OnlineTranslationLine(
                 startTimeMs = line.start,
                 content = text(line),

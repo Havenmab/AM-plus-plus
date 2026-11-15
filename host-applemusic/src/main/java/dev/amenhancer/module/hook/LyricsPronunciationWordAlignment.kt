@@ -287,6 +287,13 @@ internal object LyricsPronunciationWordAlignment {
             if (breaks) {
                 flush()
                 current += token
+                // A katakana particle that ended the word before it is a word of its own: it must not
+                // be swallowed by the word after it either (`マジカル` | `ト` | `リック`, never
+                // `majikaru` | `torikku`). The hiragana set is different — a particle that may join
+                // still has to be able to (`でも` stays one word) — so only this set closes on itself.
+                // A particle with nothing in front of it is not a particle but a loanword's head
+                // (`トリック`, `トマト`), which is why the block-initial branch above does not flush.
+                if (token.isKatakanaParticle) flush()
                 continue
             }
             val gapBreaks = previous.end != null && token.begin != null &&

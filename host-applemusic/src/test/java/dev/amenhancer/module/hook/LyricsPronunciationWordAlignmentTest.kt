@@ -101,6 +101,26 @@ class LyricsPronunciationWordAlignmentTest {
     }
 
     @Test
+    fun `a katakana particle opening a loanword does not split it`() {
+        // The same character read the other way round: with nothing in front of it, ト heads a
+        // loanword (トリック) and only the hiragana particle after it ends the block.
+        val tokens = listOf(
+            token(0, "ト", "to"),
+            token(1, "リッ", "rik"),
+            token(2, "ク", "ku"),
+            token(3, "を", "o"),
+        )
+
+        val blocks = LyricsPronunciationWordAlignment.group(tokens)
+
+        assertEquals(
+            listOf("0..2", "3"),
+            blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex },
+        )
+        assertEquals(4, blocks[0].kanaCount)
+    }
+
+    @Test
     fun `a word level line is never spliced into longer words`() {
         // The AMLL line 12 shape: every container already holds a whole word, so joining them would
         // invent words the source kept apart.

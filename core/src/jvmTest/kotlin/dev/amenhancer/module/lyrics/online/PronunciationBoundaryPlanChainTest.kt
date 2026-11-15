@@ -29,6 +29,13 @@ class PronunciationBoundaryPlanChainTest {
 
         assertNotNull(request)
         val lines = request!!.lines
+        println(
+            "[bndry-builder] lines=" + lines.size +
+                " tokens=" + lines.map { it.tokens.size } +
+                " keys=" + lines.map { it.lineKey } +
+                " readings=" + lines.map { line -> line.tokens.map { it.reading } } +
+                " kana=" + lines.map { line -> line.tokens.map { it.kanaCount } },
+        )
         assertEquals(2, lines.size)
         assertEquals(listOf("赤", "い"), lines[0].tokens.map { it.kana })
         assertEquals(listOf(1, 1), lines[0].tokens.map { it.kanaCount })
@@ -43,9 +50,13 @@ class PronunciationBoundaryPlanChainTest {
     fun `a reading-less kana still counts as a kana`() {
         val request = PronunciationBoundaryRequests.fromTtml(
             "77",
-            document(spans = listOf("ス", "テ", "ー", "ジ")),
+            document(lines = 1, spans = listOf("ス", "テ", "ー", "ジ")),
         )!!
 
+        println(
+            "[bndry-builder] one line tokens=" + request.lines.single().tokens.map { it.kana } +
+                " kana=" + request.lines.single().tokens.map { it.kanaCount },
+        )
         assertEquals(listOf(1, 1, 1, 1), request.lines.single().tokens.map { it.kanaCount })
         assertEquals(
             listOf(false, false, false, false),
@@ -200,7 +211,12 @@ class PronunciationBoundaryPlanChainTest {
 
     private fun hash(seed: String = "a"): String = seed.repeat(64).take(64)
 
-    /** Two lines by default: 赤 い (with readings) and を (with one). */
+    /**
+     * A document shaped like the ones the reader actually parses: one timed `<p itunes:key>` per
+     * line, one timed `<span>` per token, and a head transliteration lane whose `<text for>`
+     * entry carries **timed** spans too — an untimed lane yields no readings, which is what the
+     * first version of this fixture got wrong.
+     */
     private fun document(
         lines: Int = 2,
         spans: List<String> = listOf("赤", "い"),
@@ -209,11 +225,13 @@ class PronunciationBoundaryPlanChainTest {
         val body = StringBuilder()
         for (index in 0 until lines) {
             val glyphs = if (index == 0) spans else listOf(second)
-            body.append("<p begin=\"").append(index * 2).append(".0\" end=\"")
-                .append(index * 2 + 2).append(".0\" itunes:key=\"L").append(index + 1).append("\">")
+            val lineBegin = index * 2_000
+            body.append("<p begin=\"").append(clock(lineBegin)).append("\" end=\"")
+                .append(clock(lineBegin + 2_000)).append("\" itunes:key=\"L").append(index + 1)
+                .append("\">")
             glyphs.forEachIndexed { position, glyph ->
-                body.append("<span begin=\"").append(index * 2).append('.').append(position)
-                    .append("\" end=\"").append(index * 2).append('.').append(position + 1)
+                body.append("<span begin=\"").append(clock(lineBegin + position * 500))
+                    .append("\" end=\"").append(clock(lineBegin + (position + 1) * 500))
                     .append("\">").append(glyph).append("</span>")
             }
             body.append("</p>")
@@ -221,20 +239,29 @@ class PronunciationBoundaryPlanChainTest {
         return "<tt xmlns=\"http://www.w3.org/ns/ttml\" " +
             "xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\">" +
             "<head><metadata><iTunesMetadata xmlns=\"http://music.apple.com/lyric-ttml-internal\">" +
-            transliterations(lines, spans, second) +
+            transliterations(lines) +
             "</iTunesMetadata></metadata></head>" +
             "<body><div>" + body + "</div></body></tt>"
     }
 
-    private fun transliterations(lines: Int, spans: List<String>, second: String): String {
+    private fun transliterations(lines: Int): String {
         val entries = StringBuilder("<transliterations><transliteration xml:lang=\"ja-Latn\">")
         for (index in 0 until lines) {
             val readings = if (index == 0) listOf("aka", "i") else listOf("o")
+            val lineBegin = index * 2_000
             entries.append("<text for=\"L").append(index + 1).append("\">")
-            readings.forEach { reading -> entries.append("<span>").append(reading).append("</span>") }
+            readings.forEachIndexed { position, reading ->
+                entries.append("<span begin=\"").append(clock(lineBegin + position * 500))
+                    .append("\" end=\"").append(clock(lineBegin + (position + 1) * 500))
+                    .append("\">").append(reading).append("</span>")
+            }
             entries.append("</text>")
         }
         entries.append("</transliteration></transliterations>")
         return entries.toString()
     }
+
+    /** A TTML clock with three millisecond digits, the form the reader parses. */
+    private fun clock(millis: Int): String =
+        (millis / 1000).toString() + "." + (millis % 1000).toString().padStart(3, '0')
 }

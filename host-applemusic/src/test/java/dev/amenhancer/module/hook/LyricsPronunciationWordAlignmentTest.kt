@@ -96,7 +96,10 @@ class LyricsPronunciationWordAlignmentTest {
 
         val blocks = LyricsPronunciationWordAlignment.group(tokens)
 
-        assertEquals(listOf("0..3", "4", "5..6", "7"), blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex })
+        // A one-token block still spans a range: group() labels every block first..last, so the
+        // particle ト at index 4 is "4..4" and not "4".
+        val groups = blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
+        assertEquals(describe(blocks, tokens), listOf("0..3", "4..4", "5..6", "7..7"), groups)
         assertEquals(4, blocks[0].kanaCount)
     }
 
@@ -113,10 +116,8 @@ class LyricsPronunciationWordAlignmentTest {
 
         val blocks = LyricsPronunciationWordAlignment.group(tokens)
 
-        assertEquals(
-            listOf("0..2", "3"),
-            blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex },
-        )
+        val groups = blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
+        assertEquals(describe(blocks, tokens), listOf("0..2", "3..3"), groups)
         assertEquals(4, blocks[0].kanaCount)
     }
 
@@ -347,6 +348,18 @@ class LyricsPronunciationWordAlignmentTest {
     }
 
     // ---- fixtures ---------------------------------------------------------------------------------
+
+    /** What the grouping saw and produced, so a failed assertion explains itself in the CI log. */
+    private fun describe(
+        blocks: List<LyricsPronunciationWordAlignment.Block>,
+        tokens: List<LyricsPronunciationWordAlignment.ContainerToken>,
+    ): String = "blocks=" + blocks.joinToString(prefix = "[", postfix = "]") { block ->
+        block.firstIndex.toString() + ".." + block.lastIndex + "=" +
+            block.tokens.fold("") { text, token -> text + token.core }
+    } + " cores=" + tokens.map { it.core } +
+        " scripts=" + tokens.map { it.script } +
+        " katakanaParticle=" + tokens.map { it.isKatakanaParticle } +
+        " kana=" + tokens.map { it.kanaCount }
 
     private fun token(
         index: Int,

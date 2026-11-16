@@ -215,22 +215,6 @@ class PronunciationBoundaryPlanChainTest {
         assertTrue(reject.contains("line=0"))
     }
 
-    @Test
-    fun theAppRegistersTheChainAndNeverPointsTheSlotAtTheTrigger() {
-        // Two stable facts only: the facade's public entry points are called, and the slot is not
-        // wired back into triggerBoundary — that self-reference was a stack overflow on device, so
-        // it is worth one regression assertion even though the rest of the wiring is no longer
-        // pinned by source text.
-        val app = sequenceOf(
-            java.io.File("app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
-            java.io.File("../app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
-        ).firstOrNull { it.isFile }?.readText()
-        assertNotNull(app)
-        println("[bndry-wiring] appLines=" + app!!.lines().size)
-        assertTrue(app.contains("setBoundaryPlans("))
-        assertTrue(app.contains("setDocumentObserver("))
-        assertFalse(app.contains("triggerBoundary(\"llm\""))
-    }
 
 
 

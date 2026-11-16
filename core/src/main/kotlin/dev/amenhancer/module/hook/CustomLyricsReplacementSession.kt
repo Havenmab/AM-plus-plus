@@ -43,6 +43,8 @@ class CustomLyricsReplacementSession(
     private val index: CustomLyricsIndexProvider,
     private val readTtml: (CustomLyricsEntry) -> String?,
     private val parseTtml: (String) -> Any?,
+    /** Reports our document to the boundary planner the moment it is accepted; never blocks. */
+    private val onDocument: ((Long, String) -> Unit)? = null,
     private val isAlive: (Any?) -> Boolean,
     private val verifyPtr: (Any?) -> Boolean,
     private val readAdamId: (Any) -> Long?,
@@ -192,6 +194,7 @@ class CustomLyricsReplacementSession(
             if (mergedPointers[appleMusicId]?.revision == revision) return false
         }
         val pointer = runCatching { parseTtml(mergedTtml) }.getOrNull() ?: return false
+onDocument?.invoke(appleMusicId, mergedTtml)
         if (!isPrepared(pointer, appleMusicId) &&
             !runCatching { bindAdamId(pointer, appleMusicId) }.getOrDefault(false)
         ) {
@@ -264,6 +267,7 @@ class CustomLyricsReplacementSession(
                     }
                     val ttml = readTtml(entry) ?: return@runCatching
                     val replacement = parseTtml(ttml) ?: return@runCatching
+onDocument?.invoke(entry.appleMusicId, ttml)
                     if (!isPrepared(replacement, entry.appleMusicId) && !bindAdamId(replacement, entry.appleMusicId)) {
                         return@runCatching
                     }
@@ -382,6 +386,7 @@ class CustomLyricsReplacementSession(
             }
             val ttml = runCatching { readTtml(entry) }.getOrNull() ?: return
             val replacement = runCatching { parseTtml(ttml) }.getOrNull() ?: return
+onDocument?.invoke(appleMusicId, ttml)
             if (!isPrepared(replacement, appleMusicId) && !bindAdamId(replacement, appleMusicId)) {
                 logger("custom lyrics parser returned an unusable SongInfoPtr for $appleMusicId")
                 return

@@ -28,4 +28,26 @@ object LyricsPronunciationCentringBridge {
     fun reapplyObservedRows() {
         LyricsPronunciationRowCentring.reapplyObserved()
     }
+
+    /**
+     * Where the host reports a lyric document it is about to hand to Apple, or clears it with null.
+     *
+     * The injection seam is the only place every path passes through — the custom-lyrics quick path
+     * that injects an already-configured document never reaches the app's publish callbacks — so the
+     * observer is what makes the boundary planner see those songs at all. It runs on the thread that
+     * publishes the document, must not block and must not do I/O: the app's handler only queues.
+     */
+    @Volatile
+    private var documentObserver: ((Long, String) -> Unit)? = null
+
+    /** Installs the observer; the host calls it with the song id and our own document. */
+    fun setDocumentObserver(observer: ((Long, String) -> Unit)?) {
+        documentObserver = observer
+    }
+
+    /** Reports one document to the observer, if any; a no-op otherwise. */
+    fun reportDocument(appleMusicId: Long, ttml: String) {
+        if (appleMusicId <= 0L || ttml.isBlank()) return
+        documentObserver?.invoke(appleMusicId, ttml)
+    }
 }

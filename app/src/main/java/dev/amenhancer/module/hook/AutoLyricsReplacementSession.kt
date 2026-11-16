@@ -488,6 +488,11 @@ internal fun createAutoLyricsRuntime(
                 " configured=" + configured,
         )
     }
+    // The custom-lyrics quick path injects an already-configured document without ever entering the
+    // publish callbacks above, so the host reports every document it hands to Apple through here.
+    LyricsPronunciationCentringBridge.setDocumentObserver { appleMusicId, ttml ->
+        triggerBoundary("native-hook", appleMusicId, ttml)
+    }
     boundaryOnDocument = { appleMusicId, ttml ->
         triggerBoundary("llm", appleMusicId, ttml)
     }

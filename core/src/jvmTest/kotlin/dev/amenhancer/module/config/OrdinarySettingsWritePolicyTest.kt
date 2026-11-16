@@ -141,6 +141,8 @@ class OrdinarySettingsWritePolicyTest {
                 "online_lyrics_global_best_enabled" to false,
                 "online_lyrics_translation_enabled" to false,
                 "online_lyrics_hide_mandarin_pinyin" to false,
+                "dict_merge_enabled" to false,
+                "dict_merge_dry_run" to true,
                 "llm_lyrics_enabled" to false,
                 "llm_lyrics_base_url" to "",
                 "llm_lyrics_api_key" to "",

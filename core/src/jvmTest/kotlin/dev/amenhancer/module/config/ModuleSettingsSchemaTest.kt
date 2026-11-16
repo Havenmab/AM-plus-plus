@@ -135,6 +135,8 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_global_best_enabled" to false,
                 "online_lyrics_translation_enabled" to false,
                 "online_lyrics_hide_mandarin_pinyin" to false,
+                "dict_merge_enabled" to false,
+                "dict_merge_dry_run" to true,
                 "llm_lyrics_enabled" to false,
                 "llm_lyrics_base_url" to "",
                 "llm_lyrics_api_key" to "",
@@ -204,6 +206,8 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_global_best_enabled" to false,
                 "online_lyrics_translation_enabled" to false,
                 "online_lyrics_hide_mandarin_pinyin" to false,
+                "dict_merge_enabled" to false,
+                "dict_merge_dry_run" to true,
                 "llm_lyrics_enabled" to false,
                 "llm_lyrics_base_url" to "",
                 "llm_lyrics_api_key" to "",
@@ -1272,5 +1276,50 @@ class ModuleSettingsSchemaTest {
                 mapOf("phone_liquid_glass_mini_sink_bounce_dp" to "deep"),
             ).phoneLiquidGlassMiniSinkBounceDp,
         )
+    }
+
+    @Test
+    fun `the dictionary switch defaults off and round trips`() {
+        assertFalse(ModuleSettings().dictMergeEnabled)
+        assertFalse(ModuleSettingsSchema.decode(emptyMap<String, Any>()).dictMergeEnabled)
+        for (enabled in listOf(false, true)) {
+            val values = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(dictMergeEnabled = enabled),
+            )
+            assertEquals(enabled, values["dict_merge_enabled"])
+            assertEquals(enabled, ModuleSettingsSchema.decode(values).dictMergeEnabled)
+        }
+    }
+
+    @Test
+    fun `the dictionary dry run defaults on and round trips`() {
+        assertTrue(ModuleSettings().dictMergeDryRun)
+        assertTrue(ModuleSettingsSchema.decode(emptyMap<String, Any>()).dictMergeDryRun)
+        for (dryRun in listOf(true, false)) {
+            val values = ModuleSettingsSchema.encodeOrdinarySettings(
+                ModuleSettings(dictMergeDryRun = dryRun),
+            )
+            assertEquals(dryRun, values["dict_merge_dry_run"])
+            assertEquals(dryRun, ModuleSettingsSchema.decode(values).dictMergeDryRun)
+        }
+    }
+
+    @Test
+    fun `a store from before the dictionary keeps the pure rule grouping`() {
+        // A v28 store has neither key. The upgrade re-encodes it and the new defaults must be the
+        // pair that changes nothing: the switch off, the dry run on.
+        val upgraded = ModuleSettingsSchema.upgrade(
+            storedValues = mapOf(
+                "schema_version" to 28,
+                "online_lyrics_translation_enabled" to true,
+            ),
+            legacyValues = emptyMap<String, Any>(),
+        )
+        val decoded = ModuleSettingsSchema.decode(requireNotNull(upgraded))
+
+        assertFalse(decoded.dictMergeEnabled)
+        assertTrue(decoded.dictMergeDryRun)
+        assertTrue(decoded.onlineLyricsTranslationEnabled)
+        assertEquals(ModuleConstants.CONFIG_SCHEMA_VERSION, decoded.schemaVersion)
     }
 }

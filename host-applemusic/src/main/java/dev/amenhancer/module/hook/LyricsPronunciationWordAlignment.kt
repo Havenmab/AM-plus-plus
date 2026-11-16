@@ -2,6 +2,8 @@ package dev.amenhancer.module.hook
 
 import android.view.ViewGroup
 import android.widget.TextView
+import dev.amenhancer.module.config.TargetConfigClient
+import dev.amenhancer.module.lyrics.online.KanaDictionary
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
 import java.util.Collections
 import java.util.WeakHashMap
@@ -70,6 +72,15 @@ internal object LyricsPronunciationWordAlignment {
      * neighbour. Shares [LyricsPronunciationRowCentring.WHOLE_WORD_RATIO]'s threshold on purpose.
      */
     const val WHOLE_WORD_READING_RATIO = LyricsPronunciationRowCentring.WHOLE_WORD_RATIO
+
+    /** The dictionary pass logs under its own tag so a device log can be filtered to it alone. */
+    const val DICT_LOG_TAG = "AMPP-Dict"
+
+    /** How many distinct dictionary log lines are remembered before the limiter forgets them. */
+    const val DICT_LOG_LIMIT = 256
+
+    /** How many characters of a line's kana join identify it in a dictionary log line. */
+    const val DICT_LOG_KEY_PREFIX = 12
 
     /** Katakana particles: a one-character token from this set always ends the word before it. */
     const val KATAKANA_PARTICLE = "トデハヲニガモノネヨ"
@@ -241,14 +252,15 @@ internal object LyricsPronunciationWordAlignment {
     }
 
     /**
-     * The word blocks of [tokens], in order. Every token lands in exactly one block, so a caller maps
-     * a block back onto containers through [Block.firstIndex]/[Block.lastIndex].
+     * The rules' own grouping of [tokens], in order — the baseline [group] starts from. Every token
+     * lands in exactly one block, so a caller maps a block back onto containers through
+     * [Block.firstIndex]/[Block.lastIndex].
      *
      * The order of the checks is what keeps the hard cases apart: nothing may cross a word boundary
      * ([ContainerToken.trailingBlank], a wrapped line, a katakana particle), and a source that already
      * wrote the whole word's reading in one container must not join its neighbour.
      */
-    fun group(
+    private fun groupByRules(
         tokens: List<ContainerToken>,
         mode: GroupingMode = GroupingMode.LOOSE,
         maxKana: Int = WORD_MAX_KANA,
@@ -304,6 +316,172 @@ internal object LyricsPronunciationWordAlignment {
         }
         flush()
         return blocks
+    }
+
+    /**
+     * The word blocks of [tokens], in order: the rule grouping, narrowed by the kana dictionary's
+     * split correction when [dictionary] is supplied.
+     *
+     * With no dictionary (the default) this is exactly [groupByRules], so a module with the
+     * dictionary switch off keeps the rule grouping byte for byte. The dictionary may only ever
+     * **split** a block the rules over-merged; it can never join two blocks, and every hard
+     * boundary the rules prove stays untouched (see [splitPoint]).
+     *
+     * [dryRun] keeps the blocks as the rules produced them and only reports what the dictionary
+     * would do, which is how the first device run measures the correction before it reaches the
+     * layout. [log] receives one line per decision; the default writes the bounded
+     * `AMPP-Dict` diagnostic.
+     */
+    fun group(
+        tokens: List<ContainerToken>,
+        mode: GroupingMode = GroupingMode.LOOSE,
+        maxKana: Int = WORD_MAX_KANA,
+        gapBreakMs: Long = GAP_BREAK_MS,
+        dictionary: KanaDictionary? = null,
+        dryRun: Boolean = true,
+        log: (String) -> Unit = ::logDictionaryOnce,
+    ): List<Block> {
+        val blocks = groupByRules(tokens, mode, maxKana, gapBreakMs)
+        if (dictionary == null) return blocks
+        return applyDictionarySplits(tokens, blocks, dictionary, dryRun, log)
+    }
+
+    /**
+     * The dictionary's split pass over the rule [blocks].
+     *
+     * A block may be split at one internal token boundary when **both** halves are dictionary
+     * words and both halves still hold at least two readings: a one-reading half would splice
+     * nothing, so splitting it off is noise, not a word boundary. When more than one boundary
+     * qualifies the **longest left segment** wins — it keeps the largest dictionary-attested unit
+     * in front and still leaves a dictionary-attested tail, and it is deterministic. Only one
+     * split per block is taken per pass, so the result is always two words, never a re-segmented
+     * line the rules did not produce.
+     *
+     * A line that cannot be split is reported once as a `skip` line with the reason that stopped
+     * it, so a device log says why a known over-merge stayed whole.
+     */
+    fun applyDictionarySplits(
+        tokens: List<ContainerToken>,
+        blocks: List<Block>,
+        dictionary: KanaDictionary,
+        dryRun: Boolean = true,
+        log: (String) -> Unit = ::logDictionaryOnce,
+    ): List<Block> {
+        val key = dictionaryKey(tokens)
+        val result = ArrayList<Block>(blocks.size + 2)
+        for (block in blocks) {
+            val reason = skipReason(block)
+            val split = if (reason == null) splitPoint(block, dictionary) else null
+            if (split == null) {
+                log("dict skip key=" + key + " reason=" + (reason ?: "no-split"))
+                result += block
+                continue
+            }
+            log(
+                "dict split key=" + key + " at=" + block.tokens[split.at].index +
+                    " left=" + split.left + " right=" + split.right + " dry=" + dryRun,
+            )
+            if (dryRun) {
+                result += block
+            } else {
+                result += Block(block.tokens.subList(0, split.at).toList())
+                result += Block(block.tokens.subList(split.at, block.tokens.size).toList())
+            }
+        }
+        return result
+    }
+
+    /** One candidate split inside a block: [at] is the index, inside the block, of its right half. */
+    private class Split(val at: Int, val left: String, val right: String)
+
+    /** Why [block] must not be split at all, or null when the dictionary may look for a split. */
+    private fun skipReason(block: Block): String? {
+        if (block.fragments.size < 2) return "single-fragment"
+        return if (hasHardBoundary(block)) "hard-boundary" else null
+    }
+
+    /**
+     * The longest split the dictionary can prove inside [block], or null.
+     *
+     * "Both halves are dictionary words" is the whole evidence: the index is a membership test,
+     * not a segmentation score, and a cheaper cost function was measured to prefer the wrong word
+     * on kana-only lines (see .work/analysis/pronunciation-dictionary-merge-plan.md).
+     */
+    private fun splitPoint(block: Block, dictionary: KanaDictionary): Split? {
+        val tokens = block.tokens
+        var best: Split? = null
+        var bestLength = -1
+        for (at in 1 until tokens.size) {
+            val leftTokens = tokens.subList(0, at)
+            val rightTokens = tokens.subList(at, tokens.size)
+            if (leftTokens.count { it.hasReading } < 2) continue
+            if (rightTokens.count { it.hasReading } < 2) continue
+            val left = leftTokens.joinToString("") { it.core }
+            val right = rightTokens.joinToString("") { it.core }
+            if (left.isEmpty() || right.isEmpty()) continue
+            if (!dictionary.contains(left) || !dictionary.contains(right)) continue
+            if (!katakanaBoundaryAllowed(tokens[at - 1], tokens[at], left, right)) continue
+            if (left.length > bestLength) {
+                bestLength = left.length
+                best = Split(at, left, right)
+            }
+        }
+        return best
+    }
+
+    /**
+     * Whether a split at the boundary between [previous] and [next] may be taken.
+     *
+     * Inside a katakana run the membership index cannot tell an out-of-vocabulary loanword from two
+     * adjacent katakana words: マジ and カル are both words (so are メタ and モッて), so a plain
+     * "both halves are words" test splits マジカル and メタモッて apart — the two cases the index was
+     * measured to get wrong. A katakana boundary is therefore only trusted for a repetition
+     * (ダメ|ダメ), where the repeat itself is the evidence. Hiragana runs are function-word rich and
+     * keep the ordinary two-word rule (こんな|んじゃ, しかけ|てる).
+     */
+    private fun katakanaBoundaryAllowed(
+        previous: ContainerToken,
+        next: ContainerToken,
+        left: String,
+        right: String,
+    ): Boolean {
+        if (previous.script != Script.KATAKANA || next.script != Script.KATAKANA) return true
+        return left == right
+    }
+
+    /**
+     * Whether [block] spans a boundary the rules prove, which the dictionary must never cross.
+     *
+     * The rule grouping already flushes on every one of these, so a block normally contains none;
+     * the check stays because [applyDictionarySplits] is also reachable from a caller that built
+     * its own blocks, and a split across a proven boundary would be a wrong word.
+     */
+    private fun hasHardBoundary(block: Block): Boolean {
+        val tokens = block.tokens
+        for (at in 1 until tokens.size) {
+            val previous = tokens[at - 1]
+            val next = tokens[at]
+            if (previous.trailingBlank) return true
+            if (abs(previous.lineTop - next.lineTop) > LINE_TOLERANCE_PX) return true
+            if (next.isKatakanaParticle) return true
+            if (previous.readingIsWholeWord) return true
+        }
+        return false
+    }
+
+    /** The first [DICT_LOG_KEY_PREFIX] characters of the line's kana join: a key, not the line. */
+    fun dictionaryKey(tokens: List<ContainerToken>): String =
+        tokens.joinToString("") { it.core }.take(DICT_LOG_KEY_PREFIX)
+
+    private val dictionaryLog = Collections.synchronizedSet(LinkedHashSet<String>())
+
+    /** Writes one dictionary diagnostic, at most [DICT_LOG_LIMIT] distinct lines per process. */
+    private fun logDictionaryOnce(message: String) {
+        synchronized(dictionaryLog) {
+            if (dictionaryLog.size >= DICT_LOG_LIMIT) return
+            if (!dictionaryLog.add(message)) return
+        }
+        android.util.Log.i(DICT_LOG_TAG, message)
     }
 
     /**
@@ -415,7 +593,20 @@ internal object LyricsPronunciationWordAlignment {
         val timed = attachTimings(tokens, lineSpans?.invoke(tokens.joinToString("") { it.core }))
         if (isWordLevelLine(timed)) return false
 
-        val block = blockOf(group(timed), anchorIndex) ?: return false
+        // The dictionary correction is opt-in: with the switch off nothing is loaded and [group]
+        // takes the rule path alone, which is the byte-for-byte baseline. In dry-run — the default
+        // once the switch is on — the row keeps the rule grouping and only the log changes.
+        val settings = runCatching { TargetConfigClient.currentSettings() }.getOrNull()
+        val dictionary = if (settings?.dictMergeEnabled == true) {
+            KanaDictionaryAssets.load(row.context)
+        } else {
+            null
+        }
+        val dryRun = settings?.dictMergeDryRun ?: true
+        val block = blockOf(
+            group(timed, dictionary = dictionary, dryRun = dryRun),
+            anchorIndex,
+        ) ?: return false
         if (block.fragments.size < 2) return false
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it

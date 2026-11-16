@@ -177,6 +177,22 @@ data class ModuleSettings(
      */
     val onlineLyricsHideMandarinPinyinEnabled: Boolean = false,
     /**
+     * The kana dictionary's "split, never merge" correction for the pronunciation row. Defaults
+     * off: with this off the rule grouping is byte-for-byte what it was before the dictionary
+     * existed, and the 358 KB asset is never even read.
+     *
+     * When on, a word block the rules over-merged may be split at a point where both halves are
+     * dictionary words; nothing is ever merged, and every hard boundary the rules prove (a blank,
+     * a wrapped line, a katakana particle, a whole-word reading) stays untouchable.
+     */
+    val dictMergeEnabled: Boolean = false,
+    /**
+     * Records the dictionary's decisions without applying them. Defaults **on**, so enabling
+     * [dictMergeEnabled] on a build first yields `AMPP-Dict` log lines and an unchanged row; the
+     * splits only reach the layout once this is turned off, after the device log has been read.
+     */
+    val dictMergeDryRun: Boolean = true,
+    /**
      * A self-hosted lyric mirror root such as `https://lyrics.example.com/lyrics`, or "" to
      * use the public mirrors only.
      *

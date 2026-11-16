@@ -207,6 +207,8 @@ object ModuleSettingsSchema {
                 KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN,
                 default = false,
             ),
+            dictMergeEnabled = values.boolean(KEY_DICT_MERGE_ENABLED, default = false),
+            dictMergeDryRun = values.boolean(KEY_DICT_MERGE_DRY_RUN, default = true),
             fontManifest = values.fontManifest(),
             customLyricsManifest = customLyricsManifest,
             schemaVersion = values.number(KEY_SCHEMA_VERSION)
@@ -303,6 +305,8 @@ object ModuleSettingsSchema {
             KEY_ONLINE_LYRICS_TRANSLATION_ENABLED to settings.onlineLyricsTranslationEnabled,
             KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN to
                 settings.onlineLyricsHideMandarinPinyinEnabled,
+            KEY_DICT_MERGE_ENABLED to settings.dictMergeEnabled,
+            KEY_DICT_MERGE_DRY_RUN to settings.dictMergeDryRun,
             KEY_LLM_LYRICS_ENABLED to settings.llmLyricsEnabled,
             KEY_LLM_LYRICS_BASE_URL to
                 ModuleSettings.normalizeLlmLyricsBaseUrl(settings.llmLyricsBaseUrl),
@@ -564,6 +568,8 @@ object ModuleSettingsSchema {
         KEY_ONLINE_LYRICS_GLOBAL_BEST_ENABLED,
         KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
         KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN,
+        KEY_DICT_MERGE_ENABLED,
+        KEY_DICT_MERGE_DRY_RUN,
         KEY_LLM_LYRICS_ENABLED,
         KEY_LLM_LYRICS_BASE_URL,
         KEY_LLM_LYRICS_API_KEY,
@@ -655,6 +661,10 @@ object ModuleSettingsSchema {
     /** HLE's 「不显示国语歌拼音」 switch. */
     private const val KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN =
         "online_lyrics_hide_mandarin_pinyin"
+    /** The kana dictionary's split correction for the pronunciation row. */
+    private const val KEY_DICT_MERGE_ENABLED = "dict_merge_enabled"
+    /** Record the dictionary's splits without applying them. */
+    private const val KEY_DICT_MERGE_DRY_RUN = "dict_merge_dry_run"
     private const val KEY_LLM_LYRICS_ENABLED = "llm_lyrics_enabled"
     private const val KEY_LLM_LYRICS_BASE_URL = "llm_lyrics_base_url"
     private const val KEY_LLM_LYRICS_API_KEY = "llm_lyrics_api_key"

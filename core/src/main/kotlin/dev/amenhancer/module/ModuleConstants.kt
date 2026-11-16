@@ -62,8 +62,12 @@ object ModuleConstants {
      * stays off), and no key is renamed, so 28 needs no migration step of its
      * own; the region/lyrics migration above still re-encodes decoded values and
      * therefore never rewrites a stored setting.
+     *
+     * 29 adds the two kana-dictionary switches (`dict_merge_enabled`, default off, and
+     * `dict_merge_dry_run`, default on). Both are new defaulted keys, so an upgrading store
+     * keeps the pure-rule grouping byte for byte and needs no migration step of its own.
      */
-    const val CONFIG_SCHEMA_VERSION = 28
+    const val CONFIG_SCHEMA_VERSION = 29
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

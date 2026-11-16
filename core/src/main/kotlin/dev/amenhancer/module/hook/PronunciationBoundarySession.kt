@@ -136,20 +136,55 @@ class PronunciationBoundarySession(
         runCatching {
             val cached = runtime.cacheRead(appleMusicId, kanaHash, tokenCounts, config)
             if (cached != null) {
+                log("bndry llm cached song=" + appleMusicId + " lines=" + cached.size)
                 install(appleMusicId, stamp, cached)
                 return@runCatching
             }
             val lines = ArrayList<PronunciationBoundary.BoundaryLine>(request.lines.size)
             for (slice in PronunciationBoundary.slices(request)) {
                 if (isCancelled()) return@runCatching
-                val content = attempt(slice, config, isCancelled) ?: run {
-                    runtime.log("boundary request failed lines=" + slice.lines.size)
+                log(
+                    "bndry llm request song=" + appleMusicId +
+                        " model=" + config.normalizedModel +
+                        " lines=" + slice.lines.size +
+                        " chars=" + (
+                            PronunciationBoundary.buildSystemPrompt().length +
+                                PronunciationBoundary.buildUserPrompt(slice).length
+                            ) +
+                        " thinking=" + config.thinkingEnabled,
+                )
+                val started = System.nanoTime()
+                val content = attempt(slice, config, isCancelled)
+                val elapsedMs = (System.nanoTime() - started) / NANOS_PER_MILLI
+                if (content == null) {
+                    log("bndry llm failed song=" + appleMusicId + " reason=request-failed")
                     return@runCatching
                 }
+                if (content.isBlank()) {
+                    log("bndry llm failed song=" + appleMusicId + " reason=empty")
+                    return@runCatching
+                }
+                log(
+                    "bndry llm response song=" + appleMusicId +
+                        " ms=" + elapsedMs +
+                        " chars=" + content.length +
+                        " head=" + content.take(120).replace(chr(10).toString(), "\\n"),
+                )
                 when (val outcome = PronunciationBoundary.parsePlan(content, slice)) {
-                    is PronunciationBoundary.Outcome.Accepted -> lines += outcome.plan.lines
+                    is PronunciationBoundary.Outcome.Accepted -> {
+                        lines += outcome.plan.lines
+                        log(
+                            "bndry llm parsed song=" + appleMusicId +
+                                " lines=" + outcome.plan.lines.size + "/" + slice.lines.size +
+                                " rejected=0",
+                        )
+                    }
                     is PronunciationBoundary.Outcome.Rejected -> {
-                        runtime.log(
+                        log(
+                            "bndry llm failed song=" + appleMusicId +
+                                " reason=validate:" + outcome.error.code,
+                        )
+                        log(
                             "bndry reject reason=" + outcome.error.code +
                                 " line=" + (slice.lines.firstOrNull()?.index ?: -1),
                         )
@@ -189,6 +224,11 @@ class PronunciationBoundarySession(
 
     /** A cheap line count for the entry log; the parser counts again when the request is built. */
     private fun countLines(ttml: String): Int = ttml.split("<p").size - 1
+
+    /** Every line of this session goes through here, so the host decides where it lands. */
+    private fun log(line: String) {
+        runtime.log(line)
+    }
 
     private fun isCurrent(appleMusicId: Long, stamp: Long): Boolean = synchronized(lock) {
         !closed && generation == stamp && activeSongId == appleMusicId

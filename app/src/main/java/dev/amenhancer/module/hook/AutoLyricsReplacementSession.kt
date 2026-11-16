@@ -329,6 +329,21 @@ internal fun createAutoLyricsRuntime(
     // replaced lyrics too, not just the LLM fallback. The session it forwards to is created further
     // down, so the slot is null until then and a call in that window is a no-op.
     var boundaryOnDocument: ((Long, String) -> Unit)? = null
+
+    // One shape for every hand-off, so "nothing logged at all" and "triggered but dropped" are
+    // distinguishable on logcat without reading the Xposed log.
+    fun triggerBoundary(path: String, appleMusicId: Long, ttml: String) {
+        android.util.Log.i(
+            "AMPP-Bndry",
+            "bndry trigger path=" + path + " song=" + appleMusicId + " ttml=" + ttml.length,
+        )
+        val slot = boundaryOnDocument
+        if (slot == null) {
+            android.util.Log.i("AMPP-Bndry", "bndry trigger dropped path=" + path + " reason=slot-null")
+            return
+        }
+        slot(appleMusicId, ttml)
+    }
     runCatching {
         executor.execute {
             cache.cachedIds().forEach { appleMusicId ->
@@ -346,7 +361,7 @@ internal fun createAutoLyricsRuntime(
                     AutoLyricsPublishResult.PUBLISHED,
                     AutoLyricsPublishResult.ALREADY_CONFIGURED,
                     -> {
-                        candidate?.let { boundaryOnDocument?.invoke(appleMusicId, it.ttml) }
+                        candidate?.let { triggerBoundary("publish-start", appleMusicId, it.ttml) }
                         cache.delete(appleMusicId)
                     }
                     AutoLyricsPublishResult.FAILED -> Unit
@@ -380,7 +395,7 @@ internal fun createAutoLyricsRuntime(
                 currentTrack = currentTrack,
                 logger = logger,
                 overlay = nativeLyricOverlay,
-                onDocument = { appleMusicId, ttml -> boundaryOnDocument?.invoke(appleMusicId, ttml) },
+                onDocument = { appleMusicId, ttml -> triggerBoundary("enricher", appleMusicId, ttml) },
             )
         }
     logger(
@@ -451,8 +466,23 @@ internal fun createAutoLyricsRuntime(
     )
     // The splice's only door to a plan: a lookup in memory, never a request.
     LyricsPronunciationCentringBridge.setBoundaryPlans { lineKey -> boundaryStore.planFor(lineKey) }
+    run {
+        // One line at start-up: whether the chain exists at all, and what the two gates said then.
+        val settings = configuration()
+        val configured = LlmLyricsConfig(
+            baseUrl = settings.llmLyricsBaseUrl,
+            apiKey = settings.llmLyricsApiKey,
+            model = settings.llmLyricsModel,
+            thinkingEnabled = settings.llmLyricsThinkingEnabled,
+        ).isConfigured
+        android.util.Log.i(
+            "AMPP-Bndry",
+            "bndry ready enabled=" + settings.llmPronunciationBoundaryEnabled +
+                " configured=" + configured,
+        )
+    }
     boundaryOnDocument = { appleMusicId, ttml ->
-        boundarySession.onDocument(appleMusicId, ttml)
+        triggerBoundary("llm", appleMusicId, ttml)
     }
     val llm = LlmLyricsRuntime(
         configuration = {
@@ -472,6 +502,11 @@ internal fun createAutoLyricsRuntime(
             // Hand the document to the boundary planner once. It queues its own work and returns
             // immediately, so it cannot slow this fallback down.
             runCatching {
+                android.util.Log.i(
+                    "AMPP-Bndry",
+                    "bndry trigger path=llm song=" + request.appleMusicId +
+                        " ttml=" + request.originalTtml.length,
+                )
                 boundarySession.onDocument(
                     request.appleMusicId,
                     request.originalTtml,
@@ -539,7 +574,7 @@ internal fun createAutoLyricsRuntime(
                 val cached = cache.readCandidate(appleMusicId) ?: return@refresh null
                 if (isCancelled()) return@refresh null
                 if (publisher.publish(appleMusicId, cached) == AutoLyricsPublishResult.FAILED) return@refresh null
-                boundaryOnDocument?.invoke(appleMusicId, cached.ttml)
+                triggerBoundary("publish-refresh", appleMusicId, cached.ttml)
                 cache.delete(appleMusicId)
                 previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
             }

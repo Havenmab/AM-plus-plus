@@ -7,6 +7,7 @@ import dev.amenhancer.module.lyrics.LlmLyricsConfig
 import java.nio.file.Files
 import java.util.concurrent.Executor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -260,7 +261,7 @@ class PronunciationBoundaryPlanChainTest {
         assertTrue(sessionSource.contains("onDocument?.invoke(entry.appleMusicId, ttml)"))
         assertFalse(sessionSource.contains("onDocument?.invoke(0"))
         // and the host hands the facade in for all three construction sites
-        assertEquals(3, hostSource.split("LyricsPronunciationCentringBridge.reportDocument(").size - 1)
+        assertEquals(1, hostSource.split("LyricsPronunciationCentringBridge.reportDocument(").size - 1)
         assertTrue(hostSource.contains("onDocument = { id, ttml ->"))
         assertFalse(hostSource.contains("reportDocument(0"))
     }

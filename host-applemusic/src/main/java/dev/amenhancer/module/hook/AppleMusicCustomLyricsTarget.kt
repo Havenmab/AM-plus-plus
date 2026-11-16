@@ -281,9 +281,6 @@ internal class AppleMusicCustomLyricsTarget(
                 },
                 cache = runtime.cache,
                 parseTtml = parser::parse,
-            onDocument = { id, ttml ->
-                LyricsPronunciationCentringBridge.reportDocument(id, ttml)
-            },
                 isAlive = parser::isAlive,
                 verifyPtr = parser::isValid,
                 readAdamId = parser::adamIdOf,
@@ -316,9 +313,6 @@ internal class AppleMusicCustomLyricsTarget(
             LlmLyricsReplacementSession(
                 runtime = runtime,
                 parseTtml = parser::parse,
-            onDocument = { id, ttml ->
-                LyricsPronunciationCentringBridge.reportDocument(id, ttml)
-            },
                 isAlive = parser::isAlive,
                 verifyPtr = parser::isValid,
                 readAdamId = parser::adamIdOf,

@@ -458,6 +458,26 @@ class LyricsPronunciationWordAlignmentTest {
         assertEquals(listOf("アイ"), asked)
     }
 
+    @Test
+    fun aBlockKeepsASilentContainerOutOfItsFragments() {
+        // マ ジ ー ル where the ー carries no reading: the plan may still join all four, the splice
+        // places three fragments, and the block is not refused for the silent one.
+        val tokens = listOf(
+            token(0, "マ", "ma"),
+            token(1, "ジ", "ji"),
+            token(2, "ー", null),
+            token(3, "ル", "ru"),
+        )
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..3))
+
+        val blocks = LyricsPronunciationWordAlignment.group(tokens, plan = plan)
+        println("[plan-test] silent blocks=" + ranges(blocks) + " fragments=" + blocks.first().fragments.size)
+
+        assertEquals(listOf("0..3"), ranges(blocks))
+        assertEquals(3, blocks.first().fragments.size)
+        assertEquals(listOf(0, 1, 3), blocks.first().fragments.map { it.index })
+    }
+
     // ---- fixtures ---------------------------------------------------------------------------------
 
     /** What the grouping saw and produced, so a failed assertion explains itself in the CI log. */

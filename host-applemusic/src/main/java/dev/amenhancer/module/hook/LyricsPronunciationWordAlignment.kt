@@ -556,16 +556,19 @@ internal object LyricsPronunciationWordAlignment {
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it
         // covers shows a reading (Apple's whole-word reading in the first container never does).
-        if (block.fragments.size != block.tokens.size) {
-            // A silent container inside the block is the most common reason a hit plan changes
-            // nothing on screen: the splice refuses to slide the fragments that follow it.
+        // A block may hold containers Apple left without a reading (a mark of its own, the tail of a
+        // whole-word reading, a loan-word's long vowel). They take no part in the splice and do not
+        // bound it either: the run the block describes is the stretch from its first fragment to its
+        // last, and only the fragments inside it are placed.
+        val firstFragment = block.fragments.first()
+        val lastFragment = block.fragments.last()
+        val span = span(row, containers, firstFragment.index, lastFragment.index) ?: run {
             logBoundaryOnce(
-                block.firstIndex.toString() + "|silent",
-                "silent-container fragments=" + block.fragments.size + " tokens=" + block.tokens.size,
+                block.firstIndex.toString() + "|run",
+                "no-run fragments=" + block.fragments.size + " tokens=" + block.tokens.size,
             )
             return false
         }
-        val span = span(row, containers, block) ?: return false
 
         val moves = ArrayList<Pair<ContainerToken, TextView>>(block.fragments.size)
         for (fragment in block.fragments) {
@@ -686,10 +689,14 @@ internal object LyricsPronunciationWordAlignment {
     }
 
     /** The glyph stretch a block covers, with the marks and blanks at both ends cut off. */
-    fun span(row: ViewGroup, containers: List<ViewGroup>, block: Block): Span? {
-        if (block.firstIndex !in containers.indices || block.lastIndex !in containers.indices) return null
-        val first = containers[block.firstIndex]
-        val last = containers[block.lastIndex]
+    fun span(row: ViewGroup, containers: List<ViewGroup>, block: Block): Span? =
+        span(row, containers, block.firstIndex, block.lastIndex)
+
+    /** The stretch between two containers: what the splice actually lays out. */
+    fun span(row: ViewGroup, containers: List<ViewGroup>, firstIndex: Int, lastIndex: Int): Span? {
+        if (firstIndex !in containers.indices || lastIndex !in containers.indices) return null
+        val first = containers[firstIndex]
+        val last = containers[lastIndex]
         val firstGlyphs = LyricsPronunciationRowCentring.wordChunks(
             first,
             LyricsPronunciationRowCentring.shownReading(first),

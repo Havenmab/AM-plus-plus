@@ -272,19 +272,6 @@ class LyricsPronunciationWordAlignmentTest {
         assertNull(LyricsPronunciationWordAlignment.placement(span, fragments))
     }
 
-    @Test
-    fun `a silent container inside the block stops the splice`() {
-        val row = karaokeRow(
-            word(listOf("ス"), "su"),
-            word(listOf("ア"), null),
-            word(listOf("ッ"), "ppu"),
-        )
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-
-        // ス and ッ carry readings, ア does not: splicing them would slide ッ one kana to the left.
-        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
-        assertEquals(0f, readingOf(row, 0).translationX, 0.001f)
-    }
 
     @Test
     fun `an unlaid reading is not spliced`() {

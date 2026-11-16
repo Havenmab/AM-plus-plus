@@ -304,13 +304,22 @@ internal object LyricsPronunciationWordAlignment {
                 baseline
             }
             is PronunciationBoundary.MergeOutcome.Groups -> {
+                val applied = blocksOf(tokens, outcome.groups)
+                android.util.Log.i(
+                    BOUNDARY_LOG_TAG,
+                    "bndry plan apply key=" + plan.lineKey.take(12) +
+                        " tokens=" + tokens.size +
+                        " groups=" + plan.groups.size +
+                        " blocks=" + applied.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex } +
+                        " baseline=" + baseline.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex },
+                )
                 if (outcome.softened.isNotEmpty()) {
                     android.util.Log.i(
                         LOG_TAG,
                         "plan softened segments=" + outcome.softened + " line=" + plan.lineKey,
                     )
                 }
-                blocksOf(tokens, outcome.groups)
+                applied
             }
         }
     }
@@ -540,11 +549,22 @@ internal object LyricsPronunciationWordAlignment {
             logBoundaryOnce(lineKey, if (provider == null) "no-provider" else "no-plan")
         }
         val block = blockOf(group(timed, plan = plan), anchorIndex) ?: return false
-        if (block.fragments.size < 2) return false
+        if (block.fragments.size < 2) {
+            logBoundaryOnce(block.firstIndex.toString() + "|single", "single-fragment")
+            return false
+        }
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it
         // covers shows a reading (Apple's whole-word reading in the first container never does).
-        if (block.fragments.size != block.tokens.size) return false
+        if (block.fragments.size != block.tokens.size) {
+            // A silent container inside the block is the most common reason a hit plan changes
+            // nothing on screen: the splice refuses to slide the fragments that follow it.
+            logBoundaryOnce(
+                block.firstIndex.toString() + "|silent",
+                "silent-container fragments=" + block.fragments.size + " tokens=" + block.tokens.size,
+            )
+            return false
+        }
         val span = span(row, containers, block) ?: return false
 
         val moves = ArrayList<Pair<ContainerToken, TextView>>(block.fragments.size)

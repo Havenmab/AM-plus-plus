@@ -25,7 +25,7 @@ class PronunciationBoundaryPlanChainTest {
     // ---- request builder ------------------------------------------------------------------
 
     @Test
-    fun `a document becomes one request line per lyric line`() {
+    fun aDocumentBecomesOneRequestLinePerLyricLine() {
         val request = PronunciationBoundaryRequests.fromTtml("77", document(), title = "t")
 
         assertNotNull(request)
@@ -48,7 +48,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `a reading-less kana still counts as a kana`() {
+    fun aReadingLessKanaStillCountsAsAKana() {
         val request = PronunciationBoundaryRequests.fromTtml(
             "77",
             document(lines = 1, spans = listOf("ス", "テ", "ー", "ジ")),
@@ -68,7 +68,7 @@ class PronunciationBoundaryPlanChainTest {
     // ---- store ----------------------------------------------------------------------------
 
     @Test
-    fun `the store answers only for the song it holds`() {
+    fun theStoreAnswersOnlyForTheSongItHolds() {
         val store = PronunciationBoundaryStore()
         assertNull(store.planFor("赤い"))
 
@@ -86,7 +86,7 @@ class PronunciationBoundaryPlanChainTest {
     // ---- cache ----------------------------------------------------------------------------
 
     @Test
-    fun `a cached answer is reused only while everything matches`() {
+    fun aCachedAnswerIsReusedOnlyWhileEverythingMatches() {
         val directory = Files.createTempDirectory("boundary-cache").toFile()
         try {
             val cache = FilePronunciationBoundaryCache(directory)
@@ -118,7 +118,7 @@ class PronunciationBoundaryPlanChainTest {
     // ---- session --------------------------------------------------------------------------
 
     @Test
-    fun `an accepted answer is installed once and repaints once`() {
+    fun anAcceptedAnswerIsInstalledOnceAndRepaintsOnce() {
         val harness = Harness(answer())
 
         assertTrue(harness.session.onDocument(77L, document(), title = "t"))
@@ -130,7 +130,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `a rejected answer installs nothing and writes nothing`() {
+    fun aRejectedAnswerInstallsNothingAndWritesNothing() {
         // One line where the document has two: the whole answer is refused, never partly used.
         val harness = Harness("{\"lines\":[{\"i\":0,\"g\":[[0,1]]}]}")
 
@@ -143,7 +143,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `the same document is attempted once`() {
+    fun theSameDocumentIsAttemptedOnce() {
         val harness = Harness(answer())
 
         assertTrue(harness.session.onDocument(77L, document()))
@@ -153,7 +153,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `the session stops after its call budget`() {
+    fun theSessionStopsAfterItsCallBudget() {
         val harness = Harness(answer(), maxCalls = 2)
 
         harness.session.onDocument(77L, document(lines = 1))
@@ -165,7 +165,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `a cache hit costs no request`() {
+    fun aCacheHitCostsNoRequest() {
         val harness = Harness(answer())
         harness.cached = listOf(
             PronunciationBoundary.BoundaryLine("赤い", listOf(0..1)),
@@ -180,7 +180,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `every document logs one entry line`() {
+    fun everyDocumentLogsOneEntryLine() {
         val harness = Harness(answer())
 
         harness.session.onDocument(77L, document())
@@ -191,7 +191,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `a disabled chain logs the entry line and one skip`() {
+    fun aDisabledChainLogsTheEntryLineAndOneSkip() {
         val harness = Harness(answer(), configured = false)
 
         assertTrue(!harness.session.onDocument(77L, document()))
@@ -203,7 +203,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `a rejected answer logs its reason and line`() {
+    fun aRejectedAnswerLogsItsReasonAndLine() {
         val harness = Harness("{\"lines\":[{\"i\":0,\"g\":[[0,1]]}]}")
 
         harness.session.onDocument(77L, document())
@@ -216,7 +216,7 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun __BT__the app registers the chain and never points the slot at the trigger__BT__() {
+    fun theAppRegistersTheChainAndNeverPointsTheSlotAtTheTrigger() {
         // Two stable facts only: the facade's public entry points are called, and the slot is not
         // wired back into triggerBoundary — that self-reference was a stack overflow on device, so
         // it is worth one regression assertion even though the rest of the wiring is no longer

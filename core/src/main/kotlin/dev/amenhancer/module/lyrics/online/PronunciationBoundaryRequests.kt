@@ -60,7 +60,13 @@ object PronunciationBoundaryRequests {
         )
     }
 
-    /** The line's identity, the same key the view tree builds and the store is asked for. */
+    /**
+     * The line's identity: the core-stripped kana join.
+     *
+     * The view tree builds the same string from its containers' core text
+     * (LyricsPronunciationWordAlignment's lineKey), so marks and blanks must be stripped the same way
+     * on both sides — that is why both call [PronunciationBoundary.coreText].
+     */
     fun lineKey(tokens: List<PronunciationBoundary.BoundaryToken>): String =
         tokens.fold("") { text, token -> text + token.kana }
 

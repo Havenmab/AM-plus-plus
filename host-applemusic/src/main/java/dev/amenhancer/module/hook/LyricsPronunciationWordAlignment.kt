@@ -67,6 +67,9 @@ internal object LyricsPronunciationWordAlignment {
      */
     private const val VERBOSE_CENTRING_LOG = false
 
+    /** The tag the user is asked to watch; the chain's own lines use it too. */
+    const val BOUNDARY_LOG_TAG = "AMPP-Bndry"
+
     /** How many remembered log states are kept before the maps are rebuilt. */
     const val LOG_MEMORY_LIMIT = 256
 
@@ -516,13 +519,26 @@ internal object LyricsPronunciationWordAlignment {
 
         val tokens = containers.mapIndexed { index, container -> token(container, index) }
         // One key for both lookups: the line's kana join is how a plan and a timing row are found.
+        // The key is the core-stripped kana join on both sides: the planner builds it from the
+        // document's tokens the same way (PronunciationBoundaryRequests.lineKey), so a plan is found
+        // as long as both sides strip the same marks and blanks.
         val lineKey = tokens.joinToString("") { it.core }
         val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
-        if (isWordLevelLine(timed)) return false
+        if (isWordLevelLine(timed)) {
+            logBoundaryOnce(lineKey, "word-level")
+            return false
+        }
 
         val provider = boundaryPlans
         val plan = provider?.invoke(lineKey)
-        if (provider != null && plan == null) logBoundaryMiss(lineKey)
+        if (plan != null) {
+            android.util.Log.i(
+                BOUNDARY_LOG_TAG,
+                "bndry plan hit key=" + lineKey.take(24) + " groups=" + plan.groups.size,
+            )
+        } else {
+            logBoundaryOnce(lineKey, if (provider == null) "no-provider" else "no-plan")
+        }
         val block = blockOf(group(timed, plan = plan), anchorIndex) ?: return false
         if (block.fragments.size < 2) return false
         // A silent container inside the block would be skipped by the splice, which would slide every
@@ -604,10 +620,13 @@ internal object LyricsPronunciationWordAlignment {
     private val boundaryMisses = Collections.synchronizedSet(HashSet<String>())
 
     /** One logcat line per line that the provider has no plan for; the key is truncated, never read. */
-    private fun logBoundaryMiss(lineKey: String) {
+    private fun logBoundaryOnce(lineKey: String, reason: String) {
         if (boundaryMisses.size > BOUNDARY_MISS_LOG_LIMIT) boundaryMisses.clear()
-        if (!boundaryMisses.add(lineKey)) return
-        android.util.Log.i("AMPP-Bndry", "bndry miss key=" + lineKey.take(24))
+        if (!boundaryMisses.add(lineKey + "|" + reason)) return
+        android.util.Log.i(
+            BOUNDARY_LOG_TAG,
+            "bndry plan miss key=" + lineKey.take(24) + " reason=" + reason,
+        )
     }
 
 

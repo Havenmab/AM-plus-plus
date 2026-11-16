@@ -327,6 +327,7 @@ internal fun createAutoLyricsRuntime(
         { runnable -> Thread(runnable, "ampp-auto-lyrics").apply { isDaemon = true } },
         ThreadPoolExecutor.DiscardOldestPolicy(),
     )
+    }.getOrNull()
     // Every path that publishes a document of ours hands it here, so the planner sees enrichment and
     // replaced lyrics too, not just the LLM fallback. The session it forwards to is created further
     // down, so the slot is null until then and a call in that window is a no-op.
@@ -430,16 +431,22 @@ internal fun createAutoLyricsRuntime(
     val llmClient = LlmLyricsClient()
     // Boundary planning rides the same channel: one request per (song, kana), cached on disk, and
     // never on the playback path — a lyric row only ever reads the store.
-    val boundaryStore = PronunciationBoundaryStore()
-    val boundaryCache = FilePronunciationBoundaryCache(
-        File(application.filesDir, "ampp-llm-boundary"),
-    )
-    val boundaryExecutor = ThreadPoolExecutor(
+    // Nothing in this block may throw during module start-up: every step is fallible on its own and
+    // a failure only disables the chain (logged once), never the module.
+    val boundaryStore = runCatching { PronunciationBoundaryStore() }.getOrNull()
+    val boundaryCache = runCatching {
+        FilePronunciationBoundaryCache(File(application.filesDir, "ampp-llm-boundary"))
+    }.onFailure { error ->
+        android.util.Log.i("AMPP-Bndry", "bndry init failed reason=" + (error.message ?: "cache"))
+    }.getOrNull()
+    val boundaryExecutor = runCatching {
+    ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
         { task -> Thread(task, "ampp-llm-boundary").apply { isDaemon = true } },
         ThreadPoolExecutor.DiscardOldestPolicy(),
     )
-    val boundarySession = PronunciationBoundarySession(
+    val boundarySession = runCatching {
+    PronunciationBoundarySession(
         runtime = PronunciationBoundaryRuntime(
             configuration = {
                 configuration().let { settings ->
@@ -452,14 +459,16 @@ internal fun createAutoLyricsRuntime(
                     ).takeIf { it.isConfigured }
                 }
             },
-            cacheRead = boundaryCache::read,
-            cacheWrite = boundaryCache::write,
+            cacheRead = { id, hash, counts, config -> boundaryCache?.read(id, hash, counts, config) },
+            cacheWrite = { id, hash, counts, config, lines -> boundaryCache?.write(id, hash, counts, config, lines) },
             request = { config, request, cancelled ->
                 llmClient.segmentBoundaries(config, request, cancelled)
             },
             executor = Executor { task ->
-                boundaryExecutor.queue.clear()
-                boundaryExecutor.execute(task)
+                boundaryExecutor?.let { executor ->
+                    executor.queue.clear()
+                    executor.execute(task)
+                }
             },
             onInstalled = {
                 Handler(Looper.getMainLooper()).post {
@@ -472,12 +481,17 @@ internal fun createAutoLyricsRuntime(
                 logger(line)
                 android.util.Log.i("AMPP-Bndry", line)
             },
-            close = { boundaryExecutor.shutdownNow() },
+            close = { boundaryExecutor?.shutdownNow() },
         ),
-        store = boundaryStore,
+        store = boundaryStore ?: error("no store"),
     )
+    }.onFailure { error ->
+        android.util.Log.i("AMPP-Bndry", "bndry init failed reason=" + (error.message ?: "session"))
+    }.getOrNull()
     // The splice's only door to a plan: a lookup in memory, never a request.
-    LyricsPronunciationCentringBridge.setBoundaryPlans { lineKey -> boundaryStore.planFor(lineKey) }
+    runCatching {
+        LyricsPronunciationCentringBridge.setBoundaryPlans { lineKey -> boundaryStore?.planFor(lineKey) }
+    }
     run {
         // One line at start-up: whether the chain exists at all, and what the two gates said then.
         val settings = configuration()
@@ -495,8 +509,10 @@ internal fun createAutoLyricsRuntime(
     }
     // The custom-lyrics quick path injects an already-configured document without ever entering the
     // publish callbacks above, so the host reports every document it hands to Apple through here.
-    LyricsPronunciationCentringBridge.setDocumentObserver { appleMusicId, ttml ->
-        triggerBoundary("native-hook", appleMusicId, ttml)
+    runCatching {
+        LyricsPronunciationCentringBridge.setDocumentObserver { appleMusicId, ttml ->
+            triggerBoundary("native-hook", appleMusicId, ttml)
+        }
     }
     boundaryOnDocument = { appleMusicId, ttml ->
         triggerBoundary("llm", appleMusicId, ttml)
@@ -525,7 +541,7 @@ internal fun createAutoLyricsRuntime(
                     "bndry trigger path=llm song=" + request.appleMusicId +
                         " ttml=" + request.originalTtml.length,
                 )
-                boundarySession.onDocument(
+                boundarySession?.onDocument(
                     request.appleMusicId,
                     request.originalTtml,
                     request.title,

@@ -444,6 +444,7 @@ internal fun createAutoLyricsRuntime(
         { task -> Thread(task, "ampp-llm-boundary").apply { isDaemon = true } },
         ThreadPoolExecutor.DiscardOldestPolicy(),
     )
+    }.getOrNull()
     val boundarySession = runCatching {
     PronunciationBoundarySession(
         runtime = PronunciationBoundaryRuntime(

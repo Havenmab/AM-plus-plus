@@ -52,8 +52,15 @@ internal object LyricsPronunciationWordAlignment {
     /** A silence this long between two fragments means two words, not one. Store mode only. */
     const val GAP_BREAK_MS = 800L
 
-    /** A spliced block may not exceed this multiple of the glyph run it sits under. */
-    const val MAX_BLOCK_WIDTH_RATIO = 1.6f
+    /**
+     * The widest a spliced block may be, as a multiple of the glyph run it sits under.
+     *
+     * A block wider than its run is normal — a romanization is wider than the kana it reads — and the
+     * placement is centred, so the overflow only reaches the blank space beside the word: it cannot
+     * shift a kana, a timestamp or Apple's highlight. Only an absurd ratio (a long latin reading over
+     * one kana) is refused, to keep such a block from crossing its neighbours entirely.
+     */
+    const val MAX_BLOCK_WIDTH_RATIO = 4f
 
     /** Containers whose tops differ by no more than this are on the same wrapped line. */
     const val LINE_TOLERANCE_PX = 1
@@ -593,7 +600,8 @@ internal object LyricsPronunciationWordAlignment {
             logBoundaryOnce(
                 lineKey + "|placement",
                 "span=" + span.left + ".." + span.right + " width=" + span.width +
-                    " block=" + geometry.sumOf { it.visibleWidth.toDouble() },
+                    " block=" + geometry.sumOf { it.visibleWidth.toDouble() } +
+                    " ratio=" + (geometry.sumOf { it.visibleWidth.toDouble() } / span.width.coerceAtLeast(1f)),
             )
             return false
         }

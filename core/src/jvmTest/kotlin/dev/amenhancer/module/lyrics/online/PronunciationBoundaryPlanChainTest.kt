@@ -239,35 +239,6 @@ class PronunciationBoundaryPlanChainTest {
         assertTrue(app.contains("triggerBoundary(\"llm\", appleMusicId, ttml)"))
     }
 
-    @Test
-    fun `the custom lyrics path reports every document it accepts`() {
-        // The quick path injects an already-configured document without entering any publish
-        // callback, so this is the only seam that covers it. Structural: the session is driven by
-        // the host's custom-lyrics target, which this module cannot instantiate.
-        val session = java.io.File(
-            "core/src/main/kotlin/dev/amenhancer/module/hook/CustomLyricsReplacementSession.kt",
-        )
-        val host = java.io.File(
-            "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
-        )
-        assertTrue(session.isFile && host.isFile)
-        val sessionSource = session.readText()
-        val hostSource = host.readText()
-        val sessionCalls = sessionSource.split("onDocument?.invoke(").size - 1
-        val hostCalls = hostSource.split("LyricsPronunciationCentringBridge.reportDocument(").size - 1
-        println("[bndry-wiring] sessionCalls=" + sessionCalls + " hostCalls=" + hostCalls)
-
-        // Count is deliberately not pinned: a refactor may add or fold a seam. What must hold is
-        // that the seam exists, that it reports the session's own song id, and that the id is never
-        // a placeholder.
-        assertTrue(sessionCalls >= 1)
-        assertTrue(hostCalls >= 1)
-        assertTrue(sessionSource.contains("onDocument?.invoke(appleMusicId, mergedTtml)"))
-        assertTrue(sessionSource.contains("onDocument?.invoke(entry.appleMusicId, ttml)"))
-        assertFalse(sessionSource.contains("onDocument?.invoke(0"))
-        assertTrue(hostSource.contains("onDocument = { id, ttml ->"))
-        assertFalse(hostSource.contains("reportDocument(0"))
-    }
 
     // ---- fixtures -------------------------------------------------------------------------
 

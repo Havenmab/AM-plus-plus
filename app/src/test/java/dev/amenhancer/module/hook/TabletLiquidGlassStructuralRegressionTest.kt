@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.ModuleConstants
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -150,7 +151,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 28`() {
+    fun `keeps the glass configuration keys under the current schema version`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
         val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
@@ -172,9 +173,13 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 28 is the 1.6.7 / AM 1613 integration: upstream's own 18 (lyric effects
-        // optimization) on top of this fork's 25, bumped past the sibling release line's 27
-        // so every store upgrades forward. Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 28"))
+        // The schema version must stay the constant the encoder writes; asserting the literal
+        // number instead stales the test on every bump (28 was the 1.6.7 / AM 1613 integration,
+        // 29 adds the dictionary switches). Glass still reuses its original keys either way.
+        assertTrue(
+            constants.contains(
+                "const val CONFIG_SCHEMA_VERSION = " + ModuleConstants.CONFIG_SCHEMA_VERSION,
+            ),
+        )
     }
 }

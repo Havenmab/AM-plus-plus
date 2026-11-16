@@ -58,6 +58,9 @@ internal object LyricsPronunciationWordAlignment {
     /** Containers whose tops differ by no more than this are on the same wrapped line. */
     const val LINE_TOLERANCE_PX = 1
 
+    /** How many remembered log states are kept before the maps are rebuilt. */
+    const val LOG_MEMORY_LIMIT = 256
+
     /** How many distinct lines the one-shot "no plan here" log remembers before it forgets them. */
     const val BOUNDARY_MISS_LOG_LIMIT = 512
 
@@ -594,6 +597,23 @@ internal object LyricsPronunciationWordAlignment {
         if (boundaryMisses.size > BOUNDARY_MISS_LOG_LIMIT) boundaryMisses.clear()
         if (!boundaryMisses.add(lineKey)) return
         android.util.Log.i(LOG_TAG, "bndry miss key=" + lineKey.take(24))
+    }
+
+
+    /** Last splice summary printed per line, so a layout pass does not repeat an unchanged one. */
+    private val loggedSplices = Collections.synchronizedMap(HashMap<String, String>())
+
+    /**
+     * Prints one splice line per (line, whole-pixel targets).
+     *
+     * A row re-runs this on every layout pass, but the targets only move when a reading lands or the
+     * widths change, so whole pixels are what is compared and sub-pixel jitter does not re-log. The
+     * memory is bounded and rebuilt past [LOG_MEMORY_LIMIT].
+     */
+    private fun logSpliceOnce(lineKey: String, summary: String) {
+        if (loggedSplices.size > LOG_MEMORY_LIMIT) loggedSplices.clear()
+        if (loggedSplices.put(lineKey, summary) == summary) return
+        android.util.Log.i(LOG_TAG, summary)
     }
 
     /** The values the rules read, taken from one inflated container. */

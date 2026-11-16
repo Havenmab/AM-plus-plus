@@ -238,11 +238,12 @@ internal object LyricsPronunciationRowCentring {
             LyricsPronunciationWordAlignment.shiftMode,
             leftIn(row, reading) + shift,
         )
-        android.util.Log.i(
-            LOG_TAG,
+        logAlignOnce(
             "align reading='$readingText' shift=$shift" +
                 " mode=${LyricsPronunciationWordAlignment.shiftMode}" +
                 " group=${group.left},${group.width} reading=${reading.left},${reading.width}",
+            readingText,
+            shift,
         )
     }
 
@@ -292,6 +293,23 @@ internal object LyricsPronunciationRowCentring {
             val group = view as? ViewGroup ?: continue
             runCatching { alignToCoreText(group) }
         }
+    }
+
+
+    /** Last shift printed per reading text, so a reading that has not moved is not logged again. */
+    private val loggedAligns = Collections.synchronizedMap(HashMap<String, String>())
+
+    /**
+     * Prints one fallback line per (reading, shift), and never for a reading that stays put.
+     *
+     * The correction re-checks every reading on each layout pass; a zero shift means it did nothing,
+     * and the same shift on the same text means nothing has changed since it was last reported.
+     */
+    fun logAlignOnce(summary: String, readingText: String, shift: Float) {
+        if (shift == 0f) return
+        if (loggedAligns.size > LOG_MEMORY_LIMIT) loggedAligns.clear()
+        if (loggedAligns.put(readingText, shift.toString()) == shift.toString()) return
+        android.util.Log.i(LOG_TAG, summary)
     }
 
     /**

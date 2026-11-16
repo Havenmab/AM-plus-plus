@@ -82,6 +82,22 @@ internal object LyricsPronunciationWordAlignment {
     /** How many characters of a line's kana join identify it in a dictionary log line. */
     const val DICT_LOG_KEY_PREFIX = 12
 
+    /**
+     * The kana cap the dictionary pass groups by. Wider than [WORD_MAX_KANA] so a word the
+     * dictionary must split is still one block (すてっぷあっぷ is eight kana); a module without the
+     * dictionary keeps [WORD_MAX_KANA] and its byte-for-byte rule grouping.
+     */
+    const val DICT_MAX_KANA = 8
+
+    /**
+     * Short interjections and fillers that are never the other half of a split. They are real IPADIC
+     * words, which is exactly the problem: without this list すてっぷあっ splits before あっ.
+     */
+    val DICT_FILLER_SIDES: Set<String> = setOf(
+        "あっ", "えっ", "おっ", "うっ", "あー", "えー", "おー", "うー",
+        "うん", "ん", "んー", "はっ", "ふっ", "へっ",
+    )
+
     /** Katakana particles: a one-character token from this set always ends the word before it. */
     const val KATAKANA_PARTICLE = "トデハヲニガモノネヨ"
 
@@ -421,6 +437,7 @@ internal object LyricsPronunciationWordAlignment {
             if (left.isEmpty() || right.isEmpty()) continue
             if (!dictionary.contains(left) || !dictionary.contains(right)) continue
             if (!katakanaBoundaryAllowed(tokens[at - 1], tokens[at], left, right)) continue
+            if (!splitShapeAllowed(left, right)) continue
             if (left.length > bestLength) {
                 bestLength = left.length
                 best = Split(at, left, right)
@@ -428,6 +445,34 @@ internal object LyricsPronunciationWordAlignment {
         }
         return best
     }
+
+    /**
+     * Whether the two halves may be a split at all, beyond both being dictionary words.
+     *
+     * Two measured false positives are refused here:
+     *
+     *  - one half is a **proper prefix** of the other (ふわふわ|ふわ, ゆらゆら|ゆら): the six-kana
+     *    rule cap had already cut a longer repetition, so splitting again only produces a dangling
+     *    fragment. An exact repetition (ダメ|ダメ, キラ|キラ) stays allowed — the repeat itself is
+     *    the evidence;
+     *  - either half is a short interjection or filler (あっ, ん, えー …): あっ is in IPADIC, but it
+     *    is not the second word of アップ, and the same list stops a split before a bare ん.
+     */
+    private fun splitShapeAllowed(left: String, right: String): Boolean {
+        if (left == right) return true
+        if (left.startsWith(right) || right.startsWith(left)) return false
+        val foldedLeft = KanaDictionary.foldKana(left)
+        val foldedRight = KanaDictionary.foldKana(right)
+        return foldedLeft !in DICT_FILLER_SIDES && foldedRight !in DICT_FILLER_SIDES
+    }
+
+    /**
+     * The kana cap for one lyric line: the dictionary pass widens it to [DICT_MAX_KANA] so a word it
+     * must split is still one block, while a module without the dictionary keeps [WORD_MAX_KANA]
+     * and therefore the byte-for-byte rule grouping.
+     */
+    fun dictionaryMaxKana(dictionary: KanaDictionary?): Int =
+        if (dictionary != null) DICT_MAX_KANA else WORD_MAX_KANA
 
     /**
      * Whether a split at the boundary between [previous] and [next] may be taken.
@@ -604,7 +649,12 @@ internal object LyricsPronunciationWordAlignment {
         }
         val dryRun = settings?.dictMergeDryRun ?: true
         val block = blockOf(
-            group(timed, dictionary = dictionary, dryRun = dryRun),
+            group(
+                tokens = timed,
+                maxKana = dictionaryMaxKana(dictionary),
+                dictionary = dictionary,
+                dryRun = dryRun,
+            ),
             anchorIndex,
         ) ?: return false
         if (block.fragments.size < 2) return false

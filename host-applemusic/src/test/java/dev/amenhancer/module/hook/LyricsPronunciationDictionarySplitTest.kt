@@ -219,4 +219,106 @@ class LyricsPronunciationDictionarySplitTest {
         }
         assertFalse(dictionary.contains("マジカル"))
     }
+
+    // ---- the three guards added after the device-corpus review ---------------------------------
+
+    @Test
+    fun `a half that is only a prefix of the other is refused`() {
+        // ふわふわ|ふわ and ゆらゆら|ゆら are the two-kana tail of a longer repetition the rule cap
+        // had already cut; splitting again would leave a dangling fragment. An exact repeat
+        // (ダメ|ダメ) is still allowed and covered above.
+        val log = mutableListOf<String>()
+        val tokenList = tokens("ふ", "わ", "ふ", "わ", "ふ", "わ")
+
+        assertEquals(listOf(0..5), ranges(LyricsPronunciationWordAlignment.group(tokenList)))
+        assertEquals(listOf(0..5), split(tokenList, log = log))
+        assertTrue(log.single().endsWith("reason=no-split"))
+    }
+
+    @Test
+    fun `an interjection is never the other half of a split`() {
+        // あい is a word and so is the interjection ん; without the filler guard this would split.
+        val log = mutableListOf<String>()
+        val tokenList = tokens("あ", "い", "ん")
+
+        assertEquals(listOf(0..2), split(tokenList, log = log))
+        assertTrue(log.single().endsWith("reason=no-split"))
+    }
+
+    @Test
+    fun `the rule cap alone would split before a filler and the guard keeps it whole`() {
+        val tokenList = tokens("す", "て", "っ", "ぷ", "あ", "っ", "ぷ")
+        val ruleBlocks = LyricsPronunciationWordAlignment.group(tokenList)
+        val log = mutableListOf<String>()
+
+        val applied = LyricsPronunciationWordAlignment.applyDictionarySplits(
+            tokens = tokenList,
+            blocks = ruleBlocks,
+            dictionary = dictionary,
+            dryRun = false,
+            log = { message -> log += message },
+        )
+
+        // The six-kana rule block is すてっぷあっ: すてっぷ|あっ would satisfy two known words, but
+        // あっ is a filler, so the block is left as the rules had it.
+        assertEquals(listOf(0..5, 6..6), ranges(applied))
+        assertTrue(log.all { !it.contains("dict split") })
+    }
+
+    @Test
+    fun `the dictionary widens the kana cap so a loanword fits one block`() {
+        val tokenList = tokens("す", "て", "っ", "ぷ", "あ", "っ", "ぷ")
+        val log = mutableListOf<String>()
+
+        val applied = LyricsPronunciationWordAlignment.group(
+            tokens = tokenList,
+            maxKana = LyricsPronunciationWordAlignment.dictionaryMaxKana(dictionary),
+            dictionary = dictionary,
+            dryRun = false,
+            log = { message -> log += message },
+        )
+
+        assertEquals(listOf(0..3, 4..6), ranges(applied))
+        assertTrue(log.any { it.contains("left=すてっぷ right=あっぷ") })
+    }
+
+    @Test
+    fun `the kana cap follows the dictionary switch`() {
+        assertEquals(
+            LyricsPronunciationWordAlignment.WORD_MAX_KANA,
+            LyricsPronunciationWordAlignment.dictionaryMaxKana(null),
+        )
+        assertEquals(
+            LyricsPronunciationWordAlignment.DICT_MAX_KANA,
+            LyricsPronunciationWordAlignment.dictionaryMaxKana(dictionary),
+        )
+        assertEquals(6, LyricsPronunciationWordAlignment.dictionaryMaxKana(null))
+        assertEquals(8, LyricsPronunciationWordAlignment.dictionaryMaxKana(dictionary))
+    }
+
+    @Test
+    fun `with the switch off the line takes the rule grouping unchanged`() {
+        // The alignRow wiring: switch off → no dictionary and the pure-rule cap, which is exactly
+        // how the module behaved before the correction existed.
+        val fixtures = listOf(
+            tokens("ダ", "メ", "ダ", "メ"),
+            tokens("す", "て", "っ", "ぷ", "あ", "っ", "ぷ"),
+            tokens("ふ", "わ", "ふ", "わ", "ふ", "わ"),
+            tokens("マ", "ジ", "カ", "ル", "ト", "リッ", "ク", "で"),
+        )
+        fixtures.forEach { tokenList ->
+            assertEquals(
+                ranges(LyricsPronunciationWordAlignment.group(tokenList)),
+                ranges(
+                    LyricsPronunciationWordAlignment.group(
+                        tokens = tokenList,
+                        maxKana = LyricsPronunciationWordAlignment.dictionaryMaxKana(null),
+                        dictionary = null,
+                        dryRun = false,
+                    ),
+                ),
+            )
+        }
+        assertEquals(6, LyricsPronunciationWordAlignment.dictionaryMaxKana(null))
+    }
 }

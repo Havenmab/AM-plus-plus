@@ -194,7 +194,7 @@ class CustomLyricsReplacementSession(
             if (mergedPointers[appleMusicId]?.revision == revision) return false
         }
         val pointer = runCatching { parseTtml(mergedTtml) }.getOrNull() ?: return false
-onDocument?.invoke(appleMusicId, mergedTtml)
+runCatching { onDocument?.invoke(appleMusicId, mergedTtml) }
         if (!isPrepared(pointer, appleMusicId) &&
             !runCatching { bindAdamId(pointer, appleMusicId) }.getOrDefault(false)
         ) {
@@ -267,7 +267,7 @@ onDocument?.invoke(appleMusicId, mergedTtml)
                     }
                     val ttml = readTtml(entry) ?: return@runCatching
                     val replacement = parseTtml(ttml) ?: return@runCatching
-onDocument?.invoke(entry.appleMusicId, ttml)
+runCatching { onDocument?.invoke(entry.appleMusicId, ttml) }
                     if (!isPrepared(replacement, entry.appleMusicId) && !bindAdamId(replacement, entry.appleMusicId)) {
                         return@runCatching
                     }
@@ -386,7 +386,7 @@ onDocument?.invoke(entry.appleMusicId, ttml)
             }
             val ttml = runCatching { readTtml(entry) }.getOrNull() ?: return
             val replacement = runCatching { parseTtml(ttml) }.getOrNull() ?: return
-onDocument?.invoke(appleMusicId, ttml)
+runCatching { onDocument?.invoke(appleMusicId, ttml) }
             if (!isPrepared(replacement, appleMusicId) && !bindAdamId(replacement, appleMusicId)) {
                 logger("custom lyrics parser returned an unusable SongInfoPtr for $appleMusicId")
                 return

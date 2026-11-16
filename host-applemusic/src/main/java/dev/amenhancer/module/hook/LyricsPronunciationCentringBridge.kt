@@ -48,6 +48,14 @@ object LyricsPronunciationCentringBridge {
     /** Reports one document to the observer, if any; a no-op otherwise. */
     fun reportDocument(appleMusicId: Long, ttml: String) {
         if (appleMusicId <= 0L || ttml.isBlank()) return
-        documentObserver?.invoke(appleMusicId, ttml)
+        runCatching {
+            // The observer is app code running on the host's publishing thread; a throw here would
+            // reach Apple's lyric binding and take the lyrics page down, so it is contained twice:
+            // once for the lookup, once for the call.
+            val observer = documentObserver
+            if (observer != null) runCatching { observer(appleMusicId, ttml) }
+        }.onFailure { error ->
+            android.util.Log.i("AMPP-Bndry", "bndry report failed " + (error.message ?: error.javaClass.simpleName))
+        }
     }
 }

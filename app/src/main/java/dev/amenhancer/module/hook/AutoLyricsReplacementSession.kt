@@ -348,7 +348,12 @@ internal fun createAutoLyricsRuntime(
             android.util.Log.i("AMPP-Bndry", "bndry trigger dropped path=" + path + " reason=slot-null")
             return
         }
-        slot(appleMusicId, ttml)
+        runCatching { slot(appleMusicId, ttml) }.onFailure { error ->
+            android.util.Log.i(
+                "AMPP-Bndry",
+                "bndry trigger failed reason=" + (error.message ?: error.javaClass.simpleName),
+            )
+        }
     }
     runCatching {
         executor.execute {

@@ -224,13 +224,18 @@ class PronunciationBoundaryPlanChainTest {
         ).firstOrNull { it.isFile }?.readText()
         assertNotNull(app)
         println("[bndry-wiring] lines=" + app!!.lines().size)
-        // the enrichment path, the auto/custom publish path and the refresh path each report once
-        assertTrue(app.contains("onDocument = { appleMusicId, ttml -> boundaryOnDocument?.invoke"))
-        assertTrue(app.contains("boundaryOnDocument?.invoke(appleMusicId, it.ttml)"))
-        assertTrue(app.contains("boundaryOnDocument?.invoke(appleMusicId, cached.ttml)"))
+        // Every hand-off goes through one helper, and each path names itself in it.
+        assertTrue(app.contains("fun triggerBoundary(path: String, appleMusicId: Long, ttml: String)"))
+        assertTrue(app.contains("bndry trigger path="))
+        assertTrue(app.contains("triggerBoundary(\"enricher\", appleMusicId, ttml)"))
+        assertTrue(app.contains("triggerBoundary(\"publish-start\", appleMusicId, it.ttml)"))
+        assertTrue(app.contains("triggerBoundary(\"publish-refresh\", appleMusicId, cached.ttml)"))
+        assertTrue(app.contains("bndry trigger path=llm"))
+        // a trigger that fires before the session exists is reported, not silently dropped
+        assertTrue(app.contains("reason=slot-null"))
         // and the slot is filled by the one session, so every path shares its de-duplication
         assertTrue(app.contains("boundaryOnDocument = { appleMusicId, ttml ->"))
-        assertTrue(app.contains("boundarySession.onDocument(appleMusicId, ttml)"))
+        assertTrue(app.contains("triggerBoundary(\"llm\", appleMusicId, ttml)"))
     }
 
     // ---- fixtures -------------------------------------------------------------------------

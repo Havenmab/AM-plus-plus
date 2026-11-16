@@ -304,6 +304,9 @@ internal object LyricsPronunciationRowCentring {
      */
     private const val VERBOSE_CENTRING_LOG = false
 
+    /** How many remembered log states the fallback trace keeps before it is rebuilt. */
+    private const val LOG_MEMORY_LIMIT = 256
+
     /** Last shift printed per reading text, so a reading that has not moved is not logged again. */
     private val loggedAligns = Collections.synchronizedMap(HashMap<String, String>())
 

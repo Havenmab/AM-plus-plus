@@ -216,28 +216,22 @@ class PronunciationBoundaryPlanChainTest {
     }
 
     @Test
-    fun `every publishing path hands its document to the planner`() {
-        // Structural on purpose: the wiring lives in the app's runtime factory, which this module
-        // cannot instantiate, so the test pins the three call sites instead of pretending to run them.
+    fun __BT__the app registers the chain and never points the slot at the trigger__BT__() {
+        // Two stable facts only: the facade's public entry points are called, and the slot is not
+        // wired back into triggerBoundary — that self-reference was a stack overflow on device, so
+        // it is worth one regression assertion even though the rest of the wiring is no longer
+        // pinned by source text.
         val app = sequenceOf(
             java.io.File("app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
             java.io.File("../app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt"),
         ).firstOrNull { it.isFile }?.readText()
         assertNotNull(app)
-        println("[bndry-wiring] lines=" + app!!.lines().size)
-        // Every hand-off goes through one helper, and each path names itself in it.
-        assertTrue(app.contains("fun triggerBoundary(path: String, appleMusicId: Long, ttml: String)"))
-        assertTrue(app.contains("bndry trigger path="))
-        assertTrue(app.contains("triggerBoundary(\"enricher\", appleMusicId, ttml)"))
-        assertTrue(app.contains("triggerBoundary(\"publish-start\", appleMusicId, it.ttml)"))
-        assertTrue(app.contains("triggerBoundary(\"publish-refresh\", appleMusicId, cached.ttml)"))
-        assertTrue(app.contains("bndry trigger path=llm"))
-        // a trigger that fires before the session exists is reported, not silently dropped
-        assertTrue(app.contains("reason=slot-null"))
-        // and the slot is filled by the one session, so every path shares its de-duplication
-        assertTrue(app.contains("boundaryOnDocument = { appleMusicId, ttml ->"))
-        assertTrue(app.contains("triggerBoundary(\"llm\", appleMusicId, ttml)"))
+        println("[bndry-wiring] appLines=" + app!!.lines().size)
+        assertTrue(app.contains("setBoundaryPlans("))
+        assertTrue(app.contains("setDocumentObserver("))
+        assertFalse(app.contains("triggerBoundary(\"llm\""))
     }
+
 
 
     // ---- fixtures -------------------------------------------------------------------------

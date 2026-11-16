@@ -149,6 +149,8 @@ internal fun translationEnricher(
 ): (Long, String) -> String? {
     val scoped = TrackScopedDiagnostics(logger)
     return { appleMusicId, rawTtml ->
+        logger("bndry path=enricher entered song=" + appleMusicId)
+        android.util.Log.i("AMPP-Bndry", "bndry path=enricher entered song=" + appleMusicId)
         runCatching {
             OnlineTranslationEnrichment.enrich(
                 ttml = rawTtml,
@@ -335,6 +337,10 @@ internal fun createAutoLyricsRuntime(
     fun triggerBoundary(path: String, appleMusicId: Long, ttml: String) {
         android.util.Log.i(
             "AMPP-Bndry",
+            "bndry trigger called path=" + path + " slot=" + (if (boundaryOnDocument == null) "null" else "set"),
+        )
+        android.util.Log.i(
+            "AMPP-Bndry",
             "bndry trigger path=" + path + " song=" + appleMusicId + " ttml=" + ttml.length,
         )
         val slot = boundaryOnDocument
@@ -352,6 +358,7 @@ internal fun createAutoLyricsRuntime(
                     ?: return@forEach
                 when (
                     runCatching {
+                        android.util.Log.i("AMPP-Bndry", "bndry path=publish-start entered song=" + appleMusicId)
                         publisher.publish(
                             appleMusicId,
                             candidate,
@@ -498,6 +505,7 @@ internal fun createAutoLyricsRuntime(
             }
         },
         translate = translate@{ request, isCancelled ->
+            android.util.Log.i("AMPP-Bndry", "bndry path=llm entered song=" + request.appleMusicId)
             if (isCancelled()) return@translate null
             // Hand the document to the boundary planner once. It queues its own work and returns
             // immediately, so it cannot slow this fallback down.
@@ -573,6 +581,7 @@ internal fun createAutoLyricsRuntime(
                 // A restart may still have a temporary cache awaiting migration.
                 val cached = cache.readCandidate(appleMusicId) ?: return@refresh null
                 if (isCancelled()) return@refresh null
+                android.util.Log.i("AMPP-Bndry", "bndry path=publish-refresh entered song=" + appleMusicId)
                 if (publisher.publish(appleMusicId, cached) == AutoLyricsPublishResult.FAILED) return@refresh null
                 triggerBoundary("publish-refresh", appleMusicId, cached.ttml)
                 cache.delete(appleMusicId)

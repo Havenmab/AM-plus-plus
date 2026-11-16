@@ -327,7 +327,6 @@ internal fun createAutoLyricsRuntime(
         { runnable -> Thread(runnable, "ampp-auto-lyrics").apply { isDaemon = true } },
         ThreadPoolExecutor.DiscardOldestPolicy(),
     )
-    }.getOrNull()
     // Every path that publishes a document of ours hands it here, so the planner sees enrichment and
     // replaced lyrics too, not just the LLM fallback. The session it forwards to is created further
     // down, so the slot is null until then and a call in that window is a no-op.

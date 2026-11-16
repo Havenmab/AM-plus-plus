@@ -548,7 +548,10 @@ internal object LyricsPronunciationWordAlignment {
         } else {
             logBoundaryOnce(lineKey, if (provider == null) "no-provider" else "no-plan")
         }
-        val block = blockOf(group(timed, plan = plan), anchorIndex) ?: return false
+        val block = blockOf(group(timed, plan = plan), anchorIndex) ?: run {
+            logBoundaryOnce(lineKey + "|anchor", "anchor=" + anchorIndex + " no-block")
+            return false
+        }
         if (block.fragments.size < 2) {
             logBoundaryOnce(block.firstIndex.toString() + "|single", "single-fragment")
             return false
@@ -586,7 +589,14 @@ internal object LyricsPronunciationWordAlignment {
                 leadingInset = leadingInset(reading),
             )
         }
-        val splice = placement(span, geometry) ?: return false
+        val splice = placement(span, geometry) ?: run {
+            logBoundaryOnce(
+                lineKey + "|placement",
+                "span=" + span.left + ".." + span.right + " width=" + span.width +
+                    " block=" + geometry.sumOf { it.visibleWidth.toDouble() },
+            )
+            return false
+        }
 
         if (shiftMode == ShiftMode.LAYOUT && pinWidths(containers, block)) {
             // The containers just changed width, so this pass's geometry is stale: the row's own
@@ -598,6 +608,14 @@ internal object LyricsPronunciationWordAlignment {
             val target = splice.targetLefts[fragment.index] ?: return false
             LyricsPronunciationRowCentring.applyReadingOffset(row, reading, shiftMode, target)
         }
+        android.util.Log.i(
+            BOUNDARY_LOG_TAG,
+            "align run key=" + lineKey.take(12) +
+                " plan=" + (plan != null) +
+                " blocks=" + block.firstIndex + ".." + block.lastIndex +
+                " span=" + span.left + ".." + span.right +
+                " shifts=" + moves.size,
+        )
         if (VERBOSE_CENTRING_LOG) {
             logSpliceOnce(
                 lineKey,

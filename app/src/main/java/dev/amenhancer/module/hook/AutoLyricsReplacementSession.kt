@@ -514,8 +514,17 @@ internal fun createAutoLyricsRuntime(
             triggerBoundary("native-hook", appleMusicId, ttml)
         }
     }
+    // The slot holds the terminal action, never triggerBoundary: triggerBoundary ends by calling the
+    // slot, so pointing it back at the helper is an unbounded self-recursion (it overflowed the stack
+    // on device). Here the chain stops at the session.
     boundaryOnDocument = { appleMusicId, ttml ->
-        triggerBoundary("llm", appleMusicId, ttml)
+        runCatching { boundarySession?.onDocument(appleMusicId, ttml) }.onFailure { error ->
+            android.util.Log.i(
+                "AMPP-Bndry",
+                "bndry trigger failed reason=" + (error.message ?: error.javaClass.simpleName),
+            )
+        }
+        Unit
     }
     val llm = LlmLyricsRuntime(
         configuration = {

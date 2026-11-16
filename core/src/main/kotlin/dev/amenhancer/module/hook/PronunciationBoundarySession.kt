@@ -168,7 +168,7 @@ class PronunciationBoundarySession(
                     "bndry llm response song=" + appleMusicId +
                         " ms=" + elapsedMs +
                         " chars=" + content.length +
-                        " head=" + content.take(120).replace(chr(10).toString(), "\\n"),
+                        " head=" + content.take(120).replace("\n", "\\n"),
                 )
                 when (val outcome = PronunciationBoundary.parsePlan(content, slice)) {
                     is PronunciationBoundary.Outcome.Accepted -> {

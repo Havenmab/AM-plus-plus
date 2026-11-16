@@ -238,7 +238,7 @@ internal object LyricsPronunciationRowCentring {
             LyricsPronunciationWordAlignment.shiftMode,
             leftIn(row, reading) + shift,
         )
-        logAlignOnce(
+        if (VERBOSE_CENTRING_LOG) logAlignOnce(
             "align reading='$readingText' shift=$shift" +
                 " mode=${LyricsPronunciationWordAlignment.shiftMode}" +
                 " group=${group.left},${group.width} reading=${reading.left},${reading.width}",
@@ -295,6 +295,14 @@ internal object LyricsPronunciationRowCentring {
         }
     }
 
+
+    /**
+     * Centre-row traces on logcat ("align reading=... shift=..."), off by default.
+     *
+     * The correction re-runs on every layout pass; the user-facing trace is the model chain under
+     * AMPP-Bndry. Flip this to true for one build when the correction itself needs tracing.
+     */
+    private const val VERBOSE_CENTRING_LOG = false
 
     /** Last shift printed per reading text, so a reading that has not moved is not logged again. */
     private val loggedAligns = Collections.synchronizedMap(HashMap<String, String>())

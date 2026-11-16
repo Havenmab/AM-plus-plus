@@ -58,6 +58,15 @@ internal object LyricsPronunciationWordAlignment {
     /** Containers whose tops differ by no more than this are on the same wrapped line. */
     const val LINE_TOLERANCE_PX = 1
 
+    /**
+     * Centre-row traces on logcat ("grouped run=..."), off by default.
+     *
+     * They are development traces: the row re-groups on every layout pass, while what the user is
+     * asked to watch is the model chain, which logs under AMPP-Bndry. Flip this to true for one build
+     * when the splice itself needs tracing.
+     */
+    private const val VERBOSE_CENTRING_LOG = false
+
     /** How many remembered log states are kept before the maps are rebuilt. */
     const val LOG_MEMORY_LIMIT = 256
 
@@ -550,13 +559,15 @@ internal object LyricsPronunciationWordAlignment {
             val target = splice.targetLefts[fragment.index] ?: return false
             LyricsPronunciationRowCentring.applyReadingOffset(row, reading, shiftMode, target)
         }
-        android.util.Log.i(
-            LOG_TAG,
-            "grouped run=${block.firstIndex}..${block.lastIndex}" +
-                " fragments=${block.fragments.size} mode=$shiftMode" +
-                " span=${span.left}..${span.right} block=${splice.blockWidth}" +
-                " targets=${splice.targetLefts}",
-        )
+        if (VERBOSE_CENTRING_LOG) {
+            logSpliceOnce(
+                lineKey,
+                "grouped run=" + block.firstIndex + ".." + block.lastIndex +
+                    " fragments=" + block.fragments.size + " mode=" + shiftMode +
+                    " span=" + span.left + ".." + span.right + " block=" + splice.blockWidth +
+                    " targets=" + splice.targetLefts,
+            )
+        }
         return true
     }
 
@@ -584,7 +595,7 @@ internal object LyricsPronunciationWordAlignment {
             container.layoutParams = params
             container.requestLayout()
             pinnedAny = true
-            android.util.Log.i(LOG_TAG, "pinned container=${token.index} width=$width")
+            android.util.Log.i("AMPP-Bndry", "pinned container=${token.index} width=$width")
         }
         return pinnedAny
     }
@@ -596,7 +607,7 @@ internal object LyricsPronunciationWordAlignment {
     private fun logBoundaryMiss(lineKey: String) {
         if (boundaryMisses.size > BOUNDARY_MISS_LOG_LIMIT) boundaryMisses.clear()
         if (!boundaryMisses.add(lineKey)) return
-        android.util.Log.i(LOG_TAG, "bndry miss key=" + lineKey.take(24))
+        android.util.Log.i("AMPP-Bndry", "bndry miss key=" + lineKey.take(24))
     }
 
 

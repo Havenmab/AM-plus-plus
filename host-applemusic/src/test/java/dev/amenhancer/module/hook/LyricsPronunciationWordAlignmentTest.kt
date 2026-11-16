@@ -465,26 +465,6 @@ class LyricsPronunciationWordAlignmentTest {
         assertEquals(listOf(0, 1, 3), blocks.first().fragments.map { it.index })
     }
 
-    @Test
-    fun aBlockTwiceAsWideAsItsRunIsStillPlaced() {
-        // A romanization is routinely wider than the kana under it; the placement is centred, so the
-        // overflow is harmless and must not be refused (it used to be, silently).
-        val span = LyricsPronunciationWordAlignment.Span(0f, 300f)
-        val fragments = listOf(
-            LyricsPronunciationWordAlignment.FragmentGeometry(0, 0f, 300f, 300f),
-            LyricsPronunciationWordAlignment.FragmentGeometry(1, 300f, 300f, 300f),
-        )
-
-        val splice = LyricsPronunciationWordAlignment.placement(span, fragments)
-        println("[plan-test] wide splice=" + splice)
-
-        assertNotNull(splice)
-        assertEquals(600f, splice!!.blockWidth, 0.01f)
-        assertEquals(2, splice.targetLefts.size)
-        // centred on the run: 150 - 300 = -150, so it overflows equally on both sides
-        assertEquals(-150f, splice.targetLefts.getValue(0), 0.01f)
-        assertEquals(150f, splice.targetLefts.getValue(1), 0.01f)
-    }
 
     @Test
     fun aBlockTwiceAsWideAsItsRunIsStillPlaced() {

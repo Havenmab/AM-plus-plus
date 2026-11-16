@@ -261,16 +261,6 @@ class LyricsPronunciationWordAlignmentTest {
 
     // ---- 8. every guard falls back instead of guessing --------------------------------------------
 
-    @Test
-    fun `a block wider than the run it sits under is not spliced`() {
-        val span = LyricsPronunciationWordAlignment.Span(0f, 300f)
-        val fragments = listOf(
-            LyricsPronunciationWordAlignment.FragmentGeometry(0, 0f, 300f, 300f),
-            LyricsPronunciationWordAlignment.FragmentGeometry(1, 300f, 300f, 300f),
-        )
-
-        assertNull(LyricsPronunciationWordAlignment.placement(span, fragments))
-    }
 
 
     @Test

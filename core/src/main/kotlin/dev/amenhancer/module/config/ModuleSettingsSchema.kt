@@ -31,7 +31,9 @@ object ModuleSettingsSchema {
         values: Map<String, *>,
         customLyricsManifest: CustomLyricsManifest,
     ): ModuleSettings {
-        val regionSelection = values.regionSelection()
+        // One read for the four metadata controls: the runtime polls the same reader on its
+        // request seams, so both paths can never disagree about a default.
+        val metadata = values.metadataConfiguration()
         return ModuleSettings(
             dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
             dualPaneHideStatusBarEnabled = values.boolean(
@@ -125,26 +127,17 @@ object ModuleSettingsSchema {
             appleMusicDpiOverrideDpi = ModuleSettings.normalizeAppleMusicDpi(
                 values.number(KEY_APPLE_MUSIC_DPI_OVERRIDE_DPI) ?: ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI,
             ),
-            regionSelection = regionSelection,
+            regionSelection = metadata.region,
             // HLE's 「歌曲信息替换至设定地区语言」.  A store written by the retired
             // master-switch model replaced account language whenever a region was
             // selected and the master was on; carry that over so the upgrade keeps
             // behaving the same.  A fresh store lands on HLE's default, false.
-            overrideAccountLanguage = values.boolean(
-                KEY_OVERRIDE_ACCOUNT_LANGUAGE,
-                default = values.legacyOverrideAccountLanguageDefault(),
-            ),
+            overrideAccountLanguage = metadata.overrideAccountLanguage,
             // Stores that predate the separate switch keep the behaviour of the retired
             // picker: its no-region value restored names, every region value did not.
             // Once the key exists it always wins, so the controls are independent.
-            restoreCjkOriginalMetadata = values.boolean(
-                KEY_RESTORE_CJK_ORIGINAL_METADATA,
-                default = values.legacyRestoreCjkOriginalMetadataDefault(),
-            ),
-            localizedMetadataCache = values.boolean(
-                KEY_LOCALIZED_METADATA_CACHE,
-                default = true,
-            ),
+            restoreCjkOriginalMetadata = metadata.restoreCjkOriginalMetadata,
+            localizedMetadataCache = metadata.localizedMetadataCache,
             metadataCacheClearGeneration = metadataCacheClearGeneration(values),
             customLyricsEnabled = values.boolean(
                 KEY_CUSTOM_LYRICS_ENABLED,
@@ -382,6 +375,33 @@ object ModuleSettingsSchema {
      */
     fun metadataCacheClearGeneration(values: Map<String, *>): Long =
         values.long(KEY_METADATA_CACHE_CLEAR_GENERATION)?.coerceAtLeast(0L) ?: 0L
+
+    /**
+     * Reads HLE's four metadata controls as one value.
+     *
+     * The metadata runtime polls this on its request seams (through a short TTL cache) to
+     * notice a settings change without a restart, so it must stay a four-key read instead of
+     * decoding every setting.  It deliberately adds no storage key: the controls already
+     * exist, and a new schema version would invalidate every stored map for no gain.
+     */
+    fun metadataConfiguration(values: Map<String, *>): RegionMetadataConfiguration =
+        RegionMetadataConfiguration(
+            region = values.regionSelection(),
+            // HLE's 「歌曲信息替换至设定地区语言」 default for a store written by the retired
+            // master-switch model: the old runtime replaced account language whenever a region
+            // was selected and the master was on.  A fresh store keeps HLE's default, false.
+            overrideAccountLanguage = values.boolean(
+                KEY_OVERRIDE_ACCOUNT_LANGUAGE,
+                default = values.legacyOverrideAccountLanguageDefault(),
+            ),
+            // Stores that predate the separate switch keep the behaviour of the retired
+            // picker: its no-region value restored names, every region value did not.
+            restoreCjkOriginalMetadata = values.boolean(
+                KEY_RESTORE_CJK_ORIGINAL_METADATA,
+                default = values.legacyRestoreCjkOriginalMetadataDefault(),
+            ),
+            localizedMetadataCache = values.boolean(KEY_LOCALIZED_METADATA_CACHE, default = true),
+        )
 
     /** Legacy v1 preference-string manifest, kept for pre-migration reads. */
     fun decodeLegacyCustomLyricsManifest(values: Map<String, *>): CustomLyricsManifest =

@@ -1,8 +1,11 @@
 package dev.amenhancer.module.hook
 
 import android.app.Application
+import android.os.SystemClock
+import dev.amenhancer.module.config.RegionMetadataConfiguration
+import dev.amenhancer.module.config.RegionMetadataConfigurationWatcher
 import dev.amenhancer.module.config.RegionSelection
-import dev.amenhancer.module.config.RegionTitleRequestPolicy
+import dev.amenhancer.module.config.RegionTitleRequestPlan
 import io.github.libxposed.api.XposedModule
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
 import io.github.proify.lyricon.amprovider.xposed.AppleMetadataOverrideStore
@@ -63,13 +66,47 @@ internal class HleMetadataRuntime(
      * stay inert.
      */
     private val metadataCacheClearSignal: () -> Long = { 0L },
+    /**
+     * Live read of HLE's four metadata controls.
+     *
+     * HLE reads them at call time (`shouldOverrideAccountLanguage(selection)`,
+     * `isRestoreCjkOriginalMetadataEnabled()`, `configuredContentUiLanguage()` all hit the
+     * preference object again).  AM++ has no cross-process preference listener, so the host
+     * supplies a reader and the runtime polls it through [configurationWatcher] on its request
+     * seams.  The default keeps the construction-time scalars of [region] and the two
+     * switches, which is what a test or a dynamic runtime without a configuration source
+     * wants: a fixed value that never changes.
+     */
+    private val metadataConfiguration: () -> RegionMetadataConfiguration = {
+        RegionMetadataConfiguration(
+            region = region,
+            overrideAccountLanguage = overrideAccountLanguage,
+            restoreCjkOriginalMetadata = restoreCjkOriginalMetadata,
+            localizedMetadataCache = localizedMetadataCache,
+        )
+    },
+    /** Timed-read clock for [configurationWatcher]; injected so the TTL stays testable. */
+    clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
-    /** The three controls projected onto the request seams; see [RegionTitleRequestPolicy]. */
-    private val requestPlan = RegionTitleRequestPolicy.plan(
-        region = region,
-        overrideAccountLanguage = overrideAccountLanguage,
-        restoreCjkOriginalMetadata = restoreCjkOriginalMetadata,
+    /**
+     * Short-TTL snapshot of [metadataConfiguration].
+     *
+     * Every seam that used to read `requestPlan` now reads it through this watcher, so the
+     * value is the user's current configuration instead of the one that was on disk when the
+     * hook was installed, without turning the hot path into a preference read per request.
+     */
+    private val configurationWatcher = RegionMetadataConfigurationWatcher(
+        read = metadataConfiguration,
+        clock = clock,
     )
+
+    /** The four controls as they are right now. */
+    private val configuration: RegionMetadataConfiguration
+        get() = configurationWatcher.current()
+
+    /** The three controls projected onto the request seams; re-derived on every access. */
+    private val requestPlan: RegionTitleRequestPlan
+        get() = configuration.plan
 
     private val version = runCatching {
         val info = application.packageManager.getPackageInfo(
@@ -190,8 +227,11 @@ internal class HleMetadataRuntime(
             // Only a region that names a storefront redirects ordinary Apple Music traffic;
             // 不开启 keeps the account storefront and only restores names.
             regionReplacementRequested = requestPlan.rewritesCatalogRequests,
-            localizedMetadataCacheEnabled = localizedMetadataCache,
+            localizedMetadataCacheEnabled = configuration.localizedMetadataCache,
         )
+        // What we just applied is the baseline: a switch flipped between install and the first
+        // request seam has to be reported as a change, and what we installed with must not be.
+        configurationWatcher.seed()
         // A clear requested just before the previous process ended has no live
         // request seam to ride on, so settle it as soon as the runtime is up.
         metadataCacheClearObserver.observe()
@@ -450,9 +490,11 @@ internal class HleMetadataRuntime(
             contentItemHooks = contentItemHooks,
             queueMetadataHooks = queueMetadataHooks,
             actionSheetMetadataHooks = actionSheetMetadataHooks,
-            configuredContentUiLanguage = requestPlan.contentUiLanguageSelection,
-            overrideAccountLanguage = requestPlan.overrideAccountLanguage,
-            restoreOriginalMetadata = requestPlan.probesOriginalMetadata,
+            // All three gates are supplied, not snapshotted: HLE re-reads them per call, and the
+            // surface bridge outlives the value that was on disk when the hook was installed.
+            configuredContentUiLanguage = { configuration.plan.contentUiLanguageSelection },
+            overrideAccountLanguage = { selection -> configuration.shouldOverrideAccountLanguage(selection) },
+            restoreOriginalMetadata = { configuration.isRestoreOriginalMetadataEnabled },
             profileId = requestPlan.cacheNamespace,
             installation = installation,
             observeMetadataCacheClear = metadataCacheClearObserver::observe,
@@ -503,12 +545,13 @@ internal class HleMetadataRuntime(
     private fun playbackHost() = object : ApplePlaybackMetadataCoordinatorHost {
         override fun activePlayer(): Any? = playbackHooks.activePlayer()
         override fun configuredContentUiLanguage(): Int =
-            requestPlan.contentUiLanguageSelection
+            configuration.plan.contentUiLanguageSelection
         override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
-            // HLE: region != NONE && overrideAccountLanguage, not merely a region selection.
-            requestPlan.overrideAccountLanguage
+            // HLE's shouldOverrideAccountLanguage(selection): 不开启 never overrides, and the
+            // switch is read now, not when the hook was installed.
+            configuration.shouldOverrideAccountLanguage(selection)
         override fun shouldRestoreCjkOriginalMetadata(metadata: MediaMetadataCache.Metadata): Boolean =
-            requestPlan.probesOriginalMetadata &&
+            configuration.isRestoreOriginalMetadataEnabled &&
                 AppleOriginalMetadataPolicy.shouldProbeCjkOriginalMetadata(
                 mediaId = metadata.id,
                 title = metadata.title,
@@ -540,7 +583,7 @@ internal class HleMetadataRuntime(
                     originalMetadata = originalMetadata,
                     originalMetadataConfirmed = originalMetadataConfirmed,
                 )
-            } else if (originalMetadata && !requestPlan.probesOriginalMetadata) {
+            } else if (originalMetadata && !configuration.isRestoreOriginalMetadataEnabled) {
                 return
             } else if (originalMetadata) {
                 metadataStore.rememberOriginalMetadata(mediaId, alias, originalMetadataConfirmed)
@@ -582,7 +625,7 @@ internal class HleMetadataRuntime(
             }
         }
         override fun isRestoreOriginalMetadataEnabled(): Boolean =
-            requestPlan.probesOriginalMetadata
+            configuration.isRestoreOriginalMetadataEnabled
     }
 
     private fun effectiveAlias(mediaId: String): AppleInternalCatalogResolver.Alias? =

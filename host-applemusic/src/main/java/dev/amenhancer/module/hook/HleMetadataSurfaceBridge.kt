@@ -22,15 +22,23 @@ internal class HleMetadataSurfaceBridge(
     internal val contentItemHooks: AppleContentItemMetadataHooks,
     internal val queueMetadataHooks: AppleQueueMetadataHooks,
     internal val actionSheetMetadataHooks: AppleActionSheetMetadataHooks,
-    internal val configuredContentUiLanguage: Int,
+    /**
+     * HLE's `configuredContentUiLanguage()`: the current 将Apple Music改成其他地区 selection.
+     * A supplier, because the region can change while the process is alive.
+     */
+    internal val configuredContentUiLanguage: () -> Int,
     /**
      * HLE's `AppleOrchestratorCatalogLanguageAssembly.shouldOverrideAccountLanguage`: true only
-     * when a region is selected **and** the 「歌曲信息替换至设定地区语言」 switch is on.  The
-     * fork's pure projection of that pair is `RegionTitleRequestPlan.overrideAccountLanguage`,
-     * which is what [HleMetadataRuntime] passes here.
+     * when the selection the caller passes is a region **and** the 「歌曲信息替换至设定地区语言」
+     * switch is on.  Supplied rather than snapshotted so the switch is read at call time, which
+     * is the whole point of HLE's version taking the selection as a parameter.
      */
-    internal val overrideAccountLanguage: Boolean,
-    internal val restoreOriginalMetadata: Boolean,
+    internal val overrideAccountLanguage: (selection: Int) -> Boolean,
+    /**
+     * HLE's `isRestoreCjkOriginalMetadataEnabled()`: read per call, never captured, so turning
+     * 「替换中日韩歌曲信息为原地区原名」 off stops the original-name probe immediately.
+     */
+    internal val restoreOriginalMetadata: () -> Boolean,
     internal val profileId: String,
     private val installation: HleMetadataInstallation,
     /**
@@ -167,7 +175,7 @@ internal class HleMetadataSurfaceBridge(
             metadataApplier = metadataApplier,
             surfaceRuntime = surfaceRuntime,
             dataBindingHooks = dataBindingHooks,
-            configuredContentUiLanguage = { this@HleMetadataSurfaceBridge.configuredContentUiLanguage },
+            configuredContentUiLanguage = this@HleMetadataSurfaceBridge.configuredContentUiLanguage,
         )
         visibleMetadataDiagnostics = AppleVisibleMetadataDiagnostics(
             runtime = runtime,
@@ -189,7 +197,7 @@ internal class HleMetadataSurfaceBridge(
             frameworkMetadataHooks = frameworkHooks,
             visibleMetadataDiagnostics = visibleMetadataDiagnostics,
             media3MetadataCoordinator = media3MetadataCoordinator,
-            configuredContentUiLanguage = { this@HleMetadataSurfaceBridge.configuredContentUiLanguage },
+            configuredContentUiLanguage = this@HleMetadataSurfaceBridge.configuredContentUiLanguage,
             traceSequence = traceSequence,
         )
         playbackItemConversionHooks = ApplePlaybackItemConversionHooks(
@@ -353,7 +361,7 @@ internal class HleMetadataSurfaceBridge(
         artistOnly: Boolean,
         propagateArtistEntity: Boolean,
     ) {
-        if (originalMetadata && !restoreOriginalMetadata) return
+        if (originalMetadata && !restoreOriginalMetadata()) return
         if (::metadataOverrideApplicationCoordinator.isInitialized) {
             applyPlaybackMetadataOverride(
                 mediaId = mediaId,
@@ -417,14 +425,14 @@ internal class HleMetadataSurfaceBridge(
         localizedTitle: String?,
         localizedArtist: String?,
         alias: AppleInternalCatalogResolver.Alias?,
-    ): Boolean = restoreOriginalMetadata && resolutionCoordinator.shouldShareOriginalSongLanguage(
+    ): Boolean = restoreOriginalMetadata() && resolutionCoordinator.shouldShareOriginalSongLanguage(
         localizedTitle = localizedTitle,
         localizedArtist = localizedArtist,
         alias = alias,
     )
 
     fun rememberOriginalLanguageForArtist(mediaId: String, language: String) {
-        if (restoreOriginalMetadata) {
+        if (restoreOriginalMetadata()) {
             resolutionCoordinator.rememberOriginalLanguageForArtist(mediaId, language)
         }
     }

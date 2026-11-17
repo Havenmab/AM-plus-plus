@@ -128,31 +128,63 @@ class RegionMetadataConfigurationWatcher(
 ) {
     private val lock = Any()
 
+    /** The value reads are answered from; refreshed at most once per TTL window. */
     @Volatile
     private var value: RegionMetadataConfiguration? = null
+
+    /**
+     * The value the last reported change was applied against.
+     *
+     * Kept apart from [value] on purpose: a plain [current] read must never swallow a pending
+     * notification, otherwise a change that lands while the host is refreshing would be lost.
+     */
+    @Volatile
+    private var reported: RegionMetadataConfiguration? = null
 
     @Volatile
     private var readAtMillis: Long = Long.MIN_VALUE
 
     /** The current configuration, re-read from the source at most once per TTL window. */
     fun current(): RegionMetadataConfiguration {
-        sample()
+        refreshIfStale()
         return value ?: RegionMetadataConfiguration()
     }
 
     /**
-     * Samples the source and reports a change once per distinct configuration.
+     * Samples the source and reports a change when the value differs from the last one the
+     * caller accepted.
      *
-     * [onChanged] runs on the calling thread; a caller that must not block posts it itself.
-     * A change is only reported when the previous value was observed too, so the value the
-     * runtime installed with is never re-dispatched.
+     * [onChanged] runs on the calling thread and returns whether the change was taken over;
+     * a caller that must not block posts it itself and returns true, a caller that is already
+     * busy returns false so the change is offered again on the next seam instead of being
+     * dropped.  The first sample only seeds the baseline, so the configuration the runtime
+     * installed with is never re-dispatched.
      */
-    fun observe(onChanged: (RegionMetadataConfigurationChange) -> Unit): RegionMetadataConfiguration {
-        val change = sample()
-        if (change != null) {
-            runCatching { onChanged(change) }
+    fun observe(
+        onChanged: (RegionMetadataConfigurationChange) -> Boolean,
+    ): RegionMetadataConfiguration {
+        refreshIfStale()
+        val next = value ?: return RegionMetadataConfiguration()
+        val previous = reported
+        if (previous == null) {
+            reported = next
+            return next
         }
-        return value ?: RegionMetadataConfiguration()
+        if (previous == next) return next
+        val actions = RegionMetadataRefreshPolicy.actionsFor(previous, next)
+        if (actions.isEmpty()) {
+            reported = next
+            return next
+        }
+        val change = RegionMetadataConfigurationChange(previous, next, actions)
+        val accepted = runCatching { onChanged(change) }.getOrDefault(false)
+        if (accepted) reported = next
+        return next
+    }
+
+    /** Marks [current] as applied, so the next [observe] only reports a real change. */
+    fun seed() {
+        reported = current()
     }
 
     /** Drops the cached value so the next read hits the source, e.g. right after install. */
@@ -160,27 +192,16 @@ class RegionMetadataConfigurationWatcher(
         readAtMillis = Long.MIN_VALUE
     }
 
-    /** Returns a change when this sample produced one. */
-    private fun sample(): RegionMetadataConfigurationChange? {
+    private fun refreshIfStale() {
         val now = clock()
-        val cached = value
-        if (cached != null && isFresh(now)) return null
-        val (previous, next) = synchronized(lock) {
-            val current = value
-            if (current != null && isFresh(clock())) {
-                return null
-            }
-            val loaded = runCatching(read).getOrElse {
-                // A failed read must not look like a configuration change; keep the last value.
-                current ?: RegionMetadataConfiguration()
-            }
+        if (value != null && isFresh(now)) return
+        synchronized(lock) {
+            if (value != null && isFresh(clock())) return
+            // A failed read must not look like a configuration change: keep the last value.
+            val loaded = runCatching(read).getOrElse { value ?: RegionMetadataConfiguration() }
             value = loaded
             readAtMillis = clock()
-            current to loaded
         }
-        val actions = RegionMetadataRefreshPolicy.actionsFor(previous, next)
-        if (previous == null || actions.isEmpty()) return null
-        return RegionMetadataConfigurationChange(previous, next, actions)
     }
 
     private fun isFresh(now: Long): Boolean {

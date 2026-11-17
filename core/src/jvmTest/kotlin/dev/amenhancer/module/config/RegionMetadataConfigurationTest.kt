@@ -272,8 +272,75 @@ class RegionMetadataConfigurationTest {
         assertEquals(good, watcher.current())
         var reported = 0
         clock.advance(200L)
-        watcher.observe { reported += 1 }
+        watcher.observe {
+            reported += 1
+            true
+        }
         assertEquals(0, reported)
+    }
+
+    @Test
+    fun `a plain read never swallows a pending change`() {
+        val source = FakeSource(RegionMetadataConfiguration(RegionSelection.JAPAN))
+        val clock = FakeClock()
+        val watcher = RegionMetadataConfigurationWatcher(source::read, clock::read, ttlMillis = 100L)
+        watcher.observe { true }
+        source.value = RegionMetadataConfiguration(RegionSelection.KOREA)
+        clock.advance(200L)
+        // The hot path reads the new value first (the plan has to be current)...
+        assertEquals(RegionSelection.KOREA, watcher.current().region)
+        // ...but the seam still gets to report it once, so the host can refresh the surfaces.
+        val changes = mutableListOf<RegionMetadataConfigurationChange>()
+        watcher.observe { changes.add(it) }
+        assertEquals(1, changes.size)
+        assertEquals(RegionSelection.KOREA, changes.single().current.region)
+    }
+
+    @Test
+    fun `a change a busy host refuses is offered again`() {
+        val source = FakeSource(RegionMetadataConfiguration(RegionSelection.JAPAN))
+        val clock = FakeClock()
+        val watcher = RegionMetadataConfigurationWatcher(source::read, clock::read, ttlMillis = 100L)
+        watcher.observe { true }
+        source.value = RegionMetadataConfiguration(RegionSelection.KOREA)
+        clock.advance(200L)
+        // A host that is already refreshing refuses the change instead of queueing a second run.
+        var offered = 0
+        watcher.observe {
+            offered += 1
+            false
+        }
+        assertEquals(1, offered)
+        // The refusal kept it pending: the next seam offers the same change again.
+        clock.advance(200L)
+        var accepted = 0
+        watcher.observe {
+            accepted += 1
+            true
+        }
+        assertEquals(1, accepted)
+        clock.advance(200L)
+        watcher.observe {
+            accepted += 1
+            true
+        }
+        assertEquals(1, accepted)
+    }
+
+    @Test
+    fun `seeding marks the installed configuration as applied`() {
+        val source = FakeSource(RegionMetadataConfiguration(RegionSelection.JAPAN))
+        val clock = FakeClock()
+        val watcher = RegionMetadataConfigurationWatcher(source::read, clock::read, ttlMillis = 100L)
+        watcher.seed()
+        var offered = 0
+        clock.advance(200L)
+        watcher.observe {
+            offered += 1
+            true
+        }
+        // Nothing changed since install, so nothing is re-dispatched.
+        assertEquals(0, offered)
     }
 
     @Test

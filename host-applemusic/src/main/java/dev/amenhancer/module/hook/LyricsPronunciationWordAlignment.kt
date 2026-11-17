@@ -84,13 +84,6 @@ internal object LyricsPronunciationWordAlignment {
     const val BOUNDARY_MISS_LOG_LIMIT = 512
 
     /**
-     * A line whose containers hold this many kana on average is already word-level
-     * (`メイ` `キャップ` `ドレ` `スアップ`), so splicing it would join words the source kept
-     * apart. Mora-level data holds about one kana per container.
-     */
-    const val SOURCE_WORD_LEVEL_KANA_PER_CONTAINER = 1.6f
-
-    /**
      * A reading this much wider than its own kana is the reading of the **whole** word
      * (`suappu` over `ス`), so its container already ends the word and must not join a
      * neighbour. Shares [LyricsPronunciationRowCentring.WHOLE_WORD_RATIO]'s threshold on purpose.
@@ -256,24 +249,7 @@ internal object LyricsPronunciationWordAlignment {
         else -> Script.OTHER
     }
 
-    /** A token that pairs with the token after it: `っ` `ゃ` `ょ` and their katakana forms. */
-    fun bridgesSokuon(previous: ContainerToken, next: ContainerToken): Boolean {
-        val core = previous.core
-        if (core.isEmpty() || next.core.isEmpty()) return false
-        if (previous.trailingBlank) return false
-        return core.last() in BRIDGE_TRAILING
-    }
 
-    /** Whether [next] may join the block that currently ends with [previous]. */
-    fun joins(previous: ContainerToken, next: ContainerToken, mode: GroupingMode): Boolean = when {
-        bridgesSokuon(previous, next) -> true
-        next.isHiraganaParticle -> mode == GroupingMode.LOOSE && previous.script == Script.HIRAGANA
-        next.script == previous.script ->
-            previous.script != Script.MIXED && previous.script != Script.OTHER
-        mode == GroupingMode.LOOSE &&
-            previous.script == Script.KANJI && next.script == Script.HIRAGANA -> true
-        else -> false
-    }
 
     /**
      * The word blocks of [tokens], in order. Every token lands in exactly one block, so a caller maps
@@ -287,9 +263,7 @@ internal object LyricsPronunciationWordAlignment {
      */
     fun group(
         tokens: List<ContainerToken>,
-        mode: GroupingMode = GroupingMode.LOOSE,
         maxKana: Int = WORD_MAX_KANA,
-        gapBreakMs: Long = GAP_BREAK_MS,
         plan: PronunciationBoundary.BoundaryLine? = null,
     ): List<Block> {
         // The rules no longer guess word boundaries: with no plan the row keeps Apple's own shape,
@@ -333,71 +307,6 @@ internal object LyricsPronunciationWordAlignment {
         }
     }
 
-    /**
-     * The rules' own grouping, with no model involved: every call [group] makes with a null plan
-     * takes exactly this path, so the rules cannot drift behind the plan's back.
-     *
-     * The order of the checks is what keeps the hard cases apart: nothing may cross a word boundary
-     * ([ContainerToken.trailingBlank], a wrapped line, a katakana particle), and a source that already
-     * wrote the whole word's reading in one container must not join its neighbour.
-     */
-    private fun groupByRules(
-        tokens: List<ContainerToken>,
-        mode: GroupingMode,
-        maxKana: Int,
-        gapBreakMs: Long,
-    ): List<Block> {
-        val blocks = ArrayList<Block>(tokens.size)
-        var current = ArrayList<ContainerToken>(4)
-
-        fun flush() {
-            if (current.isEmpty()) return
-            blocks += Block(current.toList())
-            current = ArrayList(4)
-        }
-
-        for (token in tokens) {
-            // A container holding only Apple's own separator whitespace ends the word before it.
-            if (token.isBlankOnly) {
-                flush()
-                continue
-            }
-            // A container of nothing but marks shows no reading and is not a word: it neither joins
-            // nor breaks the run in front of it (Apple emits a lone mark as a span of its own).
-            if (token.isPureMark) continue
-            if (current.isEmpty()) {
-                current += token
-                continue
-            }
-            val previous = current.last()
-            val breaks = when {
-                previous.trailingBlank -> true
-                abs(previous.lineTop - token.lineTop) > LINE_TOLERANCE_PX -> true
-                token.isKatakanaParticle -> true
-                previous.readingIsWholeWord -> true
-                else -> !joins(previous, token, mode)
-            }
-            if (breaks) {
-                flush()
-                current += token
-                // A katakana particle that ended the word before it is a word of its own: it must not
-                // be swallowed by the word after it either (`マジカル` | `ト` | `リック`, never
-                // `majikaru` | `torikku`). The hiragana set is different — a particle that may join
-                // still has to be able to (`でも` stays one word) — so only this set closes on itself.
-                // A particle with nothing in front of it is not a particle but a loanword's head
-                // (`トリック`, `トマト`), which is why the block-initial branch above does not flush.
-                if (token.isKatakanaParticle) flush()
-                continue
-            }
-            val gapBreaks = previous.end != null && token.begin != null &&
-                token.begin - previous.end > gapBreakMs
-            val tooLong = current.sumOf { it.kanaCount } + token.kanaCount > maxKana
-            if (gapBreaks || tooLong) flush()
-            current += token
-        }
-        flush()
-        return blocks
-    }
 
     /**
      * The view-tree tokens as [PronunciationBoundary] sees them.
@@ -430,20 +339,6 @@ internal object LyricsPronunciationWordAlignment {
         return blocks
     }
 
-    /**
-     * Whether this line is already word-level, in which case splicing it would *join* words the source
-     * kept apart (`メイ` `キャップ` `ドレ` `スアップ`). Judged from the containers
-     * themselves: mora-level data holds about one kana per container, word-level data several.
-     */
-    fun isWordLevelLine(
-        tokens: List<ContainerToken>,
-        threshold: Float = SOURCE_WORD_LEVEL_KANA_PER_CONTAINER,
-    ): Boolean {
-        val carriers = tokens.filter { !it.isPureMark }
-        if (carriers.size < 2) return true
-        val kana = carriers.sumOf { it.kanaCount }
-        return kana.toFloat() / carriers.size > threshold
-    }
 
     /** The block [index] falls in, or null when the container is a mark-only one. */
     fun blockOf(blocks: List<Block>, index: Int): Block? =

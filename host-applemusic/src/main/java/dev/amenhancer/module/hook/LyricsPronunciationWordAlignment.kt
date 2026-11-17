@@ -292,7 +292,9 @@ internal object LyricsPronunciationWordAlignment {
         gapBreakMs: Long = GAP_BREAK_MS,
         plan: PronunciationBoundary.BoundaryLine? = null,
     ): List<Block> {
-        val baseline = groupByRules(tokens, mode, maxKana, gapBreakMs)
+        // The rules no longer guess word boundaries: with no plan the row keeps Apple's own shape,
+        // one container per block, which the splice reads as "nothing to join".
+        val baseline = tokens.map { token -> Block(listOf(token)) }
         if (plan == null) return baseline
         val boundaryTokens = boundaryTokens(tokens)
         val outcome = PronunciationBoundary.mergeLine(
@@ -540,10 +542,6 @@ internal object LyricsPronunciationWordAlignment {
         // as long as both sides strip the same marks and blanks.
         val lineKey = tokens.joinToString("") { it.core }
         val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
-        if (isWordLevelLine(timed)) {
-            logBoundaryOnce(lineKey, "word-level")
-            return false
-        }
 
         val provider = boundaryPlans
         val plan = provider?.invoke(lineKey)

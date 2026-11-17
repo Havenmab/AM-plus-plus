@@ -82,62 +82,8 @@ class LyricsPronunciationWordAlignmentTest {
 
     // ---- 2. word boundaries inside a katakana line -------------------------------------------------
 
-    @Test
-    fun `a katakana particle ends the word before it`() {
-        val tokens = listOf(
-            token(0, "マ", "ma"),
-            token(1, "ジ", "ji"),
-            token(2, "カ", "ka"),
-            token(3, "ル", "ru"),
-            token(4, "ト", "to"),
-            token(5, "リッ", "rik"),
-            token(6, "ク", "ku"),
-            token(7, "で", "de"),
-        )
 
-        val blocks = LyricsPronunciationWordAlignment.group(tokens)
 
-        // A one-token block still spans a range: group() labels every block first..last, so the
-        // particle ト at index 4 is "4..4" and not "4".
-        val groups = blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
-        assertEquals(describe(blocks, tokens), listOf("0..3", "4..4", "5..6", "7..7"), groups)
-        assertEquals(4, blocks[0].kanaCount)
-    }
-
-    @Test
-    fun `a katakana particle opening a loanword does not split it`() {
-        // The same character read the other way round: with nothing in front of it, ト heads a
-        // loanword (トリック) and only the hiragana particle after it ends the block.
-        val tokens = listOf(
-            token(0, "ト", "to"),
-            token(1, "リッ", "rik"),
-            token(2, "ク", "ku"),
-            token(3, "を", "o"),
-        )
-
-        val blocks = LyricsPronunciationWordAlignment.group(tokens)
-
-        val groups = blocks.map { block -> block.firstIndex.toString() + ".." + block.lastIndex }
-        assertEquals(describe(blocks, tokens), listOf("0..2", "3..3"), groups)
-        assertEquals(4, blocks[0].kanaCount)
-    }
-
-    @Test
-    fun `a word level line is never spliced into longer words`() {
-        // The AMLL line 12 shape: every container already holds a whole word, so joining them would
-        // invent words the source kept apart.
-        val tokens = listOf(
-            token(0, "メイ", "mei"),
-            token(1, "キャップ", "kyappu"),
-            token(2, "ドレ", "dore"),
-            token(3, "スアップ", "suappu"),
-        )
-        assertTrue(LyricsPronunciationWordAlignment.isWordLevelLine(tokens))
-
-        val row = karaokeRow(word(listOf("メイ"), "mei"), word(listOf("キャップ"), "kyappu"))
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
-    }
 
     // ---- 3/4. single-reading blocks fall back to the old correction --------------------------------
 

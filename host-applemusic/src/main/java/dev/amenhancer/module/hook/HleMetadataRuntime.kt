@@ -4,6 +4,8 @@ import android.app.Application
 import android.os.SystemClock
 import dev.amenhancer.module.config.RegionMetadataConfiguration
 import dev.amenhancer.module.config.RegionMetadataConfigurationWatcher
+import dev.amenhancer.module.config.RegionMetadataRefreshAction
+import dev.amenhancer.module.config.RegionMetadataRefreshPolicy
 import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.RegionTitleRequestPlan
 import io.github.libxposed.api.XposedModule
@@ -31,6 +33,7 @@ import io.github.proify.lyricon.amprovider.xposed.AppleActionSheetMetadataHost
 import io.github.proify.lyricon.amprovider.xposed.InAppContainerKind
 import io.github.proify.lyricon.amprovider.xposed.validatedOriginalSongAlias
 import com.juren233.hyperlyricsenhanced.common.lyric.AppleOriginalMetadataPolicy
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * AM++ host for the transplanted HLE metadata subsystem.
@@ -231,6 +234,7 @@ internal class HleMetadataRuntime(
         )
         // What we just applied is the baseline: a switch flipped between install and the first
         // request seam has to be reported as a change, and what we installed with must not be.
+        appliedConfiguration = configuration
         configurationWatcher.seed()
         // A clear requested just before the previous process ended has no live
         // request seam to ride on, so settle it as soon as the runtime is up.
@@ -239,6 +243,10 @@ internal class HleMetadataRuntime(
         contentLocalizationHooks = AppleContentLocalizationHooks(
             runtime = runtime,
             catalogResolver = { catalogResolver },
+            // HLE re-reads the content-UI selection on every MediaApi request.  The equivalent
+            // here is sampling the same TTL snapshot this seam rides on, so a changed region
+            // reaches the very next request without a per-request preference read.
+            onRequestSeam = ::observeConfigurationSeam,
         )
         // Region replacement installs five layers; the catalog-executor and amp-api
         // layers are the fork's additions and keep their own names so an
@@ -498,6 +506,7 @@ internal class HleMetadataRuntime(
             profileId = requestPlan.cacheNamespace,
             installation = installation,
             observeMetadataCacheClear = metadataCacheClearObserver::observe,
+            observeMetadataConfiguration = ::observeConfigurationSeam,
         )
         installedBridge.install()
         surfaceBridge = installedBridge
@@ -630,4 +639,96 @@ internal class HleMetadataRuntime(
 
     private fun effectiveAlias(mediaId: String): AppleInternalCatalogResolver.Alias? =
         bridgeEffectiveAlias(mediaId)
+
+    // ------------------------------------------------------- configuration refresh
+
+    /** Guards the posted refresh so a burst of requests schedules one run, never a re-entry. */
+    private val configurationRefreshScheduled = AtomicBoolean(false)
+
+    /** The configuration the live seams currently behave as; the baseline for change detection. */
+    @Volatile
+    private var appliedConfiguration: RegionMetadataConfiguration? = null
+
+    /**
+     * The request-side replacement for HLE's `registerOnSharedPreferenceChangeListener`.
+     *
+     * Runs at most once per TTL window (the watcher caches the value), reports a change once,
+     * and hands the actual work to the main thread: applying the region touches the MediaApi
+     * storefront, and the surface clears touch live views.
+     */
+    private fun observeConfigurationSeam() {
+        configurationWatcher.observe { change ->
+            if (change.isEmpty) return@observe false
+            scheduleConfigurationRefresh()
+            true
+        }
+    }
+
+    private fun scheduleConfigurationRefresh() {
+        if (!configurationRefreshScheduled.compareAndSet(false, true)) return
+        runtime.mainHandler.post { runConfigurationRefresh() }
+    }
+
+    private fun runConfigurationRefresh() {
+        try {
+            applyConfigurationChange()
+        } catch (error: Throwable) {
+            // A settings change must never take the host down.
+            ProviderLogger.error("Apple Music 元数据配置变更应用失败", error)
+        } finally {
+            configurationRefreshScheduled.set(false)
+            // A value that moved while we were applying has to be applied too.  Re-reading once
+            // here closes the window between "the posted run read the value" and "the flag was
+            // released" without keeping a queue of stale changes around.
+            val applied = appliedConfiguration
+            configurationWatcher.invalidate()
+            if (configurationWatcher.current() != applied) scheduleConfigurationRefresh()
+        }
+    }
+
+    /**
+     * HLE's listener body, one branch per owed action:
+     * `applyConfiguredContentUiLanguage` first (storefront/language/cache switch) and then
+     * `metadataConfigurationDispatcher.dispatch()` (clear, restore, refresh).
+     */
+    private fun applyConfigurationChange() {
+        val previous = appliedConfiguration
+        val current = configurationWatcher.current()
+        val actions = RegionMetadataRefreshPolicy.actionsFor(previous, current)
+        appliedConfiguration = current
+        if (actions.isEmpty()) return
+        if (RegionMetadataRefreshAction.APPLY_REGION in actions) {
+            catalogResolver.applyRegionConfiguration(
+                selection = current.plan.contentUiLanguageSelection,
+                regionReplacementRequested = current.plan.rewritesCatalogRequests,
+                localizedMetadataCacheEnabled = current.localizedMetadataCache,
+            )
+        }
+        if (RegionMetadataRefreshAction.DISPATCH_CONFIGURATION_CHANGE in actions) {
+            if (::surfaceBridge.isInitialized) {
+                surfaceBridge.dispatchMetadataConfigurationChange()
+            } else {
+                // The installed surfaces are not up this early; the region layer above still
+                // followed the change, so report what could not be refreshed instead of failing.
+                ProviderLogger.info(
+                    "Apple Music 元数据配置变更: 表面层尚未安装，跳过状态清理与当前项刷新"
+                )
+            }
+        }
+        ProviderLogger.info(
+            "Apple Music 元数据配置已生效: region=" + current.region.storageValue +
+                ", override=" + current.overrideAccountLanguage +
+                ", restoreOriginal=" + current.restoreCjkOriginalMetadata +
+                ", actions=" + actions.joinToString("+") { it.name.lowercase() }
+        )
+        if (previous != null && previous.region.cacheNamespace != current.region.cacheNamespace) {
+            // The persistent caches are opened with the install-time namespace; switching them
+            // live is out of scope here, so say so rather than pretend otherwise.
+            ProviderLogger.info(
+                "Apple Music 地区检索库命名空间变更: " + previous.region.cacheNamespace +
+                    "->" + current.region.cacheNamespace +
+                    "; 本次进程沿用安装时的库，重启后切换"
+            )
+        }
+    }
 }

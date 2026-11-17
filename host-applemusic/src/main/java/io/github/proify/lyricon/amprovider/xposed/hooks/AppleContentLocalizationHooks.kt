@@ -75,6 +75,17 @@ internal fun catalogSeamAction(
 internal class AppleContentLocalizationHooks(
     private val runtime: AppleMusicProviderRuntime,
     private val catalogResolver: () -> AppleInternalCatalogResolver,
+    /**
+     * Sampling hook for the runtime's metadata configuration.
+     *
+     * HLE re-reads the content-UI selection on every MediaApi request
+     * (`AppleContentLocalizationHooks.installMediaApiLocalization`).  AM++ cannot afford a
+     * cross-process preference read per request, so the same seam instead asks the runtime to
+     * sample its short-TTL configuration snapshot: the following request already carries the
+     * new language.  Failure-tolerant by contract — a settings probe must never break a
+     * network request.
+     */
+    private val onRequestSeam: () -> Unit = {},
 ) {
     @Volatile
     private var lastLoggedContentLanguage: String? = null
@@ -99,6 +110,7 @@ internal class AppleContentLocalizationHooks(
             runtime.hookRegistrar.installHook(method, after = { _, result ->
                 @Suppress("UNCHECKED_CAST")
                 val params = result as? MutableMap<Any?, Any?> ?: return@installHook
+                runCatching { onRequestSeam() }
                 val resolver = catalogResolver()
                 val requestToken = params[
                     AppleInternalCatalogResolver.CATALOG_REQUEST_TOKEN_PARAM
@@ -336,6 +348,7 @@ internal class AppleContentLocalizationHooks(
         )?.toString().orEmpty()
         val requestUri = Uri.parse(requestUrl)
         startContentHttpTiming(httpChain, requestUri)
+        runCatching { onRequestSeam() }
 
         val resolver = catalogResolver()
         val pathSegments = requestUri.pathSegments

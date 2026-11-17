@@ -344,6 +344,34 @@ class RegionMetadataConfigurationTest {
     }
 
     @Test
+    fun `an invalidate that lands during a read is not swallowed by it`() {
+        // Reentrant model of the race the lock has to survive: a refresh is in flight (it holds
+        // the lock) when an invalidate() arrives, so the timestamp the refresh writes must not
+        // be allowed to stand in for the read the invalidation asked for.
+        lateinit var watcher: RegionMetadataConfigurationWatcher
+        var invalidatedDuringRead = false
+        var reads = 0
+        val clock = FakeClock()
+        val source = {
+            reads += 1
+            if (!invalidatedDuringRead) {
+                invalidatedDuringRead = true
+                watcher.invalidate()
+            }
+            RegionMetadataConfiguration(RegionSelection.JAPAN)
+        }
+        watcher = RegionMetadataConfigurationWatcher(source, clock::read, ttlMillis = 5_000L)
+
+        watcher.current()
+        assertEquals(1, reads)
+        assertTrue(invalidatedDuringRead)
+        // The invalidation was not cancelled by the refresh that overlapped it.
+        clock.advance(10L)
+        watcher.current()
+        assertEquals(2, reads)
+    }
+
+    @Test
     fun `invalidate forces the next read to hit the source`() {
         val source = FakeSource(RegionMetadataConfiguration(RegionSelection.JAPAN))
         val clock = FakeClock()

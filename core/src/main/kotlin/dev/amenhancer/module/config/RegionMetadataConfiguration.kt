@@ -144,6 +144,13 @@ class RegionMetadataConfigurationWatcher(
     @Volatile
     private var readAtMillis: Long = Long.MIN_VALUE
 
+    /**
+     * Bumped by every [invalidate], so a refresh that overlapped one is not mistaken for the
+     * read that invalidation asked for.
+     */
+    @Volatile
+    private var generation: Long = 0L
+
     /** The current configuration, re-read from the source at most once per TTL window. */
     fun current(): RegionMetadataConfiguration {
         refreshIfStale()
@@ -187,20 +194,32 @@ class RegionMetadataConfigurationWatcher(
         reported = current()
     }
 
-    /** Drops the cached value so the next read hits the source, e.g. right after install. */
+    /**
+     * Drops the cached value so the next read hits the source, e.g. right after install.
+     *
+     * Runs under the same lock as the refresh: resetting [readAtMillis] outside it could be
+     * overwritten by a refresh that was already in flight, which silently cancelled the
+     * invalidation.
+     */
     fun invalidate() {
-        readAtMillis = Long.MIN_VALUE
+        synchronized(lock) {
+            generation += 1
+            readAtMillis = Long.MIN_VALUE
+        }
     }
 
     private fun refreshIfStale() {
-        val now = clock()
-        if (value != null && isFresh(now)) return
+        val observedGeneration = generation
+        if (value != null && isFresh(clock())) return
         synchronized(lock) {
-            if (value != null && isFresh(clock())) return
+            // A refresh that started before an invalidate() must not serve it: without the
+            // generation check a concurrent timestamp write would look fresh here.
+            if (observedGeneration == generation && value != null && isFresh(clock())) return
             // A failed read must not look like a configuration change: keep the last value.
             val loaded = runCatching(read).getOrElse { value ?: RegionMetadataConfiguration() }
             value = loaded
-            readAtMillis = clock()
+            // An invalidate() that landed while we were reading still owes a fresh read.
+            readAtMillis = if (observedGeneration == generation) clock() else Long.MIN_VALUE
         }
     }
 

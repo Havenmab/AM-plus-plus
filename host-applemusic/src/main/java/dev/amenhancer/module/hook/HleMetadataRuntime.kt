@@ -43,6 +43,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * initialized. The original HLE resolver/cache/policy/hook profile path is
  * retained for Apple Music metadata.
  */
+/** At most one configuration refresh attempt per second, so a failing action cannot spin. */
+private const val METADATA_CONFIGURATION_RETRY_INTERVAL_MS = 1_000L
+
 internal class HleMetadataRuntime(
     private val module: XposedModule,
     private val application: Application,
@@ -88,8 +91,8 @@ internal class HleMetadataRuntime(
             localizedMetadataCache = localizedMetadataCache,
         )
     },
-    /** Timed-read clock for [configurationWatcher]; injected so the TTL stays testable. */
-    clock: () -> Long = SystemClock::elapsedRealtime,
+    /** Timed-read clock for [configurationWatcher] and the refresh retry; injected so both stay testable. */
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
     /**
      * Short-TTL snapshot of [metadataConfiguration].
@@ -649,6 +652,10 @@ internal class HleMetadataRuntime(
     @Volatile
     private var appliedConfiguration: RegionMetadataConfiguration? = null
 
+    /** Uptime of the last refresh attempt, so retries are rate-limited (see [refreshRetryDue]). */
+    @Volatile
+    private var lastRefreshAttemptMillis: Long = Long.MIN_VALUE
+
     /**
      * The request-side replacement for HLE's `registerOnSharedPreferenceChangeListener`.
      *
@@ -657,16 +664,36 @@ internal class HleMetadataRuntime(
      * storefront, and the surface clears touch live views.
      */
     private fun observeConfigurationSeam() {
-        configurationWatcher.observe { change ->
-            if (change.isEmpty) return@observe false
+        // The watcher only offers a change it has not had accepted yet, so no empty check here.
+        configurationWatcher.observe {
             scheduleConfigurationRefresh()
             true
         }
+        // Self-healing retry.  The baseline only advances when every owed action succeeded, so a
+        // failed apply — or a value that moved while one was running — still differs from
+        // [appliedConfiguration] here and is offered again.  Rate-limited, because a
+        // persistently failing action must not turn every request into a main-thread retry.
+        if (configurationRefreshScheduled.get()) return
+        if (configurationWatcher.current() == appliedConfiguration) return
+        if (!refreshRetryDue()) return
+        scheduleConfigurationRefresh()
+    }
+
+    private fun refreshRetryDue(): Boolean {
+        val last = lastRefreshAttemptMillis
+        if (last == Long.MIN_VALUE) return true
+        return clock() - last >= METADATA_CONFIGURATION_RETRY_INTERVAL_MS
     }
 
     private fun scheduleConfigurationRefresh() {
         if (!configurationRefreshScheduled.compareAndSet(false, true)) return
-        runtime.mainHandler.post { runConfigurationRefresh() }
+        lastRefreshAttemptMillis = clock()
+        // post() answers false once the main looper has quit; leaving the flag set would drop
+        // every later change for the rest of the process.
+        val posted = runCatching {
+            runtime.mainHandler.post { runConfigurationRefresh() }
+        }.getOrDefault(false)
+        if (!posted) configurationRefreshScheduled.set(false)
     }
 
     private fun runConfigurationRefresh() {
@@ -677,12 +704,6 @@ internal class HleMetadataRuntime(
             ProviderLogger.error("Apple Music 元数据配置变更应用失败", error)
         } finally {
             configurationRefreshScheduled.set(false)
-            // A value that moved while we were applying has to be applied too.  Re-reading once
-            // here closes the window between "the posted run read the value" and "the flag was
-            // released" without keeping a queue of stale changes around.
-            val applied = appliedConfiguration
-            configurationWatcher.invalidate()
-            if (configurationWatcher.current() != applied) scheduleConfigurationRefresh()
         }
     }
 
@@ -690,45 +711,77 @@ internal class HleMetadataRuntime(
      * HLE's listener body, one branch per owed action:
      * `applyConfiguredContentUiLanguage` first (storefront/language/cache switch) and then
      * `metadataConfigurationDispatcher.dispatch()` (clear, restore, refresh).
+     *
+     * The baseline only advances once every owed action succeeded: a failed storefront write or
+     * a failed surface clear must be offered again by the next request seam instead of being
+     * recorded as applied and silently lost.
      */
     private fun applyConfigurationChange() {
         val previous = appliedConfiguration
         val current = configurationWatcher.current()
         val actions = RegionMetadataRefreshPolicy.actionsFor(previous, current)
-        appliedConfiguration = current
-        if (actions.isEmpty()) return
+        if (actions.isEmpty()) {
+            appliedConfiguration = current
+            return
+        }
+        var applied = true
         if (RegionMetadataRefreshAction.APPLY_REGION in actions) {
-            catalogResolver.applyRegionConfiguration(
-                selection = current.plan.contentUiLanguageSelection,
-                regionReplacementRequested = current.plan.rewritesCatalogRequests,
-                localizedMetadataCacheEnabled = current.localizedMetadataCache,
-            )
+            applied = runCatching { applyConfiguredRegion(current) }
+                .onFailure {
+                    ProviderLogger.error(
+                        "Apple Music 地区配置应用失败，将在下次请求重试: " +
+                            "region=" + current.region.storageValue,
+                        it,
+                    )
+                }
+                .isSuccess
         }
         if (RegionMetadataRefreshAction.DISPATCH_CONFIGURATION_CHANGE in actions) {
-            if (::surfaceBridge.isInitialized) {
-                surfaceBridge.dispatchMetadataConfigurationChange()
-            } else {
-                // The installed surfaces are not up this early; the region layer above still
-                // followed the change, so report what could not be refreshed instead of failing.
-                ProviderLogger.info(
-                    "Apple Music 元数据配置变更: 表面层尚未安装，跳过状态清理与当前项刷新"
-                )
-            }
+            applied = dispatchConfigurationChange() && applied
         }
+        if (!applied) return
+        appliedConfiguration = current
         ProviderLogger.info(
-            "Apple Music 元数据配置已生效: region=" + current.region.storageValue +
-                ", override=" + current.overrideAccountLanguage +
-                ", restoreOriginal=" + current.restoreCjkOriginalMetadata +
-                ", actions=" + actions.joinToString("+") { it.name.lowercase() }
+            "Apple Music 元数据配置已生效: region=${current.region.storageValue}, " +
+                "override=${current.overrideAccountLanguage}, " +
+                "restoreOriginal=${current.restoreCjkOriginalMetadata}, " +
+                "actions=${actions.joinToString("+") { it.name.lowercase() }}"
         )
         if (previous != null && previous.region.cacheNamespace != current.region.cacheNamespace) {
-            // The persistent caches are opened with the install-time namespace; switching them
-            // live is out of scope here, so say so rather than pretend otherwise.
+            // The persistent stores are opened with the install-time namespace; switching those
+            // live is out of scope here, so say so rather than pretend otherwise.  The in-memory
+            // profile does follow (see applyConfiguredRegion).
             ProviderLogger.info(
-                "Apple Music 地区检索库命名空间变更: " + previous.region.cacheNamespace +
-                    "->" + current.region.cacheNamespace +
-                    "; 本次进程沿用安装时的库，重启后切换"
+                "Apple Music 地区检索库命名空间变更: ${previous.region.cacheNamespace}->" +
+                    "${current.region.cacheNamespace}; 本次进程沿用安装时的持久库，重启后切换"
             )
         }
+    }
+
+    /**
+     * Re-runs the region engine for a changed configuration.
+     *
+     * It always runs, even when the change turns every control off: handing the storefront back
+     * to the account is exactly what that branch does.
+     */
+    private fun applyConfiguredRegion(configuration: RegionMetadataConfiguration) {
+        catalogResolver.applyRegionConfiguration(
+            selection = configuration.plan.contentUiLanguageSelection,
+            regionReplacementRequested = configuration.plan.rewritesCatalogRequests,
+            localizedMetadataCacheEnabled = configuration.localizedMetadataCache,
+        )
+    }
+
+    /** Returns false when the surfaces could not be cleared, so the change is retried. */
+    private fun dispatchConfigurationChange(): Boolean {
+        if (!::surfaceBridge.isInitialized) {
+            // The installed surfaces are not up this early; the region layer above still
+            // followed the change, so report what could not be refreshed instead of failing.
+            ProviderLogger.info(
+                "Apple Music 元数据配置变更: 表面层尚未安装，跳过状态清理与当前项刷新"
+            )
+            return true
+        }
+        return surfaceBridge.dispatchMetadataConfigurationChange()
     }
 }

@@ -305,11 +305,17 @@ internal class HleMetadataSurfaceBridge(
         }
     }
 
-    /** HLE's `dispatch()`, called by the runtime once it decided a change is owed. */
-    fun dispatchMetadataConfigurationChange() {
-        if (!::metadataConfigurationDispatcher.isInitialized) return
-        runCatching { metadataConfigurationDispatcher.dispatch() }
+    /**
+     * HLE's `dispatch()`, called by the runtime once it decided a change is owed.
+     *
+     * False means an owner threw: the runtime keeps the previous baseline so the next request
+     * seam offers the same change again instead of recording it as applied.
+     */
+    fun dispatchMetadataConfigurationChange(): Boolean {
+        if (!::metadataConfigurationDispatcher.isInitialized) return true
+        return runCatching { metadataConfigurationDispatcher.dispatch() }
             .onFailure { ProviderLogger.error("Apple Music 元数据配置状态清理失败", it) }
+            .isSuccess
     }
 
     /**

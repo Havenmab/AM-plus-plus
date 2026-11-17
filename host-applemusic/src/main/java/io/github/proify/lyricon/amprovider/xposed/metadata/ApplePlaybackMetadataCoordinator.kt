@@ -15,6 +15,13 @@ internal interface ApplePlaybackMetadataCoordinatorHost {
 
     fun shouldRestoreCjkOriginalMetadata(metadata: MediaMetadataCache.Metadata): Boolean
 
+    /**
+     * HLE's "no work, no cache": false while every region/metadata control is off, so the
+     * always-installed runtime does not feed [MediaMetadataCache] in a configuration that used
+     * to install nothing at all (readers outside this subsystem can see that cache).
+     */
+    fun shouldPublishMetadataCache(): Boolean
+
     fun ensureContentItemMetadataHooks(contentItemClass: Class<*>)
 
     fun setMetadataPlaybackMediaId(mediaId: String)
@@ -160,8 +167,21 @@ internal class ApplePlaybackMetadataCoordinator(
             if (overrideAccountLanguage || restoreCjkOriginalMetadata) {
                 host.ensureContentItemMetadataHooks(mediaItem.javaClass)
             }
-            val previousMetadata = MediaMetadataCache.getMetadataById(mediaId)
-            MediaMetadataCache.put(metadata)
+            val publishMetadataCache = runCatching { host.shouldPublishMetadataCache() }
+                .getOrDefault(false)
+            // An inactive runtime neither writes nor reads here: the cache is the publish target
+            // of the resolution pipeline, and nothing may look different while it is idle.
+            val previousMetadata = if (publishMetadataCache) {
+                MediaMetadataCache.getMetadataById(mediaId)
+            } else {
+                null
+            }
+            if (publishMetadataCache) {
+                runCatching { MediaMetadataCache.put(metadata) }
+                    .onFailure {
+                        ProviderLogger.error("歌曲元数据缓存写入失败: id=" + metadata.id, it)
+                    }
+            }
             ProviderLogger.debug(
                 "歌曲元数据已更新：source=$source, id=${metadata.id}, " +
                     "queueId=${metadata.queueId}, 标题=${metadata.title}"

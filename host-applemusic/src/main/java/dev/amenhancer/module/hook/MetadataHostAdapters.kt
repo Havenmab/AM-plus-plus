@@ -704,7 +704,7 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                 }
 
                 override fun configuredContentUiLanguage(): Int =
-                    this@createMetadataHostAdapters.configuredContentUiLanguage
+                    this@createMetadataHostAdapters.configuredContentUiLanguage()
 
                 override fun nextTraceSequence(): Long =
                     bridge.hostCall("mediaApi.nextTraceSequence", 0L) {
@@ -718,15 +718,15 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     }
 
                 override fun configuredContentUiLanguage(): Int =
-                    this@createMetadataHostAdapters.configuredContentUiLanguage
+                    this@createMetadataHostAdapters.configuredContentUiLanguage()
 
-                // HLE's `shouldOverrideAccountLanguage(selection)`: the region selection alone is
-                // not enough, the 「歌曲信息替换至设定地区语言」 switch has to be on too.  The
-                // bridge carries that pair as `RegionTitleRequestPlan.overrideAccountLanguage`.
+                // HLE's `shouldOverrideAccountLanguage(selection)`: the selection the caller is
+                // looking at decides, 不开启 never overrides, and the 「歌曲信息替换至设定地区
+                // 语言」 switch has to be on too.  Both halves are read now, not at install time.
                 override fun shouldOverrideAccountLanguage(selection: Int): Boolean =
-                    this@createMetadataHostAdapters.overrideAccountLanguage
+                    this@createMetadataHostAdapters.overrideAccountLanguage(selection)
 
-                override fun isRestoreOriginalEnabled(): Boolean = restoreOriginalMetadata
+                override fun isRestoreOriginalEnabled(): Boolean = restoreOriginalMetadata()
 
                 override fun refreshRequestScope() =
                     bridge.hostCall("resolution.refreshRequestScope", Unit) {
@@ -830,7 +830,7 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     bridge.librarySurfaceHooks.enrichEntity(mediaId, entity, kind, attributes)
                 }
 
-                override fun isRestoreOriginalMetadataEnabled(): Boolean = restoreOriginalMetadata
+                override fun isRestoreOriginalMetadataEnabled(): Boolean = restoreOriginalMetadata()
 
                 override fun shouldRetryOriginalMetadataCacheProbe(mediaId: String): Boolean =
                     bridge.hostCall("listenNow.shouldRetryOriginalMetadataCacheProbe", false) {
@@ -842,7 +842,7 @@ internal fun HleMetadataSurfaceBridge.createMetadataHostAdapters(): HleMetadataS
                     alias: AppleInternalCatalogResolver.Alias,
                     confirmed: Boolean,
                 ) = bridge.hostCall("listenNow.rememberOriginalMetadataOverride", Unit) {
-                    if (bridge.restoreOriginalMetadata) {
+                    if (bridge.restoreOriginalMetadata()) {
                         bridge.metadataStore.rememberOriginalMetadata(mediaId, alias, confirmed)
                     }
                 }

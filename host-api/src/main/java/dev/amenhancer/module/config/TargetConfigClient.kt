@@ -51,6 +51,17 @@ class TargetConfigClient private constructor(
     fun metadataCacheClearGeneration(): Long =
         ModuleSettingsSchema.metadataCacheClearGeneration(valuesProvider())
 
+    /**
+     * Live read of the four HLE metadata controls.
+     *
+     * The metadata runtime polls this from its request seams behind a short TTL cache, so it
+     * stays a four-key read: it must not decode the whole [ModuleSettings] (nor touch the
+     * potentially large lyrics index) on a hot path.  Unlike [settings], the result is always
+     * current, which is what lets a switch take effect without restarting Apple Music.
+     */
+    fun metadataConfiguration(): RegionMetadataConfiguration =
+        ModuleSettingsSchema.metadataConfiguration(valuesProvider())
+
     /** Background custom-lyrics index read. */
     fun customLyricsManifest(): CustomLyricsManifest {
         val values = valuesProvider()

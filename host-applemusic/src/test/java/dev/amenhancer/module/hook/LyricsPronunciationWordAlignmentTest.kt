@@ -98,27 +98,6 @@ class LyricsPronunciationWordAlignmentTest {
     // ---- 5. hiragana word with particles ----------------------------------------------------------
 
 
-    @Test
-    fun `a spliced hiragana word keeps the fragments flush with each other`() {
-        val row = karaokeRow(
-            word(listOf("「"), null),
-            word(listOf("お"), "o"),
-            word(listOf("は"), "ha"),
-            word(listOf("よ"), "yo"),
-            word(listOf("う"), "u"),
-        )
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-
-        assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[1]))
-
-        val lefts = (1..4).map { index ->
-            val reading = readingOf(row, index)
-            LyricsPronunciationRowCentring.leftIn(row, reading) + reading.translationX
-        }
-        (1 until lefts.size).forEach { index ->
-            assertEquals(80f, lefts[index] - lefts[index - 1], 0.5f)
-        }
-    }
 
     // ---- 6. the gap rule, when timings are available ----------------------------------------------
 
@@ -204,23 +183,6 @@ class LyricsPronunciationWordAlignmentTest {
 
     // ---- 10. idempotency --------------------------------------------------------------------------
 
-    @Test
-    fun `a second pass writes the same offsets and never accumulates`() {
-        val row = karaokeRow(
-            word(listOf("ス"), "su"),
-            word(listOf("ア"), "a"),
-            word(listOf("ッ"), "ppu"),
-        )
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-
-        assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
-        val first = (0..2).map { index -> readingOf(row, index).translationX }
-
-        assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[2]))
-        val second = (0..2).map { index -> readingOf(row, index).translationX }
-
-        assertEquals(first, second)
-    }
 
     // ---- the model's plan -------------------------------------------------------------------------
 
@@ -323,6 +285,44 @@ class LyricsPronunciationWordAlignmentTest {
         assertEquals(20f, readingOf(row, 0).translationX, 0.5f)
         assertEquals(0f, readingOf(row, 1).translationX, 0.5f)
         assertEquals(-20f, readingOf(row, 2).translationX, 0.5f)
+    }
+
+    @Test
+    fun aSecondPassWritesTheSameOffsets() {
+        val row = karaokeRow(word(listOf("ス"), "su"), word(listOf("ア"), "a"), word(listOf("ッ"), "ppu"))
+        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..2))
+        LyricsPronunciationWordAlignment.boundaryPlans = { plan }
+        try {
+            assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+            val first = (0..2).map { readingOf(row, it).translationX }
+            assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[2]))
+            val second = (0..2).map { readingOf(row, it).translationX }
+            println("[plan-test] idempotent first=" + first + " second=" + second)
+            assertEquals(first, second)
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
+    }
+
+    @Test
+    fun aSplicedWordKeepsItsFragmentsFlush() {
+        val row = karaokeRow(word(listOf("お"), "o"), word(listOf("は"), "ha"), word(listOf("よ"), "yo"), word(listOf("う"), "u"))
+        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..3))
+        LyricsPronunciationWordAlignment.boundaryPlans = { plan }
+        try {
+            assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+            val lefts = (0..3).map { index ->
+                LyricsPronunciationRowCentring.leftIn(row, readingOf(row, index)) + readingOf(row, index).translationX
+            }
+            println("[plan-test] flush lefts=" + lefts)
+            (1 until lefts.size).forEach { index ->
+                assertEquals(80f, lefts[index] - lefts[index - 1], 0.5f)
+            }
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
     }
 
     // ---- fixtures ---------------------------------------------------------------------------------

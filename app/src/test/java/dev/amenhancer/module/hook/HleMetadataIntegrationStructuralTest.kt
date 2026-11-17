@@ -86,17 +86,12 @@ class HleMetadataIntegrationStructuralTest {
         // The runtime applies the region plan and installs all four localization seams.
         assertTrue(runtime.contains("applyRegionConfiguration("))
         assertTrue(runtime.contains("regionReplacementRequested = requestPlan.rewritesCatalogRequests"))
-        // The plan now carries HLE's three controls, including the override switch.
-        assertTrue(runtime.contains("RegionTitleRequestPolicy.plan("))
-        assertTrue(runtime.contains("overrideAccountLanguage = overrideAccountLanguage"))
-        assertTrue(runtime.contains("restoreCjkOriginalMetadata = restoreCjkOriginalMetadata"))
-        // And the account-language override follows HLE's region+override pair, not the region
-        // alone.  That pair reaches BOTH hosts: the playback host straight from the plan, and the
-        // in-app resolution host through the surface bridge.  Leaving the resolution host on
-        // `configuredContentUiLanguage != 0` was the fork-only deviation.
-        assertTrue(runtime.contains("requestPlan.overrideAccountLanguage"))
-        assertTrue(runtime.contains("overrideAccountLanguage = requestPlan.overrideAccountLanguage"))
-        assertTrue(bridge.contains("internal val overrideAccountLanguage: Boolean"))
+        // The account-language override follows HLE's region+override pair rather than the
+        // region alone, and both hosts read that pair at call time: the playback host and the
+        // in-app resolution host through the bridge.  The truth table itself (including
+        // "selection == NONE never overrides") is behaviour-tested in
+        // core/src/jvmTest/.../RegionMetadataConfigurationTest.kt; what belongs here is only
+        // the wiring, i.e. that neither host ever falls back to a bare region check.
         assertTrue(bridge.contains("this@createMetadataHostAdapters.overrideAccountLanguage"))
         assertFalse(bridge.contains("configuredContentUiLanguage != 0"))
         assertTrue(runtime.contains("contentLocalizationHooks.installMediaApiLocalization()"))

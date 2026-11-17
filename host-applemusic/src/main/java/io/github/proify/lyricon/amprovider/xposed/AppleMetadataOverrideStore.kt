@@ -51,6 +51,10 @@ internal class AppleMetadataOverrideStore {
     private val originalCacheMissUptimeMillis = ConcurrentHashMap<String, Long>()
     private val originalSongMissCounts = ConcurrentHashMap<String, Int>()
     private val originalLanguageByArtistKey = ConcurrentHashMap<String, String>()
+    /** Language of a resolved original **song** alias, per media id (the artist bootstrap fallback). */
+    private val originalLanguageHints = OriginalLanguageHintStore()
+    /** Backoff bookkeeping for a failed original-artist lookup; a miss is never "resolved". */
+    private val originalArtistRetries = OriginalArtistRetryTracker()
 
     @Volatile
     private var currentPlaybackOverride: AppleInternalCatalogResolver.Alias? = null
@@ -73,6 +77,8 @@ internal class AppleMetadataOverrideStore {
         originalCacheMissUptimeMillis.clear()
         originalSongMissCounts.clear()
         originalLanguageByArtistKey.clear()
+        originalLanguageHints.clear()
+        originalArtistRetries.clear()
         currentPlaybackOverride = null
     }
 
@@ -197,11 +203,38 @@ internal class AppleMetadataOverrideStore {
 
     fun markOriginalArtistResolved(mediaId: String) {
         originalArtistResolvedIds.add(mediaId)
+        // A resolved artist needs no backoff state; keep the map from growing per song.
+        originalArtistRetries.forget(mediaId)
     }
 
     fun markOriginalArtistUnresolved(mediaId: String) {
         originalArtistResolvedIds.remove(mediaId)
+        // A changed identity/credit gets a fresh attempt instead of inheriting the old backoff.
+        originalArtistRetries.forget(mediaId)
     }
+
+    /** The language of a resolved original song alias for [mediaId], or null when unresolved. */
+    fun originalLanguageHint(mediaId: String): String? = originalLanguageHints.hint(mediaId)
+
+    /** Records the original song alias's own language as the artist lookup's bootstrap hint. */
+    fun rememberOriginalLanguageHint(mediaId: String, language: String?) {
+        originalLanguageHints.remember(mediaId, language)
+    }
+
+    fun forgetOriginalLanguageHint(mediaId: String) {
+        originalLanguageHints.forget(mediaId)
+    }
+
+    /** How many original-artist misses [mediaId] has recorded. */
+    fun originalArtistMisses(mediaId: String): Int = originalArtistRetries.misses(mediaId)
+
+    /** Records one original-artist miss at [now] and returns the new count. */
+    fun recordOriginalArtistMiss(mediaId: String, now: Long): Int =
+        originalArtistRetries.recordMiss(mediaId, now)
+
+    /** Whether the original-artist lookup may run at [now] (first attempt always may). */
+    fun shouldRetryOriginalArtist(mediaId: String, now: Long): Boolean =
+        originalArtistRetries.shouldRetry(mediaId, now)
 
     fun accountMetadata(mediaId: String): AccountMetadata? = accountMetadataValues[mediaId]
 

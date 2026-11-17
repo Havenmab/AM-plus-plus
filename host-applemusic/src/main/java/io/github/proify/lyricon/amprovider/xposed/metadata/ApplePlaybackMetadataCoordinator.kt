@@ -382,6 +382,7 @@ internal class ApplePlaybackMetadataCoordinator(
                 )
             },
             onResolved = { resolution ->
+                noteOriginalSongLanguageHint(metadata.id, resolution, metadataStore)
                 val alias = host.validatedOriginalSongAlias(
                     alias = resolution.alias,
                     localizedTitle = metadata.title,

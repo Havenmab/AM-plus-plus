@@ -21,30 +21,79 @@ import java.util.Collections
  *    the MediaSession metadata).
  *
  * A device log is finite, so [line] remembers what it already wrote and stops after [LIMIT] distinct
- * lines; [event] is for the low-frequency MediaSession seam where every update must be visible.
- * Neither call throws: a diagnostic failure must never change playback.
+ * lines; [event] is for the low-frequency seams where every update must be visible (and for the one
+ * "limit reached" sentinel, so a truncated log says so instead of silently missing lines). Neither
+ * call throws: a diagnostic failure must never change playback.
  */
 internal object MetadataDiagnostics {
 
     /** The tag a device log is filtered by. */
     const val TAG = "AMPP-Meta"
 
-    /** Distinct deduplicated lines kept per process before the limiter goes quiet. */
-    const val LIMIT = 512
+    /**
+     * Distinct deduplicated lines kept per process before [line] goes quiet. A long session log
+     * reaches this, which is why the sentinel below exists: a missing line must never be mistaken
+     * for a branch that did not run.
+     */
+    const val LIMIT = 4096
+
+    /** The one event written when [line] hits [LIMIT]; also the text a device log is grepped for. */
+    const val LIMIT_EVENT = "meta log limit reached limit="
 
     private val written: MutableSet<String> = Collections.synchronizedSet(LinkedHashSet<String>())
 
-    /** Writes [message] unless an identical line was already written. */
+    @Volatile
+    private var limitReported = false
+
+    /**
+     * Test seam: when set, lines go here instead of logcat. Kept out of the hot path with one
+     * volatile read, and never cleared by [resetForTest] so a test can install it once.
+     */
+    @Volatile
+    var sink: ((String) -> Unit)? = null
+
+    /** Writes [message] unless an identical line was already written or [LIMIT] was reached. */
     fun line(message: String) {
-        synchronized(written) {
-            if (written.size >= LIMIT) return
-            if (!written.add(message)) return
+        var overflow = false
+        val accepted = synchronized(written) {
+            if (written.size >= LIMIT) {
+                overflow = true
+                false
+            } else {
+                written.add(message)
+            }
         }
-        android.util.Log.i(TAG, message)
+        if (overflow) {
+            reportLimitOnce()
+            return
+        }
+        if (!accepted) return
+        emit(message)
     }
 
-    /** Writes [message] every time; for the per-update MediaSession seam only. */
+    /** Writes [message] every time; for the low-frequency seams and the limit sentinel. */
     fun event(message: String) {
+        emit(message)
+    }
+
+    private fun reportLimitOnce() {
+        val first = synchronized(written) {
+            if (limitReported) {
+                false
+            } else {
+                limitReported = true
+                true
+            }
+        }
+        if (first) emit(LIMIT_EVENT + LIMIT)
+    }
+
+    private fun emit(message: String) {
+        val target = sink
+        if (target != null) {
+            target(message)
+            return
+        }
         android.util.Log.i(TAG, message)
     }
 
@@ -92,8 +141,11 @@ internal object MetadataDiagnostics {
                 ",artistScript=" + script(alias.artist) + ",lang=" + alias.language
         }
 
-    /** Test-only: drop the deduplication memory. */
+    /** Test-only: drop the deduplication memory and re-arm the limit sentinel. */
     fun resetForTest() {
-        synchronized(written) { written.clear() }
+        synchronized(written) {
+            written.clear()
+            limitReported = false
+        }
     }
 }

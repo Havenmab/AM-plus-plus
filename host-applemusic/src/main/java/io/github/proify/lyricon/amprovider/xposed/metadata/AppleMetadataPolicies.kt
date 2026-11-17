@@ -374,6 +374,29 @@ internal fun originalArtistLanguageFromSongResolution(
     )
 }
 
+/**
+ * D1: records the resolved original **song** alias's own language as the per-media artist-language
+ * hint.
+ *
+ * [originalArtistLanguageFromSongResolution] cannot do this for a cached alias: the cached
+ * resolution branch reports `artistIds = emptyList()`, so the helper bails out even though the
+ * alias carries `ja-JP`. That is the bootstrap gap that leaves the artist lookup without a
+ * language on a cold song. This function does not depend on artist ids at all.
+ */
+internal fun noteOriginalSongLanguageHint(
+    mediaId: String,
+    resolution: AppleInternalCatalogResolver.OriginalResolution,
+    store: AppleMetadataOverrideStore,
+) {
+    val language = resolution.language ?: resolution.alias?.language
+    val supported = language?.let(AppleInternalCatalogResolver::supportedOriginalLanguageOrNull)
+        ?: return
+    store.rememberOriginalLanguageHint(mediaId, supported)
+    MetadataDiagnostics.event(
+        "meta lang-hint id=" + mediaId + " source=song-alias lang=" + supported,
+    )
+}
+
 internal fun stableArtistCacheKeys(keys: Collection<String>): Set<String> =
     AppleMetadataResolutionEngine.stableArtistCacheKeys(keys)
 

@@ -376,7 +376,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
         )
         // AMPP-Meta probe: the alias the whole pipeline will publish, and which of its two sources
         // produced the artist (the song entity or the separate associated-artist entity).
-        MetadataDiagnostics.line(
+        MetadataDiagnostics.event(
             "meta effective id=" + mediaId +
                 " restoreOriginal=" + host.isRestoreOriginalEnabled() +
                 " " + MetadataDiagnostics.alias(effective) +
@@ -433,10 +433,20 @@ internal class AppleInAppMetadataResolutionCoordinator(
             return
         }
 
+        // D3: a previous miss backs off instead of turning into "resolved"; the first attempt (and
+        // any attempt after the delay) is allowed through.
+        val now = SystemClock.uptimeMillis()
+        if (!metadataStore.shouldRetryOriginalArtist(mediaId, now)) {
+            MetadataDiagnostics.event(
+                "meta artist-retry id=" + mediaId +
+                    " misses=" + metadataStore.originalArtistMisses(mediaId) + " next=backoff",
+            )
+            return
+        }
         val originalLanguage = if (artistIds.size == 1) originalLanguageFor(mediaId) else null
         // AMPP-Meta probe: without an original language the artist is only read from the cache, so a
         // latin song-level artist survives; a null here with no cached artist is the whole story.
-        MetadataDiagnostics.line(
+        MetadataDiagnostics.event(
             "meta artist-origin id=" + mediaId + " artistIds=" + artistIds.size +
                 " originalLanguage=" + (originalLanguage ?: "unknown") +
                 " cachedArtist=" + MetadataDiagnostics.alias(cachedLocalizedArtist),
@@ -508,12 +518,22 @@ internal class AppleInAppMetadataResolutionCoordinator(
                     artistOnly = true,
                 )
             } else {
+                // D3: a cache miss is not a resolution. Record it, let the retry policy back off,
+                // and fetch only the localized name — with completesOriginalArtistResolution=false
+                // so nothing marks the original artist resolved on the strength of a miss.
+                val misses = metadataStore.recordOriginalArtistMiss(
+                    mediaId,
+                    SystemClock.uptimeMillis(),
+                )
+                MetadataDiagnostics.event(
+                    "meta artist-retry id=" + mediaId + " misses=" + misses + " next=backoff",
+                )
                 resolveLocalizedAssociatedArtist(
                     mediaId = mediaId,
                     artistIds = artistIds,
                     preBind = callbackPreBind,
                     priority = priority,
-                    completesOriginalArtistResolution = true,
+                    completesOriginalArtistResolution = false,
                 )
             }
         }
@@ -966,6 +986,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
                 )
             },
             onResolved = { resolution ->
+                noteOriginalSongLanguageHint(mediaId, resolution, metadataStore)
                 if (!host.isRestoreOriginalEnabled()) {
                     metadataStore.finishOriginalRequest(requestKey)
                     return@resolveOriginalMetadata
@@ -1200,17 +1221,41 @@ internal class AppleInAppMetadataResolutionCoordinator(
 
     private fun originalLanguageFor(mediaId: String): String? {
         val artistKeys = persistentOriginalArtistKeys(originalArtistKeysForMedia(mediaId))
+        var remembered: String? = null
         artistKeys.forEach { key ->
+            if (remembered != null) return@forEach
             val cached = metadataStore.originalLanguage(key) ?: return@forEach
             val supported = AppleInternalCatalogResolver.supportedOriginalLanguageOrNull(cached)
-            if (supported != null) return supported
-            metadataStore.removeOriginalLanguage(key, cached)
+            if (supported != null) {
+                remembered = supported
+            } else {
+                metadataStore.removeOriginalLanguage(key, cached)
+            }
         }
-        val restored = catalogResolver.cachedOriginalArtistRegion(
+        val cachedRegion = catalogResolver.cachedOriginalArtistRegion(
             persistentOriginalArtistKeys(artistKeys)
+        )
+        // D1: the resolved original **song** alias already carries its own language, even when the
+        // cached-resolution branch reports no artist ids. Without this fallback the artist request
+        // can never bootstrap on a cold song.
+        val hint = metadataStore.originalLanguageHint(mediaId)
+        val language = OriginalArtistLanguagePolicy.pick(
+            remembered = remembered,
+            cachedRegion = cachedRegion,
+            hint = hint,
+            supported = { value ->
+                value?.let(AppleInternalCatalogResolver::supportedOriginalLanguageOrNull)
+            },
         ) ?: return null
-        artistKeys.forEach { key -> metadataStore.rememberOriginalLanguage(key, restored) }
-        return restored
+        // Persisting is the old cached-region side effect; a remembered language is already stored.
+        if (remembered == null) {
+            artistKeys.forEach { key ->
+                if (metadataStore.originalLanguage(key) != language) {
+                    metadataStore.rememberOriginalLanguage(key, language)
+                }
+            }
+        }
+        return language
     }
 
     private fun originalArtistKeysForMedia(mediaId: String): Set<String> = buildSet {

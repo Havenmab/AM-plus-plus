@@ -227,14 +227,19 @@ internal class HleMetadataRuntime(
 
     private fun installRuntime(): TargetCapabilityInstall {
         runtime.attach(application, hookResolver)
-        MediaMetadataCache.setProfile(requestPlan.cacheNamespace)
-        catalogResolver.applyRegionConfiguration(
-            selection = requestPlan.contentUiLanguageSelection,
-            // Only a region that names a storefront redirects ordinary Apple Music traffic;
-            // 不开启 keeps the account storefront and only restores names.
-            regionReplacementRequested = requestPlan.rewritesCatalogRequests,
-            localizedMetadataCacheEnabled = configuration.localizedMetadataCache,
-        )
+        // Nothing is cached until the runtime actually acts: HLE has no master switch, so an
+        // all-off configuration must look exactly like "the runtime was never installed" to
+        // every reader of MediaMetadataCache (AppleMusicAssembly's genreFor reads the active
+        // profile), and must not warm the persistent stores either.
+        if (MetadataCachePublish.activate(configuration)) {
+            catalogResolver.applyRegionConfiguration(
+                selection = requestPlan.contentUiLanguageSelection,
+                // Only a region that names a storefront redirects ordinary Apple Music traffic;
+                // 不开启 keeps the account storefront and only restores names.
+                regionReplacementRequested = requestPlan.rewritesCatalogRequests,
+                localizedMetadataCacheEnabled = configuration.localizedMetadataCache,
+            )
+        }
         // What we just applied is the baseline: a switch flipped between install and the first
         // request seam has to be reported as a change, and what we installed with must not be.
         appliedConfiguration = configuration
@@ -506,7 +511,8 @@ internal class HleMetadataRuntime(
             configuredContentUiLanguage = { configuration.plan.contentUiLanguageSelection },
             overrideAccountLanguage = { selection -> configuration.shouldOverrideAccountLanguage(selection) },
             restoreOriginalMetadata = { configuration.isRestoreOriginalMetadataEnabled },
-            profileId = requestPlan.cacheNamespace,
+            initialProfileId = requestPlan.cacheNamespace,
+            publishMetadataCache = { MetadataCachePublish.isActive(configuration) },
             installation = installation,
             observeMetadataCacheClear = metadataCacheClearObserver::observe,
             observeMetadataConfiguration = ::observeConfigurationSeam,
@@ -570,6 +576,11 @@ internal class HleMetadataRuntime(
                 artist = metadata.artist,
                 genre = metadata.genre,
             )
+        override fun shouldPublishMetadataCache(): Boolean =
+            // The in-memory cache is the playback pipeline's publish target, and a reader outside
+            // this runtime (AppleMusicAssembly's genreFor) can see it: an all-off configuration
+            // must not feed it.
+            MetadataCachePublish.isActive(configuration)
         override fun ensureContentItemMetadataHooks(contentItemClass: Class<*>) {
             if (::contentItemHooks.isInitialized) contentItemHooks.ensureHooks(contentItemClass)
         }
@@ -759,10 +770,13 @@ internal class HleMetadataRuntime(
     }
 
     /**
-     * Re-runs the region engine for a changed configuration.
+     * Re-runs the region engine, then republishes the in-memory profile.
      *
-     * It always runs, even when the change turns every control off: handing the storefront back
-     * to the account is exactly what that branch does.
+     * The engine always runs, even when the change turns every control off: handing the
+     * storefront back to the account is exactly what that branch does.  The profile, on the
+     * other hand, only follows while the runtime still has work to do, and is dropped when it
+     * does not — otherwise a reader like AppleMusicAssembly's genreFor would keep seeing
+     * entries this runtime published, which is a state an all-off install never had.
      */
     private fun applyConfiguredRegion(configuration: RegionMetadataConfiguration) {
         catalogResolver.applyRegionConfiguration(
@@ -770,6 +784,15 @@ internal class HleMetadataRuntime(
             regionReplacementRequested = configuration.plan.rewritesCatalogRequests,
             localizedMetadataCacheEnabled = configuration.localizedMetadataCache,
         )
+        if (MetadataCachePublish.activate(configuration)) {
+            if (::surfaceBridge.isInitialized) {
+                surfaceBridge.updateCacheProfile(configuration.region.cacheNamespace)
+            }
+        } else {
+            // Nothing will be published from here on; leave the cache exactly as an all-off
+            // install would have left it.
+            runCatching { MediaMetadataCache.clearProfile() }
+        }
     }
 
     /** Returns false when the surfaces could not be cleared, so the change is retried. */

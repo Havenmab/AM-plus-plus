@@ -39,7 +39,14 @@ internal class HleMetadataSurfaceBridge(
      * 「替换中日韩歌曲信息为原地区原名」 off stops the original-name probe immediately.
      */
     internal val restoreOriginalMetadata: () -> Boolean,
-    internal val profileId: String,
+    /** The in-memory profile the runtime published when it was installed. */
+    initialProfileId: String,
+    /**
+     * HLE's "no work, no cache": while false the bridge must not publish the cache profile, so
+     * an all-off configuration leaves [MediaMetadataCache] exactly as an install that never
+     * happened would have left it.
+     */
+    private val publishMetadataCache: () -> Boolean = { true },
     private val installation: HleMetadataInstallation,
     /**
      * Runs once before every resolution seam so the one-shot 「清空检索库」 signal
@@ -54,6 +61,17 @@ internal class HleMetadataSurfaceBridge(
      */
     private val observeMetadataConfiguration: () -> Unit = {},
 ) {
+    /**
+     * The in-memory profile this runtime considers current.
+     *
+     * Not the install-time value: switching the region switches the profile
+     * ([updateCacheProfile]), and the stale-callback guard below has to compare against the
+     * profile callbacks are actually written under.
+     */
+    @Volatile
+    internal var profileId: String = initialProfileId
+        private set
+
     internal val traceSequence = AtomicLong(0L)
     internal val registry = AppleInAppMetadataRegistry()
     internal lateinit var refreshQueue: AppleInAppMetadataRefreshQueue
@@ -81,8 +99,18 @@ internal class HleMetadataSurfaceBridge(
      */
     internal lateinit var metadataConfigurationDispatcher: AppleMetadataConfigurationDispatcher
 
+    /**
+     * Follows a region change: republishes the in-memory profile so new entries land under the
+     * new region instead of the old one.  The persistent stores keep their install-time
+     * namespace (see HleMetadataRuntime.applyConfiguredRegion).
+     */
+    fun updateCacheProfile(profile: String) {
+        profileId = profile
+        if (publishMetadataCache()) MediaMetadataCache.setProfile(profile)
+    }
+
     fun install() {
-        MediaMetadataCache.setProfile(profileId)
+        if (publishMetadataCache()) MediaMetadataCache.setProfile(profileId)
         refreshQueue = AppleInAppMetadataRefreshQueue(
             postToMain = { callback -> runtime.mainHandler.post { callback() } },
             diagnostics = if (BuildConfig.DEBUG) {

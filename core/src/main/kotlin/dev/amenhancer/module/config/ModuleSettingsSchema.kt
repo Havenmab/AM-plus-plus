@@ -33,7 +33,7 @@ object ModuleSettingsSchema {
     ): ModuleSettings {
         // One read for the four metadata controls: the runtime polls the same reader on its
         // request seams, so both paths can never disagree about a default.
-        val metadata = values.metadataConfiguration()
+        val metadata = metadataConfiguration(values)
         return ModuleSettings(
             dualPaneEnabled = values.boolean(KEY_DUAL_PANE, default = true),
             dualPaneHideStatusBarEnabled = values.boolean(

@@ -434,10 +434,22 @@ internal class AppleLibrarySurfaceHooks(
                 .onSuccess { changed = true }
         }
         alias.artist.takeIf(String::isNotBlank)?.let { value ->
+            // AMPP-Meta probe: this is the in-app entity field the player and library pages read.
+            val previous = runCatching {
+                mediaApiAttribute(attributes, AppleMediaApiTextAttribute.ARTIST_NAME)
+            }.getOrNull()
             runCatching {
                 setMediaApiAttribute(attributes, AppleMediaApiTextAttribute.ARTIST_NAME, value)
             }
-                .onSuccess { changed = true }
+                .onSuccess {
+                    changed = true
+                    MetadataDiagnostics.line(
+                        "meta surface artistName kind=" + kind +
+                            " old=" + previous + " new=" + value +
+                            " oldScript=" + MetadataDiagnostics.script(previous) +
+                            " newScript=" + MetadataDiagnostics.script(value),
+                    )
+                }
         }
         if (kind == InAppLibraryEntityKind.SONG) {
             alias.album.takeIf(String::isNotBlank)?.let { value ->

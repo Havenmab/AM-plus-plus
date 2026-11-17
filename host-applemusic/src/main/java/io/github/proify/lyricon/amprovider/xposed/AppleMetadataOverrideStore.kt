@@ -86,6 +86,9 @@ internal class AppleMetadataOverrideStore {
         mediaId: String,
         alias: AppleInternalCatalogResolver.Alias,
     ) {
+        MetadataDiagnostics.line(
+            "meta store configured id=" + mediaId + " " + MetadataDiagnostics.alias(alias),
+        )
         configuredMetadataOverrides[mediaId] = alias
     }
 
@@ -108,6 +111,10 @@ internal class AppleMetadataOverrideStore {
         alias: AppleInternalCatalogResolver.Alias,
         confirmed: Boolean,
     ) {
+        MetadataDiagnostics.line(
+            "meta store original id=" + mediaId + " confirmed=" + confirmed + " " +
+                MetadataDiagnostics.alias(alias),
+        )
         clearOriginalCacheMiss(mediaId)
         markOriginalResolved(mediaId)
         if (confirmed) {
@@ -128,6 +135,9 @@ internal class AppleMetadataOverrideStore {
         mediaId: String,
         alias: AppleInternalCatalogResolver.Alias,
     ) {
+        MetadataDiagnostics.line(
+            "meta store configured-artist id=" + mediaId + " " + MetadataDiagnostics.alias(alias),
+        )
         configuredArtistOverrides[mediaId] = alias
     }
 

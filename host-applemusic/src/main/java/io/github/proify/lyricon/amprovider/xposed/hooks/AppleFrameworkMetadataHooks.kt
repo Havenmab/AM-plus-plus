@@ -17,6 +17,7 @@ import android.media.session.MediaSession
 import com.juren233.hyperlyricsenhanced.BuildConfig
 import com.juren233.hyperlyricsenhanced.common.RootConstants
 import io.github.proify.lyricon.amprovider.xposed.AppleInternalCatalogResolver
+import io.github.proify.lyricon.amprovider.xposed.MetadataDiagnostics
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
 import io.github.proify.lyricon.amprovider.xposed.AppleMetadataOverrideStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicProviderRuntime
@@ -110,7 +111,7 @@ internal class AppleFrameworkMetadataHooks(
                     )
                 }
                 if (alias == null) return@installArgumentRewriteHook null
-                val rewritten = rewriteMediaMetadata(metadata, alias)
+                val rewritten = rewriteMediaMetadata(mediaId, metadata, alias)
                     ?: return@installArgumentRewriteHook null
                 ProviderLogger.info(
                     "Apple MediaSession 元数据已覆盖: " +
@@ -148,6 +149,7 @@ internal class AppleFrameworkMetadataHooks(
                 )
                 val rewritten = rewriteMediaQueue(queue)
                     ?: return@installArgumentRewriteHook null
+                MetadataDiagnostics.line("meta queue changed items=" + rewritten.size)
                 ProviderLogger.info("Apple MediaSession 队列已覆盖: items=${rewritten.size}")
                 arrayOf(rewritten)
             }
@@ -194,7 +196,7 @@ internal class AppleFrameworkMetadataHooks(
     ) {
         val refresh = currentMediaSessionRefresh?.takeIf { it.mediaId == mediaId } ?: return
         val session = refresh.session.get() ?: return
-        val rewritten = rewriteMediaMetadata(refresh.metadata, alias) ?: refresh.metadata
+        val rewritten = rewriteMediaMetadata(mediaId, refresh.metadata, alias) ?: refresh.metadata
         runtime.mainHandler.post {
             runCatching { session.setMetadata(rewritten) }
                 .onFailure { ProviderLogger.error("Apple MediaSession 元数据刷新失败", it) }
@@ -206,6 +208,10 @@ internal class AppleFrameworkMetadataHooks(
         if (refresh.mediaIds.isNotEmpty() && mediaId !in refresh.mediaIds) return
         val session = refresh.session.get() ?: return
         val rewritten = rewriteMediaQueue(refresh.queue) ?: refresh.queue
+        MetadataDiagnostics.line(
+            "meta queue refresh id=" + MetadataDiagnostics.id(mediaId) +
+                " items=" + rewritten.size + " changed=" + (rewritten !== refresh.queue),
+        )
         runtime.mainHandler.post {
             mediaQueueRefreshInProgress.set(true)
             try {
@@ -295,18 +301,33 @@ internal class AppleFrameworkMetadataHooks(
     }
 
     private fun rewriteMediaMetadata(
+        mediaId: String,
         metadata: MediaMetadata,
         alias: AppleInternalCatalogResolver.Alias,
     ): MediaMetadata? {
         val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
         val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
         val album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)
-        if (
+        val changed = !(
             title == alias.title &&
-            artist == alias.artist &&
-            (alias.album.isBlank() || album == alias.album)
-        ) return null
-        return MediaMetadata.Builder(metadata).apply {
+                artist == alias.artist &&
+                (alias.album.isBlank() || album == alias.album)
+            )
+        // AMPP-Meta probe: the MediaSession seam (notification/lock screen), not the in-app page.
+        MetadataDiagnostics.event(
+            "meta rewrite id=" + MetadataDiagnostics.id(mediaId) +
+                " in(title=" + title + ",artist=" + artist + ")" +
+                " alias(title=" + alias.title + ",artist=" + alias.artist + ")" +
+                " artistScript=" + MetadataDiagnostics.script(alias.artist) +
+                " changed=" + changed,
+        )
+        if (!changed) {
+            MetadataDiagnostics.event(
+                "meta rewrite skip id=" + MetadataDiagnostics.id(mediaId) + " reason=unchanged",
+            )
+            return null
+        }
+        val rewritten = MediaMetadata.Builder(metadata).apply {
             alias.title.takeIf(String::isNotBlank)?.let {
                 putString(MediaMetadata.METADATA_KEY_TITLE, it)
                 putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, it)
@@ -319,6 +340,14 @@ internal class AppleFrameworkMetadataHooks(
                 putString(MediaMetadata.METADATA_KEY_ALBUM, it)
             }
         }.build()
+        MetadataDiagnostics.event(
+            "meta rewrite out id=" + MetadataDiagnostics.id(mediaId) +
+                " title=" + rewritten.getString(MediaMetadata.METADATA_KEY_TITLE) +
+                " artist=" + rewritten.getString(MediaMetadata.METADATA_KEY_ARTIST) +
+                " artistScript=" +
+                MetadataDiagnostics.script(rewritten.getString(MediaMetadata.METADATA_KEY_ARTIST)),
+        )
+        return rewritten
     }
 
     private fun rewriteMediaQueue(

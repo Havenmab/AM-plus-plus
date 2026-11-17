@@ -312,6 +312,17 @@ internal fun AppleInternalCatalogResolver.parseCatalogEntity(
                 "Apple 歌手关系名称已优先: attributes=${entity.attributeArtist}, relationship=$artist",
             )
         }
+        // AMPP-Meta probe: the catalog response's own artist fields, before any alias selection.
+        // relationship artists win over attributes, so a latin result here explains a latin UI name.
+        MetadataDiagnostics.line(
+            "meta alias id=" + entity.id + " entity=" + entityType + " lang=" + language +
+                " title=" + entity.title + " artist=" + artist +
+                " artistScript=" + MetadataDiagnostics.script(artist) +
+                " attr=" + entity.attributeArtist +
+                " attrScript=" + MetadataDiagnostics.script(entity.attributeArtist) +
+                " rel=" + relationshipArtists.size +
+                " relNames=" + relationshipArtists.joinToString("|"),
+        )
         val isrc = entity.isrc.takeIf { entityType == LocalizedEntityType.SONG }
         if (entity.title.isEmpty() && artist.isEmpty() && isrc == null) return null
         return CatalogSong(

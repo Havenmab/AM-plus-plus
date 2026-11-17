@@ -121,6 +121,23 @@ internal class AppleInAppMetadataApplier(
             if (forceRebind) queueMetadataHooks.refreshAdapters(mediaId) else 0
         val genericRecyclerTargets =
             if (forceRebind) dataBindingHooks.refreshGenericRecyclerItems(mediaId) else 0
+        // AMPP-Meta probe: which in-app surfaces took the alias, and with which artist string.
+        // A zero total here means the player page received nothing; a latin artist means the alias
+        // itself carried the latin name (see the "meta effective" line for the same id).
+        MetadataDiagnostics.line(
+            "meta inapp id=" + mediaId + " " + MetadataDiagnostics.alias(alias) +
+                " metadata=" + metadataApplied + " items=" + playbackItemApplied +
+                " containers=" + containerItemApplied +
+                " libraryEntities=" + libraryEntitiesApplied +
+                " playlistRows=" + playlistRowsApplied + " controllers=" + libraryControllers +
+                " libraryCompose=" + libraryComposeStates +
+                " albumCompose=" + albumComposeMetadata +
+                " artistProfiles=" + artistComposeProfiles +
+                " dataBindings=" + dataBindingTargets +
+                " listenNow=" + listenNowDataBindingTargets +
+                " queueAdapters=" + queueAdapterTargets +
+                " genericRecycler=" + genericRecyclerTargets,
+        )
         if (BuildConfig.DEBUG && (
             metadataApplied + playbackItemApplied + containerItemApplied +
             libraryEntitiesApplied + playlistRowsApplied + libraryControllers +
@@ -276,6 +293,13 @@ internal class AppleInAppMetadataApplier(
                         ) || changed
                     }
                 }
+        }
+        if (changed) {
+            // AMPP-Meta probe: the in-app playback item (the player page's own entity) took the alias.
+            MetadataDiagnostics.line(
+                "meta item playback entity=" + entityType + " contract=" + contract + " " +
+                    MetadataDiagnostics.alias(alias),
+            )
         }
         if (changed && notifyChange && contract == InAppPlaybackItemContract.STANDARD) {
             notifyPlaybackItemChanged(playbackItem, "变更")

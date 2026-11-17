@@ -162,6 +162,15 @@ internal class ApplePlaybackMetadataCoordinator(
             }
             val previousMetadata = MediaMetadataCache.getMetadataById(mediaId)
             MediaMetadataCache.put(metadata)
+            // AMPP-Meta probe: what Apple's own playback item says before any override runs. A kana
+            // title beside a latin artist here means the song entity itself carries both scripts.
+            MetadataDiagnostics.line(
+                "meta probe id=" + mediaId + " source=" + source +
+                    " title=" + metadata.title +
+                    " titleScript=" + MetadataDiagnostics.script(metadata.title) +
+                    " artist=" + metadata.artist +
+                    " artistScript=" + MetadataDiagnostics.script(metadata.artist),
+            )
             ProviderLogger.debug(
                 "歌曲元数据已更新：source=$source, id=${metadata.id}, " +
                     "queueId=${metadata.queueId}, 标题=${metadata.title}"

@@ -360,7 +360,7 @@ internal class AppleInAppMetadataResolutionCoordinator(
         val originalArtistResolved = associatedArtistIds.isEmpty() ||
             !canUseAssociatedArtist ||
             metadataStore.isOriginalArtistResolved(mediaId)
-        return selectEffectiveMetadataAlias(
+        val effective = selectEffectiveMetadataAlias(
             restoreOriginalEnabled = host.isRestoreOriginalEnabled(),
             originalMetadataResolved = metadataStore.isOriginalResolved(mediaId),
             originalMetadata = originalMetadata,
@@ -374,6 +374,19 @@ internal class AppleInAppMetadataResolutionCoordinator(
             originalArtist = originalArtist,
             localizedArtist = localizedArtist,
         )
+        // AMPP-Meta probe: the alias the whole pipeline will publish, and which of its two sources
+        // produced the artist (the song entity or the separate associated-artist entity).
+        MetadataDiagnostics.line(
+            "meta effective id=" + mediaId +
+                " restoreOriginal=" + host.isRestoreOriginalEnabled() +
+                " " + MetadataDiagnostics.alias(effective) +
+                " localizedSong=" + MetadataDiagnostics.alias(localizedMetadata) +
+                " localizedArtist=" + MetadataDiagnostics.alias(localizedArtist) +
+                " originalArtist=" + MetadataDiagnostics.alias(originalArtist) +
+                " associatedArtistIds=" + associatedArtistIds.size +
+                " canUseAssociatedArtist=" + canUseAssociatedArtist,
+        )
+        return effective
     }
 
     private fun ensureAssociatedArtistOverride(
@@ -421,6 +434,13 @@ internal class AppleInAppMetadataResolutionCoordinator(
         }
 
         val originalLanguage = if (artistIds.size == 1) originalLanguageFor(mediaId) else null
+        // AMPP-Meta probe: without an original language the artist is only read from the cache, so a
+        // latin song-level artist survives; a null here with no cached artist is the whole story.
+        MetadataDiagnostics.line(
+            "meta artist-origin id=" + mediaId + " artistIds=" + artistIds.size +
+                " originalLanguage=" + (originalLanguage ?: "unknown") +
+                " cachedArtist=" + MetadataDiagnostics.alias(cachedLocalizedArtist),
+        )
         if (originalLanguage != null) {
             resolveOriginalAssociatedArtist(
                 mediaId = mediaId,

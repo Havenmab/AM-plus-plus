@@ -35,7 +35,13 @@ data class RegionTitleRequestPlan(
     val metadataLookupEnabled: Boolean
         get() = overrideAccountLanguage || probesOriginalMetadata
 
-    /** True when any region/metadata feature would do work, so the runtime is worth installing. */
+    /**
+     * True when any region/metadata feature would do work.
+     *
+     * This is a diagnostic projection, not an install gate: HLE has no master switch, so its
+     * runtime is always installed and each callback yields on its own.  AM++ installs the
+     * same way ([dev.amenhancer.module.hook.TitleCorrectionFeature]) and decides per call.
+     */
     val featureActive: Boolean
         get() = rewritesCatalogRequests || probesOriginalMetadata
 }

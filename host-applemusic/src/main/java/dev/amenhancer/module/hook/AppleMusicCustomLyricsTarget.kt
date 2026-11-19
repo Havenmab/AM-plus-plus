@@ -470,6 +470,11 @@ internal class AppleMusicCustomLyricsTarget(
             val adjusted = if (display != null && settings.customLyricsEnabled) {
                 playback?.withOffset(id, source, display, displayRaw) ?: display
             } else display
+            // The custom document is the one being submitted: queue the same lane completion the
+            // automatic path runs, off the hook thread. The feed dedupes per track and document
+            // revision, never touches the resolver, and only ever writes the native overlay or
+            // asks the bridge to resubmit the session's merged pointer.
+            if (manual != null) customCompletion?.onDisplayed(id)
             parser.forSubmission(adjusted, id, nativeId)
         }
         // The native lane hooks are installed by NativeLyricsFeature; this capability only

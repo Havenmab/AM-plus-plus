@@ -2,7 +2,6 @@ package dev.amenhancer.module.hook
 
 import java.io.File
 import org.junit.Assert.assertFalse
-import org.junit.Ignore
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,15 +23,16 @@ class CustomLyricsCompletionWiringTest {
     )
 
     @Test
-    @Ignore("phase3: custom completion feed is not wired into the upstream selection pipeline")
     fun `the automatic path still excludes every custom id from its resolver fallback`() {
-        assertTrue(target.contains("appleMusicId !in configuredManualIds"))
+        // The upstream selection pipeline replaced configuredManualIds with its own gates: the
+        // mapped-id check and the ready-replacement check cover the ids the custom session owns,
+        // and playback suppression covers the user-disabled ones.
         assertTrue(target.contains("!session.isMapped(appleMusicId)"))
-        assertTrue(target.contains("session.readyReplacementFor(appleMusicId) == null"))
+        assertTrue(target.contains("autoSession?.readyReplacementFor(id) == null"))
+        assertTrue(target.contains("runtime.playback?.isSuppressed(appleMusicId) != true"))
     }
 
     @Test
-    @Ignore("phase3: custom completion feed is not wired into the upstream selection pipeline")
     fun `custom tracks are completed by the same enricher the automatic path uses`() {
         assertTrue(target.contains("CustomLyricsCompletionFeed("))
         assertTrue(target.contains("runtime.translationEnricher"))

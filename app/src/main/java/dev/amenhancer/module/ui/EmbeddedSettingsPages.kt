@@ -598,6 +598,22 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     range = ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX..ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
                     unit = " px",
                 ) { value -> onEdit { it.copy(lyricBlurRadiusOffsetPx = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRICS_FONT_SCALE),
+                    value = settings.lyricsFontScalePercent,
+                    range = ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT..ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+                    unit = "%",
+                    summary = localizedText(ModuleText.LYRICS_FONT_SCALE_SUMMARY),
+                    defaultValue = ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+                ) { value -> onEdit { it.copy(lyricsFontScalePercent = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE),
+                    value = settings.lyricsLineSpacingScalePercent,
+                    range = ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT..ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                    unit = "%",
+                    summary = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY),
+                    defaultValue = ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                ) { value -> onEdit { it.copy(lyricsLineSpacingScalePercent = value) } }
             }
             val font = remember(revision) { runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest) }
             EmbeddedSettingsSection(

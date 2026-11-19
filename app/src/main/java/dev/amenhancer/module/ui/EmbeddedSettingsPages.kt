@@ -509,6 +509,10 @@ private val EmbeddedSettingsPage.title: ModuleText
         EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS
     }
 
+/** On/off summary text shared by the settings rows and the category pages. */
+private fun EmbeddedSettingsHost.state(enabled: Boolean) =
+    localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
+
 @Composable
 private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
     activity: Activity,
@@ -529,8 +533,6 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         localizedText(ModuleText.SUMMARY_DPI_SYSTEM)
     } else settings.appleMusicDpiOverrideDpi.toString()
 
-    fun state(enabled: Boolean) = localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
-
     EmbeddedSettingsGroup {
         EmbeddedSettingLink(
             localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT),
@@ -550,7 +552,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         EmbeddedSettingLink(
             localizedText(ModuleText.CATEGORY_TITLE_REGION),
             localizedText(ModuleText.SUMMARY_TITLE_REGION, state(settings.regionSelection != RegionSelection.NONE),
-                localizedText(settings.regionSelection.displayName)),
+                settings.regionSelection.displayName),
             EmbeddedSvgIcon.TitleMode,
         ) { onOpen(EmbeddedSettingsPage.TITLE_REGION) }
     }
@@ -674,7 +676,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                 localizedText(
                     ModuleText.SUMMARY_TITLE_REGION,
                     state(settings.regionSelection != RegionSelection.NONE),
-                    localizedText(settings.regionSelection.displayName),
+                    settings.regionSelection.displayName,
                 ),
                 EmbeddedSvgIcon.TitleMode,
             ) {}

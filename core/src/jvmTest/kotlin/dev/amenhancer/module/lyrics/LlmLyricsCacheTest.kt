@@ -1,6 +1,7 @@
 package dev.amenhancer.module.lyrics
 
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
+import dev.amenhancer.module.model.LlmLyricsThinkingFormat
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -19,7 +20,7 @@ class LlmLyricsCacheTest {
     private lateinit var cache: FileLlmLyricsCache
     private val original = """<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div><p begin="00:00:01.000" end="00:00:02.000">Hello</p></div></body></tt>"""
     private val translated: String
-        get() = checkNotNull(LlmLyricsDocument.prepare(original)?.withTranslations(listOf("你好")))
+        get() = checkNotNull(LlmLyricsDocument.prepare(original)?.withTranslations(mapOf("L1" to LlmLyricsLine("你好"))))
 
     @Before
     fun setUp() {
@@ -28,7 +29,7 @@ class LlmLyricsCacheTest {
     }
 
     @Test
-    fun `explicit efforts round trip through a fresh cache instance with version two`() {
+    fun `explicit thinking-type efforts round trip through a fresh cache instance with version five`() {
         val efforts = listOf(
             LlmLyricsThinkingEffort.LOW to "low",
             LlmLyricsThinkingEffort.HIGH to "high",
@@ -40,8 +41,11 @@ class LlmLyricsCacheTest {
             assertTrue(cache.write(id, original, config, translated))
             assertEquals(translated, FileLlmLyricsCache(directory).read(id, original, config))
             val raw = JSONObject(entryFile(id).readText())
-            assertEquals(2, raw.getInt("version"))
-            assertEquals(pair.second, raw.getString("thinkingEffort"))
+            assertEquals(5, raw.getInt("version"))
+            val slot = translationSlot(raw)
+            assertEquals("thinking_type", slot.getString("thinkingFormat"))
+            assertTrue(slot.getBoolean("thinkingEnabled"))
+            assertEquals(pair.second, slot.getString("thinkingEffort"))
         }
     }
 
@@ -68,9 +72,48 @@ class LlmLyricsCacheTest {
         for (effort in LlmLyricsThinkingEffort.values()) {
             assertEquals(translated, cache.read(1, original, config(thinking = false, effort = effort)))
         }
-        val raw = JSONObject(entryFile(1).readText())
-        assertFalse(raw.getBoolean("thinkingEnabled"))
-        assertEquals("default", raw.getString("thinkingEffort"))
+        val slot = translationSlot(JSONObject(entryFile(1).readText()))
+        assertEquals("thinking_type", slot.getString("thinkingFormat"))
+        assertFalse(slot.getBoolean("thinkingEnabled"))
+        assertEquals("default", slot.getString("thinkingEffort"))
+    }
+
+    @Test
+    fun `thinking formats and effective settings never share a cached translation`() {
+        val thinkingLow = config(effort = LlmLyricsThinkingEffort.LOW)
+        val reasoningLow = thinkingLow.copy(thinkingFormat = LlmLyricsThinkingFormat.REASONING_EFFORT)
+        val cases = listOf(
+            config(thinking = false) to config(thinking = false, format = LlmLyricsThinkingFormat.NONE),
+            thinkingLow to reasoningLow,
+            reasoningLow to reasoningLow.copy(thinkingEffort = LlmLyricsThinkingEffort.HIGH),
+        )
+        for ((index, pair) in cases.withIndex()) {
+            val id = index + 1L
+            val (written, requested) = pair
+            assertTrue(cache.write(id, original, written, translated))
+            assertEquals(translated, cache.read(id, original, written))
+            assertNull("Unexpected reuse from $written to $requested", cache.read(id, original, requested))
+        }
+    }
+
+    @Test
+    fun `inactive or unsupported thinking settings do not invalidate a translation`() {
+        val none = config(thinking = false, format = LlmLyricsThinkingFormat.NONE)
+        val reasoning = config(thinking = false, format = LlmLyricsThinkingFormat.REASONING_EFFORT)
+        val reasoningLow = reasoning.copy(
+            thinkingEffort = LlmLyricsThinkingEffort.LOW,
+        )
+        val cases = listOf(
+            none.copy(thinkingEnabled = true, thinkingEffort = LlmLyricsThinkingEffort.MAX) to none,
+            reasoningLow.copy(thinkingEnabled = true) to reasoningLow,
+            reasoning.copy(thinkingEffort = LlmLyricsThinkingEffort.MAX) to reasoning,
+        )
+        for ((index, pair) in cases.withIndex()) {
+            val id = index + 1L
+            val (written, requested) = pair
+            assertTrue(cache.write(id, original, written, translated))
+            assertEquals(translated, cache.read(id, original, requested))
+        }
     }
 
     @Test
@@ -78,7 +121,7 @@ class LlmLyricsCacheTest {
         for ((index, effort) in LlmLyricsThinkingEffort.values().withIndex()) {
             val id = index + 1L
             assertTrue(cache.write(id, original, config(), translated))
-            rewrite(id) { put("version", 1); remove("thinkingEffort") }
+            rewriteLegacy(id, 1) { remove("thinkingEffort") }
             val actual = FileLlmLyricsCache(directory).read(id, original, config(effort = effort))
             if (effort == LlmLyricsThinkingEffort.DEFAULT) assertEquals(translated, actual)
             else assertNull(actual)
@@ -88,7 +131,7 @@ class LlmLyricsCacheTest {
     @Test
     fun `legacy entries missing the thinking flag remain disabled`() {
         assertTrue(cache.write(1, original, config(thinking = false), translated))
-        rewrite(1) { put("version", 1); remove("thinkingEffort"); remove("thinkingEnabled") }
+        rewriteLegacy(1, 1) { remove("thinkingEffort"); remove("thinkingEnabled") }
         assertEquals(translated, cache.read(1, original, config(thinking = false)))
         assertNull(cache.read(1, original, config()))
     }
@@ -99,15 +142,41 @@ class LlmLyricsCacheTest {
         for ((index, effort) in invalid.withIndex()) {
             val id = index + 1L
             assertTrue(cache.write(id, original, config(), translated))
-            rewrite(id) { if (effort == null) remove("thinkingEffort") else put("thinkingEffort", effort) }
+            rewriteLegacy(id, 2) {
+                if (effort == null) remove("thinkingEffort") else put("thinkingEffort", effort)
+            }
             assertNull(FileLlmLyricsCache(directory).read(id, original, config()))
         }
     }
 
     @Test
-    fun `a future cache version is not accepted with a known effort`() {
+    fun `legacy version two is interpreted as thinking type`() {
+        val typed = config(thinking = false)
+        assertTrue(cache.write(1, original, typed, translated))
+        rewriteLegacy(1, 2) { remove("thinkingFormat") }
+        assertEquals(translated, cache.read(1, original, typed))
+        assertNull(cache.read(1, original, typed.copy(thinkingFormat = LlmLyricsThinkingFormat.NONE)))
+    }
+
+    @Test
+    fun `version three rejects missing or unknown format and effort`() {
+        val fields = listOf("thinkingFormat", "thinkingEffort")
+        for ((index, field) in fields.withIndex()) {
+            for ((offset, value) in listOf(null, "unknown").withIndex()) {
+                val id = index * 2L + offset + 1L
+                assertTrue(cache.write(id, original, config(), translated))
+                rewriteLegacy(id, 3) {
+                    if (value == null) remove(field) else put(field, value)
+                }
+                assertNull(cache.read(id, original, config()))
+            }
+        }
+    }
+
+    @Test
+    fun `a future cache version is not accepted with known thinking fields`() {
         assertTrue(cache.write(1, original, config(effort = LlmLyricsThinkingEffort.HIGH), translated))
-        rewrite(1) { put("version", 3) }
+        rewrite(1) { put("version", 6) }
         assertNull(cache.read(1, original, config(effort = LlmLyricsThinkingEffort.HIGH)))
     }
 
@@ -116,7 +185,7 @@ class LlmLyricsCacheTest {
         val low = config(effort = LlmLyricsThinkingEffort.LOW)
         val high = config(effort = LlmLyricsThinkingEffort.HIGH)
         assertTrue(cache.write(1, original, low, translated))
-        val revised = checkNotNull(LlmLyricsDocument.prepare(original)?.withTranslations(listOf("您好")))
+        val revised = checkNotNull(LlmLyricsDocument.prepare(original)?.withTranslations(mapOf("L1" to LlmLyricsLine("您好"))))
         assertTrue(cache.write(1, original, high, revised))
         assertEquals(revised, FileLlmLyricsCache(directory).read(1, original, high))
         assertEquals(1, directory.listFiles()!!.count { it.name.startsWith("llm_") && it.extension == "json" })
@@ -126,15 +195,38 @@ class LlmLyricsCacheTest {
     private fun config(
         thinking: Boolean = true,
         effort: LlmLyricsThinkingEffort = LlmLyricsThinkingEffort.DEFAULT,
+        format: LlmLyricsThinkingFormat = LlmLyricsThinkingFormat.THINKING_TYPE,
     ) = LlmLyricsConfig(
         baseUrl = "http://127.0.0.1:12345", model = "lyrics-model",
-        thinkingEnabled = thinking, thinkingEffort = effort,
+        thinkingEnabled = thinking, thinkingEffort = effort, thinkingFormat = format,
     )
 
     private fun entryFile(id: Long) = File(directory, "llm_$id.json")
 
+    private fun translationSlot(raw: JSONObject): JSONObject =
+        raw.getJSONObject("slots").getJSONObject("translation")
+
     private fun rewrite(id: Long, change: JSONObject.() -> Unit) {
         val file = entryFile(id)
         file.writeText(JSONObject(file.readText()).apply(change).toString())
+    }
+
+    private fun rewriteLegacy(
+        id: Long,
+        version: Int,
+        change: JSONObject.() -> Unit = {},
+    ) {
+        val file = entryFile(id)
+        val raw = JSONObject(file.readText())
+        val slot = translationSlot(raw)
+        val slotKeys = slot.keys()
+        while (slotKeys.hasNext()) {
+            val key = slotKeys.next()
+            raw.put(key, slot.get(key))
+        }
+        raw.remove("slots")
+        raw.put("version", version)
+        raw.apply(change)
+        file.writeText(raw.toString())
     }
 }

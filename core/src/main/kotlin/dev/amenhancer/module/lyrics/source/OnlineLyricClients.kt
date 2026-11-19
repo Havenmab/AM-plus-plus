@@ -26,6 +26,7 @@ class AmllTtmlClient(
      * what a repeat play normally pays.
      */
     private val customRoot: String? = null,
+    private val onFailure: ((LyricFetchFailure) -> Unit)? = null,
 ) {
     fun fetch(adamId: Long): String? =
         transport.getFirstBytes(urls(adamId))?.toString(Charsets.UTF_8)
@@ -129,6 +130,27 @@ class AutoLyricsSourceResolver(
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
 
+    /** Explicit user choice accepts timed line lyrics as well as word lyrics. */
+    fun fetchSelected(
+        appleMusicId: Long,
+        source: String,
+        onInvalid: (() -> Unit)? = null,
+    ): AutoLyricsCandidate? {
+        if (appleMusicId <= 0L) return null
+        val provider = sources.firstOrNull { it.name == source } ?: return null
+        val ttml = try {
+            provider.fetch(appleMusicId)
+        } catch (error: Throwable) {
+            onInvalid?.invoke()
+            return null
+        } ?: return null
+        if (!TtmlInputPolicy.isAcceptable(ttml)) {
+            onInvalid?.invoke()
+            return null
+        }
+        return AutoLyricsCandidate(source, ttml)
+    }
+
     /** Uses the caller's provider order and consults [cached] only at its recorded source. */
     fun fetch(
         appleMusicId: Long,
@@ -183,6 +205,7 @@ class AutoLyricsSourceResolver(
             trailing: List<AutoLyricsSource> = emptyList(),
             /** Optional presence index; null keeps "ask every repository". */
             presence: LyricPresenceIndex? = null,
+            onFailure: ((LyricFetchFailure) -> Unit)? = null,
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL, presenceId = LyricPresence.AMLL) { raw ->
@@ -244,6 +267,7 @@ class AmLyricsClient(
     private val customRoot: String? = null,
     /** The cached index when the app has one; null falls back to a per-call fetch. */
     private val indexProvider: AmLyricsIndexProvider? = null,
+    private val onFailure: ((LyricFetchFailure) -> Unit)? = null,
 ) {
     fun fetch(adamId: Long): String? {
         if (adamId <= 0L) return null
@@ -264,7 +288,11 @@ class AmLyricsClient(
         if (bytes.size.toLong() != entry.sizeBytes) return null
         if (!sha256(bytes).equals(entry.sha256, ignoreCase = true)) return null
         val ttml = bytes.toString(Charsets.UTF_8)
-        return ttml.takeIf(TtmlInputPolicy::isAcceptable)
+        if (!TtmlInputPolicy.isAcceptable(ttml)) {
+            onFailure?.invoke(LyricFetchFailure.INVALID)
+            return null
+        }
+        return ttml
     }
 
     /**

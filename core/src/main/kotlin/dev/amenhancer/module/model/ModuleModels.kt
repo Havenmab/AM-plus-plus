@@ -57,6 +57,8 @@ data class ModuleSettings(
     val futureBlurEnabled: Boolean = true,
     /** Enables the native rush-gradient adaptation for CJK karaoke lyrics. */
     val cjkKaraokeAnimationEnabled: Boolean = true,
+    /** Enables native pronunciation requests and matching at host startup. */
+    val lyricsPronunciationEnabled: Boolean = true,
     /** Opt-in corrections for wrapped sweeps and main lyric highlighting; applied at host startup. */
     val lyricEffectsOptimizationEnabled: Boolean = false,
     val navigationCompensationEnabled: Boolean = false,
@@ -131,8 +133,6 @@ data class ModuleSettings(
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,
-    /** Prefers AM native lyrics over configured automatic sources when available. */
-    val automaticLyricsPreferNative: Boolean = true,
     /** Automatic provider priority, normalized against [DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER]. */
     val automaticLyricsSourceOrder: List<String> = DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER,
     /**
@@ -197,12 +197,16 @@ data class ModuleSettings(
      * missed. Per-song eligibility gates live in the LLM lyrics runtime.
      */
     val llmLyricsEnabled: Boolean = false,
-    /** OpenAI-compatible Chat Completions endpoint; blank disables AM native translation. */
+    /** Adds pronunciation where official or third-party lyrics lack it; independent of translation. */
+    val llmLyricsTransliterationEnabled: Boolean = false,
+    /** OpenAI-compatible Chat Completions endpoint shared by translation and transliteration. */
     val llmLyricsBaseUrl: String = "",
     /** Bearer token sent to [llmLyricsBaseUrl]. Never logged or echoed back to the host. */
     val llmLyricsApiKey: String = "",
     /** Model name requested from the OpenAI-compatible endpoint. */
     val llmLyricsModel: String = "",
+    /** Optional HTTP headers shared by translation, transliteration and connection checks. */
+    val llmLyricsCustomHeaders: String = "",
     /** Send the user-selected thinking mode to the configured compatible endpoint. */
     val llmLyricsThinkingEnabled: Boolean = false,
     /**
@@ -213,6 +217,8 @@ data class ModuleSettings(
      * above, so it adds no configuration of its own.
      */
     val llmPronunciationBoundaryEnabled: Boolean = false,
+    /** Selects the request shape used for thinking; [LlmLyricsThinkingFormat.NONE] sends none. */
+    val llmLyricsThinkingFormat: LlmLyricsThinkingFormat = LlmLyricsThinkingFormat.NONE,
     /** Retained while thinking is disabled; DEFAULT leaves the endpoint's effort unchanged. */
     val llmLyricsThinkingEffort: LlmLyricsThinkingEffort = LlmLyricsThinkingEffort.DEFAULT,
     val fontManifest: LyricsFontManifest = LyricsFontManifest.disabled(),
@@ -280,13 +286,14 @@ data class ModuleSettings(
         const val MAX_LLM_LYRICS_BASE_URL_LENGTH = 2048
         const val MAX_LLM_LYRICS_API_KEY_LENGTH = 4096
         const val MAX_LLM_LYRICS_MODEL_LENGTH = 256
+        const val MAX_LLM_LYRICS_CUSTOM_HEADERS_LENGTH = 16 * 1024
 
         /** Long enough for a host plus a path prefix; short enough to reject junk. */
         const val MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH = 300
         val DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER: List<String> = listOf(
+            CustomLyricsSources.AM_NATIVE,
             CustomLyricsSources.AMLL,
             CustomLyricsSources.AM_LYRICS,
-            CustomLyricsSources.AM_NATIVE,
             CustomLyricsSources.LUNABEAT,
         )
 
@@ -339,6 +346,9 @@ data class ModuleSettings(
                 else -> ""
             }
         }
+        fun normalizeLlmLyricsCustomHeaders(value: String): String =
+            value.replace("\r\n", "\n").trim(' ', '\t', '\n')
+                .take(MAX_LLM_LYRICS_CUSTOM_HEADERS_LENGTH)
 
         fun normalizePhoneLiquidGlassBottomGapDp(value: Int): Int =
             value.coerceIn(MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP, MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP)
@@ -369,6 +379,26 @@ data class ModuleSettings(
                 MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
                 MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
             )
+    }
+}
+
+/** Request shapes for endpoint-specific thinking controls; selection is never inferred from a URL. */
+enum class LlmLyricsThinkingFormat(val storageValue: String) {
+    NONE("none"),
+    THINKING_TYPE("thinking_type"),
+    REASONING_EFFORT("reasoning_effort");
+
+    fun supportsEffort(effort: LlmLyricsThinkingEffort): Boolean = when (this) {
+        NONE -> effort == LlmLyricsThinkingEffort.DEFAULT
+        THINKING_TYPE -> true
+        REASONING_EFFORT -> effort == LlmLyricsThinkingEffort.DEFAULT ||
+            effort == LlmLyricsThinkingEffort.LOW ||
+            effort == LlmLyricsThinkingEffort.HIGH
+    }
+
+    companion object {
+        fun decode(value: String?): LlmLyricsThinkingFormat =
+            values().firstOrNull { it.storageValue == value } ?: NONE
     }
 }
 

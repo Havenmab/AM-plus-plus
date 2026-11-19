@@ -63,7 +63,7 @@ object ModuleConstants {
      * own; the region/lyrics migration above still re-encodes decoded values and
      * therefore never rewrites a stored setting.
      */
-    const val CONFIG_SCHEMA_VERSION = 28
+    const val CONFIG_SCHEMA_VERSION = 29
 
     const val FEATURE_DUAL_PANE = "dual_pane"
     const val FEATURE_EDITORIAL_VIDEO = "editorial_video"

@@ -1,933 +1,737 @@
 package dev.amenhancer.module.ui
 
-import dev.amenhancer.module.i18n.ModuleText
-
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Dialog
-import android.content.Context
-import android.content.ContextWrapper
-import android.content.res.ColorStateList
-import android.content.res.Configuration
-import android.content.res.Resources
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
-import android.graphics.Typeface
-import android.graphics.drawable.RippleDrawable
-import android.os.Bundle
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
-import android.view.Gravity
-import android.view.HapticFeedbackConstants
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.view.accessibility.AccessibilityNodeInfo
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.Switch
-import android.widget.TextView
+import android.view.ViewTreeObserver
 import android.widget.Toast
-import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import dev.amenhancer.glass.GlassPolicy
-import dev.amenhancer.module.CurrentSongDetails
-import dev.amenhancer.module.lyrics.LlmLyricsClient
-import dev.amenhancer.module.lyrics.LlmLyricsConfig
-import dev.amenhancer.module.model.CustomLyricsSources
-import dev.amenhancer.module.model.LlmLyricsThinkingEffort
+import dev.amenhancer.module.config.TitleCorrectionMode
+import dev.amenhancer.module.i18n.ModuleText
 import dev.amenhancer.module.model.ModuleSettings
-import dev.amenhancer.module.model.OnlineLyricSources
 import java.lang.ref.WeakReference
-import java.util.concurrent.atomic.AtomicBoolean
+import top.yukonga.miuix.kmp.basic.HorizontalDivider
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.NavigationRail
+import top.yukonga.miuix.kmp.basic.NavigationRailItem
+import top.yukonga.miuix.kmp.basic.NavigationRailValue
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.SmallTopAppBar
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.Close
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.nav.core.navBackStackOf
+import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
-        val currentDialog = dialogReference?.get()
-        if (currentDialog?.isShowing == true) return
+    if (dialogReference?.get()?.isShowing == true || activity.isFinishing || activity.isDestroyed) return
+    val initial = runCatching { controller.currentSettings() }.getOrElse {
+        Toast.makeText(activity, localizedText(ModuleText.SETTINGS_READ_FAILED), Toast.LENGTH_SHORT).show()
+        return
+    }
+    val draft = EmbeddedSettingsDraft(initial, controller::saveOrdinarySettings)
+    var settings by mutableStateOf(initial)
+    var revision by mutableIntStateOf(0)
+    val backStack = navBackStackOf()
+    val pageScrollStates = mutableMapOf<EmbeddedSettingsPage, ScrollState>()
+    var pluginPageSequence = 0L
+    var dialog: Dialog? = null
 
-        val initialSettings = runCatching { controller.currentSettings() }.getOrElse {
-            Toast.makeText(activity, localizedText(ModuleText.SETTINGS_READ_FAILED), Toast.LENGTH_SHORT).show()
-            return
-        }
-        val draft = EmbeddedSettingsDraft(initialSettings, controller::saveOrdinarySettings)
-        var page = EmbeddedSettingsPage.MAIN
-        var dialogReady = false
-        val pageScrollPositions = mutableMapOf<EmbeddedSettingsPage, Int>()
-        var stopPageTransition: (() -> Unit)? = null
-        var cancelPageReady: (() -> Unit)? = null
-        var cancelPagePreparation: (() -> Unit)? = null
-        var disposePage: (() -> Unit)? = null
-        var pageTransitionActive = false
-        var pendingNavigation: (() -> Unit)? = null
-        var refreshAfterTransition = false
-        val panelBounds = RectF()
-        val panelClip = Path()
-        val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val panelShadow = EmbeddedPanelShadow(activity.resources.displayMetrics.density)
-        var onViewportChanged: (() -> Unit)? = null
-        var onPluginBoundsChanged: ((RectF) -> Unit)? = null
-        var onTransitionFinished: (() -> Unit)? = null
-        lateinit var dialog: AlertDialog
-        val barHeight = dp(activity, 64)
-        val barHorizontalInset = dp(activity, if (isEmbeddedPhone(activity)) 8 else 0)
-
-        val pageHost = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-            val hostInset = dp(activity, if (isEmbeddedPhone(activity)) 0 else 8)
-            setPadding(hostInset, 0, hostInset, 0)
-            setEmbeddedBackgroundColor(activity) { colors -> colors.pageBackground }
-        }
-        val topBar = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = barHeight
-            setPadding(barHorizontalInset, 0, barHorizontalInset, 0)
-        }
-        val backButton = ImageView(activity).apply {
-            setEmbeddedImageDrawable(activity,
-                embeddedSvgDrawable(EmbeddedSvgIcon.Back, activity) ?: EmbeddedGlyphDrawable(
-                    EmbeddedGlyphKind.BackArrow,
-                    EmbeddedSettingsPalette.Light.primary,
-                ),
-            )
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            contentDescription = localizedText(ModuleText.BACK)
-            isClickable = true
-            isFocusable = true
-            setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
-            bindEmbeddedClickFeedback(activity, cornerRadiusDp = 12)
-        }
-        val moduleIcon = ImageView(activity).apply {
-            setEmbeddedImageDrawable(activity, EmbeddedAmppBrandDrawable(cornerRadiusPx = dp(activity, 12).toFloat()))
-            contentDescription = "AM++"
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(0, 0, 0, 0)
-        }
-        val pageTitle = TextView(activity).apply {
-            textSize = embeddedTextSize(activity, 19f, 18f)
-            setEmbeddedTextColor(activity) { colors -> colors.onSurface }
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            includeFontPadding = false
-            gravity = Gravity.CENTER_VERTICAL
-            setSingleLine(false)
-            maxLines = 2
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        topBar.addView(backButton, LinearLayout.LayoutParams(dp(activity, 44), barHeight))
-        topBar.addView(moduleIcon, LinearLayout.LayoutParams(embeddedHeaderIconSize(activity), embeddedHeaderIconSize(activity)).apply {
-            marginStart = dp(activity, if (isEmbeddedPhone(activity)) 0 else 8)
-            marginEnd = dp(activity, 8)
-        })
-        topBar.addView(pageTitle)
-        val pageAction = Button(activity).apply {
-            text = localizedText(ModuleText.SETTINGS_DETAILS_ACTION)
-            bindEmbeddedDialogActionTheme(activity)
-            setOnClickListener {
-                cancelPagePreparation?.invoke()
-                cancelPagePreparation = null
-                if (page == EmbeddedSettingsPage.PLUGINS) {
-                    launchSafPicker(activity, EmbeddedSafOperation.PluginZip, "*/*",
-                        arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
-                } else showEmbeddedPageDetails(activity, page)
-            }
-        }
-        topBar.addView(pageAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 48)))
-        pageHost.addView(topBar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            barHeight,
-        ))
-        val pageContent = FrameLayout(activity)
-        pageHost.addView(pageContent, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1f,
-        ))
-
-        // Keep the close action inside our content tree.  AlertDialog's default
-        // button panel adds theme-dependent padding that made the phone layout
-        // look like it had an oversized blank footer.
-        val closeBar = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            setEmbeddedBackgroundColor(activity) { colors -> colors.pageBackground }
-            setPadding(barHorizontalInset, 0, barHorizontalInset, 0)
-        }
-        val closeButton = Button(activity).apply {
-            text = localizedText(ModuleText.CLOSE)
-            bindEmbeddedDialogActionTheme(activity)
-            contentDescription = localizedText(ModuleText.CLOSE_SETTINGS)
-            setOnClickListener { dialog.dismiss() }
-        }
-        closeBar.addView(closeButton, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(activity, 48),
-        ))
-        pageHost.addView(closeBar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            barHeight,
-        ))
-
-        val root = object : FrameLayout(activity) {
-            private var viewportWidth = 0
-            private var viewportHeight = 0
-
-            override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean =
-                pageTransitionActive || super.dispatchTouchEvent(event)
-
-            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-                val availableWidth = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
-                    activity.resources.displayMetrics.widthPixels
-                } else MeasureSpec.getSize(widthMeasureSpec)
-                val availableHeight = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) {
-                    activity.resources.displayMetrics.heightPixels
-                } else MeasureSpec.getSize(heightMeasureSpec)
-                val panelWidth = embeddedPanelWidth(activity, page, availableWidth)
-                val panelMaxHeight = (availableHeight - dp(activity, 16)).coerceAtLeast(1)
-                val exactWidth = MeasureSpec.makeMeasureSpec(panelWidth, MeasureSpec.EXACTLY)
-                val animatedHeight = pageHost.measuredHeight.takeIf {
-                    pageTransitionActive && stopPageTransition != null &&
-                        viewportWidth == availableWidth && viewportHeight == availableHeight
-                }
-                pageHost.measure(exactWidth, MeasureSpec.makeMeasureSpec(panelMaxHeight, MeasureSpec.EXACTLY))
-                val scroll = pageContent.getChildAt(0) as? ScrollView
-                val contentHeight = topBar.measuredHeight + (scroll?.getChildAt(0)?.measuredHeight ?: 0) +
-                    (scroll?.paddingTop ?: 0) + (scroll?.paddingBottom ?: 0) +
-                    (if (closeBar.visibility == View.VISIBLE) closeBar.measuredHeight else 0)
-                // Every page follows its actual content height and scrolls only
-                // when that content exceeds the available viewport.
-                val panelHeight = (animatedHeight ?: contentHeight).coerceIn(1, panelMaxHeight)
-                if (panelHeight != panelMaxHeight) {
-                    pageHost.measure(exactWidth, MeasureSpec.makeMeasureSpec(panelHeight, MeasureSpec.EXACTLY))
-                }
-                for (index in 0 until childCount) {
-                    val child = getChildAt(index)
-                    if (child !== pageHost) {
-                        val params = child.layoutParams
-                        child.measure(MeasureSpec.makeMeasureSpec(params.width, MeasureSpec.EXACTLY),
-                            MeasureSpec.makeMeasureSpec(params.height, MeasureSpec.EXACTLY))
-                    }
-                }
-                setMeasuredDimension(availableWidth, availableHeight)
-            }
-
-            override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-                super.onLayout(changed, left, top, right, bottom)
-                val viewportChanged = viewportWidth > 0 && viewportHeight > 0 &&
-                    (viewportWidth != width || viewportHeight != height)
-                viewportWidth = width
-                viewportHeight = height
-                if (viewportChanged && pageTransitionActive) onViewportChanged?.invoke()
-                if (!pageTransitionActive || panelBounds.isEmpty) {
-                    val targetBounds = RectF(pageHost.left.toFloat(), pageHost.top.toFloat(),
-                        pageHost.right.toFloat(), pageHost.bottom.toFloat())
-                    if (page == EmbeddedSettingsPage.PLUGINS && dialogReady && !viewportChanged &&
-                        cancelPageReady == null && !panelBounds.isEmpty && panelBounds != targetBounds
-                    ) {
-                        onPluginBoundsChanged?.invoke(targetBounds)
-                    } else panelBounds.set(targetBounds)
-                }
-            }
-
-            override fun dispatchDraw(canvas: Canvas) {
-                if (panelBounds.isEmpty) return
-                val radius = dp(activity, 24).toFloat()
-                panelShadow.draw(canvas, panelBounds, radius)
-                panelClip.setEmbeddedG3Rect(panelBounds, radius)
-                val save = canvas.save()
-                canvas.clipPath(panelClip)
-                canvas.drawPath(panelClip, panelPaint)
-                super.dispatchDraw(canvas)
-                canvas.restoreToCount(save)
-            }
-        }.apply {
-            bindEmbeddedTheme(activity) { colors ->
-                panelPaint.color = colors.pageBackground
-                invalidate()
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == android.view.MotionEvent.ACTION_UP && !panelBounds.contains(event.x, event.y)) {
-                    dialog.cancel()
-                }
-                true
-            }
-            addView(pageHost, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER,
-            ))
-        }
-        var outgoingPage: ImageView? = null
-        fun clearOutgoingPage() {
-            outgoingPage?.let { outgoing ->
-                root.removeView(outgoing)
-                outgoing.setImageDrawable(null)
-            }
-            outgoingPage = null
-        }
-
-        fun updateDraft(next: ModuleSettings) {
-            if (!draft.update(next)) {
-                Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        fun syncBottomCloseButton() {
-            closeBar.visibility = if (page == EmbeddedSettingsPage.MAIN) View.VISIBLE else View.GONE
-        }
-
-        fun renderPage(nextPage: EmbeddedSettingsPage = page) {
-            cancelPagePreparation?.invoke()
-            cancelPagePreparation = null
-            val changingPage = nextPage != page
-            if (pageTransitionActive) {
-                if (changingPage) pendingNavigation = { renderPage(nextPage) }
-                else refreshAfterTransition = true
-                return
-            }
-            val customLyricsPage = nextPage == EmbeddedSettingsPage.CUSTOM_LYRICS
-            val automaticLyricsPage = nextPage == EmbeddedSettingsPage.AUTOMATIC_LYRICS
-            val llmLyricsPage = nextPage == EmbeddedSettingsPage.LLM_LYRICS
-            val lyricsPage = customLyricsPage || automaticLyricsPage || llmLyricsPage
-            val bottomInset = dp(activity, when {
-                nextPage == EmbeddedSettingsPage.MAIN -> 0
-                lyricsPage -> 8
-                else -> 12
-            })
-            val scroll = ScrollView(activity).apply {
-                isFillViewport = false
-                clipChildren = !customLyricsPage
-                clipToPadding = !customLyricsPage
-                isVerticalScrollBarEnabled = false
-                isVerticalFadingEdgeEnabled = true
-                setFadingEdgeLength(dp(activity, 18))
-                setEmbeddedBackgroundColor(activity) { colors -> colors.surface }
-                val horizontalInset = when {
-                    nextPage == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> 0
-                    customLyricsPage -> 16
-                    else -> 8
-                }
-                setPadding(
-                    dp(activity, horizontalInset),
-                    0,
-                    dp(activity, horizontalInset),
-                    0,
-                )
-            }
-            val content = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                clipChildren = !customLyricsPage
-                // Bottom-only padding also clips the side edges by default.
-                // Let the lyrics ripple reach the ScrollView's side inset.
-                clipToPadding = !customLyricsPage
-                // Keep both fading edges at the viewport edges. A ScrollView's
-                // own bottom padding leaves unfaded ink when clipToPadding=false.
-                setPadding(0, 0, 0, bottomInset)
-            }
-            scroll.addView(content)
-            var preparationCancelled = false
-            var disposePreparedPage: (() -> Unit)? = null
-            cancelPagePreparation = {
-                preparationCancelled = true
-                disposePreparedPage?.invoke()
-                disposePreparedPage = null
-            }
-
-            fun showPreparedPage() {
-                if (preparationCancelled || (dialogReady && !dialog.isShowing)) return
-                cancelPagePreparation = null
-                val previousScroll = pageContent.getChildAt(0) as? ScrollView
-                previousScroll?.let { pageScrollPositions[page] = it.scrollY }
-                cancelPageReady?.invoke()
-                cancelPageReady = null
-                stopPageTransition?.invoke()
-                stopPageTransition = null
-                clearOutgoingPage()
-                val startBounds = RectF(panelBounds)
-                val snapshot = if (dialogReady && changingPage) pageHost.captureEmbeddedSettingsBackdrop() else null
-                val outgoing = snapshot?.let { backdrop ->
-                    ImageView(activity).apply {
-                        setImageDrawable(backdrop)
-                        scaleType = ImageView.ScaleType.FIT_XY
-                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    }.also { view ->
-                        root.addView(view, 0, FrameLayout.LayoutParams(
-                            pageHost.width, pageHost.height, Gravity.CENTER))
-                        outgoingPage = view
-                    }
-                }
-                pageTransitionActive = outgoing != null
-                pageHost.alpha = if (pageTransitionActive) 0f else 1f
-                disposePage?.invoke()
-                disposePage = disposePreparedPage
-                disposePreparedPage = null
-                page = nextPage
-                pageContent.removeAllViews()
-                pageContent.addView(scroll, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ))
-                val childPage = page != EmbeddedSettingsPage.MAIN
-                pageTitle.text = when (page) {
-                    EmbeddedSettingsPage.MAIN -> "AM++"
-                    EmbeddedSettingsPage.CUSTOM_LYRICS -> localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT)
-                    EmbeddedSettingsPage.AUTOMATIC_LYRICS -> localizedText(ModuleText.AUTO_LYRICS)
-                    EmbeddedSettingsPage.LYRICS_EFFECTS -> localizedText(ModuleText.CATEGORY_LYRICS_EFFECTS)
-                    EmbeddedSettingsPage.INTERFACE -> localizedText(ModuleText.CATEGORY_INTERFACE)
-                    EmbeddedSettingsPage.TITLE_REGION -> localizedText(ModuleText.CATEGORY_TITLE_REGION)
-                    EmbeddedSettingsPage.ADVANCED -> localizedText(ModuleText.ADVANCED_SETTINGS)
-                    EmbeddedSettingsPage.PLUGINS -> localizedText(ModuleText.PLUGINS)
-                    EmbeddedSettingsPage.LLM_LYRICS -> localizedText(ModuleText.LLM_LYRICS_FALLBACK)
-                    EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS)
-                }
-                backButton.visibility = if (childPage) View.VISIBLE else View.GONE
-                moduleIcon.visibility = if (childPage) View.GONE else View.VISIBLE
-                pageAction.text = localizedText(if (page == EmbeddedSettingsPage.PLUGINS) ModuleText.IMPORT_ZIP else ModuleText.SETTINGS_DETAILS_ACTION)
-                pageAction.isEnabled = page != EmbeddedSettingsPage.PLUGINS || plugins != null
-                syncBottomCloseButton()
-                refreshEmbeddedTheme(activity)
-                val restoredScrollY = pageScrollPositions[page] ?: 0
-                val ready = object : android.view.ViewTreeObserver.OnPreDrawListener {
-                    override fun onPreDraw(): Boolean {
-                        if (pageContent.getChildAt(0) !== scroll) {
-                            if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
-                            return true
-                        }
-                        if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(this)
-                        if (pageContent.getChildAt(0) !== scroll) return true
-                        cancelPageReady = null
-                        if (!dialogReady || !dialog.isShowing) {
-                            pageHost.alpha = 1f
-                            pageTransitionActive = false
-                            clearOutgoingPage()
-                            return true
-                        }
-                        scroll.scrollTo(0, restoredScrollY)
-                        val endBounds = RectF(pageHost.left.toFloat(), pageHost.top.toFloat(),
-                            pageHost.right.toFloat(), pageHost.bottom.toFloat())
-                        if (pageTransitionActive) {
-                            val stop = pageHost.morphEmbeddedSettingsPage(outgoing, startBounds, endBounds, onBoundsChanged = { bounds ->
-                                panelBounds.set(bounds)
-                                root.invalidate()
-                            }) {
-                                onTransitionFinished?.invoke()
-                            }
-                            if (pageTransitionActive) stopPageTransition = stop
-                        } else {
-                            panelBounds.set(endBounds)
-                            root.invalidate()
-                        }
-                        return true
-                    }
-                }
-                scroll.viewTreeObserver.addOnPreDrawListener(ready)
-                cancelPageReady = {
-                    if (scroll.viewTreeObserver.isAlive) scroll.viewTreeObserver.removeOnPreDrawListener(ready)
-                }
-            }
-
-            if (customLyricsPage) {
-                renderEmbeddedCustomLyricsPage(
-                    activity = activity,
-                    parent = content,
-                    settings = draft.settings,
-                    song = controller.currentSongDetails(),
-                    onSettingsChanged = ::updateDraft,
-                    onOpenLlmLyrics = {
-                        renderPage(EmbeddedSettingsPage.LLM_LYRICS)
-                    },
-                    onOpenAutomaticLyrics = {
-                        renderPage(EmbeddedSettingsPage.AUTOMATIC_LYRICS)
-                    },
-                )
-            } else if (automaticLyricsPage) {
-                renderEmbeddedAutomaticLyricsPage(
-                    activity = activity,
-                    parent = content,
-                    currentSettings = { draft.settings },
-                    onSettingsChanged = ::updateDraft,
-                )
-            } else if (llmLyricsPage) {
-                renderEmbeddedLlmLyricsPage(
-                    activity = activity,
-                    parent = content,
-                    settings = draft.settings,
-                    onSettingsChanged = ::updateDraft,
-                )
-            } else if (nextPage == EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION) {
-                renderEmbeddedAnimationSettingsPage(
-                    activity = activity,
-                    parent = content,
-                    currentSettings = { draft.settings },
-                    onSettingsChanged = ::updateDraft,
-                )
-            } else if (nextPage == EmbeddedSettingsPage.PLUGINS) {
-                // Prepare off-screen. The current page stays interactive until
-                // the first result supplies the one real transition height.
-                disposePreparedPage = renderEmbeddedPluginManagementPage(activity, content, scroll,
-                    onInitialContentReady = { root.post { showPreparedPage() } })
-                return
-            } else if (nextPage == EmbeddedSettingsPage.MAIN) {
-                renderEmbeddedMainPage(
-                    activity = activity,
-                    parent = content,
-                    settings = draft.settings,
-                    lyricsCount = runCatching { controller.lyricsEntries().size }.getOrDefault(0),
-                    onOpenPage = { renderPage(it) },
-                )
-            } else {
-                renderEmbeddedCategoryPage(
-                    activity = activity,
-                    parent = content,
-                    page = nextPage,
-                    currentSettings = { draft.settings },
-                    onSettingsChanged = ::updateDraft,
-                    onCellularDataEntryChanged = { enabled ->
-                        if (!draft.updateCellularDataEntry(enabled)) {
-                            Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    onOpenAnimationSettings = {
-                        renderPage(EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION)
-                    },
-                    onChooseFont = {
-                        launchSafPicker(
-                            activity,
-                            EmbeddedSafOperation.Font,
-                            "*/*",
-                            EMBEDDED_FONT_MIME_TYPES,
-                        )
-                    },
-                    onClearFont = { runAsync(activity, controller::clearFont) },
-                )
-            }
-            showPreparedPage()
-        }
-
-        onTransitionFinished = {
-            stopPageTransition = null
-            pageTransitionActive = false
-            clearOutgoingPage()
-            // Plugin refreshes may arrive during the short entrance motion. Remeasure
-            // after it finishes so a changed content height gets its own morph.
-            root.requestLayout()
-            val nextNavigation = pendingNavigation
-            pendingNavigation = null
-            val needsRefresh = refreshAfterTransition
-            refreshAfterTransition = false
-            if (nextNavigation != null || needsRefresh) root.post {
-                if (dialog.isShowing && pageHost.isAttachedToWindow) {
-                    if (nextNavigation != null) nextNavigation()
-                    else renderPage()
-                }
-            }
-        }
-
-        onPluginBoundsChanged = { targetBounds ->
-            val startBounds = RectF(panelBounds)
-            pageTransitionActive = true
-            val stop = pageHost.morphEmbeddedSettingsPage(null, startBounds, targetBounds, onBoundsChanged = { bounds ->
-                panelBounds.set(bounds)
-                root.invalidate()
-            }) { onTransitionFinished?.invoke() }
-            if (pageTransitionActive) stopPageTransition = stop
-        }
-
-        onViewportChanged = {
-            cancelPageReady?.invoke()
-            cancelPageReady = null
-            stopPageTransition?.invoke()
-            stopPageTransition = null
-            pageTransitionActive = false
-            pageHost.alpha = 1f
-            pageHost.translationX = 0f
-            pageHost.translationY = 0f
-            clearOutgoingPage()
-            val nextNavigation = pendingNavigation
-            pendingNavigation = null
-            val needsRefresh = refreshAfterTransition
-            refreshAfterTransition = false
-            root.post {
-                if (dialog.isShowing && pageHost.isAttachedToWindow) {
-                    if (nextNavigation != null) nextNavigation()
-                    else if (needsRefresh) renderPage()
-                }
-            }
-        }
-
-        fun navigateBack() {
-            val parentPage = when (page) {
-                EmbeddedSettingsPage.AUTOMATIC_LYRICS -> EmbeddedSettingsPage.CUSTOM_LYRICS
-                EmbeddedSettingsPage.LLM_LYRICS -> EmbeddedSettingsPage.CUSTOM_LYRICS
-                EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> EmbeddedSettingsPage.INTERFACE
-                EmbeddedSettingsPage.MAIN -> {
-                    dialog.dismiss()
-                    return
-                }
-                else -> EmbeddedSettingsPage.MAIN
-            }
-            renderPage(parentPage)
-        }
-        backButton.setOnClickListener { navigateBack() }
-        val backCallback = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            android.window.OnBackInvokedCallback { navigateBack() }
-        } else null
-        val themedContext = embeddedThemedContext(activity, dialog = true)
-        dialog = object : AlertDialog(themedContext) {
-            override fun onCreate(savedInstanceState: android.os.Bundle?) {
-                super.onCreate(savedInstanceState)
-                // Match the editor's stable transparent carrier. Page changes
-                // only morph the visible panel; WindowManager never recenters it.
-                setContentView(root, ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                window?.apply {
-                    clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
-                    setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-                    setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-                    setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-                }
-            }
-        }
-        configureEmbeddedDialogWindow(activity, dialog, themedContext, customPanel = true, animateStandardEntrance = false)
-        dialog.setOnKeyListener { _, keyCode, event ->
-            if (keyCode != android.view.KeyEvent.KEYCODE_BACK || page == EmbeddedSettingsPage.MAIN) false
-            else {
-                if (event.action == android.view.KeyEvent.ACTION_UP && !event.isCanceled) navigateBack()
-                true
-            }
-        }
-        dialog.setOnShowListener {
-            dialogReady = true
-            syncBottomCloseButton()
-            root.animateEmbeddedPanelEntrance()
-            if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
-                dialog.onBackInvokedDispatcher.registerOnBackInvokedCallback(
-                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback)
-            }
-        }
-        val weakDialog = WeakReference<Dialog>(dialog)
-        dialog.setOnDismissListener {
-            cancelPagePreparation?.invoke()
-            cancelPagePreparation = null
-            cancelPageReady?.invoke()
-            cancelPageReady = null
-            pendingNavigation = null
-            refreshAfterTransition = false
-            stopPageTransition?.invoke()
-            stopPageTransition = null
-            pageTransitionActive = false
-            clearOutgoingPage()
-            disposePage?.invoke()
-            disposePage = null
-            if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
-                dialog.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
-            }
-            if (dialogReference?.get() === weakDialog.get()) {
-                dialogReference = null
-                pageRefresh = null
-            }
-        }
-        dialogReference = weakDialog
-        pageRefresh = { renderPage() }
-        renderPage()
-        dialog.show()
+    fun update(next: ModuleSettings) {
+        val saved = draft.update(next)
+        settings = draft.settings
+        if (!saved) Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
     }
 
+    fun applySavedChange(change: (ModuleSettings) -> ModuleSettings) {
+        draft.applySavedChange(change)
+        settings = draft.settings
+    }
 
-internal fun EmbeddedSettingsHost.renderEmbeddedMainPage(
+    fun back(dismiss: () -> Unit) {
+        // The root overlay host gets Back first. While a modal is exiting, keep its page in place.
+        if (auxiliaryDialogs.isNotEmpty()) return
+        if (backStack.size > 1) {
+            (backStack.removeAt(backStack.lastIndex) as? EmbeddedPluginSettingsPage)?.close()
+        } else {
+            dismiss()
+        }
+    }
+
+    fun open(page: EmbeddedSettingsPage) {
+        // NavDisplay requires unique keys. A second click during a push must not add the same route.
+        if (auxiliaryDialogs.isEmpty() && page !in backStack) backStack.add(page)
+    }
+
+    fun canOpenPluginSettings(): Boolean =
+        backStack.lastOrNull() == EmbeddedSettingsPage.PLUGINS && auxiliaryDialogs.isEmpty() &&
+            activeSettingsDialog(activity) != null
+
+    fun openPluginSettings(id: String, title: String) {
+        if (!canOpenPluginSettings()) return
+        val page = createPluginSettingsPage(activity, id, title, "plugin-settings:${++pluginPageSequence}") ?: return
+        if (canOpenPluginSettings()) backStack.add(page) else page.close()
+    }
+
+    fun selectCategory(page: EmbeddedSettingsPage) {
+        if (auxiliaryDialogs.isNotEmpty() || page !in EmbeddedSettingsNavigationPages) return
+        val target = listOf(page)
+        if (backStack.toList() == target) return
+        val pluginPage = backStack.lastOrNull() as? EmbeddedPluginSettingsPage
+        // A category is a destination, not another level in the previous category's history.
+        Snapshot.withMutableSnapshot {
+            backStack.clear()
+            backStack.addAll(target)
+        }
+        pluginPage?.close()
+    }
+
+    fun adaptNavigationToWidth(wide: Boolean) {
+        val pages = backStack.filterNot { it == EmbeddedSettingsPage.MAIN }
+        val target = if (wide) {
+            pages.ifEmpty { listOf(EmbeddedSettingsPage.CUSTOM_LYRICS) }
+        } else {
+            listOf(EmbeddedSettingsPage.MAIN) + pages
+        }
+        if (backStack.toList() == target) return
+        // Resize only adjusts the root; the current category and its children keep their keys.
+        Snapshot.withMutableSnapshot {
+            backStack.clear()
+            backStack.addAll(target)
+        }
+    }
+
+    runCatching {
+        val opened = createEmbeddedSettingsDialog(activity, onBack = ::back, onDismiss = {
+            if (dialogReference?.get() === dialog) {
+                dialogReference = null
+                pageRefresh = null
+                dismissAuxiliarySettingsDialogs()
+            }
+            (backStack.lastOrNull() as? EmbeddedPluginSettingsPage)?.close()
+        }) { dismiss ->
+            val goBack = { back(dismiss) }
+            val swipeDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) {
+                NavSwipeDirection.RightToLeft
+            } else {
+                NavSwipeDirection.LeftToRight
+            }
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val wide = maxWidth >= EMBEDDED_SETTINGS_RAIL_MIN_WIDTH_DP.dp
+                // Seed before rendering from the measured window, including an initial split screen.
+                val navigationStack = remember {
+                    backStack.apply {
+                        if (isEmpty()) add(if (wide) EmbeddedSettingsPage.CUSTOM_LYRICS else EmbeddedSettingsPage.MAIN)
+                    }
+                }
+                val preferExpanded = maxWidth >= 1200.dp
+                val railState = rememberNavigationRailState(
+                    if (preferExpanded) NavigationRailValue.Expanded else NavigationRailValue.Collapsed,
+                )
+                val railScrollState = rememberScrollState()
+                val focusManager = LocalFocusManager.current
+                val keyboardController = LocalSoftwareKeyboardController.current
+                val selectedCategory = when (val page = navigationStack.lastOrNull()) {
+                    is EmbeddedSettingsPage -> page.navigationCategory
+                    is EmbeddedPluginSettingsPage -> EmbeddedSettingsPage.PLUGINS
+                    else -> EmbeddedSettingsPage.CUSTOM_LYRICS
+                }
+                LaunchedEffect(wide) {
+                    adaptNavigationToWidth(wide)
+                }
+                LaunchedEffect(preferExpanded) {
+                    if (preferExpanded) railState.expand() else railState.collapse()
+                }
+                Row(
+                    Modifier.fillMaxSize().then(if (wide) Modifier.imePadding() else Modifier),
+                ) {
+                    if (wide) {
+                        NavigationRail(
+                            state = railState,
+                            modifier = Modifier.fillMaxHeight(),
+                            scrollState = railScrollState,
+                            expandContentDescription = localizedText(ModuleText.EXPAND_SETTINGS_NAVIGATION),
+                            collapseContentDescription = localizedText(ModuleText.COLLAPSE_SETTINGS_NAVIGATION),
+                        ) {
+                            EmbeddedSettingsNavigationPages.forEach { category ->
+                                NavigationRailItem(
+                                    selected = selectedCategory == category,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        selectCategory(category)
+                                    },
+                                    icon = EmbeddedSettingsSvgAssets.vector(category.navigationIcon),
+                                    label = localizedText(category.title),
+                                    enabled = auxiliaryDialogs.isEmpty(),
+                                )
+                            }
+                        }
+                    }
+                    // Keep this NavDisplay stable across resize, and contain its covered pages'
+                    // parallax inside the content pane rather than drawing over the rail.
+                    Box(
+                        Modifier.weight(1f).fillMaxSize().clipToBounds().then(
+                            if (wide) Modifier
+                                .consumeWindowInsets(WindowInsets.displayCutout.only(WindowInsetsSides.Start))
+                                .consumeWindowInsets(WindowInsets.navigationBars.only(WindowInsetsSides.Start))
+                            else Modifier,
+                        ),
+                    ) {
+                        NavDisplay(
+                            backStack = navigationStack,
+                            modifier = Modifier.fillMaxSize(),
+                            onBack = goBack,
+                            transition = NavTransitions.MiuixDefault,
+                        ) {
+                            entry<EmbeddedSettingsPage>(swipeDismiss = swipeDirection) { page ->
+                                val active = navigationStack.lastOrNull() == page
+                                val current = settings
+                                val refresh = revision
+                                val scrollState = pageScrollStates.getOrPut(page) { ScrollState(0) }
+                                EmbeddedSettingsScreen(activity, page, current, wide, scrollState, goBack) {
+                                    when (page) {
+                                        EmbeddedSettingsPage.MAIN -> EmbeddedSettingsHome(activity, current, refresh, ::open)
+                                        EmbeddedSettingsPage.CUSTOM_LYRICS ->
+                                            EmbeddedCustomLyricsPage(activity, current, refresh, ::update, ::open)
+                                        EmbeddedSettingsPage.AUTOMATIC_LYRICS ->
+                                            EmbeddedAutomaticLyricsPage(activity, current, ::applySavedChange)
+                                        EmbeddedSettingsPage.LLM_LYRICS ->
+                                            EmbeddedLlmLyricsPage(activity, current, ::update, active = active)
+                                        EmbeddedSettingsPage.PLUGINS ->
+                                            EmbeddedPluginManagementPage(activity, refresh, active, ::openPluginSettings)
+                                        EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION ->
+                                            EmbeddedAnimationSettingsPage(current) { edit -> update(edit(draft.settings)) }
+                                        else -> EmbeddedSettingsCategory(
+                                            activity, page, current, refresh,
+                                            onEdit = { edit -> update(edit(draft.settings)) },
+                                            onOpenAnimationSettings = { open(EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION) },
+                                        )
+                                    }
+                                }
+                            }
+                            // The route owns a View; state saving only sees its per-session string key.
+                            entry<EmbeddedPluginSettingsPage>(
+                                contentKey = { it.contentKey },
+                                swipeDismiss = swipeDirection,
+                            ) { page ->
+                                val scrollBehavior = MiuixScrollBehavior()
+                                val reportedScroll = page.supportsReportedScroll
+                                val scrollFraction = page.reportedScrollFraction
+                                val hostView = LocalView.current
+                                fun applyReportedScroll() {
+                                    if (!page.isClosed && page.supportsReportedScroll) {
+                                        val state = scrollBehavior.state
+                                        val limit = state.heightOffsetLimit
+                                        if (limit.isFinite() && limit > -Float.MAX_VALUE) {
+                                            val offset = limit * page.reportedScrollFraction
+                                            if (state.heightOffset != offset) state.heightOffset = offset
+                                        }
+                                    }
+                                }
+                                LaunchedEffect(page, reportedScroll, scrollFraction, scrollBehavior) {
+                                    applyReportedScroll()
+                                }
+                                DisposableEffect(page, reportedScroll, scrollBehavior, hostView) {
+                                    if (!reportedScroll) {
+                                        onDispose {}
+                                    } else {
+                                        // Miuix's measured limit is a plain field, so layout changes do not recompose us.
+                                        val observer = hostView.viewTreeObserver
+                                        val listener = ViewTreeObserver.OnPreDrawListener {
+                                            applyReportedScroll()
+                                            true
+                                        }
+                                        observer.addOnPreDrawListener(listener)
+                                        onDispose {
+                                            val current = if (observer.isAlive) observer else hostView.viewTreeObserver
+                                            if (current.isAlive) current.removeOnPreDrawListener(listener)
+                                        }
+                                    }
+                                }
+                                DisposableEffect(page) {
+                                    val nestedScrollingEnabled = page.view.isNestedScrollingEnabled
+                                    // AndroidView forwards nested scroll only while its root View enables it.
+                                    page.view.isNestedScrollingEnabled = true
+                                    PluginSettingsScrollBridge.bind(page)
+                                    onDispose {
+                                        page.view.isNestedScrollingEnabled = nestedScrollingEnabled
+                                        PluginSettingsScrollBridge.release(page)
+                                    }
+                                }
+                                EmbeddedSettingsScaffold(
+                                    title = page.title,
+                                    wide = wide,
+                                    navigation = {
+                                        EmbeddedSettingsIconAction(EmbeddedSvgIcon.Back, localizedText(ModuleText.BACK), onClick = goBack)
+                                    },
+                                    scrollBehavior = scrollBehavior,
+                                    largeTitle = page.largeTitle ?: page.title,
+                                ) { bottomPadding ->
+                                    // The plugin owns scrolling; non-cooperating Views keep a fixed title.
+                                    AndroidView(
+                                        factory = { page.view },
+                                        modifier = Modifier.fillMaxWidth()
+                                            .padding(bottom = bottomPadding)
+                                            .then(
+                                                if (reportedScroll) Modifier
+                                                else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+                                            ),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                EmbeddedSettingsOverlays()
+            }
+        }
+        dialog = opened
+        dialogReference = WeakReference(opened)
+        pageRefresh = { if (opened.isShowing) revision++ }
+        opened.show()
+    }.onFailure { error ->
+        dialog?.dismiss()
+        if (dialogReference?.get() === dialog) {
+            dialogReference = null
+            pageRefresh = null
+        }
+        Toast.makeText(activity, localizedText(ModuleText.SETTINGS_OPEN_FAILED, error.message.orEmpty()), Toast.LENGTH_LONG).show()
+    }
+}
+
+@Composable
+private fun EmbeddedSettingsHost.EmbeddedSettingsScreen(
     activity: Activity,
-    parent: LinearLayout,
+    page: EmbeddedSettingsPage,
     settings: ModuleSettings,
-    lyricsCount: Int,
-    onOpenPage: (EmbeddedSettingsPage) -> Unit,
+    wide: Boolean,
+    scrollState: ScrollState,
+    onBack: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    fun state(enabled: Boolean) = localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
-    val font = runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest)
+    val title = localizedText(page.title)
+    val home = page == EmbeddedSettingsPage.MAIN
+    val closeSettings = home || (wide && page in EmbeddedSettingsNavigationPages)
+    val contentSpacing = if (home) 16.dp else 12.dp
+    val scrollBehavior = MiuixScrollBehavior()
+    val navigation: @Composable () -> Unit = {
+        if (closeSettings) {
+            IconButton(onClick = onBack) {
+                Icon(MiuixIcons.Basic.Close, contentDescription = localizedText(ModuleText.CLOSE_SETTINGS))
+            }
+        } else {
+            EmbeddedSettingsIconAction(EmbeddedSvgIcon.Back, localizedText(ModuleText.BACK), onClick = onBack)
+        }
+    }
+    val actions: @Composable RowScope.() -> Unit = {
+        if (page == EmbeddedSettingsPage.PLUGINS) {
+            EmbeddedSettingsIconAction(
+                EmbeddedSvgIcon.AddCircle,
+                localizedText(ModuleText.IMPORT_ZIP),
+                enabled = plugins != null,
+            ) {
+                launchSafPicker(
+                    activity, EmbeddedSafOperation.PluginZip, "*/*",
+                    arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
+                )
+            }
+        } else {
+            EmbeddedSettingsIconAction(EmbeddedSvgIcon.Document, localizedText(ModuleText.SETTINGS_DETAILS_ACTION)) {
+                showEmbeddedPageDetails(activity, page)
+            }
+        }
+    }
+
+    EmbeddedSettingsScaffold(title, wide, navigation, actions, scrollBehavior) { bottomPadding ->
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                .verticalScroll(scrollState)
+                // Scroll behind the gesture area; keep only the final item clear of it.
+                .padding(
+                    start = if (wide) 16.dp else 12.dp,
+                    top = contentSpacing,
+                    end = if (wide) 16.dp else 12.dp,
+                    bottom = 12.dp + bottomPadding,
+                ),
+            verticalArrangement = Arrangement.spacedBy(contentSpacing),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun EmbeddedSettingsScaffold(
+    title: String,
+    wide: Boolean,
+    navigation: @Composable () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+    scrollBehavior: ScrollBehavior? = null,
+    largeTitle: String = title,
+    content: @Composable (bottomPadding: Dp) -> Unit,
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            if (wide) {
+                SmallTopAppBar(
+                    title = title,
+                    modifier = Modifier.fillMaxWidth(),
+                    navigationIcon = navigation,
+                    actions = actions,
+                    scrollBehavior = scrollBehavior,
+                )
+            } else {
+                TopAppBar(
+                    title = title,
+                    largeTitle = largeTitle,
+                    navigationIcon = navigation,
+                    actions = actions,
+                    scrollBehavior = scrollBehavior,
+                )
+            }
+        },
+    ) { padding ->
+        val direction = LocalLayoutDirection.current
+        val viewportPadding = PaddingValues(
+            start = padding.calculateStartPadding(direction),
+            top = padding.calculateTopPadding(),
+            end = padding.calculateEndPadding(direction),
+        )
+        Box(
+            Modifier.fillMaxSize().padding(viewportPadding).consumeWindowInsets(padding).imePadding(),
+        ) {
+            content(padding.calculateBottomPadding())
+        }
+    }
+}
+
+private const val EMBEDDED_SETTINGS_RAIL_MIN_WIDTH_DP = 600
+
+private val EmbeddedSettingsNavigationPages = listOf(
+    EmbeddedSettingsPage.CUSTOM_LYRICS,
+    EmbeddedSettingsPage.LYRICS_EFFECTS,
+    EmbeddedSettingsPage.INTERFACE,
+    EmbeddedSettingsPage.TITLE_REGION,
+    EmbeddedSettingsPage.ADVANCED,
+    EmbeddedSettingsPage.PLUGINS,
+)
+
+private val EmbeddedSettingsPage.navigationCategory: EmbeddedSettingsPage
+    get() = when (this) {
+        EmbeddedSettingsPage.MAIN, EmbeddedSettingsPage.AUTOMATIC_LYRICS, EmbeddedSettingsPage.LLM_LYRICS ->
+            EmbeddedSettingsPage.CUSTOM_LYRICS
+        EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> EmbeddedSettingsPage.INTERFACE
+        else -> this
+    }
+
+private val EmbeddedSettingsPage.navigationIcon: EmbeddedSvgIcon
+    get() = when (navigationCategory) {
+        EmbeddedSettingsPage.CUSTOM_LYRICS -> EmbeddedSvgIcon.CustomLyrics
+        EmbeddedSettingsPage.LYRICS_EFFECTS -> EmbeddedSvgIcon.LyricEffects
+        EmbeddedSettingsPage.INTERFACE -> EmbeddedSvgIcon.TabletDualPane
+        EmbeddedSettingsPage.TITLE_REGION -> EmbeddedSvgIcon.TitleMode
+        EmbeddedSettingsPage.PLUGINS -> EmbeddedSvgIcon.Plugins
+        else -> EmbeddedSvgIcon.Settings
+    }
+
+private val EmbeddedSettingsPage.title: ModuleText
+    get() = when (this) {
+        EmbeddedSettingsPage.MAIN -> ModuleText.MODULE_SETTINGS
+        EmbeddedSettingsPage.CUSTOM_LYRICS -> ModuleText.CATEGORY_LYRICS_MANAGEMENT
+        EmbeddedSettingsPage.AUTOMATIC_LYRICS -> ModuleText.AUTO_LYRICS
+        EmbeddedSettingsPage.LYRICS_EFFECTS -> ModuleText.CATEGORY_LYRICS_EFFECTS
+        EmbeddedSettingsPage.INTERFACE -> ModuleText.CATEGORY_INTERFACE
+        EmbeddedSettingsPage.TITLE_REGION -> ModuleText.CATEGORY_TITLE_REGION
+        EmbeddedSettingsPage.ADVANCED -> ModuleText.ADVANCED_SETTINGS
+        EmbeddedSettingsPage.PLUGINS -> ModuleText.PLUGINS
+        EmbeddedSettingsPage.LLM_LYRICS -> ModuleText.LLM_LYRICS_FALLBACK
+        EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS
+    }
+
+@Composable
+private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
+    activity: Activity,
+    settings: ModuleSettings,
+    revision: Int,
+    onOpen: (EmbeddedSettingsPage) -> Unit,
+) {
+    val lyricsCount = remember(revision) { runCatching { controller.lyricsEntries().size }.getOrDefault(0) }
+    val font = remember(revision) { runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest) }
     val fontName = if (font.enabled) font.displayName else localizedText(ModuleText.ORIGINAL_FONT)
+    val effectCount = listOf(
+        settings.futureBlurEnabled,
+        settings.cjkKaraokeAnimationEnabled,
+        settings.lyricEffectsOptimizationEnabled,
+        settings.lyricsPronunciationEnabled && nativeBridge.supportsLyricsPronunciation(activity),
+    ).count { it }
     val dpi = if (settings.appleMusicDpiOverrideDpi == ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI) {
         localizedText(ModuleText.SUMMARY_DPI_SYSTEM)
     } else settings.appleMusicDpiOverrideDpi.toString()
-    val effectCount = listOf(settings.futureBlurEnabled, settings.cjkKaraokeAnimationEnabled,
-        settings.lyricEffectsOptimizationEnabled).count { it }
 
-    parent.addView(embeddedCard(activity, null) {
-        setPadding(dp(activity, 4), dp(activity, 4), dp(activity, 4), dp(activity, 4))
-        fun entry(title: ModuleText, summary: String, icon: EmbeddedSvgIcon, onClick: () -> Unit) {
-            if (childCount > 0) addView(embeddedSpacer(activity, 1))
-            addView(embeddedNavigationRow(
-                activity = activity,
-                title = localizedText(title),
-                summary = summary,
-                icon = icon,
-                summaryMaxLines = 1,
-                onClick = onClick,
-            ))
-        }
-        entry(ModuleText.CATEGORY_LYRICS_MANAGEMENT,
+    fun state(enabled: Boolean) = localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
+
+    EmbeddedSettingsGroup {
+        EmbeddedSettingLink(
+            localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT),
             localizedText(ModuleText.SUMMARY_LYRICS_MANAGEMENT, state(settings.customLyricsEnabled), lyricsCount),
-            EmbeddedSvgIcon.CustomLyrics) { onOpenPage(EmbeddedSettingsPage.CUSTOM_LYRICS) }
-        entry(ModuleText.CATEGORY_LYRICS_EFFECTS,
+            EmbeddedSvgIcon.CustomLyrics,
+        ) { onOpen(EmbeddedSettingsPage.CUSTOM_LYRICS) }
+        EmbeddedSettingLink(
+            localizedText(ModuleText.CATEGORY_LYRICS_EFFECTS),
             localizedText(ModuleText.SUMMARY_LYRICS_EFFECTS, effectCount, fontName),
-            EmbeddedSvgIcon.LyricEffects) { onOpenPage(EmbeddedSettingsPage.LYRICS_EFFECTS) }
-        entry(ModuleText.CATEGORY_INTERFACE,
+            EmbeddedSvgIcon.LyricEffects,
+        ) { onOpen(EmbeddedSettingsPage.LYRICS_EFFECTS) }
+        EmbeddedSettingLink(
+            localizedText(ModuleText.CATEGORY_INTERFACE),
             localizedText(ModuleText.SUMMARY_INTERFACE, state(settings.dualPaneEnabled), state(settings.phoneLiquidGlassEnabled)),
-            EmbeddedSvgIcon.TabletDualPane) { onOpenPage(EmbeddedSettingsPage.INTERFACE) }
-        entry(ModuleText.CATEGORY_TITLE_REGION,
-            localizedText(ModuleText.SUMMARY_TITLE_REGION, settings.regionSelection.displayName,
-                state(settings.overrideAccountLanguage)),
-            EmbeddedSvgIcon.TitleMode) { onOpenPage(EmbeddedSettingsPage.TITLE_REGION) }
-        entry(ModuleText.ADVANCED_SETTINGS,
+            EmbeddedSvgIcon.TabletDualPane,
+        ) { onOpen(EmbeddedSettingsPage.INTERFACE) }
+        EmbeddedSettingLink(
+            localizedText(ModuleText.CATEGORY_TITLE_REGION),
+            localizedText(ModuleText.SUMMARY_TITLE_REGION, state(settings.titleCorrectionEnabled),
+                localizedText(settings.titleCorrectionMode.displayText)),
+            EmbeddedSvgIcon.TitleMode,
+        ) { onOpen(EmbeddedSettingsPage.TITLE_REGION) }
+    }
+    EmbeddedSettingsGroup {
+        EmbeddedSettingLink(
+            localizedText(ModuleText.ADVANCED_SETTINGS),
             if (nativeBridge.supportsStartupPagePrewarm(activity)) {
                 localizedText(ModuleText.SUMMARY_ADVANCED, dpi, state(settings.startupPagePrewarmEnabled))
             } else "DPI · $dpi",
-            EmbeddedSvgIcon.Settings) { onOpenPage(EmbeddedSettingsPage.ADVANCED) }
-        entry(ModuleText.PLUGINS,
+            EmbeddedSvgIcon.Settings,
+        ) { onOpen(EmbeddedSettingsPage.ADVANCED) }
+        EmbeddedSettingLink(
+            localizedText(ModuleText.PLUGINS),
             localizedText(if (plugins == null) ModuleText.PLUGIN_RUNTIME_UNAVAILABLE else ModuleText.SUMMARY_PLUGINS),
-            EmbeddedSvgIcon.Plugins) { onOpenPage(EmbeddedSettingsPage.PLUGINS) }
-    }, matchWidthWrapContent())
+            EmbeddedSvgIcon.Plugins,
+        ) { onOpen(EmbeddedSettingsPage.PLUGINS) }
+    }
 }
 
-private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
+@Composable
+private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
     activity: Activity,
-    parent: LinearLayout,
     page: EmbeddedSettingsPage,
-    currentSettings: () -> ModuleSettings,
-    onSettingsChanged: (ModuleSettings) -> Unit,
-    onCellularDataEntryChanged: (Boolean) -> Unit,
+    settings: ModuleSettings,
+    revision: Int,
+    onEdit: ((ModuleSettings) -> ModuleSettings) -> Unit,
     onOpenAnimationSettings: () -> Unit,
-    onChooseFont: () -> Unit,
-    onClearFont: () -> Unit,
 ) {
-    val settings = currentSettings()
-    fun LinearLayout.spaceBeforeRow() {
-        if (childCount > 0) addView(embeddedSpacer(activity, 1))
-    }
-    fun LinearLayout.setting(title: ModuleText, summary: ModuleText, checked: Boolean, onChanged: (Boolean) -> Unit) {
-        spaceBeforeRow()
-        addView(embeddedSettingRow(activity, localizedText(title), localizedText(summary), checked, onChanged = onChanged))
-    }
-
-    parent.addView(embeddedCard(activity, null) {
-        setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
-        when (page) {
-            EmbeddedSettingsPage.LYRICS_EFFECTS -> {
-                setting(ModuleText.BIDIRECTIONAL_LYRIC_BLUR, ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
-                    settings.futureBlurEnabled) {
-                    onSettingsChanged(currentSettings().copy(futureBlurEnabled = it))
+    when (page) {
+        EmbeddedSettingsPage.LYRICS_EFFECTS -> {
+            EmbeddedSettingsGroup {
+                if (nativeBridge.supportsLyricsPronunciation(activity)) {
+                    Setting(ModuleText.LYRICS_PRONUNCIATION, ModuleText.LYRICS_PRONUNCIATION_SUMMARY,
+                        settings.lyricsPronunciationEnabled, EmbeddedSvgIcon.Translation) { value ->
+                        onEdit { it.copy(lyricsPronunciationEnabled = value) }
+                    }
                 }
-                setting(ModuleText.CJK_KARAOKE_ANIMATION, ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY,
-                    settings.cjkKaraokeAnimationEnabled) {
-                    onSettingsChanged(currentSettings().copy(cjkKaraokeAnimationEnabled = it))
-                }
-                setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
-                    settings.lyricEffectsOptimizationEnabled) {
-                    onSettingsChanged(currentSettings().copy(lyricEffectsOptimizationEnabled = it))
-                }
-                spaceBeforeRow()
-                addView(embeddedBlurRadiusRow(activity, settings.lyricBlurRadiusOffsetPx) {
-                    onSettingsChanged(currentSettings().copy(lyricBlurRadiusOffsetPx = it))
-                })
-                addView(embeddedSpacer(activity, 12))
-                addView(embeddedGlassRangeRow(
-                    activity = activity,
-                    title = localizedText(ModuleText.LYRICS_FONT_SCALE),
-                    value = settings.lyricsFontScalePercent,
-                    defaultValue = ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
-                    rangeMin = ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT,
-                    rangeMax = ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
-                    suffix = localizedText(ModuleText.LYRICS_FONT_SCALE_SUMMARY),
-                    unit = "%",
-                ) { onSettingsChanged(currentSettings().copy(lyricsFontScalePercent = it)) })
-                addView(embeddedSpacer(activity, 12))
-                addView(embeddedGlassRangeRow(
-                    activity = activity,
-                    title = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE),
-                    value = settings.lyricsLineSpacingScalePercent,
-                    defaultValue = ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
-                    rangeMin = ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT,
-                    rangeMax = ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
-                    suffix = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY),
-                    unit = "%",
-                ) { onSettingsChanged(currentSettings().copy(lyricsLineSpacingScalePercent = it)) })
+                Setting(ModuleText.BIDIRECTIONAL_LYRIC_BLUR, ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
+                    settings.futureBlurEnabled, EmbeddedSvgIcon.LyricsBlur) { value -> onEdit { it.copy(futureBlurEnabled = value) } }
+                Setting(ModuleText.CJK_KARAOKE_ANIMATION, ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY,
+                    settings.cjkKaraokeAnimationEnabled, EmbeddedSvgIcon.Karaoke) { value -> onEdit { it.copy(cjkKaraokeAnimationEnabled = value) } }
+                Setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
+                    settings.lyricEffectsOptimizationEnabled, EmbeddedSvgIcon.LyricEffects) { value -> onEdit { it.copy(lyricEffectsOptimizationEnabled = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRIC_BLUR_OFFSET),
+                    value = settings.lyricBlurRadiusOffsetPx,
+                    range = ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX..ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
+                    unit = " px",
+                ) { value -> onEdit { it.copy(lyricBlurRadiusOffsetPx = value) } }
             }
-            EmbeddedSettingsPage.INTERFACE -> {
-                setting(ModuleText.TABLET_DUAL_PANE, ModuleText.TABLET_DUAL_PANE_SUMMARY, settings.dualPaneEnabled) {
-                    onSettingsChanged(currentSettings().copy(dualPaneEnabled = it))
-                    pageRefresh?.invoke()
+            val font = remember(revision) { runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest) }
+            EmbeddedSettingsSection(
+                localizedText(ModuleText.LYRICS_FONT),
+                localizedText(if (font.enabled) ModuleText.LYRICS_FONT_ENABLED_SUMMARY else ModuleText.LYRICS_FONT_IMPORT_SUMMARY),
+            )
+            EmbeddedSettingsGroup {
+                EmbeddedSettingLink(localizedText(ModuleText.CHOOSE_FONT),
+                    if (font.enabled) font.displayName else localizedText(ModuleText.ORIGINAL_FONT), EmbeddedSvgIcon.Document) {
+                    launchSafPicker(activity, EmbeddedSafOperation.Font, "*/*", EMBEDDED_FONT_MIME_TYPES)
                 }
-                if (settings.dualPaneEnabled) {
-                    setting(ModuleText.TABLET_DUAL_PANE_HIDE_STATUS_BAR, ModuleText.SHORT_DUAL_PANE_STATUS_SUMMARY,
-                        settings.dualPaneHideStatusBarEnabled) {
-                        onSettingsChanged(currentSettings().copy(dualPaneHideStatusBarEnabled = it))
-                    }
-                }
-                setting(ModuleText.LIQUID_GLASS_NAVIGATION, ModuleText.SHORT_GLASS_SUMMARY, settings.phoneLiquidGlassEnabled) {
-                    onSettingsChanged(currentSettings().copy(phoneLiquidGlassEnabled = it))
-                    pageRefresh?.invoke()
-                }
-                if (settings.phoneLiquidGlassEnabled) {
-                    if (nativeBridge.supportsGlassScrollCollapse(activity)) {
-                        setting(ModuleText.BOTTOM_BAR_COLLAPSE, ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY,
-                            settings.phoneLiquidGlassCollapseEnabled) {
-                            onSettingsChanged(currentSettings().copy(phoneLiquidGlassCollapseEnabled = it))
-                            pageRefresh?.invoke()
-                        }
-                        if (settings.phoneLiquidGlassCollapseEnabled) {
-                            spaceBeforeRow()
-                            addView(embeddedNavigationRow(activity,
-                                localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS),
-                                localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY),
-                                onClick = onOpenAnimationSettings))
-                        }
-                    }
-                    addView(embeddedSpacer(activity, 12))
-                    addView(embeddedGlassRangeRow(
-                        activity = activity,
-                        title = localizedText(ModuleText.BOTTOM_BAR_HEIGHT),
-                        value = settings.phoneLiquidGlassBottomGapDp,
-                        defaultValue = GlassPolicy.BOTTOM_DP,
-                        rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-                        rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
-                        suffix = localizedText(ModuleText.BOTTOM_BAR_HEIGHT_SUMMARY),
-                    ) { onSettingsChanged(currentSettings().copy(phoneLiquidGlassBottomGapDp = it)) })
-                    addView(embeddedSpacer(activity, 16))
-                    addView(embeddedGlassRangeRow(
-                        activity = activity,
-                        title = localizedText(ModuleText.BOTTOM_BAR_BLUR),
-                        value = settings.phoneLiquidGlassPanelBlurDp,
-                        defaultValue = GlassPolicy.PANEL_BLUR_DP.toInt(),
-                        rangeMin = ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-                        rangeMax = ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
-                        suffix = localizedText(ModuleText.BOTTOM_BAR_BLUR_SUMMARY),
-                    ) { onSettingsChanged(currentSettings().copy(phoneLiquidGlassPanelBlurDp = it)) })
-                } else {
-                    setting(ModuleText.TABLET_BOTTOM_BAR_FIX, ModuleText.TABLET_BOTTOM_BAR_FIX_SUMMARY,
-                        settings.navigationCompensationEnabled) {
-                        onSettingsChanged(currentSettings().copy(navigationCompensationEnabled = it))
-                    }
+                EmbeddedSettingLink(localizedText(ModuleText.RESTORE_FONT), icon = EmbeddedSvgIcon.RestoreDefault,
+                    enabled = font.enabled) {
+                    runAsync(activity, controller::clearFont)
                 }
             }
-            EmbeddedSettingsPage.TITLE_REGION -> {
-                // HLE's page computes these two gates from its four controls; reproduce them
-                // verbatim so the region picker and the two switches keep HLE's visibility.
-                val regionReplacementEnabled =
-                    settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
-                val metadataLookupEnabled =
-                    regionReplacementEnabled || settings.restoreCjkOriginalMetadata
-                // 1. HLE 将Apple Music改成其他地区 — title/summary/options verbatim, and the
-                // current option stays visible on the right.
-                addView(embeddedNavigationRow(activity,
-                    localizedText(ModuleText.REGION_SELECTION),
-                    localizedText(ModuleText.REGION_SELECTION_SUMMARY),
-                    trailingValue = settings.regionSelection.displayName,
-                ) {
-                    showEmbeddedRegionSelectionPicker(activity) { region ->
-                        onSettingsChanged(currentSettings().copy(regionSelection = region))
-                        pageRefresh?.invoke()
-                    }
-                })
-                // 2. HLE 歌曲信息替换至设定地区语言 — only shown once a region is selected.
-                if (settings.regionSelection.replacesRegion) {
-                    spaceBeforeRow()
-                    addView(embeddedSettingRow(
-                        activity,
-                        localizedText(ModuleText.REGION_METADATA_LANGUAGE),
-                        "",
-                        settings.overrideAccountLanguage,
-                    ) {
-                        onSettingsChanged(currentSettings().copy(overrideAccountLanguage = it))
-                        pageRefresh?.invoke()
-                    })
-                }
-                // 3. HLE 替换中日韩歌曲信息为原地区原名 — always shown.
-                spaceBeforeRow()
-                addView(embeddedSettingRow(
-                    activity,
-                    localizedText(ModuleText.REGION_RESTORE_ORIGINAL),
-                    "",
-                    settings.restoreCjkOriginalMetadata,
-                ) {
-                    onSettingsChanged(currentSettings().copy(restoreCjkOriginalMetadata = it))
-                    pageRefresh?.invoke()
-                })
-                // 4. HLE 创建检索库以提升替换体验 — only shown while the metadata lookup runs.
-                if (metadataLookupEnabled) {
-                    spaceBeforeRow()
-                    addView(embeddedSettingRow(
-                        activity,
-                        localizedText(ModuleText.REGION_METADATA_CACHE),
-                        localizedText(ModuleText.REGION_METADATA_CACHE_SUMMARY),
-                        settings.localizedMetadataCache,
-                    ) {
-                        onSettingsChanged(currentSettings().copy(localizedMetadataCache = it))
-                    })
-                }
-                // AM++: the 检索库 exists whenever the runtime can write it — a region
-                // replacement caches localized results even without the override switch —
-                // so the clear row follows HLE's four controls in every installable state.
-                if (settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata) {
-                    spaceBeforeRow()
-                    addView(embeddedNavigationRow(activity,
-                        localizedText(ModuleText.REGION_CACHE_CLEAR),
-                        localizedText(ModuleText.REGION_CACHE_CLEAR_SUMMARY),
-                    ) {
-                        confirmEmbeddedMetadataCacheClear(activity) {
-                            // Read the current draft so an earlier toggle that did not
-                            // re-render the page is not reverted by this action's copy.
-                            val current = currentSettings()
-                            onSettingsChanged(
-                                current.copy(
-                                    metadataCacheClearGeneration =
-                                        current.metadataCacheClearGeneration + 1L,
-                                ),
-                            )
-                            // Re-render so a second tap carries the incremented value.
-                            pageRefresh?.invoke()
-                            Toast.makeText(
-                                activity,
-                                localizedText(ModuleText.REGION_CACHE_CLEAR_REQUESTED),
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    })
-                }
-            }
-            EmbeddedSettingsPage.ADVANCED -> {
-                if (nativeBridge.supportsStartupPagePrewarm(activity)) {
-                    setting(ModuleText.STARTUP_PAGE_PREWARM, ModuleText.STARTUP_PAGE_PREWARM_SUMMARY,
-                        settings.startupPagePrewarmEnabled) {
-                        onSettingsChanged(currentSettings().copy(startupPagePrewarmEnabled = it))
-                    }
-                }
-                setting(ModuleText.CELLULAR_SETTINGS, ModuleText.CELLULAR_SETTINGS_SUMMARY,
-                    settings.forceCellularDataEntryEnabled) {
-                    onCellularDataEntryChanged(it)
-                    pageRefresh?.invoke()
-                }
-                spaceBeforeRow()
-                addView(embeddedDpiOverrideRow(activity, settings.appleMusicDpiOverrideDpi) {
-                    onSettingsChanged(currentSettings().copy(appleMusicDpiOverrideDpi = it))
-                    pageRefresh?.invoke()
-                })
-            }
-            else -> Unit
         }
-    }, matchWidthWrapContent())
-    if (page == EmbeddedSettingsPage.LYRICS_EFFECTS) {
-        parent.addView(embeddedSpacer(activity, 12))
-        val font = runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest)
-        parent.addView(embeddedFontCard(activity, font, onChooseFont, onClearFont), matchWidthWrapContent())
+        EmbeddedSettingsPage.INTERFACE -> {
+            EmbeddedSettingsGroup {
+                Setting(ModuleText.TABLET_DUAL_PANE, ModuleText.TABLET_DUAL_PANE_SUMMARY,
+                    settings.dualPaneEnabled, EmbeddedSvgIcon.TabletDualPane) { value -> onEdit { it.copy(dualPaneEnabled = value) } }
+                if (settings.dualPaneEnabled) Setting(
+                    ModuleText.TABLET_DUAL_PANE_HIDE_STATUS_BAR, ModuleText.SHORT_DUAL_PANE_STATUS_SUMMARY,
+                    settings.dualPaneHideStatusBarEnabled, EmbeddedSvgIcon.HideStatusBar,
+                ) { value -> onEdit { it.copy(dualPaneHideStatusBarEnabled = value) } }
+                Setting(ModuleText.LIQUID_GLASS_NAVIGATION, ModuleText.SHORT_GLASS_SUMMARY,
+                    settings.phoneLiquidGlassEnabled, EmbeddedSvgIcon.Glass) { value -> onEdit { it.copy(phoneLiquidGlassEnabled = value) } }
+                if (!settings.phoneLiquidGlassEnabled) {
+                    Setting(ModuleText.TABLET_BOTTOM_BAR_FIX, ModuleText.TABLET_BOTTOM_BAR_FIX_SUMMARY,
+                        settings.navigationCompensationEnabled, EmbeddedSvgIcon.NavigationFix) {
+                        value -> onEdit { it.copy(navigationCompensationEnabled = value) }
+                    }
+                } else if (nativeBridge.supportsGlassScrollCollapse(activity)) {
+                    Setting(ModuleText.BOTTOM_BAR_COLLAPSE, ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY,
+                        settings.phoneLiquidGlassCollapseEnabled, EmbeddedSvgIcon.BarCollapse) {
+                        value -> onEdit { it.copy(phoneLiquidGlassCollapseEnabled = value) }
+                    }
+                    if (settings.phoneLiquidGlassCollapseEnabled) EmbeddedSettingLink(
+                        localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS),
+                        localizedText(ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY),
+                        EmbeddedSvgIcon.BarAnimation,
+                        onClick = onOpenAnimationSettings,
+                    )
+                }
+            }
+            if (settings.phoneLiquidGlassEnabled) EmbeddedSettingsGroup {
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.BOTTOM_BAR_HEIGHT),
+                    value = settings.phoneLiquidGlassBottomGapDp,
+                    range = ModuleSettings.MIN_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP..ModuleSettings.MAX_PHONE_LIQUID_GLASS_BOTTOM_GAP_DP,
+                    unit = " dp",
+                    summary = localizedText(ModuleText.BOTTOM_BAR_HEIGHT_SUMMARY),
+                    defaultValue = GlassPolicy.BOTTOM_DP,
+                ) { value -> onEdit { it.copy(phoneLiquidGlassBottomGapDp = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.BOTTOM_BAR_BLUR),
+                    value = settings.phoneLiquidGlassPanelBlurDp,
+                    range = ModuleSettings.MIN_PHONE_LIQUID_GLASS_PANEL_BLUR_DP..ModuleSettings.MAX_PHONE_LIQUID_GLASS_PANEL_BLUR_DP,
+                    unit = " dp",
+                    summary = localizedText(ModuleText.BOTTOM_BAR_BLUR_SUMMARY),
+                    defaultValue = GlassPolicy.PANEL_BLUR_DP.toInt(),
+                ) { value -> onEdit { it.copy(phoneLiquidGlassPanelBlurDp = value) } }
+            }
+        }
+        EmbeddedSettingsPage.TITLE_REGION -> EmbeddedSettingsGroup {
+            Setting(ModuleText.TITLE_CORRECTION, ModuleText.TITLE_CORRECTION_SUMMARY,
+                settings.titleCorrectionEnabled, EmbeddedSvgIcon.TitleCorrection) { value -> onEdit { it.copy(titleCorrectionEnabled = value) } }
+            val modes = TitleCorrectionMode.entries
+            OverlayDropdownPreference(
+                items = modes.map { localizedText(it.displayText) },
+                selectedIndex = modes.indexOf(settings.titleCorrectionMode),
+                title = localizedText(ModuleText.TITLE_CORRECTION_MODE),
+                summary = localizedText(ModuleText.VALUE_RESTART_REQUIRED, localizedText(settings.titleCorrectionMode.displayText)),
+                startAction = { EmbeddedSettingsIcon(EmbeddedSvgIcon.TitleMode, modifier = Modifier.size(22.dp)) },
+                insideMargin = EmbeddedPreferencePadding,
+                showValue = false,
+                onSelectedIndexChange = { index -> onEdit { it.copy(titleCorrectionMode = modes[index]) } },
+            )
+        }
+        EmbeddedSettingsPage.ADVANCED -> EmbeddedSettingsGroup {
+            if (nativeBridge.supportsStartupPagePrewarm(activity)) Setting(
+                ModuleText.STARTUP_PAGE_PREWARM, ModuleText.STARTUP_PAGE_PREWARM_SUMMARY,
+                settings.startupPagePrewarmEnabled, EmbeddedSvgIcon.StartupPrewarm,
+            ) { value -> onEdit { it.copy(startupPagePrewarmEnabled = value) } }
+            Setting(ModuleText.CELLULAR_SETTINGS, ModuleText.CELLULAR_SETTINGS_SUMMARY,
+                settings.forceCellularDataEntryEnabled, EmbeddedSvgIcon.Cellular) { value -> onEdit { it.copy(forceCellularDataEntryEnabled = value) } }
+            val dpi = settings.appleMusicDpiOverrideDpi
+            EmbeddedSettingLink(
+                localizedText(ModuleText.MUSIC_DPI),
+                if (dpi == ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI) {
+                    localizedText(ModuleText.MUSIC_DPI_DEFAULT_SUMMARY).substringBefore(" ·")
+                } else localizedText(ModuleText.MUSIC_DPI_VALUE_SUMMARY, dpi).substringBefore(" ·"),
+                EmbeddedSvgIcon.DisplayDpi,
+            ) {
+                showEmbeddedDpiDialog(activity, dpi) { value -> onEdit { it.copy(appleMusicDpiOverrideDpi = value) } }
+            }
+        }
+        else -> Unit
+    }
+}
+
+@Composable
+private fun EmbeddedSettingsHost.Setting(
+    title: ModuleText,
+    summary: ModuleText,
+    checked: Boolean,
+    icon: EmbeddedSvgIcon,
+    onCheckedChange: (Boolean) -> Unit,
+) = EmbeddedSettingSwitch(localizedText(title), localizedText(summary), checked, icon = icon, onCheckedChange = onCheckedChange)
+
+private fun EmbeddedSettingsHost.showEmbeddedDpiDialog(activity: Activity, current: Int, onSelected: (Int) -> Unit) {
+    showEmbeddedMiuixDialog(activity, localizedText(ModuleText.MUSIC_DPI), maxWidth = 420.dp) { dismiss ->
+        var input by remember { mutableStateOf(current.toString()) }
+        var invalid by remember { mutableStateOf(false) }
+        Text(localizedText(ModuleText.MUSIC_DPI_NOTICE), style = MiuixTheme.textStyles.body2)
+        TextField(
+            value = input,
+            onValueChange = { input = it; invalid = false },
+            modifier = Modifier.fillMaxWidth(),
+            label = localizedText(ModuleText.MUSIC_DPI_INPUT_HINT),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        if (invalid) Text(localizedText(ModuleText.MUSIC_DPI_INVALID), color = MiuixTheme.colorScheme.error)
+        EmbeddedDialogActions(localizedText(ModuleText.CANCEL), dismiss, localizedText(ModuleText.SAVE)) {
+            val parsed = input.trim().toIntOrNull()
+            if (parsed == null || !ModuleSettings.isValidAppleMusicDpi(parsed)) {
+                invalid = true
+            } else {
+                onSelected(parsed)
+                dismiss()
+            }
+        }
     }
 }
 
@@ -941,19 +745,13 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
         )
         EmbeddedSettingsPage.AUTOMATIC_LYRICS -> listOf(
             ModuleText.AUTO_LYRICS_ENABLED to ModuleText.AUTO_LYRICS_SUMMARY,
-            ModuleText.AUTO_LYRICS_PREFER_NATIVE to ModuleText.AUTO_LYRICS_PREFER_NATIVE_SUMMARY,
-            ModuleText.AUTO_LYRICS_SOURCE_ORDER to
-                if (controller.currentSettings().automaticLyricsPreferNative) {
-                    ModuleText.AUTO_LYRICS_SOURCE_ORDER_NATIVE_HIDDEN
-                } else ModuleText.AUTO_LYRICS_SOURCE_ORDER_ALL,
+            ModuleText.AUTO_LYRICS_SOURCE_ORDER to ModuleText.AUTO_LYRICS_SOURCE_ORDER_ALL,
         )
         EmbeddedSettingsPage.LYRICS_EFFECTS -> listOf(
             ModuleText.BIDIRECTIONAL_LYRIC_BLUR to ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
             ModuleText.CJK_KARAOKE_ANIMATION to ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY,
             ModuleText.LYRIC_EFFECTS_OPTIMIZATION to ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
             ModuleText.LYRICS_FONT to ModuleText.LYRICS_FONT_IMPORT_SUMMARY,
-            ModuleText.LYRICS_FONT_SCALE to ModuleText.LYRICS_FONT_SCALE_SUMMARY,
-            ModuleText.LYRICS_LINE_SPACING_SCALE to ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY,
         )
         EmbeddedSettingsPage.INTERFACE -> listOf(
             ModuleText.TABLET_DUAL_PANE to ModuleText.TABLET_DUAL_PANE_SUMMARY,
@@ -963,12 +761,7 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.BOTTOM_BAR_COLLAPSE to ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY,
             ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS to ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY,
         )
-        EmbeddedSettingsPage.TITLE_REGION -> listOf(
-            ModuleText.REGION_SELECTION to ModuleText.REGION_SELECTION_SUMMARY,
-            ModuleText.REGION_METADATA_LANGUAGE to ModuleText.REGION_RESTORE_ORIGINAL,
-            ModuleText.REGION_METADATA_CACHE to ModuleText.REGION_METADATA_CACHE_SUMMARY,
-            ModuleText.REGION_CACHE_CLEAR to ModuleText.REGION_CACHE_CLEAR_SUMMARY,
-        )
+        EmbeddedSettingsPage.TITLE_REGION -> listOf(ModuleText.TITLE_CORRECTION to ModuleText.TITLE_CORRECTION_SUMMARY)
         EmbeddedSettingsPage.ADVANCED -> listOf(
             ModuleText.STARTUP_PAGE_PREWARM to ModuleText.STARTUP_PAGE_PREWARM_SUMMARY,
             ModuleText.CELLULAR_SETTINGS to ModuleText.CELLULAR_SETTINGS_SUMMARY,
@@ -977,9 +770,12 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
         EmbeddedSettingsPage.PLUGINS -> listOf(ModuleText.PLUGINS to ModuleText.PLUGIN_RESTART_NOTICE)
         EmbeddedSettingsPage.LLM_LYRICS -> listOf(
             ModuleText.LLM_LYRICS_ENABLED to ModuleText.LLM_LYRICS_ENABLED_SUMMARY,
+            ModuleText.LLM_LYRICS_TRANSLITERATION_ENABLED to
+                ModuleText.LLM_LYRICS_TRANSLITERATION_ENABLED_SUMMARY,
             ModuleText.LLM_LYRICS_BASE_URL to ModuleText.LLM_LYRICS_BASE_URL_SUMMARY,
             ModuleText.LLM_LYRICS_API_KEY to ModuleText.LLM_LYRICS_API_KEY_SUMMARY,
             ModuleText.LLM_LYRICS_MODEL to ModuleText.LLM_LYRICS_MODEL_SUMMARY,
+            ModuleText.LLM_LYRICS_THINKING_FORMAT to ModuleText.LLM_LYRICS_THINKING_FORMAT_SUMMARY,
             ModuleText.LLM_LYRICS_THINKING to ModuleText.LLM_LYRICS_THINKING_SUMMARY,
             ModuleText.LLM_LYRICS_THINKING_EFFORT to ModuleText.LLM_LYRICS_THINKING_EFFORT_SUMMARY,
         )
@@ -990,739 +786,59 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.BOTTOM_BAR_EXPAND_REBOUND to ModuleText.BOTTOM_BAR_EXPAND_REBOUND_SUMMARY,
         )
     }
-    val message = if (page == EmbeddedSettingsPage.MAIN) {
-        listOf(ModuleText.PRIVATE_STORAGE_NOTICE, ModuleText.RESTART_NOTICE,
-            ModuleText.LSPOSED_HELP_SCOPE, ModuleText.LSPOSED_HELP_RESTART).joinToString("\n\n") { localizedText(it) }
-    } else {
-        entries.joinToString("\n\n") { (title, summary) -> "${localizedText(title)}\n${localizedText(summary)}" } +
-            "\n\n" + localizedText(ModuleText.RESTART_NOTICE)
-    }
-    embeddedDialogBuilder(activity)
-        .setTitle(localizedText(if (page == EmbeddedSettingsPage.MAIN) ModuleText.SETTINGS_HELP else ModuleText.SETTINGS_DETAILS))
-        .setMessage(message)
-        .setPositiveButton(localizedText(ModuleText.GOT_IT), null)
-        .show()
-}
-
-
-internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
-        activity: Activity,
-        parent: LinearLayout,
-        settings: ModuleSettings,
-        song: CurrentSongDetails?,
-        onSettingsChanged: (ModuleSettings) -> Unit,
-        onOpenLlmLyrics: () -> Unit,
-        onOpenAutomaticLyrics: () -> Unit,
-    ) {
-        val entries = runCatching { controller.lyricsEntries() }.getOrDefault(emptyList())
-        customLyricsListState.update(entries, customLyricsSearchQuery)
-
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT),
-            localizedText(ModuleText.CUSTOM_LYRICS_REPLACEMENT_SUMMARY),
-            settings.customLyricsEnabled,
-            compactWidePadding = true,
-        ) {
-            onSettingsChanged(settings.copy(customLyricsEnabled = it))
-            // Re-render so the dependent automatic-lyrics switch changes its
-            // enabled state without leaving the custom-lyrics page.
-            pageRefresh?.invoke()
-        })
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedNavigationRow(
-            activity = activity,
-            title = localizedText(ModuleText.AUTO_LYRICS),
-            summary = localizedText(ModuleText.SHORT_AUTO_LYRICS_SUMMARY),
-            compactWidePadding = true,
-        ) {
-            onSettingsChanged(settings.copy(automaticLyricsEnabled = it))
-            // The LLM fallback tier sits below automatic completion.
-            pageRefresh?.invoke()
-        })
-        // The fixed AMLL / AM-Lyrics sources are what automatic completion normally hits, and a
-        // self-hosted mirror is tried before the public hosts: the same 50 KB document measured
-        // ~65 ms locally against 470-540 ms cross-border. Same row widget as the LLM endpoint,
-        // with the URL-specific notice.
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedTextValueRow(
-            activity = activity,
-            title = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL),
-            value = settings.customLyricsSourceBaseUrl,
-            emptySummary = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_NOT_CONFIGURED),
-            hint = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_HINT),
-            maxLength = ModuleSettings.MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH,
-            notice = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_SUMMARY),
-        ) { value ->
-            val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(value)
-            // A half-typed or non-http value must never silently redirect every lyric request,
-            // so it is dropped and the user is told why instead.
-            if (value.isNotBlank() && normalized.isEmpty()) {
-                Toast.makeText(
-                    activity,
-                    localizedText(ModuleText.LLM_LYRICS_TEST_INVALID_ENDPOINT),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-            onSettingsChanged(settings.copy(customLyricsSourceBaseUrl = normalized))
-            // Re-render so the row summary shows the saved address.
-            pageRefresh?.invoke()
-        })
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedNavigationRow(
-            activity = activity,
-            title = localizedText(ModuleText.LLM_LYRICS_FALLBACK),
-            summary = localizedText(ModuleText.SHORT_LLM_LYRICS_SUMMARY),
-            compactWidePadding = true,
-            chevronTint = EmbeddedSettingsPalette.Light.accent,
-            onClick = onOpenLlmLyrics,
-        ))
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT),
-            localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT_SUMMARY),
-            settings.onlineLyricsSupplementEnabled,
-            enabled = settings.customLyricsEnabled,
-            compactWidePadding = true,
-        ) {
-            onSettingsChanged(settings.copy(onlineLyricsSupplementEnabled = it))
-            // Re-render so the source rows below enable/disable with the master.
-            pageRefresh?.invoke()
-        })
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION),
-            localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION_SUMMARY),
-            settings.onlineLyricsTranslationEnabled,
-            enabled = settings.customLyricsEnabled && settings.automaticLyricsEnabled,
-            compactWidePadding = true,
-        ) {
-            onSettingsChanged(settings.copy(onlineLyricsTranslationEnabled = it))
-            // The pronunciation switch sits below the translation switch.
-            pageRefresh?.invoke()
-        })
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN),
-            localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN_SUMMARY),
-            settings.onlineLyricsHideMandarinPinyinEnabled,
-            enabled = settings.customLyricsEnabled &&
-                settings.automaticLyricsEnabled &&
-                settings.onlineLyricsTranslationEnabled,
-            compactWidePadding = true,
-        ) {
-            onSettingsChanged(settings.copy(onlineLyricsHideMandarinPinyinEnabled = it))
-        })
-
-        // The translation/pronunciation pass borrows the same provider chain as
-        // the supplement, so the chain rows stay usable while either opt-in is on.
-        val chainEnabled = settings.customLyricsEnabled &&
-            (settings.onlineLyricsSupplementEnabled || settings.onlineLyricsTranslationEnabled)
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER),
-            localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER_SUMMARY),
-            settings.onlineLyricsAutomaticOrderEnabled,
-            enabled = chainEnabled,
-            compactWidePadding = true,
-        ) { onSettingsChanged(settings.copy(onlineLyricsAutomaticOrderEnabled = it)) })
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST),
-            localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST_SUMMARY),
-            settings.onlineLyricsGlobalBestEnabled,
-            enabled = chainEnabled,
-            compactWidePadding = true,
-        ) { onSettingsChanged(settings.copy(onlineLyricsGlobalBestEnabled = it)) })
-
-        OnlineLyricSources.DEFAULT_ORDER.forEach { sourceId ->
-            parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-            parent.addView(embeddedSettingRow(
-                activity,
-                embeddedOnlineLyricsSourceLabel(sourceId),
-                localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY),
-                settings.onlineLyricsSourceEnabled(sourceId),
-                enabled = chainEnabled,
-                compactWidePadding = true,
-            ) {
-                onSettingsChanged(settings.withOnlineLyricsSourceEnabled(sourceId, it))
-            })
-        }
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-
-        val lyricsContent = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            clipChildren = false
-
-            addView(
-                embeddedCompactLyricsActionBar(
-                    activity = activity,
-                    onAdd = { showLyricsEditor(activity, null as CustomLyricsUiGroup?, song) },
-                    onTtml = {
-                        launchSafPicker(
-                            activity,
-                            EmbeddedSafOperation.Ttml,
-                            "application/xml",
-                            arrayOf("application/ttml+xml", "application/xml", "text/xml", "text/plain"),
-                        )
-                    },
-                    onUpdate = { updateEmbeddedLyrics(activity) },
-                    onBackup = { anchor -> showEmbeddedBackupRestoreMenu(activity, anchor) },
-                ),
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(activity, 76),
-                ).apply {
-                    bottomMargin = dp(activity, if (isEmbeddedPhone(activity)) 12 else 14)
-                },
-            )
-
-            val search = EditText(activity).apply {
-
-                bindEmbeddedInputTheme(activity)
-                hint = localizedText(ModuleText.SEARCH_LYRICS)
-                textSize = 14f
-                inputType = InputType.TYPE_CLASS_TEXT
-                imeOptions = EditorInfo.IME_ACTION_SEARCH
-                showSoftInputOnFocus = true
-                isSingleLine = true
-                includeFontPadding = false
-                setText(customLyricsSearchQuery)
-                setPadding(dp(activity, 12), 0, dp(activity, 12), 0)
-                setEmbeddedTextColor(activity) { colors -> colors.onSurface }
-                setEmbeddedHintColor(activity) { colors -> colors.muted }
-                background = null
-            }
-            addView(FrameLayout(activity).apply {
-                bindEmbeddedTheme(activity) { colors ->
-                    background = EmbeddedG3Drawable().apply {
-                        setColor(colors.raised)
-                        setStroke(dp(activity, 1), colors.outline)
-                        cornerRadius = dp(activity, 12).toFloat()
-                    }
-                }
-                addView(ImageView(activity).apply {
-                    setEmbeddedImageDrawable(activity,
-                        EmbeddedGlyphDrawable(
-                            EmbeddedGlyphKind.Search,
-                            EmbeddedSettingsPalette.Light.onSurfaceVariant,
-                        ),
-                    )
-                    contentDescription = null
-                    setPadding(dp(activity, 12), dp(activity, 12), dp(activity, 8), dp(activity, 12))
-                }, FrameLayout.LayoutParams(embeddedSearchFieldHeight(activity), embeddedSearchFieldHeight(activity)))
-                search.setPadding(embeddedSearchFieldHeight(activity), 0, dp(activity, 12), 0)
-                addView(search, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    embeddedSearchFieldHeight(activity),
-                ))
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                embeddedSearchFieldHeight(activity),
-            ).apply {
-                topMargin = dp(activity, 4)
-                bottomMargin = dp(activity, if (isEmbeddedPhone(activity)) 8 else 16)
-            })
-            addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, dp(activity, 6))
-                addView(TextView(activity).apply {
-                    text = localizedText(ModuleText.CONFIGURED)
-                    textSize = embeddedTextSize(activity, 14f, 13f)
-                    setEmbeddedTextColor(activity) { colors -> colors.text }
-                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                }, LinearLayout.LayoutParams(0, dp(activity, 28), 1f))
-                addView(TextView(activity).apply {
-                    text = localizedText(ModuleText.SONG_COUNT, entries.size)
-                    textSize = embeddedTextSize(activity, 13f, 13f)
-                    gravity = Gravity.CENTER_VERTICAL or Gravity.END
-                    setEmbeddedTextColor(activity) { colors -> colors.secondary }
-                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 28)))
-            }, matchWidthWrapContent())
-            val entriesRegion = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                clipChildren = false
-            }
-            addView(entriesRegion, matchWidthWrapContent())
-
-            fun renderEntries() {
-                entriesRegion.removeAllViews()
-                val state = customLyricsListState
-                if (state.totalCount == 0) {
-                    entriesRegion.addView(LinearLayout(activity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        gravity = Gravity.CENTER_HORIZONTAL
-                        setPadding(dp(activity, 16), dp(activity, 42), dp(activity, 16), dp(activity, 48))
-                        addView(ImageView(activity).apply {
-                            setEmbeddedImageDrawable(activity,
-                                if (entries.isEmpty()) embeddedSvgDrawable(EmbeddedSvgIcon.CustomLyrics, activity)
-                                else EmbeddedGlyphDrawable(
-                                    EmbeddedGlyphKind.DocumentSearch,
-                                    EmbeddedSettingsPalette.Light.disabledText,
-                                ),
-                            )
-                            contentDescription = null
-                            setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
-                        }, LinearLayout.LayoutParams(dp(activity, 56), dp(activity, 56)))
-                        addView(TextView(activity).apply {
-                            text = if (entries.isEmpty()) localizedText(ModuleText.NO_CUSTOM_LYRICS) else localizedText(ModuleText.NO_SEARCH_RESULTS)
-                            textSize = 15f
-                            gravity = Gravity.CENTER
-                            setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
-                            setSingleLine(false)
-                            setPadding(0, dp(activity, 8), 0, 0)
-                        }, matchWidthWrapContent())
-                        addView(TextView(activity).apply {
-                            text = if (entries.isEmpty()) localizedText(ModuleText.ADD_LYRICS_EMPTY_HINT) else localizedText(ModuleText.SEARCH_LYRICS_EMPTY_HINT)
-                            textSize = 12.5f
-                            gravity = Gravity.CENTER
-                            setEmbeddedTextColor(activity) { colors -> colors.mutedText }
-                            setSingleLine(false)
-                            setPadding(0, dp(activity, 4), 0, 0)
-                        }, matchWidthWrapContent())
-                    }, matchWidthWrapContent())
-                    return
-                }
-                val visibleGroups = state.visibleGroups
-                visibleGroups.forEachIndexed { index, group ->
-                    entriesRegion.addView(embeddedCustomLyricsEntryRow(activity, group, song))
-                    if (index < visibleGroups.lastIndex) entriesRegion.addView(View(activity).apply {
-                        alpha = 0.35f
-                        setEmbeddedBackgroundColor(activity) { colors -> colors.outline }
-                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 1)).apply {
-                        marginStart = dp(activity, if (isEmbeddedPhone(activity)) 12 else 8)
-                        marginEnd = dp(activity, 8)
-                    })
-                }
-                entriesRegion.addView(TextView(activity).apply {
-                    text = localizedText(ModuleText.LYRICS_VISIBLE_COUNT, state.visibleCount, state.totalCount)
-                    textSize = 13f
-                    setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
-                    setPadding(0, dp(activity, 8), 0, dp(activity, 12))
-                })
-                if (state.hasMore) {
-                    entriesRegion.addView(LinearLayout(activity).apply {
-                        orientation = embeddedActionOrientation(activity)
-                        setPadding(0, 0, 0, dp(activity, 12))
-                        addView(embeddedActionButton(activity, localizedText(ModuleText.LOAD_MORE)) {
-                            customLyricsListState.loadMore()
-                            renderEntries()
-                        }, embeddedActionButtonParams(activity))
-                    }, matchWidthWrapContent())
-                }
-            }
-
-            search.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                override fun afterTextChanged(s: Editable?) {
-                    customLyricsSearchQuery = s?.toString().orEmpty()
-                    customLyricsListState.setQuery(customLyricsSearchQuery)
-                    renderEntries()
-                }
-            })
-            renderEntries()
-        }
-        parent.addView(lyricsContent)
-
-        // The one-shot clear-all action, mirroring the 「清空检索库」 precedent: a
-        // navigation row, a count-carrying confirmation, then [runAsync]'s toast
-        // and page re-render.
-        parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 12 else 16))
-        parent.addView(embeddedNavigationRow(
-            activity,
-            localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
-            if (entries.isEmpty()) {
-                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL)
-            } else {
-                localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, entries.size)
-            },
-        ) {
-            confirmEmbeddedCustomLyricsClear(activity, entries.size) {
-                runAsync(activity) { controller.clearLyrics() }
-            }
-        })
-    }
-
-
-internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(
-    activity: Activity,
-    entryCount: Int,
-    onConfirmed: () -> Unit,
-) {
-    embeddedDialogBuilder(activity)
-        .setTitle(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS))
-        .setMessage(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM, entryCount))
-        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
-        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
-        .show()
-}
-
-
-private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
-    activity: Activity,
-    parent: LinearLayout,
-    settings: ModuleSettings,
-    onSettingsChanged: (ModuleSettings) -> Unit,
-) {
-    val llmFallbackActive = settings.customLyricsEnabled && settings.automaticLyricsEnabled
-    val settingsGroup = embeddedCard(activity, null) {
-        setPadding(dp(activity, 8), dp(activity, 8), dp(activity, 8), dp(activity, 8))
-    }
-    parent.addView(settingsGroup, matchWidthWrapContent())
-    settingsGroup.addView(embeddedSettingRow(
-        activity,
-        localizedText(ModuleText.LLM_LYRICS_ENABLED),
-        localizedText(
-            if (llmFallbackActive) ModuleText.LLM_LYRICS_ENABLED_SUMMARY
-            else ModuleText.LLM_LYRICS_REQUIRES_AUTO,
-        ),
-        settings.llmLyricsEnabled,
-        enabled = llmFallbackActive,
-        compactWidePadding = true,
-    ) {
-        onSettingsChanged(settings.copy(llmLyricsEnabled = it))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    settingsGroup.addView(embeddedTextValueRow(
+    val heading = if (page == EmbeddedSettingsPage.MAIN) ModuleText.SETTINGS_HELP else ModuleText.SETTINGS_DETAILS
+    showEmbeddedMiuixDialog(
         activity = activity,
-        title = localizedText(ModuleText.LLM_LYRICS_BASE_URL),
-        value = settings.llmLyricsBaseUrl,
-        emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_BASE_URL),
-        maxLength = ModuleSettings.MAX_LLM_LYRICS_BASE_URL_LENGTH,
-        notice = localizedText(ModuleText.LLM_LYRICS_BASE_URL_SUMMARY),
-    ) { value ->
-        onSettingsChanged(settings.copy(llmLyricsBaseUrl = value))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    settingsGroup.addView(embeddedTextValueRow(
-        activity = activity,
-        title = localizedText(ModuleText.LLM_LYRICS_API_KEY),
-        value = settings.llmLyricsApiKey,
-        emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_API_KEY),
-        maxLength = ModuleSettings.MAX_LLM_LYRICS_API_KEY_LENGTH,
-        notice = localizedText(ModuleText.LLM_LYRICS_API_KEY_SUMMARY),
-        password = true,
-        masked = true,
-    ) { value ->
-        onSettingsChanged(settings.copy(llmLyricsApiKey = value))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    settingsGroup.addView(embeddedTextValueRow(
-        activity = activity,
-        title = localizedText(ModuleText.LLM_LYRICS_MODEL),
-        value = settings.llmLyricsModel,
-        emptySummary = localizedText(ModuleText.LLM_LYRICS_NOT_CONFIGURED),
-        hint = localizedText(ModuleText.LLM_LYRICS_INPUT_HINT_MODEL),
-        maxLength = ModuleSettings.MAX_LLM_LYRICS_MODEL_LENGTH,
-        notice = localizedText(ModuleText.LLM_LYRICS_MODEL_SUMMARY),
-    ) { value ->
-        onSettingsChanged(settings.copy(llmLyricsModel = value))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    settingsGroup.addView(embeddedSettingRow(
-        activity,
-        localizedText(ModuleText.LLM_LYRICS_THINKING),
-        localizedText(ModuleText.LLM_LYRICS_THINKING_SUMMARY),
-        settings.llmLyricsThinkingEnabled,
-        compactWidePadding = true,
-    ) {
-        onSettingsChanged(settings.copy(llmLyricsThinkingEnabled = it))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    // The boundary pass reuses the same channel; it is only meaningful once that channel is on.
-    settingsGroup.addView(embeddedSettingRow(
-        activity,
-        localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY),
-        localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY_SUMMARY),
-        settings.llmPronunciationBoundaryEnabled,
-        enabled = settings.llmLyricsEnabled,
-        compactWidePadding = true,
-    ) {
-        onSettingsChanged(settings.copy(llmPronunciationBoundaryEnabled = it))
-        pageRefresh?.invoke()
-    })
-    settingsGroup.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-    // Page edits replace this config snapshot; detaching the old page cancels its check.
-    addLlmConnectionTestButton(activity, settingsGroup, LlmLyricsConfig(
-        baseUrl = settings.llmLyricsBaseUrl,
-        apiKey = settings.llmLyricsApiKey,
-        model = settings.llmLyricsModel,
-        thinkingEnabled = settings.llmLyricsThinkingEnabled,
-        thinkingEffort = settings.llmLyricsThinkingEffort,
-    ))
-}
-
-
-internal fun EmbeddedSettingsHost.embeddedCustomLyricsEntryRow(
-        activity: Activity,
-        group: CustomLyricsUiGroup,
-        song: CurrentSongDetails?,
-    ): View = LinearLayout(activity).apply {
-        val entry = group.primary
-        val contentInset = dp(activity, if (isEmbeddedPhone(activity)) 12 else 8)
-        val moreIconSize = dp(activity, 28)
-        val moreIconEndSpace = EmbeddedSettingsSvgAssets.endInset(EmbeddedSvgIcon.MoreVertical, moreIconSize)
-        orientation = LinearLayout.VERTICAL
-        clipChildren = false
-        clipToPadding = false
-        // Match the visible dots' end inset to the text's start inset.
-        setPaddingRelative(
-            contentInset,
-            dp(activity, 10),
-            0,
-            dp(activity, 10),
-        )
-        minimumHeight = dp(activity, 68)
-        val artist = song
-            ?.takeIf { it.appleMusicId == entry.appleMusicId }
-            ?.artist
-            ?.takeIf(String::isNotBlank)
-        val secondary = buildString {
-            artist?.let {
-                append(it)
-                append(" · ")
+        title = localizedText(heading),
+        footer = { dismiss ->
+            Column(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                EmbeddedDialogActions(localizedText(ModuleText.GOT_IT), dismiss)
             }
-            append("AM ID: ")
-            append(entry.appleMusicId)
-            if (group.entries.size > 1) {
-                append(localizedText(ModuleText.LYRICS_ID_COUNT, group.entries.size))
-            }
-        }
-        addView(LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false
-            addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(activity).apply {
-                    text = entry.displayName.ifBlank { entry.appleMusicId.toString() }
-                    textSize = 16f
-                    setEmbeddedTextColor(activity) { colors -> colors.onSurface }
-                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                    setSingleLine(false)
-                    maxLines = 2
-                }, matchWidthWrapContent())
-                addView(TextView(activity).apply {
-                    text = secondary
-                    textSize = 12f
-                    setEmbeddedTextColor(activity) { colors -> colors.onSurfaceVariant }
-                    setPadding(0, dp(activity, 4), 0, 0)
-                    setSingleLine(false)
-                    maxLines = 3
-                }, matchWidthWrapContent())
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(activity, 4)
-            })
-            addView(Switch(activity).apply {
-                isChecked = group.allEnabled
-                contentDescription = localizedText(ModuleText.LYRICS_TOGGLE_ACCESSIBILITY, entry.displayName)
-                bindEmbeddedSwitchTheme(activity)
-                setOnCheckedChangeListener { _, checked ->
-                    runAsync(activity) { controller.setLyricsEnabled(group.appleMusicIds, checked) }
-                }
-            }, LinearLayout.LayoutParams(dp(activity, if (isEmbeddedPhone(activity)) 56 else 48), dp(activity, 44)))
-            addView(object : FrameLayout(activity) {
-                override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-                    super.onLayout(changed, left, top, right, bottom)
-                    val icon = getChildAt(0) ?: return
-                    foreground?.setHotspotBounds(icon.left, 0, icon.right, height)
-                    drawableHotspotChanged(icon.left + icon.width / 2f, height / 2f)
-                }
-
-                override fun drawableHotspotChanged(x: Float, y: Float) {
-                    val icon = getChildAt(0)
-                    super.drawableHotspotChanged(
-                        icon?.let { it.left + it.width / 2f } ?: x,
-                        icon?.let { it.top + it.height / 2f } ?: y,
-                    )
-                }
-            }.apply {
-                contentDescription = localizedText(ModuleText.MORE_LYRICS_ACTIONS)
-                isClickable = true
-                isFocusable = true
-                clipChildren = false
-                addView(ImageView(activity).apply {
-                    setEmbeddedImageDrawable(activity,
-                        EmbeddedGlyphDrawable(
-                            EmbeddedGlyphKind.MoreVertical,
-                            EmbeddedSettingsPalette.Light.onSurfaceVariant,
-                        ),
-                    )
-                    scaleType = ImageView.ScaleType.CENTER
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, FrameLayout.LayoutParams(moreIconSize, moreIconSize, Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                    marginEnd = contentInset - kotlin.math.round(moreIconEndSpace).toInt()
-                })
-                // A bounded mask cuts off the ripple near the content edge.
-                stateListAnimator = null
-                val ripple = RippleDrawable(ColorStateList.valueOf(Color.TRANSPARENT), null, null).apply {
-                    radius = dp(activity, 18)
-                }
-                foreground = ripple
-                bindEmbeddedTheme(activity) { colors ->
-                    // Recolour the existing ripple without cancelling its release animation.
-                    ripple.setColor(ColorStateList.valueOf(if (colors.isDark) 0x24FFFFFF else 0x14000000))
-                }
-                setOnClickListener { showEmbeddedLyricsOverflowMenu(activity, group, song, this) }
-            }, LinearLayout.LayoutParams(dp(activity, 44), dp(activity, 44)))
-        }, matchWidthWrapContent())
-    }
-
-
-internal fun EmbeddedSettingsHost.confirmEmbeddedLyricsDelete(activity: Activity, group: CustomLyricsUiGroup) {
-        val entry = group.primary
-        embeddedDialogBuilder(activity)
-            .setMessage(
-                localizedText(ModuleText.DELETE_LYRICS_CONFIRM,
-                    entry.displayName.ifBlank { entry.appleMusicId.toString() }, group.entries.size),
-            )
-            .setNegativeButton(localizedText(ModuleText.CANCEL), null)
-            .setPositiveButton(localizedText(ModuleText.DELETE)) { _, _ ->
-                runAsync(activity) { controller.deleteLyrics(group.appleMusicIds) }
-            }
-            .show()
-    }
-
-
-internal fun EmbeddedSettingsHost.confirmEmbeddedMetadataCacheClear(
-    activity: Activity,
-    onConfirmed: () -> Unit,
-) {
-    embeddedDialogBuilder(activity)
-        .setTitle(localizedText(ModuleText.REGION_CACHE_CLEAR))
-        .setMessage(localizedText(ModuleText.REGION_CACHE_CLEAR_CONFIRM))
-        .setNegativeButton(localizedText(ModuleText.CANCEL), null)
-        .setPositiveButton(localizedText(ModuleText.CLEAR)) { _, _ -> onConfirmed() }
-        .show()
-}
-
-
-internal fun EmbeddedSettingsHost.showEmbeddedLyricsOverflowMenu(
-        activity: Activity,
-        group: CustomLyricsUiGroup,
-        song: CurrentSongDetails?,
-        anchor: View,
+        },
     ) {
-        showEmbeddedActionMenu(activity, anchor, listOf(
-            localizedText(ModuleText.EDIT) to { showLyricsEditor(activity, group, song) },
-            localizedText(ModuleText.DELETE) to { confirmEmbeddedLyricsDelete(activity, group) },
-            localizedText(ModuleText.COPY_MUSIC_ID) to {
-                val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                clipboard?.setPrimaryClip(
-                    android.content.ClipData.newPlainText(
-                        "Apple Music ID",
-                        group.appleMusicIds.joinToString(","),
-                    ),
+        if (page == EmbeddedSettingsPage.MAIN) {
+            listOf(ModuleText.PRIVATE_STORAGE_NOTICE, ModuleText.RESTART_NOTICE,
+                ModuleText.LSPOSED_HELP_SCOPE, ModuleText.LSPOSED_HELP_RESTART).forEach {
+                Text(
+                    text = localizedText(it),
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Start,
                 )
-                Toast.makeText(activity, localizedText(ModuleText.MUSIC_ID_COPIED), Toast.LENGTH_SHORT).show()
-            },
-        ), destructiveIndex = 1)
-    }
-
-
-internal fun EmbeddedSettingsHost.embeddedCustomLyricsSourceName(source: String): String = when (source) {
-        CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)
-        CustomLyricsSources.AMLL -> "AMLL"
-        CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.AM_LYRICS_REPOSITORY)
-        CustomLyricsSources.LUNABEAT -> "Lunabeat"
-        CustomLyricsSources.KUWO -> "酷我"
-        CustomLyricsSources.NETEASE -> "网易云"
-        CustomLyricsSources.QQ -> "QQ 音乐"
-        CustomLyricsSources.KUGOU -> "酷狗"
-        else -> localizedText(ModuleText.MANUAL_TTML)
-    }
-
-/** Display name for one selectable online chain source id. */
-internal fun embeddedOnlineLyricsSourceLabel(sourceId: String): String = when (sourceId) {
-    CustomLyricsSources.NETEASE -> "网易云音乐"
-    CustomLyricsSources.QQ -> "QQ 音乐"
-    CustomLyricsSources.KUWO -> "酷我音乐"
-    CustomLyricsSources.KUGOU -> "酷狗音乐"
-    else -> sourceId
-}
-
-
-private fun EmbeddedSettingsHost.addLlmConnectionTestButton(
-    activity: Activity,
-    parent: LinearLayout,
-    config: LlmLyricsConfig,
-) {
-    val cancelled = AtomicBoolean(false)
-    val running = AtomicBoolean(false)
-    val hostReference = WeakReference(this)
-    val activityReference = WeakReference(activity)
-    val main = android.os.Handler(android.os.Looper.getMainLooper())
-    val idleLabel = localizedText(ModuleText.LLM_LYRICS_TEST_CONNECTION)
-    lateinit var button: android.widget.Button
-    button = embeddedActionButton(activity, idleLabel) {
-        if (cancelled.get() || !running.compareAndSet(false, true)) return@embeddedActionButton
-        button.isEnabled = false
-        button.alpha = 0.55f
-        button.text = localizedText(ModuleText.LLM_LYRICS_TEST_RUNNING)
-        val buttonReference = WeakReference(button)
-        Thread({
-            val result = runCatching {
-                LlmLyricsClient().testConnection(config) { cancelled.get() }
-            }.getOrElse { LlmLyricsClient.ConnectionResult("transport") }
-            main.post {
-                running.set(false)
-                if (cancelled.get()) return@post
-                val target = buttonReference.get()?.takeIf { it.isAttachedToWindow } ?: return@post
-                val owner = activityReference.get()?.takeUnless { it.isFinishing || it.isDestroyed } ?: return@post
-                val host = hostReference.get() ?: return@post
-                if (host.dialogReference?.get()?.isShowing != true) return@post
-                target.isEnabled = true
-                target.alpha = 1f
-                target.text = idleLabel
-                if (result.failureReason != "cancelled") {
-                    host.embeddedDialogBuilder(owner)
-                        .setTitle(idleLabel)
-                        .setMessage(host.llmConnectionResultText(result))
-                        .setPositiveButton(host.localizedText(ModuleText.CLOSE), null)
-                        .show()
+            }
+        } else {
+            // SmallTitle is a page-group label with its own margins and subdued colours.
+            // Reading content uses the dialog's single inset and normal foreground instead.
+            entries.forEach { (title, summary) ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = localizedText(title),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold),
+                        color = MiuixTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Start,
+                    )
+                    Text(
+                        text = localizedText(summary),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MiuixTheme.textStyles.body1,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Start,
+                    )
                 }
             }
-        }, "ampp-llm-connection-test").apply { isDaemon = true }.start()
-    }
-    button.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(view: View) = Unit
-        override fun onViewDetachedFromWindow(view: View) {
-            cancelled.set(true)
+            HorizontalDivider(Modifier.fillMaxWidth().padding(vertical = 4.dp))
+            Text(
+                text = localizedText(ModuleText.RESTART_NOTICE),
+                modifier = Modifier.fillMaxWidth(),
+                style = MiuixTheme.textStyles.body1,
+                color = MiuixTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Start,
+            )
         }
-    })
-    parent.addView(button, matchWidthWrapContent())
+    }
 }
-
-private fun EmbeddedSettingsHost.llmConnectionResultText(result: LlmLyricsClient.ConnectionResult): String =
-    when (result.failureReason) {
-        null -> localizedText(ModuleText.LLM_LYRICS_TEST_SUCCESS)
-        "invalid_endpoint" -> localizedText(ModuleText.LLM_LYRICS_TEST_INVALID_ENDPOINT)
-        "missing_model" -> localizedText(ModuleText.LLM_LYRICS_TEST_MISSING_MODEL)
-        "http_status" -> when (result.httpStatus) {
-            401, 403 -> localizedText(ModuleText.LLM_LYRICS_TEST_AUTH_FAILED, result.httpStatus)
-            404 -> localizedText(ModuleText.LLM_LYRICS_TEST_NOT_FOUND)
-            429 -> localizedText(ModuleText.LLM_LYRICS_TEST_RATE_LIMITED)
-            else -> localizedText(ModuleText.LLM_LYRICS_TEST_HTTP_FAILED, result.httpStatus)
-        }
-        "timeout" -> localizedText(ModuleText.LLM_LYRICS_TEST_TIMEOUT)
-        "dns" -> localizedText(ModuleText.LLM_LYRICS_TEST_DNS_FAILED)
-        "tls" -> localizedText(ModuleText.LLM_LYRICS_TEST_TLS_FAILED)
-        "connect", "network", "connection_unavailable" -> localizedText(ModuleText.LLM_LYRICS_TEST_NETWORK_FAILED)
-        "invalid_response", "response_limit" -> localizedText(ModuleText.LLM_LYRICS_TEST_INVALID_RESPONSE)
-        else -> localizedText(ModuleText.LLM_LYRICS_TEST_FAILED)
-    }
-

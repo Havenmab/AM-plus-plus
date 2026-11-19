@@ -1,17 +1,21 @@
 package dev.amenhancer.module.hook
+
 import android.app.Application
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.OnlineLyricSourcePolicy
 import dev.amenhancer.module.model.CustomLyricsEntry
 import io.github.proify.lyricon.amprovider.xposed.MediaMetadataCache
+import dev.amenhancer.module.settings.EmbeddedRuntimeSettingsController
+import dev.amenhancer.module.ui.showEmbeddedLyricsMenu
 
 internal fun assembleAppleMusicTarget(
     config: TargetConfigClient,
     application: Application,
     classLoader: ClassLoader,
     lyricsTypefaceSession: LyricsTypefaceResourceBinding,
-    currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache(),
+    currentSong: CurrentSongIdentityCache,
+    settingsController: EmbeddedRuntimeSettingsController,
 ): TargetAdaptation {
     val settings = config.settings()
     // One capture registry serves the whole target: the composite reads the
@@ -25,6 +29,8 @@ internal fun assembleAppleMusicTarget(
         }.getOrDefault(emptySet())
         createAutoLyricsRuntime(
             application = application,
+            content = settingsController.content,
+            lunabeatCatalogCache = settingsController.lunabeatCatalogCache,
             suppressedIds = suppressed,
             onlineLyricsSupplementEnabled = settings.onlineLyricsSupplementEnabled,
             onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled,
@@ -55,5 +61,15 @@ internal fun assembleAppleMusicTarget(
         automatic,
         timingObservations,
         nativeLyricOverlay,
+        onOpenLyricsMenu = { activity ->
+            val playback = automatic?.playback
+            if (playback != null) {
+                showEmbeddedLyricsMenu(
+                    activity, currentSong, playback, config::settings,
+                    writeSourceOrder = settingsController::saveAutomaticLyricsSourceOrder,
+                    writeAutomaticLyricsEnabled = settingsController::saveAutomaticLyricsEnabled,
+                )
+            }
+        },
     )
 }

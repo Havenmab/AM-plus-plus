@@ -13,6 +13,8 @@ data class LyricHttpResponse(
     val headers: Map<String, String> = emptyMap(),
 )
 
+enum class LyricFetchFailure { NOT_FOUND, REQUEST, INVALID }
+
 interface LyricHttpTransport {
     fun get(url: String): String?
 
@@ -77,6 +79,7 @@ class HttpLyricTransport(
     private val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
     private val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
     private val maxResponseBytes: Int = DEFAULT_MAX_RESPONSE_BYTES,
+    private val onFailure: ((LyricFetchFailure) -> Unit)? = null,
 ) : LyricHttpTransport {
 
     override fun get(url: String): String? =
@@ -168,13 +171,19 @@ class HttpLyricTransport(
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED) {
                 return@runCatching LyricHttpResponse(status, body = null, etag = connection.etag())
             }
-            if (status != HttpURLConnection.HTTP_OK) return@runCatching null
-            val bytes = readBounded(connection) ?: return@runCatching null
+            if (status != HttpURLConnection.HTTP_OK) {
+                onFailure?.invoke(if (status == HttpURLConnection.HTTP_NOT_FOUND) LyricFetchFailure.NOT_FOUND else LyricFetchFailure.REQUEST)
+                return@runCatching null
+            }
+            val bytes = readBounded(connection) ?: run {
+                onFailure?.invoke(LyricFetchFailure.INVALID)
+                return@runCatching null
+            }
             LyricHttpResponse(status, bytes, connection.etag(), connection.responseHeaders())
         } finally {
             connection.disconnect()
         }
-    }.getOrNull()
+    }.onFailure { onFailure?.invoke(LyricFetchFailure.REQUEST) }.getOrNull()
 
     private fun HttpURLConnection.etag(): String? = getHeaderField("ETag")?.trim()
 

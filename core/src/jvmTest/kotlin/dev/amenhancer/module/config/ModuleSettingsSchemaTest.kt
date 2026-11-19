@@ -3,6 +3,7 @@ package dev.amenhancer.module.config
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
+import dev.amenhancer.module.model.LlmLyricsThinkingFormat
 import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -110,6 +111,7 @@ class ModuleSettingsSchemaTest {
                 "phone_liquid_glass_mini_sink_bounce_dp" to 4,
                 "future_blur_enabled" to false,
                 "cjk_karaoke_animation_enabled" to true,
+                "lyrics_pronunciation_enabled" to true,
                 "lyric_effects_optimization_enabled" to false,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
@@ -125,6 +127,7 @@ class ModuleSettingsSchemaTest {
                 "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "automatic_lyrics_source_order" to "am-native,amll-ttml-db,am-lyrics,lunabeat-ttml-hub",
                 "custom_lyrics_source_base_url" to "",
                 "online_lyrics_supplement_enabled" to false,
                 "online_lyrics_source_netease_enabled" to true,
@@ -137,13 +140,15 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_translation_enabled" to false,
                 "online_lyrics_hide_mandarin_pinyin" to false,
                 "automatic_lyrics_prefer_native" to true,
-                "automatic_lyrics_source_order" to "amll-ttml-db,am-lyrics,am-native,lunabeat-ttml-hub",
                 "llm_lyrics_enabled" to false,
+                "llm_lyrics_transliteration_enabled" to false,
                 "llm_lyrics_base_url" to "",
                 "llm_lyrics_api_key" to "",
                 "llm_lyrics_model" to "",
+                "llm_lyrics_custom_headers" to "",
                 "llm_lyrics_thinking_enabled" to false,
                 "llm_pronunciation_boundary_enabled" to false,
+                "llm_lyrics_thinking_format" to "none",
                 "llm_lyrics_thinking_effort" to "default",
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
@@ -183,6 +188,7 @@ class ModuleSettingsSchemaTest {
                 "phone_liquid_glass_mini_sink_bounce_dp" to 4,
                 "future_blur_enabled" to true,
                 "cjk_karaoke_animation_enabled" to true,
+                "lyrics_pronunciation_enabled" to true,
                 "lyric_effects_optimization_enabled" to false,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
@@ -198,6 +204,7 @@ class ModuleSettingsSchemaTest {
                 "metadata_cache_clear_generation" to 0L,
                 "custom_lyrics_enabled" to false,
                 "automatic_lyrics_enabled" to true,
+                "automatic_lyrics_source_order" to "am-native,amll-ttml-db,am-lyrics,lunabeat-ttml-hub",
                 "custom_lyrics_source_base_url" to "",
                 "online_lyrics_supplement_enabled" to false,
                 "online_lyrics_source_netease_enabled" to true,
@@ -210,13 +217,15 @@ class ModuleSettingsSchemaTest {
                 "online_lyrics_translation_enabled" to false,
                 "online_lyrics_hide_mandarin_pinyin" to false,
                 "automatic_lyrics_prefer_native" to true,
-                "automatic_lyrics_source_order" to "amll-ttml-db,am-lyrics,am-native,lunabeat-ttml-hub",
                 "llm_lyrics_enabled" to false,
+                "llm_lyrics_transliteration_enabled" to false,
                 "llm_lyrics_base_url" to "",
                 "llm_lyrics_api_key" to "",
                 "llm_lyrics_model" to "",
+                "llm_lyrics_custom_headers" to "",
                 "llm_lyrics_thinking_enabled" to false,
                 "llm_pronunciation_boundary_enabled" to false,
+                "llm_lyrics_thinking_format" to "none",
                 "llm_lyrics_thinking_effort" to "default",
                 "lyrics_font_enabled" to false,
                 "lyrics_font_file_id" to "",
@@ -227,6 +236,35 @@ class ModuleSettingsSchemaTest {
                 "schema_version" to ModuleConstants.CONFIG_SCHEMA_VERSION,
             ),
             upgraded,
+        )
+    }
+
+    @Test
+    fun `a legacy native priority becomes the effective order without overriding later edits`() {
+        val legacyOrder = listOf("am-lyrics", "am-native", "amll-ttml-db", "lunabeat-ttml-hub")
+        val nativeFirst = listOf("am-native", "am-lyrics", "amll-ttml-db", "lunabeat-ttml-hub")
+        val oldValues = mapOf(
+            "schema_version" to 20,
+            "automatic_lyrics_source_order" to legacyOrder.joinToString(","),
+        )
+        assertEquals(nativeFirst, ModuleSettingsSchema.decodeOrdinarySettings(oldValues).automaticLyricsSourceOrder)
+        val preferredValues = oldValues + ("automatic_lyrics_prefer_native" to true)
+        val migrated = preferredValues + ModuleSettingsSchema.legacyAutomaticLyricsSourceOrderMigrationValues(preferredValues)
+        assertEquals(nativeFirst, ModuleSettingsSchema.decodeOrdinarySettings(migrated).automaticLyricsSourceOrder)
+        val reordered = migrated + ModuleSettingsSchema.encodeAutomaticLyricsSourceOrder(legacyOrder)
+        assertEquals(legacyOrder, ModuleSettingsSchema.decodeOrdinarySettings(reordered).automaticLyricsSourceOrder)
+    }
+
+    @Test
+    fun `disabled legacy native priority preserves the prior sorting default`() {
+        val oldValues = mapOf("schema_version" to 20, "automatic_lyrics_prefer_native" to false)
+        assertEquals(
+            listOf("amll-ttml-db", "am-lyrics", "am-native", "lunabeat-ttml-hub"),
+            ModuleSettingsSchema.decodeOrdinarySettings(oldValues).automaticLyricsSourceOrder,
+        )
+        assertEquals(
+            listOf("am-native", "amll-ttml-db", "am-lyrics", "lunabeat-ttml-hub"),
+            ModuleSettingsSchema.decodeOrdinarySettings(emptyMap<String, Any>()).automaticLyricsSourceOrder,
         )
     }
 
@@ -258,7 +296,7 @@ class ModuleSettingsSchemaTest {
     }
 
     @Test
-    fun `schema 18 upgrades to 19 with saved LLM configuration and default effort`() {
+    fun `schema 18 upgrades with saved LLM configuration and preserves thinking type`() {
         val upgraded = ModuleSettingsSchema.upgrade(
             storedValues = mapOf(
                 "schema_version" to 18,
@@ -284,6 +322,7 @@ class ModuleSettingsSchemaTest {
         assertEquals("test-api-key", upgraded["llm_lyrics_api_key"])
         assertEquals("reasoning-model", upgraded["llm_lyrics_model"])
         assertEquals(true, upgraded["llm_lyrics_thinking_enabled"])
+        assertEquals("thinking_type", upgraded["llm_lyrics_thinking_format"])
         assertEquals("default", upgraded["llm_lyrics_thinking_effort"])
     }
 
@@ -302,6 +341,36 @@ class ModuleSettingsSchemaTest {
         assertEquals("max", upgraded["llm_lyrics_thinking_effort"])
         assertEquals(LlmLyricsThinkingEffort.MAX, decoded.llmLyricsThinkingEffort)
         assertEquals(false, decoded.llmLyricsThinkingEnabled)
+    }
+
+    @Test
+    fun `legacy format migration preserves only configured stores with no saved choice`() {
+        val configured = mapOf("llm_lyrics_base_url" to "https://example.test/v1")
+        val cases = listOf(
+            configured to "thinking_type",
+            mapOf("llm_lyrics_thinking_effort" to "max") to "none",
+            configured + ("llm_lyrics_thinking_format" to "reasoning_effort") to "reasoning_effort",
+            configured + ("llm_lyrics_thinking_format" to "unknown") to "none",
+        )
+        for ((stored, expected) in cases) {
+            val upgraded = ModuleSettingsSchema.upgrade(
+                storedValues = mapOf("schema_version" to 19) + stored,
+                legacyValues = emptyMap<String, Any?>(),
+            )!!
+            assertEquals(expected, upgraded["llm_lyrics_thinking_format"])
+        }
+        val current = ModuleSettingsSchema.decode(
+            configured + ("schema_version" to ModuleConstants.CONFIG_SCHEMA_VERSION),
+        )
+        assertEquals(LlmLyricsThinkingFormat.NONE, current.llmLyricsThinkingFormat)
+    }
+
+    @Test
+    fun `ordinary settings round trip the selected thinking format`() {
+        for (format in LlmLyricsThinkingFormat.values()) {
+            val values = ModuleSettingsSchema.encodeOrdinarySettings(ModuleSettings(llmLyricsThinkingFormat = format))
+            assertEquals(format, ModuleSettingsSchema.decode(values).llmLyricsThinkingFormat)
+        }
     }
 
     @Test

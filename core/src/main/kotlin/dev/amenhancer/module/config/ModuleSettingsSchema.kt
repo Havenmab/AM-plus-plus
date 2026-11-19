@@ -3,8 +3,10 @@ package dev.amenhancer.module.config
 import dev.amenhancer.module.model.EnhancementDefaults
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
-import dev.amenhancer.module.model.LlmLyricsThinkingEffort
+import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.LyricsFontManifest
+import dev.amenhancer.module.model.LlmLyricsThinkingEffort
+import dev.amenhancer.module.model.LlmLyricsThinkingFormat
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
 
@@ -20,6 +22,8 @@ object ModuleSettingsSchema {
         // KEY_RESTORE_CJK_ORIGINAL_METADATA fully express when the runtime acts.
         // The retired value is carried over onto the new override switch below.
         KEY_TITLE_CORRECTION_ENABLED,
+        // Retired: v1.6.9 folds it into KEY_AUTOMATIC_LYRICS_SOURCE_ORDER.
+        KEY_AUTOMATIC_LYRICS_PREFER_NATIVE,
     )
 
     fun decode(values: Map<String, *>): ModuleSettings = decode(values, values.customLyricsManifest())
@@ -94,6 +98,10 @@ object ModuleSettingsSchema {
                 KEY_CJK_KARAOKE_ANIMATION_ENABLED,
                 default = true,
             ),
+            lyricsPronunciationEnabled = values.boolean(
+                KEY_LYRICS_PRONUNCIATION_ENABLED,
+                default = true,
+            ),
             lyricEffectsOptimizationEnabled = values.boolean(
                 KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
                 default = false,
@@ -161,10 +169,15 @@ object ModuleSettingsSchema {
             llmLyricsBaseUrl = ModuleSettings.normalizeLlmLyricsBaseUrl(
                 values.string(KEY_LLM_LYRICS_BASE_URL),
             ),
+            llmLyricsTransliterationEnabled = values.boolean(
+                KEY_LLM_LYRICS_TRANSLITERATION_ENABLED,
+                default = false,
+            ),
             llmLyricsApiKey = ModuleSettings.normalizeLlmLyricsApiKey(
                 values.string(KEY_LLM_LYRICS_API_KEY),
             ),
             llmLyricsModel = ModuleSettings.normalizeLlmLyricsModel(
+            llmLyricsCustomHeaders = ModuleSettings.normalizeLlmLyricsCustomHeaders(values.string(KEY_LLM_LYRICS_CUSTOM_HEADERS)),
                 values.string(KEY_LLM_LYRICS_MODEL),
             ),
             llmLyricsThinkingEnabled = values.boolean(
@@ -172,6 +185,7 @@ object ModuleSettingsSchema {
                 default = false,
             ),
             llmLyricsThinkingEffort = LlmLyricsThinkingEffort.decode(values.string(KEY_LLM_LYRICS_THINKING_EFFORT)),
+            llmLyricsThinkingFormat = values.llmLyricsThinkingFormat(),
             llmPronunciationBoundaryEnabled = values.boolean(
                 KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
                 default = false,
@@ -267,6 +281,7 @@ object ModuleSettingsSchema {
                 ),
             KEY_FUTURE_BLUR to settings.futureBlurEnabled,
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
+            KEY_LYRICS_PRONUNCIATION_ENABLED to settings.lyricsPronunciationEnabled,
             KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED to settings.lyricEffectsOptimizationEnabled,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
@@ -316,19 +331,31 @@ object ModuleSettingsSchema {
             KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN to
                 settings.onlineLyricsHideMandarinPinyinEnabled,
             KEY_LLM_LYRICS_ENABLED to settings.llmLyricsEnabled,
+            KEY_LLM_LYRICS_TRANSLITERATION_ENABLED to settings.llmLyricsTransliterationEnabled,
             KEY_LLM_LYRICS_BASE_URL to
                 ModuleSettings.normalizeLlmLyricsBaseUrl(settings.llmLyricsBaseUrl),
             KEY_LLM_LYRICS_API_KEY to
                 ModuleSettings.normalizeLlmLyricsApiKey(settings.llmLyricsApiKey),
             KEY_LLM_LYRICS_MODEL to
                 ModuleSettings.normalizeLlmLyricsModel(settings.llmLyricsModel),
+            KEY_LLM_LYRICS_CUSTOM_HEADERS to
+                ModuleSettings.normalizeLlmLyricsCustomHeaders(settings.llmLyricsCustomHeaders),
             KEY_LLM_LYRICS_THINKING_ENABLED to settings.llmLyricsThinkingEnabled,
+            KEY_LLM_LYRICS_THINKING_FORMAT to settings.llmLyricsThinkingFormat.storageValue,
             KEY_LLM_LYRICS_THINKING_EFFORT to settings.llmLyricsThinkingEffort.storageValue,
             KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED to settings.llmPronunciationBoundaryEnabled,
         )
-        values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
+        values.putAll(encodeAutomaticLyricsSourceOrder(settings.automaticLyricsSourceOrder))
         return values
     }
+
+    fun encodeAutomaticLyricsSourceOrder(order: List<String>): Map<String, Any> = mapOf(
+        KEY_AUTOMATIC_LYRICS_SOURCE_ORDER to ModuleSettings.normalizeAutomaticLyricsSourceOrder(order).joinToString(","),
+        KEY_SCHEMA_VERSION to ModuleConstants.CONFIG_SCHEMA_VERSION,
+    )
+
+    fun encodeAutomaticLyricsEnabled(enabled: Boolean): Map<String, Any> =
+        mapOf(KEY_AUTOMATIC_LYRICS_ENABLED to enabled)
 
     fun encodeFontManifest(manifest: LyricsFontManifest): Map<String, Any> {
         val safe = FontManifestPolicy.sanitize(manifest)
@@ -466,10 +493,28 @@ object ModuleSettingsSchema {
         boolean(KEY_TITLE_CORRECTION_ENABLED, default = false) &&
             regionSelection().replacesRegion
 
-    private fun Map<String, *>.automaticLyricsSourceOrder(): List<String> =
-        ModuleSettings.normalizeAutomaticLyricsSourceOrder(
-            string(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER).split(','),
-        )
+    private fun Map<String, *>.hasLegacyAutomaticLyricsSourceOrder(): Boolean =
+        (number(KEY_SCHEMA_VERSION) ?: 0) < SOURCE_ORDER_SCHEMA_VERSION &&
+            (containsKey(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE) || containsKey(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER))
+
+    private fun Map<String, *>.automaticLyricsSourceOrder(): List<String> {
+        val order = string(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER).split(',')
+        if (!hasLegacyAutomaticLyricsSourceOrder()) return ModuleSettings.normalizeAutomaticLyricsSourceOrder(order)
+        val legacyOrder = ModuleSettings.normalizeAutomaticLyricsSourceOrder(order + listOf(
+            CustomLyricsSources.AMLL,
+            CustomLyricsSources.AM_LYRICS,
+            CustomLyricsSources.AM_NATIVE,
+            CustomLyricsSources.LUNABEAT,
+        ))
+        return if (boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = true)) {
+            listOf(CustomLyricsSources.AM_NATIVE) + legacyOrder.filterNot { it == CustomLyricsSources.AM_NATIVE }
+        } else legacyOrder
+    }
+
+    /** Fold the old preference into the actual order before removing the legacy key. */
+    fun legacyAutomaticLyricsSourceOrderMigrationValues(values: Map<String, *>): Map<String, Any> =
+        if (values.hasLegacyAutomaticLyricsSourceOrder()) encodeAutomaticLyricsSourceOrder(values.automaticLyricsSourceOrder())
+        else emptyMap()
 
     /**
      * Returns the host-local values required before removing the retired keys.  This
@@ -508,6 +553,15 @@ object ModuleSettingsSchema {
         return migration
     }
 
+    /** Persists the format for an old configured store without rewriting file metadata. */
+    fun legacyLlmThinkingFormatMigrationValues(values: Map<String, *>): Map<String, Any> {
+        if (!values.usesLegacyLlmThinkingFormat()) return emptyMap()
+        return linkedMapOf(
+            KEY_LLM_LYRICS_THINKING_FORMAT to LlmLyricsThinkingFormat.THINKING_TYPE.storageValue,
+            KEY_SCHEMA_VERSION to ModuleConstants.CONFIG_SCHEMA_VERSION,
+        )
+    }
+
     private fun Map<String, *>.string(key: String): String = this[key] as? String ?: ""
 
     private fun Map<String, *>.long(key: String): Long? = when (val value = this[key]) {
@@ -526,9 +580,27 @@ object ModuleSettingsSchema {
         // app and are unreadable from AM++ (see AMTOOL_MODIFY_LOCALE_KEY).
         val storedVersion = storedValues.number(KEY_SCHEMA_VERSION)
         if (storedVersion != null && storedVersion >= ModuleConstants.CONFIG_SCHEMA_VERSION) return null
-        val source = if (storedValues.hasSettingValue()) storedValues else legacyValues
+        val source = if (storedValues.hasSettingValue() || storedValues.hasLegacyAutomaticLyricsSourceOrder()) {
+            storedValues
+        } else legacyValues
         return encode(decode(source))
     }
+
+    /** The old writer always sent thinking.type, even when its switch was off. */
+    private fun Map<String, *>.usesLegacyLlmThinkingFormat(): Boolean =
+        !containsKey(KEY_LLM_LYRICS_THINKING_FORMAT) &&
+            (number(KEY_SCHEMA_VERSION) ?: 0) < LLM_LYRICS_THINKING_FORMAT_SCHEMA_VERSION &&
+            (string(KEY_LLM_LYRICS_BASE_URL).isNotBlank() ||
+                string(KEY_LLM_LYRICS_MODEL).isNotBlank() ||
+                boolean(KEY_LLM_LYRICS_ENABLED, default = false) ||
+                boolean(KEY_LLM_LYRICS_THINKING_ENABLED, default = false))
+
+    private fun Map<String, *>.llmLyricsThinkingFormat(): LlmLyricsThinkingFormat =
+        if (usesLegacyLlmThinkingFormat()) {
+            LlmLyricsThinkingFormat.THINKING_TYPE
+        } else {
+            LlmLyricsThinkingFormat.decode(string(KEY_LLM_LYRICS_THINKING_FORMAT))
+        }
 
     private fun Map<String, *>.boolean(key: String, default: Boolean): Boolean =
         this[key] as? Boolean ?: default
@@ -552,6 +624,7 @@ object ModuleSettingsSchema {
         KEY_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
         KEY_FUTURE_BLUR,
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
+        KEY_LYRICS_PRONUNCIATION_ENABLED,
         KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
@@ -586,10 +659,13 @@ object ModuleSettingsSchema {
         KEY_ONLINE_LYRICS_TRANSLATION_ENABLED,
         KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN,
         KEY_LLM_LYRICS_ENABLED,
+        KEY_LLM_LYRICS_TRANSLITERATION_ENABLED,
         KEY_LLM_LYRICS_BASE_URL,
         KEY_LLM_LYRICS_API_KEY,
         KEY_LLM_LYRICS_MODEL,
+        KEY_LLM_LYRICS_CUSTOM_HEADERS,
         KEY_LLM_LYRICS_THINKING_ENABLED,
+        KEY_LLM_LYRICS_THINKING_FORMAT,
         KEY_LLM_LYRICS_THINKING_EFFORT,
         KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
@@ -636,6 +712,7 @@ object ModuleSettingsSchema {
     private const val KEY_FUTURE_BLUR = "future_blur_enabled"
     private const val KEY_STARTUP_PAGE_PREWARM = "startup_page_prewarm_enabled"
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
+    private const val KEY_LYRICS_PRONUNCIATION_ENABLED = "lyrics_pronunciation_enabled"
     private const val KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED = "lyric_effects_optimization_enabled"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
@@ -680,13 +757,18 @@ object ModuleSettingsSchema {
     /** HLE's 「不显示国语歌拼音」 switch. */
     private const val KEY_ONLINE_LYRICS_HIDE_MANDARIN_PINYIN =
         "online_lyrics_hide_mandarin_pinyin"
+    private const val SOURCE_ORDER_SCHEMA_VERSION = 21
     private const val KEY_LLM_LYRICS_ENABLED = "llm_lyrics_enabled"
+    private const val KEY_LLM_LYRICS_TRANSLITERATION_ENABLED = "llm_lyrics_transliteration_enabled"
     private const val KEY_LLM_LYRICS_BASE_URL = "llm_lyrics_base_url"
     private const val KEY_LLM_LYRICS_API_KEY = "llm_lyrics_api_key"
     private const val KEY_LLM_LYRICS_MODEL = "llm_lyrics_model"
+    private const val KEY_LLM_LYRICS_CUSTOM_HEADERS = "llm_lyrics_custom_headers"
     private const val KEY_LLM_LYRICS_THINKING_ENABLED = "llm_lyrics_thinking_enabled"
+    private const val KEY_LLM_LYRICS_THINKING_FORMAT = "llm_lyrics_thinking_format"
     private const val KEY_LLM_LYRICS_THINKING_EFFORT = "llm_lyrics_thinking_effort"
     private const val KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED = "llm_pronunciation_boundary_enabled"
+    private const val LLM_LYRICS_THINKING_FORMAT_SCHEMA_VERSION = 20
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"
     private const val KEY_FONT_FILE_ID = "lyrics_font_file_id"

@@ -1,7 +1,13 @@
 package dev.amenhancer.module.hook
 
 import android.app.Application
+import android.app.Activity
+import android.content.res.Resources
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookResolver
@@ -54,6 +60,33 @@ object AppleMusicHostFactory {
             LayoutInflationRegistry.register(name, observer)
         }
     }
+
+    private fun installLyricPronunciationPairAlignment(
+        profile: AppleMusicHostProfile,
+        resources: Resources,
+    ): TargetCapabilityInstall {
+        val layoutName = profile.document.optJSONObject("layoutVariants")
+            ?.optString("lyricPronunciationPairLayout").orEmpty()
+        if (!profile.productionEnabled || layoutName.isBlank()) {
+            return TargetCapabilityInstall.Unsupported("No verified word pronunciation pair layout")
+        }
+        if (resources.getIdentifier(layoutName, "layout", profile.packageName) == 0) {
+            return TargetCapabilityInstall.Degraded("Word pronunciation pair layout is missing: $layoutName")
+        }
+        LayoutInflationRegistry.register(layoutName) { root ->
+            if (root is LinearLayout && root.orientation == LinearLayout.VERTICAL &&
+                root.layoutParams?.width == ViewGroup.LayoutParams.WRAP_CONTENT
+            ) {
+                // The wider child determines the group width. The host keeps its mixed-direction rows separate.
+                root.setHorizontalGravity(Gravity.CENTER_HORIZONTAL)
+                root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    compensateLyricPronunciationEdges(root)
+                }
+            }
+        }
+        return TargetCapabilityInstall.Active("Word pronunciation pair alignment registered")
+    }
+
     fun appleMusic(
         config: TargetConfigClient,
         application: Application,
@@ -63,6 +96,7 @@ object AppleMusicHostFactory {
         autoLyricsRuntime: AutoLyricsRuntime? = null,
         timingObservations: TtmlTimingObservationRegistry = TtmlTimingObservationRegistry(),
         nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
+        onOpenLyricsMenu: (Activity) -> Unit = {},
     ): TargetAdaptation {
         val build = targetBuild(application)
         val profile = checkNotNull(dev.amenhancer.host.applemusic.AppleMusicHostProfiles.find(build.packageName, build.versionName, build.versionCode))
@@ -97,6 +131,7 @@ object AppleMusicHostFactory {
             },
             presentationMethod = nativePresentationMethod,
         )
+        if (settings.lyricsPronunciationEnabled) LyricsPronunciationMatching.install(profile, classLoader)
         val customLyrics = AppleMusicCustomLyricsTarget(
             config = config,
             symbols = resolver,
@@ -104,6 +139,7 @@ object AppleMusicHostFactory {
             autoLyricsRuntime = autoLyricsRuntime,
             timingObservations = timingObservations,
             nativeLyricDelivery = nativeLyricsTarget,
+            installMenu = { registration -> AppleMusicLyricsMenuTarget(profile, classLoader, onOpenLyricsMenu).install(registration) },
         )
         val karaokeAnimation = AppleMusicCjkKaraokeAnimationTarget(
             symbols = resolver,
@@ -117,13 +153,14 @@ object AppleMusicHostFactory {
             val alignment = installLineLyricAgentAlignment(profile, classLoader, application.resources) {
                 config.settings().lyricEffectsOptimizationEnabled
             }
+            val pronunciationAlignment = installLyricPronunciationPairAlignment(profile, application.resources)
             val terminal = AppleMusicCjkTerminalGradientTarget(profile, classLoader).install()
             val splitGlow = karaokeAnimation.installSplitWordGlow(
-                profile.document.optJSONObject("cjk")?.optBoolean("splitWordGlow", false) == true,
+                profile.document.optJSONObject("cjk")?.optJSONObject("splitWordGlow"),
             )
-            val repairs = listOf(parser) + listOf(alignment, terminal, splitGlow)
-                .filterNot { it is TargetCapabilityInstall.Unsupported }
-            val message = listOf(parser, alignment, terminal, splitGlow).joinToString("; ") { it.message }
+            val optionalRepairs = listOf(alignment, pronunciationAlignment, terminal, splitGlow)
+            val repairs = listOf(parser) + optionalRepairs.filterNot { it is TargetCapabilityInstall.Unsupported }
+            val message = (listOf(parser) + optionalRepairs).joinToString("; ") { it.message }
             when {
                 repairs.all { it is TargetCapabilityInstall.Active } -> TargetCapabilityInstall.Active(message)
                 repairs.all { it is TargetCapabilityInstall.Unsupported } -> TargetCapabilityInstall.Unsupported(message)

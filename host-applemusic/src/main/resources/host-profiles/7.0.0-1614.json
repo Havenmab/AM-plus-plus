@@ -90,6 +90,13 @@
         "parameters": [],
         "returns": "void",
         "static": false
+      },
+      "unavailableFallback": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "m2",
+        "parameters": [],
+        "returns": "void",
+        "static": false
       }
     },
     "fields": {
@@ -2731,7 +2738,7 @@
     }
   },
   "knownDegradations": [],
-  "profileRevision": 1,
+  "profileRevision": 4,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -2843,7 +2850,86 @@
       "fields": {}
     }
   },
+  "lyricsMenu": {
+    "contractVersion": 2,
+    "resources": {
+      "rowLayout": "menu_item_lyrics_translations",
+      "endIcon": "ic_actionsheet_more",
+      "separator": "bg_menu_item_lyrics_translations"
+    },
+    "methods": {
+      "evaluate": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "F2",
+        "parameters": [
+          "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "chromeVisibility": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "Z1",
+        "parameters": [
+          "int"
+        ],
+        "returns": "void",
+        "static": false
+      },
+      "resume": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "onResume",
+        "parameters": [],
+        "returns": "void",
+        "static": false
+      },
+      "getActivity": {
+        "owner": "androidx.fragment.app.n",
+        "name": "getActivity",
+        "parameters": [],
+        "returns": "androidx.fragment.app.s",
+        "static": false
+      }
+    },
+    "constructors": {
+      "menuReadyCallback": {
+        "owner": "Hf.A",
+        "parameters": [
+          "java.lang.Object",
+          "int"
+        ]
+      }
+    },
+    "fields": {
+      "listenerFragment": {
+        "owner": "com.apple.android.music.player.fragment.a0",
+        "name": "a",
+        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
+      },
+      "fragmentBinding": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "l0",
+        "type": "q8.X4"
+      },
+      "fragmentPopup": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "l1",
+        "type": "android.widget.PopupWindow"
+      },
+      "menuAnchor": {
+        "owner": "q8.X4",
+        "name": "o0",
+        "type": "android.widget.ImageView"
+      }
+    },
+    "evidence": {
+      "sourceIdentity": "com.apple.android.music / 7.0.0 / 1614",
+      "snapshot": "a0.onClick inflates native pronunciation and translation rows with no parent and adds them to the vertical q8.yb LinearLayout using its default MATCH_PARENT row width. It then constructs Hf.A(a0, 1) before the isrtl branch and before the first PopupWindow.showAsDropDown. The module appends one row at this preparation seam, scoped to the exact a0 listener and its unshown popup, so native and tablet offset measurements include all rows. The PopupWindow itself wraps width and height and is anchored to q8.X4.o0. F2 evaluates native availability and sets that anchor visibility. Native row callbacks, dismissal and positioning remain intact.",
+      "runtimeVerified": false
+    }
+  },
   "layoutVariants": {
+    "lyricPronunciationPairLayout": "lyrics_pronunciation_vertical_group",
     "gradientEdges": [
       {
         "vertical": [
@@ -2879,7 +2965,54 @@
   "ambiguityPolicy": "reject-ambiguous",
   "legacyFirstMatchExceptions": [],
   "cjk": {
-    "splitWordGlow": true,
+    "splitWordGlow": {
+      "contractVersion": 1,
+      "foregroundLayout": 2131559453,
+      "aggregateTrimLine": 88,
+      "methods": {
+        "bind": {
+          "owner": "com.apple.android.music.player.x",
+          "name": "c0",
+          "parameters": [
+            "com.apple.android.music.ttml.javanative.model.LyricsWordVector",
+            "android.util.ArrayMap",
+            "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
+            "int",
+            "int",
+            "boolean",
+            "boolean"
+          ],
+          "returns": "android.util.ArrayMap",
+          "static": false
+        },
+        "trim": {
+          "owner": "Hj.y",
+          "name": "t0",
+          "parameters": [
+            "java.lang.CharSequence"
+          ],
+          "returns": "java.lang.CharSequence",
+          "static": true
+        }
+      },
+      "fields": {
+        "wordLength": {
+          "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
+          "name": "g",
+          "type": "int"
+        },
+        "riseFunction": {
+          "owner": "com.apple.android.music.player.i",
+          "name": "a",
+          "type": "com.apple.android.music.player.h"
+        },
+        "riseView": {
+          "owner": "com.apple.android.music.player.h",
+          "name": "a",
+          "type": "com.apple.android.music.common.views.CustomTextView"
+        }
+      }
+    },
     "foregroundTextField": "X",
     "maxSpanGlowCharacters": 3,
     "bindingOwners": [
@@ -5763,6 +5896,80 @@
             "androidx.fragment.app.F"
           ]
         }
+      }
+    }
+  },
+  "lyricPronunciation": {
+    "methods": {
+      "requestLyrics": {
+        "owner": "com.apple.android.music.ttml.e",
+        "name": "e",
+        "parameters": ["long", "[Ljava.lang.String;", "long", "[Ljava.lang.String;", "hi.c"],
+        "returns": "java.io.Serializable",
+        "static": false
+      },
+      "evaluate": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "F2",
+        "parameters": ["com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"],
+        "returns": "void",
+        "static": false
+      },
+      "match": {
+        "owner": "com.apple.android.music.playback.util.LocaleUtil",
+        "name": "matchToSystemLyricsScript",
+        "parameters": ["com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative"],
+        "returns": "java.lang.String",
+        "static": true
+      },
+      "songInfo": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
+        "name": "get",
+        "parameters": [],
+        "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "static": false
+      },
+      "address": {
+        "owner": "org.bytedeco.javacpp.Pointer",
+        "name": "address",
+        "parameters": [],
+        "returns": "long",
+        "static": false
+      },
+      "songLanguage": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "getLanguage",
+        "parameters": [],
+        "returns": "java.lang.String",
+        "static": false
+      },
+      "setTranslation": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "setTranslation",
+        "parameters": ["java.lang.String"],
+        "returns": "boolean",
+        "static": false
+      },
+      "pronunciationLanguages": {
+        "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
+        "name": "getPronunciationLanguages",
+        "parameters": [],
+        "returns": "com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative",
+        "static": false
+      },
+      "vectorSize": {
+        "owner": "com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative",
+        "name": "size",
+        "parameters": [],
+        "returns": "long",
+        "static": false
+      },
+      "vectorGet": {
+        "owner": "com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative",
+        "name": "get",
+        "parameters": ["long"],
+        "returns": "java.lang.String",
+        "static": false
       }
     }
   },

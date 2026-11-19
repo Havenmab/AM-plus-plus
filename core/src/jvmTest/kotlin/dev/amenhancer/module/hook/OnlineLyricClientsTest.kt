@@ -32,7 +32,8 @@ class OnlineLyricClientsTest {
 
     @Test
     fun `amll client fetches the exact adam id ttml url`() {
-        val transport = FakeTransport(getResult = "<tt>lyrics</tt>")
+        val ttml = "<tt><body><div><p>lyrics</p></div></body></tt>"
+        val transport = FakeTransport(getResult = ttml)
         val client = AmllTtmlClient(transport)
 
         assertEquals("<tt>lyrics</tt>", client.fetch(42L))

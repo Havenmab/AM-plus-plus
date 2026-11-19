@@ -3,10 +3,10 @@ package dev.amenhancer.module.ui
 import dev.amenhancer.module.i18n.ModuleText
 
 import android.net.Uri
-import dev.amenhancer.module.config.EmbeddedConfigurationSession
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.lyrics.CustomLyricsDraft
 import dev.amenhancer.module.lyrics.CustomLyricsMultiIdDraft
+import dev.amenhancer.module.lyrics.CustomLyricsOnlineImportResult
 import dev.amenhancer.module.lyrics.CustomLyricsRestorePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateProgress
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
@@ -18,6 +18,8 @@ internal interface EmbeddedSettingsController {
     fun currentSettings(): ModuleSettings
 
     fun saveOrdinarySettings(settings: ModuleSettings): Boolean
+    fun saveAutomaticLyricsEnabled(enabled: Boolean): Boolean = false
+    fun saveAutomaticLyricsSourceOrder(order: List<String>): Boolean = false
 
     fun currentSongDetails(): CurrentSongDetails? = null
     fun lyricsEntries(): List<CustomLyricsEntry> = emptyList()
@@ -54,24 +56,15 @@ internal interface EmbeddedSettingsController {
     fun backupLyrics(uri: Uri): EmbeddedActionResult = EmbeddedActionResult.Failed(ModuleText.BACKUP_UNAVAILABLE.text())
     fun restoreLyrics(uri: Uri, policy: CustomLyricsRestorePolicy): EmbeddedActionResult =
         EmbeddedActionResult.Failed(ModuleText.RESTORE_UNAVAILABLE.text())
-    fun importOnlineLyrics(
+    fun fetchOnlineLyrics(
         source: EmbeddedOnlineSource,
         appleMusicId: Long,
-        displayName: String,
-    ): EmbeddedActionResult = EmbeddedActionResult.Failed(ModuleText.ONLINE_IMPORT_UNAVAILABLE.text())
+    ): CustomLyricsOnlineImportResult = CustomLyricsOnlineImportResult.Failed(ModuleText.ONLINE_IMPORT_UNAVAILABLE.text())
 
     fun updateLyrics(
         isCancelled: () -> Boolean = { false },
         onProgress: (CustomLyricsUpdateProgress) -> Unit = {},
     ): CustomLyricsUpdateResult = CustomLyricsUpdateResult.Failed(ModuleText.LYRICS_UPDATE_UNAVAILABLE.text())
-}
-
-internal class EmbeddedSessionSettingsController(
-    private val session: EmbeddedConfigurationSession,
-) : EmbeddedSettingsController {
-    override fun currentSettings(): ModuleSettings = session.settings()
-
-    override fun saveOrdinarySettings(settings: ModuleSettings): Boolean = session.saveSettings(settings)
 }
 
 internal fun interface EmbeddedSafSelectionHandler {

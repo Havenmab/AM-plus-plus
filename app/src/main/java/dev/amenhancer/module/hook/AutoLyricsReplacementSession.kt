@@ -5,7 +5,6 @@ import dev.amenhancer.module.i18n.ModuleText
 
 import dev.amenhancer.module.lyrics.source.LunabeatClient
 import dev.amenhancer.module.lyrics.source.HttpLyricTransport
-import dev.amenhancer.module.lyrics.source.FileLunabeatCatalogCache
 import dev.amenhancer.module.lyrics.source.AutoLyricsSourceResolver
 import dev.amenhancer.module.lyrics.source.AmllTtmlClient
 import dev.amenhancer.module.lyrics.source.AmLyricsClient
@@ -20,10 +19,6 @@ import dev.amenhancer.module.lyrics.online.PronunciationBoundaryStore
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
 import dev.amenhancer.module.config.EmbeddedContentManager
-import dev.amenhancer.module.config.HostPrivateEmbeddedStorage
-import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
-import dev.amenhancer.module.lyrics.CustomLyricsDraft
-import dev.amenhancer.module.lyrics.CustomLyricsSaveResult
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NeSessionStore
@@ -35,28 +30,21 @@ import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateSources
 import dev.amenhancer.module.model.CustomLyricsSources
-import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.lyrics.FileLlmLyricsCache
 import dev.amenhancer.module.lyrics.LlmLyricsClient
 import dev.amenhancer.module.lyrics.LlmLyricsConfig
+import dev.amenhancer.module.lyrics.LlmLyricsPhase
 import dev.amenhancer.module.lyrics.LlmLyricsDocument
+import dev.amenhancer.module.lyrics.LlmTransliterationDocument
+import dev.amenhancer.module.lyrics.source.LunabeatCatalogCache
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.util.LinkedHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-
-private const val AUTO_CACHE_DIRECTORY = "ampp-auto-lyrics"
 
 /** The AM-Lyrics index cache lives next to the other private automatic-lyrics state. */
 private const val AM_LYRICS_CACHE_DIRECTORY = "ampp-amlyrics"
@@ -175,6 +163,8 @@ internal fun translationEnricher(
 
 internal fun createAutoLyricsRuntime(
     application: Application,
+    content: EmbeddedContentManager,
+    lunabeatCatalogCache: LunabeatCatalogCache,
     suppressedIds: Set<Long> = emptySet(),
     onlineLyricsSupplementEnabled: Boolean = false,
     onlineLyricsTranslationEnabled: Boolean = false,
@@ -188,21 +178,25 @@ internal fun createAutoLyricsRuntime(
     nativeLyricOverlay: NativeLyricOverlayStore = NativeLyricOverlayStore(),
     configuration: () -> ModuleSettings = { ModuleSettings() },
 ): AutoLyricsRuntime {
-    val root = File(application.filesDir, AUTO_CACHE_DIRECTORY)
+    val sourceStore = content.sourceCache
+    val failures = ThreadLocal<dev.amenhancer.module.lyrics.source.LyricFetchFailure?>()
     val lyricTransport = HttpLyricTransport(
         connectTimeoutMs = 4_000,
         readTimeoutMs = 8_000,
         maxResponseBytes = TtmlInputPolicy.MAX_TTML_BYTES,
+        onFailure = { failures.set(it) },
     )
     val indexTransport = HttpLyricTransport(
         connectTimeoutMs = 4_000,
         readTimeoutMs = 8_000,
         maxResponseBytes = LunabeatClient.INDEX_MAX_BYTES,
+        onFailure = { failures.set(it) },
     )
     val lunabeat = LunabeatClient(
         indexTransport = indexTransport,
         lyricsTransport = lyricTransport,
-        cache = FileLunabeatCatalogCache(File(root, "lunabeat")),
+        cache = lunabeatCatalogCache,
+        onFailure = { failures.set(it) },
     )
     // A self-hosted mirror root from the settings is tried before every public host: the same
     // 50 KB file measured ~65 ms locally against 470-540 ms cross-border, so it is what an
@@ -285,45 +279,12 @@ internal fun createAutoLyricsRuntime(
         // not name the track skips the bundled repositories without a single request.
         presence = lyricPresenceCache,
     )
-    val cache = FileAutoLyricsCache(root)
-    val configuredContent = EmbeddedContentManager(
-        session = EmbeddedConfigurationSession(HostPrivateEmbeddedStorage(application)),
-    )
-    val publisher = AutoLyricsPublisher { appleMusicId, candidate ->
-        // Native lyrics are selected from the host result, never copied into the managed index.
-        if (candidate.source == CustomLyricsSources.AM_NATIVE) return@AutoLyricsPublisher AutoLyricsPublishResult.FAILED
-        val existing = runCatching {
-            configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
-        }.getOrNull()
-        when {
-            existing != null && !existing.enabled -> AutoLyricsPublishResult.FAILED
-            existing != null && !existing.autoManaged -> AutoLyricsPublishResult.ALREADY_CONFIGURED
-            existing != null && existing.source == candidate.source &&
-                runCatching { configuredContent.readLyrics(appleMusicId) }
-                    .getOrNull() == candidate.ttml -> AutoLyricsPublishResult.PUBLISHED
-            else -> {
-                val displayName = candidate.displayName
-                    ?.takeIf(String::isNotBlank)
-                    ?: ModuleText.AUTO_CACHED_LYRICS_NAME.text(appleMusicId)
-                when (
-                    runCatching {
-                        configuredContent.saveLyrics(
-                            CustomLyricsDraft(
-                                appleMusicId = appleMusicId,
-                                displayName = displayName,
-                                ttml = candidate.ttml,
-                                source = candidate.source,
-                                autoManaged = true,
-                            ),
-                            replacingAppleMusicId = existing?.appleMusicId,
-                        )
-                    }.getOrNull()
-                ) {
-                    is CustomLyricsSaveResult.Saved -> AutoLyricsPublishResult.PUBLISHED
-                    else -> AutoLyricsPublishResult.FAILED
-                }
-            }
-        }
+    val cache = object : AutoLyricsCache {
+        override fun readCandidate(appleMusicId: Long, source: String): AutoLyricsCandidate? =
+            sourceStore.readCandidate(appleMusicId, source)
+        override fun writeCandidateIfCurrent(appleMusicId: Long, candidate: AutoLyricsCandidate, generation: Long): Boolean =
+            sourceStore.writeCandidate(appleMusicId, candidate, generation)
+        override fun generation(): Long = sourceStore.generation()
     }
     val executor = ThreadPoolExecutor(
         1,
@@ -433,8 +394,9 @@ internal fun createAutoLyricsRuntime(
             "presence=${lyricPresenceCache.enabled} " +
             "build=${ModuleConstants.BUILD_TAG}",
     )
+    refreshExecutor.execute { sourceStore.prepare() }
     val llmExecutor = ThreadPoolExecutor(
-        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        2, 2, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(4),
         { task -> Thread(task, "ampp-llm-lyrics").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
@@ -538,19 +500,21 @@ internal fun createAutoLyricsRuntime(
         }
         Unit
     }
+    LyricsPlaybackRuntimeRegistry.attachLlmStatus(llmExecutor)
+    fun failurePhase(reason: String, status: Int?): LlmLyricsPhase = when {
+        status == 401 || status == 403 -> LlmLyricsPhase.AUTH_FAILED
+        status == 429 -> LlmLyricsPhase.RATE_LIMITED
+        reason == "timeout" -> LlmLyricsPhase.TIMED_OUT
+        reason == "invalid_response" || reason == "response_limit" -> LlmLyricsPhase.INVALID_RESPONSE
+        else -> LlmLyricsPhase.REQUEST_FAILED
+    }
     val llm = LlmLyricsRuntime(
         configuration = {
             configuration().let { settings ->
-                if (settings.customLyricsEnabled && settings.automaticLyricsEnabled && settings.llmLyricsEnabled) {
-                    LlmLyricsConfig(
-                        baseUrl = settings.llmLyricsBaseUrl,
-                        apiKey = settings.llmLyricsApiKey,
-                        model = settings.llmLyricsModel,
-                        thinkingEnabled = settings.llmLyricsThinkingEnabled,
-                        thinkingEffort = if (settings.llmLyricsThinkingEnabled) {
-                            settings.llmLyricsThinkingEffort
-                        } else LlmLyricsThinkingEffort.DEFAULT,
-                    )
+                if (settings.llmLyricsTransliterationEnabled ||
+                    (settings.customLyricsEnabled && settings.automaticLyricsEnabled && settings.llmLyricsEnabled)
+                ) {
+                    LlmLyricsConfig.fromSettings(settings)
                 } else null
             }
         },
@@ -573,94 +537,141 @@ internal fun createAutoLyricsRuntime(
                 )
             }
             // Eligibility always precedes cache reads, including on later visits.
-            val document = LlmLyricsDocument.prepare(request.originalTtml) ?: return@translate null
+            val document = LlmLyricsDocument.prepare(request.originalTtml) ?: run {
+                val metadata = TtmlTimingPolicy.metadataOf(request.originalTtml)
+                request.reportStatus(when {
+                    metadata.hasTranslation -> LlmLyricsPhase.EXISTS
+                    metadata.language != null && !metadata.isForeign -> LlmLyricsPhase.NOT_NEEDED
+                    else -> LlmLyricsPhase.UNSUPPORTED
+                })
+                return@translate null
+            }
             if (isCancelled()) return@translate null
             llmCache.read(request.appleMusicId, request.originalTtml, request.config)?.let { cached ->
+                request.reportStatus(LlmLyricsPhase.CACHED)
                 return@translate cached.takeUnless { isCancelled() }
             }
+            request.reportStatus(LlmLyricsPhase.GENERATING)
             val translations = llmClient.translate(
                 config = request.config,
-                texts = document.texts,
+                lines = document.translationLines,
                 title = request.title,
                 artist = request.artist,
                 sourceLanguage = document.sourceLanguage,
-                backgroundIndices = document.backgroundIndices,
+                onFailure = { reason, status -> request.reportStatus(failurePhase(reason, status)) },
                 isCancelled = isCancelled,
             ) ?: return@translate null
             if (isCancelled()) return@translate null
-            val translated = document.withTranslations(translations) ?: return@translate null
+            val translated = document.withTranslations(translations) ?: run {
+                request.reportStatus(LlmLyricsPhase.INVALID_RESPONSE)
+                return@translate null
+            }
             if (isCancelled()) return@translate null
             translated.takeUnless { isCancelled() }
         },
         executor = Executor { task ->
-            llmExecutor.queue.clear()
             llmExecutor.execute(task)
         },
-        close = { llmExecutor.shutdownNow() },
+        close = {
+            llmExecutor.shutdownNow()
+            LyricsPlaybackRuntimeRegistry.detachLlmStatus(llmExecutor)
+        },
         onPrepared = { request, translated ->
             // Persist only a host-accepted result; never use the custom-lyrics publisher.
             llmCache.write(request.appleMusicId, request.originalTtml, request.config, translated)
         },
+        translationEnabled = {
+            configuration().let { it.customLyricsEnabled && it.automaticLyricsEnabled && it.llmLyricsEnabled }
+        },
+        transliterationEnabled = { configuration().llmLyricsTransliterationEnabled },
+        transliterate = transliterate@{ request, isCancelled ->
+            if (isCancelled()) return@transliterate null
+            val document = LlmTransliterationDocument.prepare(request.originalTtml) ?: run {
+                request.reportStatus(if (LlmTransliterationDocument.hasPronunciation(request.originalTtml))
+                    LlmLyricsPhase.EXISTS else LlmLyricsPhase.UNSUPPORTED)
+                return@transliterate null
+            }
+            if (document.isLatinOnly) {
+                request.reportStatus(LlmLyricsPhase.NOT_NEEDED)
+                return@transliterate null
+            }
+            if (isCancelled()) return@transliterate null
+            llmCache.read(request.appleMusicId, request.originalTtml, request.config, kind = "transliteration")
+                ?.let {
+                    request.reportStatus(LlmLyricsPhase.CACHED)
+                    return@transliterate it.takeUnless { isCancelled() }
+                }
+            request.reportStatus(LlmLyricsPhase.GENERATING)
+            llmClient.transliterate(
+                config = request.config,
+                document = document,
+                title = request.title,
+                artist = request.artist,
+                onFailure = { reason, status -> request.reportStatus(failurePhase(reason, status)) },
+                isCancelled = isCancelled,
+            )?.takeUnless { isCancelled() }
+        },
+        onTransliterationPrepared = { request, ttml ->
+            llmCache.write(request.appleMusicId, request.originalTtml, request.config, ttml, kind = "transliteration")
+        },
+        discardPending = { llmExecutor.queue.clear() },
+        onStatusChanged = { LyricsPlaybackRuntimeRegistry.publishLlmStatus(llmExecutor, it) },
     )
+    val playbackExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(8),
+        { task -> Thread(task, "ampp-lyrics-controls").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+    val playback = EmbeddedLyricsPlaybackRuntime(
+        content = content,
+        settings = configuration,
+        executor = playbackExecutor,
+        fetch = { id, source ->
+            failures.remove()
+            val result = resolver.fetchSelected(id, source) {
+                failures.set(dev.amenhancer.module.lyrics.source.LyricFetchFailure.INVALID)
+            }
+            result to failures.get().also { failures.remove() }
+        },
+    )
+    LyricsPlaybackRuntimeRegistry.attach(playback)
     return AutoLyricsRuntime(
         resolver = resolver,
         cache = cache,
         executor = executor,
-        publisher = publisher,
         llm = llm,
         suppressedIds = suppressedIds,
         translationEnricher = enricher,
         nativeLyricOverlay = nativeLyricOverlay,
         hideMandarinPinyin = hideMandarinPronunciation,
         genreFor = genreFor,
+        playback = playback,
         refreshExecutor = Executor { task ->
-            // Old waiting visits have already been cancelled by the session's generation.
             refreshExecutor.queue.clear()
             refreshExecutor.execute(task)
         },
-        // One lifecycle for both background lanes: the refresh executor and the index
-        // scheduler (which drives the AM-Lyrics and presence caches) stop with the runtime.
         closeRefresh = {
             refreshExecutor.shutdownNow()
             amLyricsIndexScheduler.shutdownNow()
+            playbackExecutor.shutdownNow()
+            executor.shutdownNow()
+            playback.close()
         },
         refreshSong = refresh@{ appleMusicId, isCancelled ->
-            if (isCancelled()) return@refresh null
-            var previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
-            if (previous == null) {
-                // A restart may still have a temporary cache awaiting migration.
-                val cached = cache.readCandidate(appleMusicId) ?: return@refresh null
-                if (isCancelled()) return@refresh null
-                android.util.Log.i("AMPP-Bndry", "bndry path=publish-refresh entered song=" + appleMusicId)
-                if (publisher.publish(appleMusicId, cached) == AutoLyricsPublishResult.FAILED) return@refresh null
-                triggerBoundary("publish-refresh", appleMusicId, cached.ttml)
-                cache.delete(appleMusicId)
-                previous = configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
-            }
-            val entry = previous ?: return@refresh null
-            // A document the user wrote or edited is left exactly as they saved
-            // it: refreshing would re-convert the source over their edit.
-            if (!entry.enabled || entry.userEdited || entry.source == CustomLyricsSources.MANUAL ||
-                isCancelled()
-            ) {
-                return@refresh null
-            }
-            val result = configuredContent.updateSong(appleMusicId, sources, isCancelled)
-            val updated = result as? CustomLyricsUpdateResult.Updated ?: run {
-                if (result is CustomLyricsUpdateResult.Failed && !isCancelled()) {
-                    ModernXposedRuntime.log("cached lyrics update failed id=$appleMusicId: ${result.message}")
-                }
-                return@refresh null
-            }
-            if (updated.failed > 0) {
-                ModernXposedRuntime.log("cached lyrics update failed id=$appleMusicId: ${updated.issues.firstOrNull()?.message.orEmpty()}")
-                return@refresh null
-            }
-            // Lunabeat can fall back to an older catalog, so don't log an authoritative 'unchanged'.
-            if (updated.skipped > 0 || isCancelled()) return@refresh null
-            // The native session skips identical keys; this also retries a formerly failed native parse.
-            updated.manifest.entries.firstOrNull { it.appleMusicId == appleMusicId }
+            val source = playback.snapshot(appleMusicId).activeSource?.takeIf {
+                it == CustomLyricsSources.AMLL || it == CustomLyricsSources.AM_LYRICS || it == CustomLyricsSources.LUNABEAT
+            } ?: return@refresh null
+            val previous = sourceStore.entryFor(appleMusicId, source) ?: return@refresh null
+            if (!previous.enabled || isCancelled()) return@refresh null
+            val epoch = sourceStore.generation()
+            val candidate = resolver.fetchSelected(appleMusicId, source) ?: return@refresh null
+            val current = playback.snapshot(appleMusicId)
+            if (isCancelled() || !current.isCurrentSong || current.activeSource != source ||
+                (current.preferredSource == LyricsPlaybackSources.AUTOMATIC && !TtmlTimingPolicy.isWord(candidate.ttml)) ||
+                sourceStore.entryFor(appleMusicId, source) != previous ||
+                !sourceStore.writeCandidate(appleMusicId, candidate, epoch)
+            ) return@refresh null
+            sourceStore.entryFor(appleMusicId, source)?.takeIf { it.sha256 != previous.sha256 }
         },
     )
 }
-

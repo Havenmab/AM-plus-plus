@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  无需 LSPosed 的<a href="https://github.com/Zennmn/AM-plus-plus/releases/tag/embedded-2026.08.10-r1">npatch 嵌入版</a>也可直接安装。
+  没有lsposed和root？不妨试试<a href="https://github.com/Zennmn/AM-plus-plus/releases/tag/embedded">npatch 嵌入版</a>
 </p>
 
 <details>
@@ -47,7 +47,7 @@
 
 ## 项目简介
 
-安装后，在 Apple Music → 设置 → **AM++ 模块设置** 中管理功能。模块无独立启动图标。
+安装后，在 Apple Music → 设置 → **AM++ 模块设置** 中管理功能。
 
 支持导入 ZIP 插件扩展功能，详见 [插件开发手册](docs/plugin-development.md)。
 
@@ -107,7 +107,9 @@
 
 ### npatch 嵌入版
 
-直接安装 [npatch 嵌入版](https://github.com/Zennmn/AM-plus-plus/releases/tag/embedded-2026.08.10-r1)，无需 LSPosed，无法与官方版共存。
+没有lsposed和root？不妨试试[npatch 嵌入版](https://github.com/Zennmn/AM-plus-plus/releases/tag/embedded)，无法与官方版共存。
+
+安装包文件名包含 AM++ 版本、Apple Music 版本和构建号，按需选择即可。
 
 ## 使用
 
@@ -143,7 +145,7 @@
 
 ## 从源码构建
 
-环境：JDK 17、Android SDK 37、Build Tools 37.0.0，使用项目自带的 Gradle Wrapper。
+环境：JDK 21、Android SDK 37、Build Tools 37.0.0，使用项目自带的 Gradle Wrapper。
 
 Windows：
 

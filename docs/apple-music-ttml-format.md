@@ -103,6 +103,21 @@
 2. `for` 必须引用对应正文段落 key；不能将每个和声另列为同 key 的 `text`，也不能漏掉未翻译的段落占位。
 3. 结合当前原生解析入口与使用者人工场景确认显示；文件结构正确、原生指针有效和译文实际显示是不同层次的证据。
 
+### 6.1 音译轨（`<transliterations>`）与逐词读音
+
+```xml
+<transliterations>
+  <transliteration xml:lang="ja-Latn">
+    <text for="L1"><span begin="0:31.576" end="0:31.696">hi</span> <span begin="0:31.696" end="0:31.846">ta</span></text>
+  </transliteration>
+</transliterations>
+```
+
+- **词级（`Word`）文档的每个 `<text for>` 必须逐词一条带 `begin`/`end` 的 `span`，时间与正文该词完全相同**：AM 为正文每个 `span` 生成一个读音视图，并从同一位置的头部 `span` 取文字；整行一条不带时间的文本**不会显示任何读音**（症状：音译轨存在、文本也在，但读音行整行为空）。
+- `<transliteration xml:lang>` 是读音轨在 App 内部的名字（`ja-Latn` / `ko-Latn` / `zh-Latn` / `und-Latn`）；缺这个标签时轨道虽被解析，却不会被 `getPronunciationLanguages` 报告，也就无法被选中。
+- AMLL 旧式写法（行内一条空格分隔音节的 `span ttm:role="x-roman"`）由导入转换器拆成上面的逐词形式：音节数等于词数时一一对应，否则按各词演唱时长比例分配；正文时间不被改写，读音顺序不变。正文为纯拉丁文字、或该 `span` 里其实是译文而非读音时保持原样（由 `RomanizationPolicy` 判定）。
+- 行级（`Line`）文档只写逐行文本，AM 读的是行文本本身，不做逐词配对。
+
 ## 7. 段落（`<div>`）
 
 - `<div itunes:song-part="Verse">`；取值：Verse/Chorus/PreChorus/Bridge/Intro/Outro/PostChorus/Refrain/Instrumental（官方建议值，任意值也可）

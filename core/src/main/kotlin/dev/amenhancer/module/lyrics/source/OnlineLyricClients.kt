@@ -208,10 +208,20 @@ class AutoLyricsSourceResolver(
             /** Optional presence index; null keeps "ask every repository". */
             presence: LyricPresenceIndex? = null,
             onFailure: ((LyricFetchFailure) -> Unit)? = null,
+            /**
+             * Debug-build sink for the AMLL conversion, handed to
+             * [AmllTtmlFormatConverter.toAppleFormat]: the source document's shape on
+             * entry and the head pronunciation lane Apple will read on exit. Null keeps
+             * the conversion silent, and a caller that wires it is expected to gate it
+             * on a debug build itself.
+             */
+            conversionDebug: ((String) -> Unit)? = null,
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL, presenceId = LyricPresence.AMLL) { raw ->
-                    amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
+                    amll.fetch(raw)?.let {
+                        AmllTtmlFormatConverter.toAppleFormat(it, debug = conversionDebug).ttml
+                    }
                 },
                 AutoLyricsSource(
                     CustomLyricsSources.LUNABEAT,

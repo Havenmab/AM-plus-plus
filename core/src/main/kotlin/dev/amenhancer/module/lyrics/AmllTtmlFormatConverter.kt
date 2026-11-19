@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import dev.amenhancer.module.hook.TtmlTimingPolicy
+import dev.amenhancer.module.lyrics.online.RomanizationPolicy
 import java.math.BigDecimal
 
 data class TtmlFormatConversion(
@@ -80,6 +82,22 @@ data class TtmlFormatConversion(
  * rewrites only touch a shape that is not yet canonical, so running the
  * converter twice changes nothing the second time.
  *
+ * A reading AMLL wrote **for the line** is then given the per-word timing that
+ * Apple's pronunciation row is built from. Apple inflates one pronunciation view
+ * per body span and pairs it with the head entry's span at that place — the
+ * AMLL files that already render carry one timed head span per lyric word,
+ * timed exactly as the word it reads (see [expandLineLevelReadings]). AMLL's
+ * inline form is one span of space-separated syllables for the whole line, which
+ * used to migrate verbatim into the head as an untimed entry: the app then had
+ * no span to put under any word, so the row stayed empty. Such a reading is now
+ * split into one span per lyric word of its own line, every span carrying that
+ * word's own `begin` / `end` — no timing is invented — with the
+ * syllables handed out in order, proportional to the words' sung durations so
+ * the reading advances with the highlight. A word count that matches the
+ * syllable count maps one to one, which is exact. A reading that already
+ * carries timing is left byte for byte, so the pass changes nothing on a second
+ * run.
+ *
  * The root language is resolved per song, not pinned. The document's own
  * `xml:lang`, else the caller's explicit language, names the **lyrics** language;
  * only a document that names none falls back to the script the body is written
@@ -147,6 +165,8 @@ object AmllTtmlFormatConverter {
     private val SPAN_TIMING =
         Regex("""\s(?:begin|end)\s*=\s*"[^"]*"|\s(?:begin|end)\s*=\s*'[^']*'""")
     private val PARENTHESIZED = Regex("""^\s*[(（].*[)）]\s*$""", RegexOption.DOT_MATCHES_ALL)
+    private val WHITESPACE = Regex("""\s+""")
+    private val HEAD_SPAN = Regex("""(?is)<span\b""")
     private val TIMELINE_OFFSET = Regex("([0-9]+(?:\\.[0-9]+)?)(ms|s|m|h)")
     private val TIMELINE_NUMBER = Regex("[0-9]+(?:\\.[0-9]+)?")
 
@@ -159,15 +179,46 @@ object AmllTtmlFormatConverter {
     private fun quoteRawAttributeValue(value: String): String =
         if ('"' in value) "'$value'" else "\"$value\""
 
-    fun toAppleFormat(ttml: String, lyricLanguage: String? = null): TtmlFormatConversion {
+    /**
+     * Rewrites [ttml] into Apple's format; [lyricLanguage] names the lyrics
+     * language when the caller knows it better than the document does.
+     *
+     * [debug] is a debug-build sink: it receives exactly two lines about this one
+     * conversion — the source document's shape on entry and the head lane and
+     * timing verdict on exit — so a device log can tell "the source carried no
+     * reading" from "the reading was lost on the way in". It is null by default,
+     * which keeps the converter silent and adds no work to the rewrite; a sink
+     * that throws is swallowed, because a diagnostic must never fail a
+     * conversion.
+     */
+    fun toAppleFormat(
+        ttml: String,
+        lyricLanguage: String? = null,
+        debug: ((String) -> Unit)? = null,
+    ): TtmlFormatConversion {
         if (ttml.isEmpty()) return TtmlFormatConversion(ttml, false)
+        if (debug != null) emitDebug(debug) { "amll convert in " + sourceSummary(ttml) }
         // The AMLL database still carries shapes an axis tool left behind: a
         // `<p>` whose only word is bare text, and `x-bg` groups whose
         // role-carrying wrapper also holds the timing. Neither is the canonical
         // shape the app reads, so they are normalized before anything else. The
         // pass is idempotent and is the only source of the indices the rest of
-        // the rewrite uses.
-        val normalized = normalizeLegacyShapes(ttml)
+        // the rewrite uses. A line-level reading is then given per-word timing,
+        // so the head lane can carry it to the word Apple draws it under.
+        val expansion = expandLineLevelReadings(normalizeLegacyShapes(ttml))
+        val conversion = convert(ttml, expansion.ttml, lyricLanguage)
+        if (debug != null) {
+            emitDebug(debug) { "amll convert out " + conversionSummary(conversion, expansion.readings) }
+        }
+        return conversion
+    }
+
+    /** The rewrite itself, once [normalized] carries canonical body shapes. */
+    private fun convert(
+        original: String,
+        normalized: String,
+        lyricLanguage: String?,
+    ): TtmlFormatConversion {
         // Judged per kind, so a head that already declares one track does not
         // hide the other kind still sitting inline. An `<iTunesMetadata>` on its
         // own is no such signal: AMLL writes one to carry `<songwriters>`.
@@ -184,7 +235,7 @@ object AmllTtmlFormatConverter {
         // documents benefit from it too.
         if (declared.any && unnamed.isEmpty() && !hasUndeclaredInlineTrack(normalized, declared)) {
             val formatted = formatTimeline(normalized)
-            return TtmlFormatConversion(formatted, formatted != ttml)
+            return TtmlFormatConversion(formatted, formatted != original)
         }
         // Read before `normalizeTags` pins the root: the source document's own
         // language is the song's lyrics language. A document that names an
@@ -210,7 +261,7 @@ object AmllTtmlFormatConverter {
         val result = formatTimeline(normalizedRoot)
         return TtmlFormatConversion(
             ttml = result,
-            converted = result != ttml,
+            converted = result != original,
         )
     }
 
@@ -329,6 +380,239 @@ object AmllTtmlFormatConverter {
         }
     }
 
+    /**
+     * Splits a line-level reading into one timed span per lyric word of its line.
+     *
+     * Apple draws a Word-timed line's pronunciation row one view per **body** span
+     * and reads each view's text from the head entry's span at that place; the
+     * AMLL files that render today carry one head span per lyric word, timed
+     * exactly as the word it reads. AMLL's inline form instead writes the whole
+     * line's syllables into one `x-roman` span with no timing, which the
+     * migration carries into the head verbatim — the entry then has no span for
+     * any word, so nothing is ever drawn. This pass gives that reading the
+     * per-word shape before it is migrated.
+     *
+     * The split only ever **reuses body timing**: each span takes its word's own
+     * `begin` / `end`, so the reading advances with Apple's highlight,
+     * and the syllables keep their order. A reading whose syllable count equals
+     * the line's word count maps one to one; otherwise each syllable goes to the
+     * word whose share of the line's sung duration contains its mid-point, which
+     * is the closest guess a source without timing allows and never moves a
+     * syllable past a later one. A word left without a syllable keeps an empty
+     * span so the head and body stay one-to-one, which is the pairing the app
+     * reads. A reading that already carries its own timing and a line with no
+     * timed words (Apple reads those from the line's own text) both stay
+     * untouched, so a second pass finds nothing to split.
+     *
+     * The background lane is handled the same way with the `x-bg` group's own
+     * words: its reading belongs under the small row, not under the lyric.
+     */
+    private fun expandLineLevelReadings(ttml: String): ReadingExpansion {
+        val body = nextElement(ttml, "body", 0) ?: return ReadingExpansion(ttml, 0)
+        val edits = mutableListOf<Edit>()
+        var cursor = body.contentStart
+        while (true) {
+            val line = nextElement(ttml, "p", cursor) ?: break
+            if (line.end > body.contentEnd) break
+            cursor = line.end
+            if (line.selfClosing) continue
+            val children = childElements(ttml, line)
+            val words = lyricWords(ttml, children)
+            children.forEach { child ->
+                when (attribute(child.attributes, ROLE_ATTRIBUTE)) {
+                    ROLE_ROMAN -> expandReading(ttml, child, words)?.let(edits::add)
+                    ROLE_BACKGROUND -> {
+                        val nested = childElements(ttml, child)
+                        val groupWords = lyricWords(ttml, nested)
+                        nested
+                            .filter { attribute(it.attributes, ROLE_ATTRIBUTE) == ROLE_ROMAN }
+                            .forEach { reading ->
+                                expandReading(ttml, reading, groupWords)?.let(edits::add)
+                            }
+                    }
+                }
+            }
+        }
+        return ReadingExpansion(applyEdits(ttml, edits), edits.size)
+    }
+
+    /** The line's lyric words: timed spans that carry no role of their own. */
+    private fun lyricWords(ttml: String, children: List<Element>): List<Element> =
+        children.filter { child ->
+            isElement(ttml, child.start, "span") &&
+                attribute(child.attributes, ROLE_ATTRIBUTE) == null &&
+                attribute(child.attributes, BEGIN_ATTRIBUTE_VALUE) != null &&
+                attribute(child.attributes, END_ATTRIBUTE_VALUE) != null
+        }
+
+    /**
+     * [reading]'s content rewritten as one timed span per word in [words], or null
+     * when it already carries timing, holds markup, or has no word to sit under.
+     */
+    private fun expandReading(ttml: String, reading: Element, words: List<Element>): Edit? {
+        if (reading.selfClosing || words.isEmpty()) return null
+        val inner = content(ttml, reading).trim()
+        if (inner.isEmpty() || '<' in inner) return null
+        val tokens = inner.split(WHITESPACE).filter(String::isNotEmpty)
+        if (tokens.isEmpty()) return null
+        // Only a real reading is worth placing under the words. AMLL's database
+        // also carries files whose "romanization" is a translation, and a line
+        // whose body is Latin has nothing to romanize; the module's own
+        // pronunciation gate already answers both questions, so a reading it would
+        // refuse is left exactly as the source wrote it.
+        val lyric = words.joinToString(separator = "") { content(ttml, it) }
+        if (RomanizationPolicy.sanitize(lyric, inner) == null) return null
+        val extents = words.map { word ->
+            val begin = attribute(word.attributes, BEGIN_ATTRIBUTE_VALUE) ?: return null
+            val end = attribute(word.attributes, END_ATTRIBUTE_VALUE) ?: return null
+            val start = timelineTime(begin) ?: return null
+            val finish = timelineTime(end) ?: return null
+            WordExtent(begin, end, (finish - start).toDouble())
+        }
+        val owners = assignTokens(tokens.size, extents.map(WordExtent::seconds))
+        val grouped = List(extents.size) { mutableListOf<String>() }
+        owners.forEachIndexed { index, owner -> grouped[owner] += tokens[index] }
+        val replacement = buildString {
+            extents.forEachIndexed { index, extent ->
+                append("<span begin=\"").append(extent.begin).append("\" end=\"")
+                append(extent.end).append("\">")
+                append(grouped[index].joinToString(" "))
+                append("</span>")
+            }
+        }
+        return Edit(reading.contentStart, reading.contentEnd, replacement)
+    }
+
+    /**
+     * Which word owns each syllable, in order. An equal count maps one to one;
+     * otherwise the syllable's own mid-point position decides, so the result is
+     * always an ordered partition of the reading over the words. A line with no
+     * readable duration falls back to one equal share per word.
+     */
+    private fun assignTokens(count: Int, seconds: List<Double>): List<Int> {
+        if (count == seconds.size) return List(count) { it }
+        val total = seconds.sum()
+        val weights = if (total > 0.0) seconds else List(seconds.size) { 1.0 }
+        val sum = weights.sum()
+        val bounds = MutableList(weights.size + 1) { 0.0 }
+        weights.forEachIndexed { index, weight -> bounds[index + 1] = bounds[index] + weight / sum }
+        bounds[bounds.lastIndex] = 1.0
+        return List(count) { token ->
+            val position = (token + 0.5) / count
+            var owner = 0
+            while (owner < weights.size - 1 && bounds[owner + 1] <= position) owner += 1
+            owner
+        }
+    }
+
+    /** One word's own extent, in the source's own time strings. */
+    private data class WordExtent(val begin: String, val end: String, val seconds: Double)
+
+    /** The body after the reading pass, plus how many readings it rewrote. */
+    private data class ReadingExpansion(val ttml: String, val readings: Int)
+
+    // --- Debug-only diagnostics -------------------------------------------
+
+    /**
+     * Hands one debug line to [sink]. The rewrite never depends on it, so a sink
+     * that throws (a closing log, a full queue) is swallowed rather than failing
+     * the conversion.
+     */
+    private fun emitDebug(sink: (String) -> Unit, line: () -> String) {
+        runCatching { sink(line()) }
+    }
+
+    /**
+     * What a source document offers the pronunciation lane, counted before the
+     * rewrite: how many inline role spans each kind has, whether the head already
+     * declares a lane and under which language, and how Apple will time it.
+     */
+    private fun sourceSummary(ttml: String): String {
+        val declared = declaredTracks(ttml)
+        return buildString {
+            append("bytes=").append(ttml.length)
+            append(" inlineRoman=").append(countRole(ttml, ROLE_ROMAN))
+            append(" inlineTranslation=").append(countRole(ttml, ROLE_TRANSLATION))
+            append(" background=").append(countRole(ttml, ROLE_BACKGROUND))
+            append(' ').append(headSummary(ttml))
+            append(' ').append(timingSummary(ttml))
+            if (declared.any) append(" declared=yes")
+        }
+    }
+
+    /** What the rewritten document hands Apple, with the timing verdict it will be read under. */
+    private fun conversionSummary(conversion: TtmlFormatConversion, readings: Int): String =
+        buildString {
+            append("bytes=").append(conversion.ttml.length)
+            append(" converted=").append(conversion.converted)
+            append(" readable=").append(TtmlInputPolicy.isAcceptable(conversion.ttml))
+            append(' ').append(timingSummary(conversion.ttml))
+            append(" expandedReadings=").append(readings)
+            append(' ').append(headSummary(conversion.ttml))
+        }
+
+    /**
+     * The head `<transliterations>` lane as Apple reads it: its language tags,
+     * how many `<text>` entries it holds, how many of those carry timed spans, and
+     * how many are still one untimed line — the number that decides whether any
+     * word can show a reading.
+     */
+    private fun headSummary(ttml: String): String {
+        val block = nextElement(ttml, "transliterations", 0) ?: return "head=none"
+        val tags = mutableListOf<String>()
+        var entries = 0
+        var timed = 0
+        var spans = 0
+        var cursor = block.contentStart
+        while (true) {
+            val track = nextElement(ttml, "transliteration", cursor) ?: break
+            if (track.end > block.contentEnd) break
+            cursor = track.end
+            tags += attribute(track.attributes, LANGUAGE_ATTRIBUTE)?.takeIf(String::isNotBlank) ?: "none"
+            childElements(ttml, track).forEach { entry ->
+                if (!isElement(ttml, entry.start, "text")) return@forEach
+                entries += 1
+                val inner = content(ttml, entry)
+                if (SPAN_TIMING.containsMatchIn(inner)) timed += 1
+                spans += HEAD_SPAN.findAll(inner).count()
+            }
+        }
+        return "headTags=" + tags.joinToString(",").ifEmpty { "none" } +
+            " headEntries=" + entries + " headTimedEntries=" + timed + " headSpans=" + spans
+    }
+
+    /** How many elements carry one role value; the diagnostic's only count. */
+    private fun countRole(ttml: String, role: String): Int {
+        var count = 0
+        var index = 0
+        while (true) {
+            val open = ttml.indexOf('<', index)
+            if (open < 0) return count
+            index = open + 1
+            val literal = literalEnd(ttml, open)
+            if (literal > 0) {
+                index = literal
+                continue
+            }
+            val end = tagEnd(ttml, open)
+            if (end < 0) return count
+            if (attribute(ttml.substring(open, end + 1), ROLE_ATTRIBUTE) == role) count += 1
+        }
+    }
+
+    /**
+     * The timing verdict: the root declaration the source gate reads, beside
+     * whether the body actually carries timed syllables. A source can declare
+     * nothing and still be word-timed, which is exactly what the converter then
+     * writes onto the root.
+     */
+    private fun timingSummary(ttml: String): String {
+        val body = nextElement(ttml, "body", 0)
+        return buildString {
+            append("timing=").append(if (TtmlTimingPolicy.isWord(ttml)) "WORD" else "LINE")
+            append(" words=").append(if (body != null && hasTimedSpan(ttml, body)) "yes" else "no")
+        }
+    }
     /** The `begin` / `end` attributes for a synthesized span, in that order. */
     private fun timingAttributes(begin: String?, end: String?): String = buildString {
         if (begin != null) append(" begin=\"").append(begin).append('"')

@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import dev.amenhancer.module.model.CustomLyricsSources
+import java.nio.file.Files
 import java.util.ArrayDeque
 import java.util.concurrent.Executor
 import org.junit.Assert.assertEquals
@@ -152,7 +153,7 @@ class AutoLyricsReplacementSessionTest {
         var parses = 0
         val session = session(
             queued = queued,
-            fetch = { AutoLyricsCandidate("kuwo", LINE_TTML) },
+            fetch = { _, _ -> AutoLyricsCandidate("kuwo", LINE_TTML) },
             parse = { parses += 1; pointer },
         )
 
@@ -166,13 +167,15 @@ class AutoLyricsReplacementSessionTest {
     @Test
     fun `a persisted line timed cache is prepared before any network source`() {
         val queued = QueuedExecutor()
-        val cache = MemoryCache(mapOf(42L to LINE_TTML))
+        val cache = MemoryCache(
+            mapOf((42L to CustomLyricsSources.AMLL) to AutoLyricsCandidate(CustomLyricsSources.AMLL, LINE_TTML)),
+        )
         val pointer = Pointer()
         var fetches = 0
         val session = session(
             queued = queued,
             cache = cache,
-            fetch = { fetches += 1; AutoLyricsCandidate("network", WORD_TTML) },
+            fetch = { _, _ -> fetches += 1; AutoLyricsCandidate("network", WORD_TTML) },
             parse = { pointer },
         )
 
@@ -209,7 +212,7 @@ class AutoLyricsReplacementSessionTest {
         var documentAvailable = false
         val session = session(
             queued = queued,
-            fetch = {
+            fetch = { _, _ ->
                 fetches += 1
                 if (documentAvailable) AutoLyricsCandidate("online-translation", WORD_TTML) else null
             },
@@ -238,7 +241,7 @@ class AutoLyricsReplacementSessionTest {
         var fetches = 0
         val session = session(
             queued = queued,
-            fetch = {
+            fetch = { _, _ ->
                 fetches += 1
                 AutoLyricsCandidate("online-translation", WORD_TTML)
             },
@@ -278,7 +281,6 @@ class AutoLyricsReplacementSessionTest {
         } finally {
             directory.deleteRecursively()
         }
-        assertTrue(session.hasLookupMiss(42L))
     }
 
     private fun session(

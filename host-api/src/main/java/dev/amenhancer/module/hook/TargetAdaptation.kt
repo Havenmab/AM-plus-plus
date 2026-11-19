@@ -95,6 +95,8 @@ interface NativeLyricsTarget {
     fun onLyricsPresentation(fragment: Any?, pointer: Any?) = Unit
     fun onCustomOverlayUpdated(songId: Long) = Unit
     fun setModuleSupplementSongResolver(resolver: (Long) -> Boolean) = Unit
+}
+
 fun interface LyricsParserTarget {
     fun install(): TargetCapabilityInstall
 }

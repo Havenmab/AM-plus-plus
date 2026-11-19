@@ -84,10 +84,10 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         assertTrue(target.contains("mainHandler.post {"))
         assertTrue(target.contains("resultBridge.onReplacementPublished(appleMusicId)"))
         assertEquals(
-            // Configured lyrics, automatic fallback, cache refresh, LLM and this
-            // fork's merged custom document (user body + online translation and
-            // pronunciation lanes) each publish through the same bridge.
-            5,
+            // Configured lyrics, automatic fallback, cache refresh, LLM, the native-ID
+            // selection repair, the fresh-candidate and lookup-miss re-submissions each
+            // publish through the same bridge (the merged selection pipeline owns these).
+            8,
             Regex("resultBridge\\.onReplacementPublished").findAll(target).count(),
         )
         assertTrue(

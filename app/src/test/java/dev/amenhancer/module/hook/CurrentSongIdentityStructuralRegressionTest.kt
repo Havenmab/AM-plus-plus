@@ -88,10 +88,11 @@ class CurrentSongIdentityStructuralRegressionTest {
         assertTrue(adaptation.contains("currentSong: CurrentSongIdentityCache = CurrentSongIdentityCache()"))
         assertTrue(factory.contains("currentSong = currentSong"))
         assertTrue(factory.contains("currentSongIdentity = AppleMusicCurrentSongIdentityTarget("))
-        assertTrue(factory.contains("customLyrics = AppleMusicCustomLyricsTarget("))
+        assertTrue(factory.contains("val customLyrics = AppleMusicCustomLyricsTarget("))
+        assertTrue(factory.contains("customLyrics = customLyrics"))
         assertTrue(factory.contains("autoLyricsRuntime = autoLyricsRuntime"))
         assertTrue(assembly.contains("content = settingsController.content"))
-        assertTrue(assembly.contains("activity, currentSong, automatic.playback"))
+        assertTrue(assembly.contains("activity, currentSong, playback, config::settings"))
         assertTrue(adaptation.contains("fun interface CurrentSongIdentityTarget"))
         assertTrue(installation.contains("FeatureInstallationPlan(feature = CurrentSongIdentityFeature())"))
         assertTrue(

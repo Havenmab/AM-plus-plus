@@ -307,14 +307,24 @@ internal fun EmbeddedSettingsHost.EmbeddedCustomLyricsPage(
     }
 }
 
+/**
+ * The automatic-lyrics page.
+ *
+ * Two write paths coexist here: the on/off flag and the order already have a key-scoped
+ * controller write, while the search section below is a plain settings block owned by this page.
+ * Both must update the draft, but only the second must write it — routing the search rows through
+ * [onKeyScopedSettingsSaved] is what left them in memory only, so a cleared mirror address came
+ * back from disk on the next launch.
+ */
 @Composable
 internal fun EmbeddedSettingsHost.EmbeddedAutomaticLyricsPage(
     activity: Activity,
     settings: ModuleSettings,
     onSettingsSaved: ((ModuleSettings) -> ModuleSettings) -> Unit,
+    onKeyScopedSettingsSaved: ((ModuleSettings) -> ModuleSettings) -> Unit,
 ) {
-    fun applySettings(saved: Boolean, change: (ModuleSettings) -> ModuleSettings): Boolean {
-        if (saved) onSettingsSaved(change)
+    fun applyKeyScopedSettings(saved: Boolean, change: (ModuleSettings) -> ModuleSettings): Boolean {
+        if (saved) onKeyScopedSettingsSaved(change)
         else Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
         return saved
     }
@@ -330,7 +340,7 @@ internal fun EmbeddedSettingsHost.EmbeddedAutomaticLyricsPage(
                 enabled = settings.customLyricsEnabled,
                 icon = EmbeddedSvgIcon.AutomaticLyrics,
                 onCheckedChange = { enabled ->
-                    val saved = applySettings(controller.saveAutomaticLyricsEnabled(enabled)) {
+                    val saved = applyKeyScopedSettings(controller.saveAutomaticLyricsEnabled(enabled)) {
                         it.copy(automaticLyricsEnabled = enabled)
                     }
                     if (saved) pageRefresh?.invoke()
@@ -341,7 +351,7 @@ internal fun EmbeddedSettingsHost.EmbeddedAutomaticLyricsPage(
             order = settings.automaticLyricsSourceOrder,
             localize = { key, arguments -> localizedText(key, *arguments) },
             onOrderChanged = { nextOrder ->
-                applySettings(controller.saveAutomaticLyricsSourceOrder(nextOrder)) {
+                applyKeyScopedSettings(controller.saveAutomaticLyricsSourceOrder(nextOrder)) {
                     it.copy(automaticLyricsSourceOrder = nextOrder)
                 }
             },

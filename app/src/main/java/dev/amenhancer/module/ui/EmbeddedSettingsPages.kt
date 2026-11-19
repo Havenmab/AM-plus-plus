@@ -98,14 +98,18 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
     var pluginPageSequence = 0L
     var dialog: Dialog? = null
 
-    fun update(next: ModuleSettings) {
-        val saved = draft.update(next)
+    /** Writes a change that no key-scoped controller write owns. */
+    fun saveChange(change: (ModuleSettings) -> ModuleSettings) {
+        val saved = draft.saveChange(change)
         settings = draft.settings
         if (!saved) Toast.makeText(activity, localizedText(ModuleText.SETTINGS_SAVE_FAILED), Toast.LENGTH_SHORT).show()
     }
 
-    fun applySavedChange(change: (ModuleSettings) -> ModuleSettings) {
-        draft.applySavedChange(change)
+    fun update(next: ModuleSettings) = saveChange { next }
+
+    /** Mirrors a change the controller already wrote through its own key. */
+    fun mirrorSavedChange(change: (ModuleSettings) -> ModuleSettings) {
+        draft.mirrorSavedChange(change)
         settings = draft.settings
     }
 
@@ -256,7 +260,12 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                                         EmbeddedSettingsPage.CUSTOM_LYRICS ->
                                             EmbeddedCustomLyricsPage(activity, current, refresh, ::update, ::open)
                                         EmbeddedSettingsPage.AUTOMATIC_LYRICS ->
-                                            EmbeddedAutomaticLyricsPage(activity, current, ::applySavedChange)
+                                            EmbeddedAutomaticLyricsPage(
+                                                activity,
+                                                current,
+                                                onSettingsSaved = ::saveChange,
+                                                onKeyScopedSettingsSaved = ::mirrorSavedChange,
+                                            )
                                         EmbeddedSettingsPage.LLM_LYRICS ->
                                             EmbeddedLlmLyricsPage(activity, current, ::update, active = active)
                                         EmbeddedSettingsPage.PLUGINS ->

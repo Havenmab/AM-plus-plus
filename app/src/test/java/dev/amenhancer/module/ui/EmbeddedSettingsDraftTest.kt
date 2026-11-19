@@ -64,4 +64,47 @@ class EmbeddedSettingsDraftTest {
         assertTrue(draft.updateCellularDataEntry(false))
         assertEquals(updated.copy(lyricBlurRadiusOffsetPx = 5), stored)
     }
+
+    @Test
+    fun `clearing the custom source address is written, not only shown`() {
+        var stored = ModuleSettings(customLyricsSourceBaseUrl = "https://mirror.example/lyrics")
+        val draft = EmbeddedSettingsDraft(stored) { next ->
+            stored = next
+            true
+        }
+
+        assertTrue(draft.saveChange { it.copy(customLyricsSourceBaseUrl = "") })
+        assertEquals("", stored.customLyricsSourceBaseUrl)
+        assertEquals("", draft.settings.customLyricsSourceBaseUrl)
+    }
+
+    @Test
+    fun `a failed write keeps the cleared address in the draft for a retry`() {
+        var stored = ModuleSettings(customLyricsSourceBaseUrl = "https://mirror.example/lyrics")
+        val draft = EmbeddedSettingsDraft(stored) { next ->
+            stored = next
+            false
+        }
+
+        assertFalse(draft.saveChange { it.copy(customLyricsSourceBaseUrl = "") })
+        assertEquals("https://mirror.example/lyrics", stored.customLyricsSourceBaseUrl)
+        assertEquals("", draft.settings.customLyricsSourceBaseUrl)
+    }
+
+    @Test
+    fun `mirroring a key-scoped write leaves the stored settings alone`() {
+        var stored = ModuleSettings(automaticLyricsEnabled = true)
+        var writes = 0
+        val draft = EmbeddedSettingsDraft(stored) { next ->
+            stored = next
+            writes += 1
+            true
+        }
+
+        draft.mirrorSavedChange { it.copy(automaticLyricsEnabled = false) }
+
+        assertEquals(0, writes)
+        assertTrue(stored.automaticLyricsEnabled)
+        assertFalse(draft.settings.automaticLyricsEnabled)
+    }
 }

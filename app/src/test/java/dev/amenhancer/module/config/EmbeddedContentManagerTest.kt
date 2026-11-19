@@ -48,6 +48,9 @@ class EmbeddedContentManagerTest {
 
     @Test
     fun `cache refresh preserves a concurrent edit clear disable or cancellation`() {
+        // This is the edit guard the retired commitCustomLyricsIfUnchanged() used to provide:
+        // the refresh path now detects the concurrent change through the source store
+        // generation, so every branch below must leave the user's own write in place.
         val source = CustomLyricsSources.AMLL
         for (action in listOf("edit", "clear", "disable", "cancel")) {
             val storage = MemoryStorage()

@@ -213,6 +213,36 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
+    fun `a captured document discards the attempt that was already queued`() {
+        val queued = QueuedExecutor()
+        val pointer = Pointer()
+        var fetches = 0
+        var documentAvailable = false
+        val session = session(
+            queued = queued,
+            fetch = { _, _ ->
+                fetches += 1
+                if (documentAvailable) AutoLyricsCandidate("online-translation", WORD_TTML) else null
+            },
+            parse = { pointer },
+        )
+
+        // Queue the attempt that runs without a displayed document.
+        session.ensureRequested(42L)
+        documentAvailable = true
+        // The document arrives while that attempt is still queued: it must be invalidated, and
+        // the retry must be the one that fetches and publishes.
+        session.onDisplayedDocumentCaptured(42L)
+
+        queued.runNext()
+        assertNull("the stale attempt must not publish", session.readyReplacementFor(42L))
+
+        queued.runAll()
+        assertEquals(1, fetches)
+        assertSame(pointer, session.readyReplacementFor(42L))
+    }
+
+    @Test
     fun `a line timed candidate is still prepared from the provider-less cache slot`() {
         // The merged per-source read only accepts word timing; the legacy AUTO_CACHE slot stays the
         // one place a persisted line-timed document may win, and the seam policy accepts it.
@@ -468,6 +498,11 @@ class AutoLyricsReplacementSessionTest {
         }
         fun runAll() {
             while (tasks.isNotEmpty()) tasks.removeFirst().invoke()
+        }
+
+        /** Runs exactly one queued task, so a stale one can be observed on its own. */
+        fun runNext() {
+            if (tasks.isNotEmpty()) tasks.removeFirst().invoke()
         }
     }
 

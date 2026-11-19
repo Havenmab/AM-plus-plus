@@ -378,16 +378,19 @@ class AutoLyricsReplacementSession(
         val retry = synchronized(lock) {
             if (!isCurrentSongLocked(appleMusicId) || !isAllowed(appleMusicId)) return
             val attempted = pending.containsKey(appleMusicId) ||
-                failedUntil.containsKey(appleMusicId)
-            failedUntil.remove(appleMusicId)
+                failedUntil.containsKey(appleMusicId) ||
+                currentRequests.containsKey(appleMusicId)
+            // Drop the in-flight request's stamp (and its pending/cooldown state) so a prepare
+            // that started before the document existed bails out when it returns, instead of
+            // publishing a result the document could have improved. A track that already has a
+            // prepared candidate is left alone.
+            if (attempted) invalidateRequestLocked(appleMusicId)
             attempted
         }
         if (retry) {
-            // The merged session replaced the fork generation counter with per-request
-            // stamps; bumping the stamp is the equivalent invalidate-in-flight-work signal.
-            // TODO(phase3): re-point this at the per-source store generation.
-            synchronized(lock) { nextRequestStamp += 1L }
+            logger("automatic lyrics retry after the displayed document arrived id=$appleMusicId")
         }
+        // Always (re)start: with no attempt yet the document is the first reason to look.
         ensureRequested(appleMusicId)
     }
 
@@ -630,11 +633,16 @@ class AutoLyricsReplacementSession(
             isCurrentSongLocked(appleMusicId) &&
             isAllowed(appleMusicId)
 
-    private fun invalidateSongLocked(appleMusicId: Long) {
+    /** Drops the in-flight request bookkeeping, keeping any candidate already prepared. */
+    private fun invalidateRequestLocked(appleMusicId: Long) {
         currentRequests.remove(appleMusicId)
         pending.remove(appleMusicId)
         failedUntil.remove(appleMusicId)
         lookupMisses.remove(appleMusicId)
+    }
+
+    private fun invalidateSongLocked(appleMusicId: Long) {
+        invalidateRequestLocked(appleMusicId)
         candidates.remove(appleMusicId)
     }
 

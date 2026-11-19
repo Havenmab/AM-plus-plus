@@ -81,14 +81,17 @@ class EmbeddedSettingsDraftTest {
     @Test
     fun `a failed write keeps the cleared address in the draft for a retry`() {
         var stored = ModuleSettings(customLyricsSourceBaseUrl = "https://mirror.example/lyrics")
-        val draft = EmbeddedSettingsDraft(stored) { next ->
-            stored = next
+        var writes = 0
+        // A rejected commit leaves the store untouched; only the draft keeps the new value.
+        val draft = EmbeddedSettingsDraft(stored) { _ ->
+            writes += 1
             false
         }
 
         assertFalse(draft.saveChange { it.copy(customLyricsSourceBaseUrl = "") })
         assertEquals("https://mirror.example/lyrics", stored.customLyricsSourceBaseUrl)
         assertEquals("", draft.settings.customLyricsSourceBaseUrl)
+        assertEquals(1, writes)
     }
 
     @Test

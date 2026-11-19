@@ -51,6 +51,9 @@ data class TargetAdaptation(
     val startupPagePrewarm: StartupPagePrewarmTarget = StartupPagePrewarmTarget {
         TargetCapabilityInstall.Unsupported("Startup page prewarming has no exact host contract")
     },
+    val lyricsParser: LyricsParserTarget = LyricsParserTarget {
+        TargetCapabilityInstall.Unsupported("Native lyric parser repair has no exact host contract")
+    },
 ) {
 }
 
@@ -92,6 +95,8 @@ interface NativeLyricsTarget {
     fun onLyricsPresentation(fragment: Any?, pointer: Any?) = Unit
     fun onCustomOverlayUpdated(songId: Long) = Unit
     fun setModuleSupplementSongResolver(resolver: (Long) -> Boolean) = Unit
+fun interface LyricsParserTarget {
+    fun install(): TargetCapabilityInstall
 }
 
 fun interface CurrentSongIdentityTarget {

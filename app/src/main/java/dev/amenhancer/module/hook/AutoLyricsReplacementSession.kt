@@ -35,6 +35,7 @@ import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateResult
 import dev.amenhancer.module.lyrics.CustomLyricsUpdateSources
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.lyrics.FileLlmLyricsCache
 import dev.amenhancer.module.lyrics.LlmLyricsClient
@@ -289,12 +290,17 @@ internal fun createAutoLyricsRuntime(
         session = EmbeddedConfigurationSession(HostPrivateEmbeddedStorage(application)),
     )
     val publisher = AutoLyricsPublisher { appleMusicId, candidate ->
+        // Native lyrics are selected from the host result, never copied into the managed index.
+        if (candidate.source == CustomLyricsSources.AM_NATIVE) return@AutoLyricsPublisher AutoLyricsPublishResult.FAILED
         val existing = runCatching {
             configuredContent.listLyrics().firstOrNull { it.appleMusicId == appleMusicId }
         }.getOrNull()
         when {
-            existing != null && existing.enabled -> AutoLyricsPublishResult.ALREADY_CONFIGURED
-            existing != null -> AutoLyricsPublishResult.FAILED
+            existing != null && !existing.enabled -> AutoLyricsPublishResult.FAILED
+            existing != null && !existing.autoManaged -> AutoLyricsPublishResult.ALREADY_CONFIGURED
+            existing != null && existing.source == candidate.source &&
+                runCatching { configuredContent.readLyrics(appleMusicId) }
+                    .getOrNull() == candidate.ttml -> AutoLyricsPublishResult.PUBLISHED
             else -> {
                 val displayName = candidate.displayName
                     ?.takeIf(String::isNotBlank)
@@ -307,7 +313,9 @@ internal fun createAutoLyricsRuntime(
                                 displayName = displayName,
                                 ttml = candidate.ttml,
                                 source = candidate.source,
+                                autoManaged = true,
                             ),
+                            replacingAppleMusicId = existing?.appleMusicId,
                         )
                     }.getOrNull()
                 ) {
@@ -394,7 +402,11 @@ internal fun createAutoLyricsRuntime(
         fetchAmLyricsTtml = amLyrics::fetchTtml,
         loadLunabeatCatalog = lunabeat::loadCatalog,
         fetchLunabeatTtml = lunabeat::fetch,
-        fetchAutoCache = resolver::fetch,
+        fetchAutoCache = { id ->
+            resolver.fetch(id, ModuleSettings.normalizeAutomaticLyricsSourceOrder(
+                configuration().automaticLyricsSourceOrder,
+            ).filterNot { it == CustomLyricsSources.AM_NATIVE })
+        },
     )
     // One overlay for the active track. The optional enricher writes it and the
     // independent native-lyrics target reads it back, so Apple's own lanes still
@@ -535,6 +547,9 @@ internal fun createAutoLyricsRuntime(
                         apiKey = settings.llmLyricsApiKey,
                         model = settings.llmLyricsModel,
                         thinkingEnabled = settings.llmLyricsThinkingEnabled,
+                        thinkingEffort = if (settings.llmLyricsThinkingEnabled) {
+                            settings.llmLyricsThinkingEffort
+                        } else LlmLyricsThinkingEffort.DEFAULT,
                     )
                 } else null
             }

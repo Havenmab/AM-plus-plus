@@ -22,7 +22,7 @@
 生产准入、能力可用和人工通过分别判断：
 
 1. 精确 `versionName`+`versionCode` 组合已登记且生产入口启用，才允许模块接入。
-2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如跨行扫光虽由“歌词效果优化”设置门禁，仍依赖自己的顶层契约，LLM 则复用已有歌词通道。
+2. 功能按当前 profile 的能力位、独立契约、设置、Android API 和设备形态共同判断。`capabilities` 不是全部功能的目录；例如简体替换和声修复与跨行扫光虽由“歌词效果优化”设置门禁，仍依赖各自的精确接缝，LLM 则复用已有歌词通道。
 3. 成员解析与 Hook 安装成功只说明该阶段就绪，不能代替页面完成、显示结果或人工验收。`productionEnabled` 与 `runtimeVerified` 各自依据实际证据维护，局部反馈不扩展为整个构建通过。
 
 页面族按实际入口、生命周期和布局识别：`legacy-activity` 与 `fragment-content` 分别使用自己的接入。相邻构建、版本号大小和主版本号均不能代替该判断；新页面族先建立有证据的能力工厂。
@@ -110,6 +110,10 @@ Java 反编译用于理解流程，原始 owner 与擦除签名以 DEX/smali 为
 
 类结构、字段顺序、相似描述符或反编译浏览中的近似签名只能提出结构候选，用于缩小核查范围；在缺少语义闭合前不能据此认定目标版本已适配、授予能力或推定运行时兼容。候选转为已确认映射时，须同时核对当前 split 中的原始 owner 与完整擦除签名或字段类型、实际声明及继承/接口关系、调用方与读写语义、Hook 的具体实现，以及页面生命周期中的实际作用；资源与布局还须按上表确认限定符和运行时父链。
 
+适配器基类新增方法造成子类混淆名整体移动时，旧名仍可能存在且签名相同，却已指向其他实现；空实现也无法仅凭方法体归一化或完整签名区分。此时须沿原生调用的同一状态分支和父类声明追踪实际实现，不能按同名或首个候选复用。
+
+复用相邻构建 profile 的 `evidence` 时，各独立区域沿用现有字段，逐个按目标实际包更新 `sourceBuild`、`sourceIdentity`、`memberSource`，并重新核对 `layoutReview`；明确区分上游方案来源与当前宿主证据，旧 `runtimeVerified` 不随复制保留。
+
 <a id="adaptation-workflow"></a>
 
 ## 4. 每个构建的适配流程
@@ -162,9 +166,9 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 | 功能域 | profile / 主要接缝 | 人工场景 |
 |---|---|---|
 | [共用歌词结果提交](#lyrics-result-submission) | `indexed`、`lyricResultSubmission`、原生安装与 item 更新 | [结果提交](feature-preservation.md#lyrics-result-submission) |
-| [歌词来源](#lyrics-sources)、[LLM](#llm-lyrics-fallback) | 原生 TTML 观察、指针/歌曲身份及共用结果通道 | [来源](feature-preservation.md#lyrics-sources)、[LLM](feature-preservation.md#llm-lyrics-fallback) |
+| [歌词来源](#lyrics-sources)、[简体替换和声修复](#simplified-replacement-backgrounds)、[LLM](#llm-lyrics-fallback) | 原生 TTML 观察、共享歌词效果优化门禁的单解析器修复、指针/歌曲身份及共用结果通道 | [来源](feature-preservation.md#lyrics-sources)、[LLM](feature-preservation.md#llm-lyrics-fallback) |
 | [模糊](#lyrics-blur)、[CJK](#cjk-animation)、[字体](#lyrics-typeface) | 各自契约、显示状态、绑定与资源 | [模糊](feature-preservation.md#lyrics-blur)、[CJK](feature-preservation.md#cjk-animation)、[字体](feature-preservation.md#lyrics-typeface) |
-| [歌词效果优化](#lyric-background-highlight)：[跨行扫光](#lyric-wrap-sweep)与活动行高亮 | 共享设置门禁；`lyricWrapSweep` / `lyricBackgroundHighlight` 独立契约、安装状态和验收 | [跨行](feature-preservation.md#lyric-wrap-sweep)、[活动行](feature-preservation.md#lyric-background-highlight) |
+| [歌词效果优化](#lyric-background-highlight)：[简体替换和声修复](#simplified-replacement-backgrounds)、[逐行双声部对齐](#line-lyric-agent-alignment)、[CJK 末词补偿](#cjk-animation)、[跨行扫光](#lyric-wrap-sweep)与活动行高亮 | 共享设置门禁；解析修复、逐行对齐与末词补偿保留三项完整诊断并按 parser 与已声明可选项汇总状态，`terminalGradient` / `lyricWrapSweep` / `lyricBackgroundHighlight` 分别核对契约、降级和失败 | [末词](feature-preservation.md#cjk-animation)、[跨行](feature-preservation.md#lyric-wrap-sweep)、[活动行](feature-preservation.md#lyric-background-highlight) |
 | [玻璃导航](#chrome-glass)、[收缩](#glass-collapse-rendering) | `chrome` / `fragmentChrome`、独立能力位、滚动与 sheet 端口 | [玻璃](feature-preservation.md#chrome-glass)、[收缩](feature-preservation.md#glass-collapse-rendering) |
 | [启动预热](#startup-page-prewarm) | 独立能力、`startupPagePrewarm` 与形态导航资源 | [预热](feature-preservation.md#startup-page-prewarm) |
 | [平板布局、视频与恢复](#tablet-layout) | 双栏、binding、资源、视频/恢复与布局变体 | [平板](feature-preservation.md#tablet-layout) |
@@ -190,13 +194,25 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 
 | 事件 | 处理与归属 |
 |---|---|
-| 原生安装 before / Fragment 恢复 | 附加当前 ViewModel 和结果容器，重读已存值并恢复请求；不改安装参数，不重入 Fragment 安装方法 |
+| 原生安装 before / Fragment 恢复 | 先附加当前 ViewModel 和实际结果容器，再重读已存值并恢复请求；安装入参为空时仅在当前会话可证明有可交付文档时抑制该次空安装；不改写安装参数，不重入 Fragment 安装方法 |
 | 原生 item 更新 after | 宿主先更新自己的 item，再重新附加；复用歌词 Fragment 既有精确条目，不主动改写 item |
 | 后台候选就绪 | 主线程重读当前身份与选择器，匹配后立即提交；不匹配时等待原生身份恢复，不重新查询 |
 | 安装 after | 无异常返回，且 Fragment、ViewModel、歌曲 ID、选中指针均一致时确认交付；确认表示调用返回，完整显示由人工场景判断 |
 | 重建 / 请求结束 | 原生观察者按生命周期恢复结果；请求、ViewModel 或会话结束清理选择与待安装状态，不启用旧 ready-late 台账或重应用协调器 |
 
-结果写入与安装确认分别保存。所有容器提交只在主线程进行，与原生写入保持同一线程。身份对齐后，选中指针尚未确认安装可经容器补发，每次外部恢复回调最多一次，自身写入不再次排队；确认后同文档去重。换到新 Fragment 实例且已有选择时重新等待确认，同实例重复附加不重置。
+安装入口收到空 `SongInfoPtr` 时，先完成附加，再判断是否抑制。只有 Fragment、当前 ViewModel、请求和播放 ID 一致，并且能取得存活、ID 匹配的当前文档或已 ready 的 replacement 时，才取消本次空安装。只把此前未知的原生结果记为已观察，保留当前选择并置为待安装，再通过既有结果通道在主线程排队补发；不得改写安装入参、直接重入安装方法或为同一信息新增 profile 成员。没有可用文档、切歌或身份不匹配、容器丢失、会话关闭时保持原生空安装与既有回退。非空原生结果仍按来源优先级、文档质量和请求身份仲裁。
+
+配置歌曲 ID 与宿主当前 item ID 分开维护。资料库补全可在同一歌曲的 `persistentId` 不变时通过 `overwriteLibraryDataFrom` 更换 `getId()`；只有 item 与播放器发布时保存的非零 `persistentId` 快照相同，才将其归入当前配置歌曲 ID。公开 `getPersistentId(): long` 不可用、值为零或不相等时不建立别名，不凭标题、艺术家或数值长度匹配，也不改写宿主 item。发布时保存 persistentId 的值，不能日后读取可能已变异的 item 来补证旧快照。
+
+请求、候选缓存及来源优先级使用配置 ID；原生指针、时间索引与安装校验使用当前 item 的实际 ID。`OpaqueTtmlParser` 在既有 Handle 中保留逻辑 ID 与原始绑定快照，只有原生绑定仍有效时才向 core 返回逻辑 ID；TTML 本身已带正确 ID、无需初始绑定时，也须建立该逻辑身份。
+
+提交 ID 改变时，在既有准备执行器上由保留的 TTML 生成独立原生指针并绑定新 ID，不修改已经安装的旧指针，不在主线程解析或拼接裸地址。每个 Handle 合并进行中的准备，只接纳仍匹配最新目标的结果；失败不能自行循环唤醒。当前提交指针由 Handle 保持引用，历史指针仅作弱身份识别；宿主释放指针后重新准备，不因另一个指针存活而掩盖实际传入对象失活。没有原文时不猜测复制或所有权行为。文档去重同时核对绑定 ID 快照及当前提交指针身份，不能把新指针折回旧的已安装对象。
+
+定位结果保护未生效时，使用有界诊断同时记录加载、item 更新、安装与结果写入的入口及早退原因，关联请求、播放 ID、owner、ViewModel、容器和选中指针身份。只有成功阶段日志缺失不能证明 Hook 未命中；包内代码、进程加载、入口调用、条件拒绝和最终显示分别判断。诊断不输出歌词正文、凭据或其他结果容器的内容。
+
+结果写入、实际容器保存与安装确认分别保存。所有容器提交只在主线程进行，与原生写入保持同一线程。身份对齐后，选中指针尚未确认安装可经容器补发，每次外部恢复回调最多一次，自身写入不再次排队；确认后同文档去重，但去重前必须确认实际跟踪 LiveData 的当前值仍保存该指针。空值或更换容器不能沿用旧确认，应保留可用选择并经通道补发；实际保存值读取失败时保留选择、报告原因并等待后续恢复，不能将读取失败当作去重成功。附加以及同一 ViewModel 的新请求都要重新读取实际 `lyricsResult` 容器，不能只在新 ViewModel 时刷新。换到新 Fragment 实例且已有选择时重新等待确认；同实例重复附加不重置已确认状态，除非实际容器为空或不再保存选中指针。
+
+原生结果的接收归属与提交目标 ID 分开校验。同一当前 canonical 请求、同一当前 ViewModel 的显式加载已捕获某 raw native ID 时，可只保留一个属于该 ID 且仍存活的结果；即使 Fragment 当前 native ID 尚未对齐也不得因 canonical 相同而丢弃，但不得提前提交。item-update、resume 或 ready 唤醒完成 owner 对齐后，再经实际结果容器恢复既有选择与仲裁。新请求、换 ViewModel、切歌或关闭使该暂存退役；无关或失活结果拒绝，现有 native 目标 ID 优先级不变，也不得为此新增线程、定时轮询、profile 角色或改写原生 item。
 
 #### 结果与派生索引
 
@@ -236,7 +252,7 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 
 ### 5.2 歌词来源与候选准备
 
-**宿主接缝。** 当前歌曲身份由 `CurrentItemIdentitySeam` 读取精确 item 与 ID；自定义歌词的原生 parser、SongInfoPtr、文档身份与可用性谓词由 `AppleMusicCustomLyricsTarget` 接入。手动、自动、刷新及 LLM 只准备候选，最终均通过[共用结果通道](#lyrics-result-submission)。字体、模糊、翻译、发音和其他订阅者继续使用原生显示链。
+**宿主接缝。** 当前歌曲身份由 `CurrentItemIdentitySeam` 读取精确 item、公开 ID 与可选 persistentId；配置身份仅按当前发布快照的精确关系归一，原生提交仍绑定实际 item ID。自定义歌词的原生 parser、SongInfoPtr、文档身份与可用性谓词由 `AppleMusicCustomLyricsTarget` 接入。手动、自动、刷新及 LLM 只准备候选，最终均通过[共用结果通道](#lyrics-result-submission)。字体、模糊、翻译、发音和其他订阅者继续使用原生显示链。
 
 | 层 | 维护入口与职责 |
 |---|---|
@@ -245,7 +261,15 @@ Fragment view 重建、配置变化与 controller 销毁分别关闭会话。状
 | `host-applemusic` | `CurrentItemIdentitySeam`、`OpaqueTtmlParser`、`TtmlTimingObservationRegistry` 与结果 Bridge：原生对象及反射只在适配层 |
 | `app` | `AppleMusicAssembly` 与 [AutoLyricsReplacementSession.kt](../app/src/main/java/dev/amenhancer/module/hook/AutoLyricsReplacementSession.kt) 的 `createAutoLyricsRuntime`：存储、执行器、来源服务与配置装配 |
 
-**通用维护。** 歌曲禁用优先于模块候选，可用手动结果优先；自动来源保持 AMLL → Lunabeat → AM-Lyrics 的顺序及现有原生保留、逐字/语言/译文资格。新版本不能因安装通道改变而放宽原生可用性或自动补全条件。缓存、ETag、退避、来源更新及手动条目保护沿原会话维护，异步任务切歌/退役后不提交。
+**通用维护。** 歌曲禁用优先于模块候选，可用手动结果优先。`automatic_lyrics_prefer_native` 默认及缺键开启；开启时始终先判断达标 AM 原生，关闭时 AM 原生按 `automatic_lyrics_source_order` 的位置参与选择。两种模式共用既有逐字/语言/译文资格：已观察的原生须为逐字，已声明外语的逐字原生还须有非空译文；未观察的现存原生指针继续保守保留，不从正文猜测语言或质量。
+
+原生优先关闭且原生符合上述资格时，排序模式才仅查询其前置第三方来源，前置均未命中后采用原生。不达标或不可用时跳过原生项，仍按顺序查询全部第三方来源，包括排在原生之后的 Lunabeat；全部未命中时仍保留可用原生，不清空当前歌词。AM 原生来自宿主结果，不新增网络客户端，也不发布成自定义条目。
+
+来源顺序始终以稳定 ID 保存为同一份完整顺序，不新增显隐专用配置；默认 AMLL → AM-Lyrics → AM原生 → Lunabeat，配置解码及写入过滤未知项、去重并补齐缺项。规范化时若 Lunabeat 位于 AM 原生之前，只将 Lunabeat 移到 AM 原生之后，其他来源的相对顺序保持不变；读取、保存与运行时入口共同使用该结果，旧配置不能绕过约束。`automaticLyricsLookupSources` 统一计算结果选择、解析观察、可用性补偿和切歌预热的第三方查询范围。来源范围变化撤销旧请求代次，迟到结果不能越过新的原生位置；宿主通道适配不能重置用户顺序或改变这套选择规则。
+
+自动发布的条目通过现有 `CustomLyricsEntry.autoManaged` 标识归属，缓存只在其 provider 所处位置生效，不抢占更靠前的来源或原生。新自动结果可替换已有自动管理项；手动导入、用户明确选择及缺少归属字段的旧条目默认受手动保护，不根据 provider 名称推断归属。归属随索引、备份和来源更新保留；用户明确编辑后按手动项保存。来源刷新只更新所记录的 provider，不把“更新”隐式改成重新选源。ETag、退避及切歌/退役取消继续沿原会话维护。
+
+歌词管理页的“自动实时补全”进入独立二级页，总开关、原生优先和来源排序集中于该页。来源行使用右侧拖动柄：按住后上下拖动，松手保存；取消拖动不保存。拖动柄获得触摸后锁定行拖拽，柄外手势仍归页面滚动，拖动期间列表滚动不得与改序争用；触摸排序与无障碍的上移/下移动作更新同一份顺序。改序仅局部移动当前列表并写设置，不重建页面；连续改序及保存保持列表滚动位置和无障碍焦点，不造成屏幕闪暗。保存时必须先同步内部隐藏原生占位索引，使后续改序从最新完整顺序继续。排序列表使用模块自己的 AndroidX 与资源上下文，按宿主有效密度和配置展示，不借用宿主私有列表成员或资源 ID。原生优先开启时隐藏原生行；保存时采用用户调整后的可见来源顺序，并把隐藏原生占位放回：原位置仍能保持就保持，若 Lunabeat 已移动到该旧位置之前，则只把占位前插到 Lunabeat 之前，其他可见来源的相对顺序保持不变。隐藏期间旧原生位置不限制可见来源互调。原生优先关闭、原生与 Lunabeat 同时可见时，Lunabeat 不能上移跨过原生，原生不能下移跨过 Lunabeat；触摸拖动与无障碍上移/下移遵循同一约束，被阻止时不改顺序、不保存，完整顺序始终保持原生在 Lunabeat 之前。排序标题右上角复用既有重置 SVG 图标，只恢复 `ModuleSettings.DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER`（AMLL → AM-Lyrics → AM 原生 → Lunabeat），不改变自动实时补全总开关或原生优先；重置后按当前原生优先状态重建显隐，隐藏原生仍按上述占位规则处理，完整顺序中 Lunabeat 仍位于 AM 原生之后。重置、原生显隐等同页刷新可沿用同页重建，但不得把旧内容当作跨页来源，不重放切页透明度或快照动画；真正跨页继续使用原有切页过渡。排序标题区沿用原有紧凑行样式，不额外设置最小高度或居中标题行；右上角重置沿用无底色 SVG 图标、主题配色和 44dp 触摸范围，标题与说明同列并保持 4dp 间距，标题、说明和来源行沿用相同的左右内容边界。设置保存和返回复用既有二级页流程，LLM 页面保持独立入口。
 
 TTML 文件有界读取、输入合法性、原生指针存活/ID 检查和来源转换分别保留。自动来源发布自定义条目与临时缓存迁移继续使用已有发布器，刷新只处理允许更新的来源条目；LLM 使用独立缓存，不混入该发布链。TTML 结构与 AMLL 时间轴整理见[格式说明](apple-music-ttml-format.md)。
 
@@ -253,9 +277,34 @@ AMLL 转换器及 `scripts/amll_to_apple_ttml.py` 的译文/音译和声节点�
 
 仅原生成员变化时更新精确档案；若原生质量/可用性含义、TTML 时间轴或生命周期变化，再调整对应宿主接缝或业务策略。[来源人工场景](feature-preservation.md#lyrics-sources)负责行为要求。
 
+<a id="simplified-replacement-backgrounds"></a>
+
+#### 5.2.1 简体系统语言下的替换和声修复
+
+**安装与单一解析接缝。** `FeatureInstallation` 始终登记 `LyricsParserFeature`，由现有 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）控制生效；默认及缺键关闭，更改后按现有设置策略重启宿主。关闭时该 Feature 返回 `DISABLED`，且不调用 `LyricsParserTarget.install()`。开启时经 `LyricsParserTarget.install()` 委派 `AppleMusicCustomLyricsTarget.installParserRepair()`；宿主解析器不可用时只降级本项修复，不影响普通原生显示。
+
+`CustomLyricsFeature` 开启时也可调用同一 `installParserRepair()`，以便自定义替换、自动来源或 LLM 取得原生元数据和修复前 TTML。两个入口复用同一目标实例及同一个解析 Hook；重复调用返回已安装结果，不产生第二 Hook。before 阶段先检查共享设置，再按语言和修复契约处理 `String` 参数；共享设置关闭时直接跳过输入改写。after 阶段的观察者仍接收修复前的原始 TTML，自定义歌词不另装解析 Hook。
+
+**完整签名。** `TtmlSongInfoFromTtml` 必须解析到实例方法 `TTMLParser$TTMLParserNative#songInfoFromTTML(String): SongInfo$SongInfoPtr`：owner 为解析器类，非静态，唯一参数为 `String`，返回 `SongInfo$SongInfoPtr`。模块解析器的 `TtmlParserNative` 与这个既有符号必须指向同一宿主入口。完整签名不可验证或 Hook 安装失败时报告本能力降级并保留原生解析；不得用相似签名或原生内存位移补齐。
+
+**语言与开关门禁。** 修复只在“歌词效果优化”开启且用户所选的系统语言命中时执行，不另增设置；开启后不要求自定义歌词替换已启用，自定义歌词开关也不能替代共享设置或语言门禁。locale 的语言必须为 `zh`：脚本显式标为 `Hans` 时命中；脚本缺省且地区为 `CN` 或 `SG` 时命中。`zh-Hant`、`zh-TW`、`zh-HK`、`zh-MO`、缺省脚本但地区不是 `CN`/`SG` 的 locale，以及非中文 locale 都直接返回原文。原生 `replacement` 轨是否存在、是否会被 Apple 的原生资格路径采用，不能替代这两道门禁，也不能放宽门禁。
+
+**修复契约。** 专项处理入口为 `AmllTtmlFormatConverter.repairSimplifiedReplacementBackgrounds`；它不做通用 XML/TTML 转换，只按下列关系从唯一、明确标注 `type="replacement"` 与 `xml:lang="zh-Hans"` 的替换轨取得背景词文本：
+
+1. 以唯一的正文 `itunes:key` 对应唯一的 `<text for="该 key">`。
+2. 在每条 `text` 内按 `x-bg` 分组顺序对应正文与替换轨；两侧均声明的组起止时间必须数值等价。
+3. 每组的背景词数量相同，所有词必须具备完整、有效且唯一的 `begin`/`end`，以数值等价的起止时间匹配词文本。
+4. 仅替换正文既有 `x-bg` 内对应词 span 的文本内容。正文行与 span 的 begin/end、层次、属性和其他标签，主唱前景文本，以及翻译、音译等其他轨道全部保留。
+
+修复仅接受默认 TTML 根及规范的 `ttm`、`itunes` 绑定；替换轨容器和 `text` 属于 Apple 命名空间，其中每个 `x-bg` 必须显式切回 TTML。其他前缀或重绑定无法可靠解释时保留原文。输入超过既有 TTML 大小/标签数上限、轨道不唯一或 key 重复时整份透传；缺少对应内容、分组/词数/时间不兼容时整行保持原文，该行不部分写入，其他可对应行仍可修复。修复异常不能阻断原生解析。
+
+**原文与观察。** 发生修复时，before 阶段另外保留未经修改的原始 String；after 阶段向 `TtmlTimingObservationRegistry` 和 LLM 输入登记该原文及解析结果身份，不能把修复后的宿主入参当作原生原文。共享设置关闭时不写回任何文本，after 阶段仍可把原样的宿主输入交给观察者，因此自定义歌词开启时原生元数据与 raw-TTML 观察继续工作。`OpaqueTtmlParser.isModuleParse()` 继续排除模块解析的原生来源归属。普通原生歌词与模块生成的文档都经过同一个设置及语言门禁；设置开启时，普通原生歌词不依赖自定义歌词开关即可修复。
+
+人工复核至少覆盖：共享设置关闭时普通原生歌词与自定义歌词输入都不发生改写，且开启自定义歌词时观察仍可用；设置开启后，`zh-Hans`、`zh-CN`、`zh-SG` 下普通原生歌词在自定义歌词关闭时修复成功；`zh-Hant`、`zh-TW` 与非中文 locale 保持原文；模块生成文档走同一门禁；修复后正文时间、标签、主唱前景与其他辅助轨不变；缺 key、重复 key、时间或分组冲突时原歌词仍能正常解析和显示。
+
 <a id="llm-lyrics-fallback"></a>
 
-### 5.3 LLM 歌词翻译兜底
+### 5.3 LLM 原生歌词翻译
 
 **生效与接缝。** LLM 复用歌词替换、自动补全与结果提交，不另建宿主成员映射。观察精确 `TtmlSongInfoFromTtml` 的真实调用，以原生结果指针弱身份关联有界原文快照；`OpaqueTtmlParser` 标记并排除模块自己的解析，防止生成歌词回流为原生输入。当前歌曲与原文的对应关系须可验证，不能使用“最近的 TTML”或视图文字补猜。
 
@@ -266,10 +315,12 @@ AMLL 转换器及 `scripts/amll_to_apple_ttml.py` 的译文/音译和声节点�
 | [LlmLyricsTtml.kt](../core/src/main/kotlin/dev/amenhancer/module/lyrics/LlmLyricsTtml.kt) | 时间轴/语言/译文资格、正文抽取、输出副本补 key 与 Apple 译文轨写入 |
 | [LlmLyricsClient.kt](../core/src/main/kotlin/dev/amenhancer/module/lyrics/LlmLyricsClient.kt) | 提示词、共享请求编码与传输、严格响应校验、期限与取消 |
 | [LlmLyricsCache.kt](../core/src/main/kotlin/dev/amenhancer/module/lyrics/LlmLyricsCache.kt) | 独立文件缓存与最近使用淘汰 |
-| [LlmLyricsReplacementSession.kt](../core/src/main/kotlin/dev/amenhancer/module/hook/LlmLyricsReplacementSession.kt) | 播放代次、来源明确未命中门禁、去重与原生指针准备 |
+| [LlmLyricsReplacementSession.kt](../core/src/main/kotlin/dev/amenhancer/module/hook/LlmLyricsReplacementSession.kt) | 播放代次、原生被采用的门禁、去重与原生指针准备 |
 | `app` / `host-applemusic` | 设置/私有存储/后台装配，以及原文观察/模块解析排除/共用结果提交，各守既有边界 |
 
-原生保留判断、手动/禁用状态及既有来源查询先于 LLM 缓存；仅来源明确未命中后才进入兜底，每次再播放重新判断。输入须有可用逐行或逐字时间轴；纯文本、无时间轴、空歌词不翻译。根 `xml:lang` 的中文、简繁体/地区标签与中文别名整首跳过；逐字文档缺根语言时保留原生且不触发来源或 LLM，逐行文档保守判断文本，含汉字的日文不能直接判中文。
+手动/禁用状态及来源选择先于 LLM 缓存；只有最终采用 AM 原生时才允许补翻译，每次再播放重新判断。所需的第三方查询尚未完成时不开始翻译；原生不达标时须等全部第三方未命中后回退原生，再判断翻译资格。达标原生之后的来源不参与本次查询；采用第三方或手动结果时撤销在途及就绪译文。`onNativeSelected` 只由选源结果授予资格，输入仍须来自当前原生指针关联的原文，不以模块生成的 TTML 代替。
+
+输入须有可用逐行或逐字时间轴；纯文本、无时间轴、空歌词不翻译。根 `xml:lang` 的中文、简繁体/地区标签与中文别名整首跳过；逐字文档缺根语言时不调用 LLM，自动查源仍按所选策略判断。逐行文档保守判断文本，含汉字的日文不能直接判中文。
 
 日文、韩文中的纯汉字行依据声明语言，明确标中文的行/词保留；其他外文歌曲的中文行按文本判断保留。任意语言原生译文轨阻止整首翻译，空 `translations` 容器不算译文。缺 `itunes:key` 的逐行文档可按行位置处理，原 key 重复而无法唯一对应时拒绝。
 
@@ -281,11 +332,11 @@ AMLL 转换器及 `scripts/amll_to_apple_ttml.py` 的译文/音译和声节点�
 
 #### 通用维护：客户端、缓存与取消
 
-接口使用配置的 OpenAI Compatible Chat Completions，Bearer、非流式、有界响应与 60 秒期限共用客户端，不隐式切换服务。翻译和手动连通测试共用 `encodeRequest`，按“模型思考”布尔在顶层发送 `thinking.type=enabled/disabled`，`stream=false` 单独控制非流式。思考默认及旧配置缺键均关闭，模式进入不可变请求配置和缓存身份；该字段是服务端扩展，拒绝时按失败处理，不移除参数重试、不按地址/模型维护分叉。
+接口继续使用配置的 OpenAI Compatible Chat Completions，Bearer、非流式、有界响应与 60 秒期限共用客户端，不隐式切换服务，也不因思考强度引入供应商或传输分支。翻译和手动连通测试共用 `encodeRequest` 及同一组请求参数映射：`thinking.type=enabled/disabled` 按思考开关发送；开关开启且强度为 `low`/`high`/`max` 时，另在顶层发送 `reasoning_effort`，强度 `default` 不发送该字段，关闭思考时也不发送。`stream=false` 单独控制非流式。思考默认关闭；强度是只接受 `default`/`low`/`high`/`max` 的强类型枚举，默认 `default`，保存于普通设置键 `llm_lyrics_thinking_effort`，缺键或未知值按 `default` 解码。关闭思考时保留 UI 中已选的强度值，但后台请求和缓存的有效强度统一归一为 `default`，开关仍单独参与缓存身份；开关开启时，显式 `low`/`high`/`max` 分别进入不可变请求配置和缓存身份。`thinking` 是服务端扩展，参数支持与强度含义取决于接口和模型；拒绝时按失败处理，不移除参数重试、不按地址/模型维护分叉。连接成功只说明请求可用，不能证明网关实际采纳了强度。
 
-缓存为宿主私有 `files/ampp-llm-lyrics`，最多 100 首，命中更新 LRU，每首只保留一项。原文、规范化接口、模型、思考模式或提示词版本变化使旧项失效，旧缓存缺思考字段按关闭匹配；仅成功并被原生解析接受的结果可持久化，密钥不写缓存。不调用 `AutoLyricsPublisher`，不生成自定义条目，不参与自定义歌词备份或在线更新。
+缓存为宿主私有 `files/ampp-llm-lyrics`，最多 100 首，命中更新 LRU，每首只保留一项。原文、规范化接口、模型、思考开关、有效思考强度或提示词版本变化使旧项失效。所有新写入统一使用格式 2，并记录完整思考身份；新版只按 `default` 解释格式 1，格式 2 中的强度字段缺失或未知时拒绝该缓存。旧客户端只接受格式 1，因此会拒绝格式 2 的新缓存，降级安装不能把显式强度结果当作默认复用或写回。显式 `low`/`high`/`max` 之间也不得互相复用。仅成功并被原生解析接受的结果可持久化，密钥不写缓存。不调用 `AutoLyricsPublisher`，不生成自定义条目，不参与自定义歌词备份或在线更新。
 
-主唱/和声提取或输出结构变化影响缓存兼容性时，提升现有 `LlmLyricsClient.PROMPT_VERSION`，使旧格式在下一次合格查询时失效；单纯调整翻译风格时可保留版本并继续复用已有缓存。不增加缓存目录或配置 schema，也不批量改写自定义歌词。
+主唱/和声提取或输出结构变化影响缓存兼容性时，提升现有 `LlmLyricsClient.PROMPT_VERSION`，使旧格式在下一次合格查询时失效；单纯调整翻译风格时可保留版本并继续复用已有缓存。缓存身份或读取兼容规则变化时单独维护缓存格式，不增加第二缓存目录，也不批量改写自定义歌词。
 
 网络/XML 在后台，单播放失败不循环重试。切歌、原文/配置变化、高优先级结果或关闭撤销旧任务，迟到完成仍通过共用通道校验。正常资格跳过保持安静，不保留逐阶段诊断集合、耗时统计或原因回调；原生 TTML 观察属于功能输入，不能随临时日志删除。连通错误通过[设置页](#settings-data-plugins)的手动测试展示。
 
@@ -335,9 +386,11 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 <a id="cjk-animation"></a>
 
-### 5.5 CJK 辉光与末词补偿
+### 5.5 歌词辉光与末词补偿
 
-**生效与接缝。** `cjkKaraokeAnimationEnabled` 控制辉光与末词羽化补偿，按原安装方式重启宿主生效，关闭时均不安装。辉光资格由 profile 的 `cjk.maxSpanGlowCharacters` 限定：缺省 `1`，只放行单个未合并 CJK 词；精确 profile 显式设为 `3` 时，另放行 2～3 字的单个原始未合并 CJK span。前景绑定与结束清理、`cjk.foregroundTextField` 和 bindingOwners 独立核对。可选 `cjk.terminalGradient` 由 [AppleMusicCjkTerminalGradientTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCjkTerminalGradientTarget.kt) 的 Contract 解析，角色以代码为准，描述符只维护在精确 profile。
+**生效与接缝。** `cjkKaraokeAnimationEnabled` 只控制 CJK 辉光，按原安装方式重启宿主生效，关闭时不安装 CJK 辉光。末词羽化补偿和英语拆词辉光由“歌词效果优化”的 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）门禁并重启生效。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 的现有 `lyricRepairs` lazy 组在 `LyricsParserFeature` 门禁下独立安装，并合并解析修复、逐行双声部对齐、末词补偿与英语拆词辉光的结果，保留各项完整诊断消息；复用现有 Target 和设置。`cjk.terminalGradient` 只登记补偿契约，与 CJK 辉光设置独立。CJK 辉光资格由 profile 的 `cjk.maxSpanGlowCharacters` 限定：缺省 `1`，只放行单个未合并 CJK 词；精确 profile 显式启用多字资格时，另放行 2～3 字的单个原始未合并 CJK span。前景绑定与结束清理、`cjk.foregroundTextField` 和 bindingOwners 独立核对。`terminalGradient` 的角色仍由 Contract 解析，以代码为准，描述符只维护在精确 profile。
+
+CJK 辉光使用 `trim` 原文去除 Unicode 标点 `\p{P}` 后的副本判断脚本、正文字数及平均时长；纯标点、混入 Latin/数字/emoji/内部空白的正文不放行。正文码点仍须属于既有六个 CJK 区块。分类改写仅作用于已验证的 `a0` 候选作用域，不全局改写 `j0`/`k0` 集合，不替代 Apple 原生触发，也不推广到英语拆词或末字渐变。原文、显示标点、native duration、分组和长度 `g` 保持原值。
 
 | 角色组 | 新构建复核的含义 |
 |---|---|
@@ -346,15 +399,17 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 | 词 ID / 文本 / 时间 | 尾词判定所用对象与当前扫光词一致 |
 | animationTag | 接口 getter 和原生延迟补亮标签的语义，接口仅按 invocationOnly 调用 |
 
-**多字 span。** 放行前须 `trim` 后全部属于现有六个 CJK 区块，字数为 `2..min(cjk.maxSpanGlowCharacters, 3)`，原生 span 总时长至少为字数 × 1000ms（即平均每字 ≥1000ms）。累计时长须等于原生 span 时长，累计文本长度须等于字数，`splitBindingCount` 须在 `0..字数`，且只接受前景。不得把宿主合并的多个原始 span 当作一个 span 按时长放行；原生时长、文本、词分组和长度 g 均保持不变。单字回落子动画延迟修正只作用于原单字分支，多字保留宿主错峰。
+**单字与短 span。** 单字正文恰有 1 个 CJK 码点；短 span 正文为 `2..min(cjk.maxSpanGlowCharacters, 3)` 个 CJK 码点，且原生总时长至少为正文码点数 × 1000ms。两类均只接受前景，累计时长 `f` 须等于 native duration，累计长度 `g` 须等于含标点 `trim` 原文的 UTF-16 length，`splitBindingCount` 须在 `0..nativeCharacterCount`，其中 `nativeCharacterCount` 为未过滤原文的码点数。标点可有独立原生绑定，但不得超过原文码点数；无标点时与既有边界一致。不得把宿主合并的多个原始 span 按总时长放行。单字回落子动画延迟修正仍只作用于单字分支，多字保留宿主错峰。
+
+**英语拆词辉光。** 复用 `AppleMusicCjkKaraokeAnimationTarget.installSplitWordGlow`，精确 profile 须显式声明 `cjk.splitWordGlow=true`，缺省关闭。保留原生整词判定；只为长度超过 7 的前景 Latin 拆词组补充“任一原始 span 时长 ≥1000ms 且 trim 后长度为 2～7”的资格，标点计入长度。同组至少两个成员，须同属原生行 `a` 和非空组 ID `l`，各段文本 `c` 与时长 `e` 累计须对应原生 `g`、`f`，不可跨空格或混入其他文字脚本。仅在当前原生动画调用内临时令 `g=7`，正常、提前返回及异常退出均恢复。各片段以整词中心为共同横向 pivot，原生辉光上升同时开始、回落统一在上升时长后开始；屏蔽该组 `TimeAnimator` 的片段拉扯，原文、binding 及 TTML 分词扫光时间保持。无有效布局或词组已跨视觉行时不额外放行。新构建须核对回落 listener 的 `c` 视图和 `d` 辉光函数、上升 listener 的 `a` 函数及其 `a` 视图，以及原生回落结束的 pivot 恢复；该作用域内的 `TimeAnimator` 须只负责辉光片段间距。另须确认 `g` 的门槛语义及间接读取在原值与 7 下分支相同，不得影响扫光几何；不合并 TTML 或词模型。
 
 **通用维护。** [CjkTerminalGradientPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/CjkTerminalGradientPolicy.kt) 对合法 CJK 尾词取 `max(original, feather)`，只接受有限值与 `0 < feather <= 1`。原余量更大时保留，无效几何透传；尾词不额外要求触发长尾辉光。
 
 当前 reader 的原文与发音向量分别选合法 end 最大的词 ID，同 end 取后出现词。向量大小须在 2..4096，时间 begin 非负且 end 大于 begin；两路结果按 reader 弱身份与行 ID 缓存。补偿只影响当前扫光对应 CJK 词；现有协议的build第八参（零基索引7）为true时走原生分支，Latin文本也保持原生。margin词对象须与当前扫光词一致，嵌套/异常退出恢复线程作用域。
 
-有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复；[跨行能力](#lyric-wrap-sweep)由“歌词效果优化”开关控制，CJK 辉光开关不控制该能力。
+有效补偿后从原生返回动画列表移除 `KARAOKE_SPLIT_ON_CHARS_LANGUAGES_RUSH_GRADIENT_TAG` 延迟补亮，其他动画、时长、分组、滚动及位移保留；未补偿时原列表不变。它不承担换绑保护或跨行遮罩修复；[跨行能力](#lyric-wrap-sweep)与末词补偿均由“歌词效果优化”门禁，CJK 辉光开关只控制辉光，不控制它们。
 
-**变更与降级。** 辉光安装后再安装末词补偿，两者合并能力状态；末词契约缺失时保留辉光并报告末词不支持，声明契约但解析/注册失败时报告降级且辉光继续。新增两个 Hook 共用独立 scope，全部成功才 activate。新增宿主构建须独立确认原生 span 元数据、前后景绑定和 split binding 语义后，才能在精确 profile 显式启用多字放行；默认值不继承前版本。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
+**变更与降级。** CJK 辉光、英语拆词辉光与末词补偿分别安装、分别报告，任一失败不撤销其他项。`CjkKaraokeAnimationFeature` 只负责 CJK 辉光的安装和状态；末词契约缺失、解析或注册失败只使补偿不支持或降级。`lyricRepairs` 保留各项完整诊断消息，未声明能力的 `Unsupported` 也原样保留；整体状态按 parser 与已声明可选项计算：全为 `Active` 时为 `Active`，仅全为 `Unsupported` 时为 `Unsupported`，否则为 `Degraded`。子项失败或不可用不撤销其他已安装项。新增宿主构建须独立确认原生 span 元数据、前后景绑定和 split binding 语义后，才能在精确 profile 显式启用多字放行或英语拆词资格；默认值不继承前版本。时间、分组、标签或原生特殊分支语义变化时重新分析；若新宿主复用同一reader并原地改写词数据，须补相应缓存失效入口，不能只复制成员名。
 
 [证据清单](host-adaptation-checklist.md#cjk-animation-checks) · [人工场景](feature-preservation.md#cjk-animation)
 
@@ -362,7 +417,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 ### 5.6 跨行歌词扫光
 
-**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）是跨行扫光与活动行高亮共用的唯一开关，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricWrapSweepFeature` 与 `LyricBackgroundHighlightFeature` 都返回 `DISABLED`，且不调用各自 `target.install`。开启后仍分别按精确 profile 的 `lyricWrapSweep` 与 `lyricBackgroundHighlight` 契约安装和核对，各自报告支持、降级或失败；任一能力未声明或安装失败不阻止另一项。跨行扫光的 `LyricWrapSweepTarget` 使用能力键 `FEATURE_LYRIC_WRAP_SWEEP`，不新增独立设置。CJK 辉光开关不控制这两个 Feature。
+**生效与接缝。** 设置 `ModuleSettings.lyricEffectsOptimizationEnabled`（配置键 `lyric_effects_optimization_enabled`）是简体替换和声修复、逐行双声部对齐、CJK 末词补偿、跨行扫光与活动行高亮共用的现有开关，默认及缺键均为关闭，更改后重启宿主生效。关闭时 `LyricsParserFeature`、`LyricWrapSweepFeature` 与 `LyricBackgroundHighlightFeature` 都返回 `DISABLED`，且既有 `lyricRepairs` 组不调用解析修复、逐行对齐或末词补偿的 `install`；自定义歌词开启时仍可安装同一解析 Hook 供观察，但 before 不执行修复。开启后，解析修复、逐行对齐和末词补偿共用既有 `lyricRepairs` 安装入口，保留三项完整诊断并按前述规则汇总整体状态；跨行扫光与活动行高亮仍分别按精确 profile 的 `lyricWrapSweep` 与 `lyricBackgroundHighlight` 契约安装和核对，各自报告支持、降级或失败。任一子项不可用不阻止其他子项或撤销其安装。跨行扫光的 `LyricWrapSweepTarget` 使用能力键 `FEATURE_LYRIC_WRAP_SWEEP`，不新增独立设置。CJK 辉光开关只控制辉光，不控制这些 Feature。
 
 入口为 [LyricWrapSweepContract](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepContract.kt)、[Geometry](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricWrapSweepGeometry.kt)、[AppleMusicLyricWrapSweepTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricWrapSweepTarget.kt) 和 core 的 [LyricWrapSweepPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/LyricWrapSweepPolicy.kt)。Contract 的必需清单与关系校验是协议依据，不另写混淆名或支持版本表。
 
@@ -377,7 +432,7 @@ Native vector/pointer 在 Hook 当次同步解码，只把复制数值送主线�
 
 #### 通用维护：时间与几何
 
-保留宿主 AnimatorSet / ValueAnimator 与歌词身份，不另建全局计时器。仅原生词跨多个有效视觉行，来源遮罩/监听器身份及 RTL 均一致时接管；同 flexbox 同 bank 只保留最新词。每次主扫光先释放持有标记，成功绘制才重新持有；补亮仅在持有且几何仍有效时抑制，其余透传。单行末词仍用 CJK 补偿，跨行成功接管由本能力独占对应多遮罩写入。
+保留宿主 AnimatorSet / ValueAnimator 与歌词身份，不另建全局计时器。仅原生词跨多个有效视觉行，来源遮罩/监听器身份及 RTL 均一致时接管；同 flexbox 同 bank 只保留最新词。每次主扫光先释放持有标记，成功绘制才重新持有；补亮仅在持有且几何仍有效时抑制，其余透传。单行末词仍走前述末词补偿，跨行成功接管由本能力独占对应多遮罩写入。
 
 初始及逐帧进度取 `(position - begin) / duration` 限幅，同次接管只前进，原生完成 tick 完成整词，向后 Seek 退役后由新接管降低进度。几何就绪且词已开始未结束才把动画时长最多缩到实际剩余段；延迟布局不先改时长，不把 JNI duration 或 listener 行内坐标当整词进度。
 
@@ -410,7 +465,7 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 
 #### 5.6.1 歌词效果优化：活动行高亮
 
-**生效与接缝。** 本能力与跨行扫光共用前述“歌词效果优化”开关及重启门禁；开关开启后，本能力仍按自己的精确契约单独安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖跨行扫光的安装结果；跨行不支持或失败不影响本能力，反之亦然。
+**生效与接缝。** 本能力与简体替换和声修复、跨行扫光共用前述“歌词效果优化”开关及重启门禁；开关开启后，本能力仍按自己的精确契约单独安装。[AppleMusicHostFactory](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicHostFactory.kt) 经 `TargetAdaptation.lyricBackgroundHighlight` 提供独立的 [AppleMusicLyricBackgroundHighlightTarget](../host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicLyricBackgroundHighlightTarget.kt)，不依赖跨行扫光的安装结果；跨行不支持或失败不影响本能力，反之亦然。
 
 启用要求精确 profile 声明 `lyricBackgroundHighlight`、`contractVersion: 4`，通过全部成员及关系校验，并成功对活动行提交方法 `O` 执行 `deoptimize` 后注册、激活 Hook。`lineSubset` 为 `f1.D(TreeSet,Collection)boolean static`，去优化确保此内部调用可被拦截。支持范围以精确 profile 的契约声明为准；开关开启后未声明契约报告不支持，解析、去优化或注册失败关闭本次注册 scope 并报告降级。
 
@@ -425,6 +480,16 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 **状态与维护。** 安装健康状态由 Feature 统一报告；首次非主线程提交透传并报告降级。运行异常记录原因、尝试释放保留行并清理会话，后续提交可重新建立会话。正常逐句提交不输出诊断，异常日志不含歌词正文。新构建须重新确认过滤调用、词 ID 消费、焦点/显示快照、媒体与行调度时钟及生命周期语义；所需成员清单由代码契约维护，不能照搬相邻构建的混淆名。
 
 [证据清单](host-adaptation-checklist.md#lyric-background-highlight-checks) · [人工场景](feature-preservation.md#lyric-background-highlight)
+
+<a id="line-lyric-agent-alignment"></a>
+
+#### 5.6.2 歌词效果优化：逐行双声部对齐
+
+**生效与接缝。** [逐行对齐补丁](../host-applemusic/src/main/java/dev/amenhancer/module/hook/LineLyricAgentAlignment.kt) 由精确 profile 的 `capabilities.lineLyricAgentAlignment=true` 授权，复用 `LyricsParserFeature` 的开关和安装组，不增加独立设置、Feature 或 Target。成员从 `lyricBlur` 中只选取 `lineBind`、`lineType`、`lineMap`、`lineReader`、`lineToken`、`readerCount`、`readerLine`、`lineGet`、`holderView`，不依赖其他模糊成员或模糊功能的安装。native `getAgent` 等方法按稳定 JavaCPP ABI 解析。缺少能力位时保留原 parser 结果；解析修复、逐行对齐与末词补偿的完整诊断由 `lyricRepairs` 合并，整体状态按上述规则汇总，任一子项失败不撤销其他已安装项。
+
+**适用边界与行绑定。** 仅处理原生 `timing=Line`：排除 `Group` 后，`Person`/`Other` 有效声部恰为两个，且至少一个为 `Person`。首个实际出现的 `Person` 按原歌词的首字母方向确定主侧，另一声部使用对侧；`Group` 行、未知声部、单声部、更多声部及逐字文档恢复原生布局。普通行绑定后，每次为主文、译文、音译重算同一物理侧或原生对齐，并同步缩放中心；保留文字方向、尺寸、边距和时间数据，不缓存跨歌曲映射。延迟布局回调读取当前 view 状态，不保留 native 指针；无需独立 payload、recycle Hook 或常驻布局监听。
+
+**维护触发。** 新版本授予能力位前，核对普通行筛选、位置换算、agent ABI、原生首字母方向判定、内容 payload 回到完整绑定及一次性布局回调顺序。人工场景覆盖双声部、原生回落、滚动复用、翻译/音译切换、混合脚本和开关重启；不能依据相邻版本自动继承资格。
 
 <a id="lyrics-typeface"></a>
 
@@ -448,6 +513,8 @@ staticMask 同时用于未来行初始化和已唱恢复，不能因它被调用
 | sheet 状态/坐标/peek、settleSheet、refreshCollapsedOffset | 原生计算收回终点前同步模块占位并刷新坐标，同 peek 也可刷新；模块值不成为新的原生恢复基线 |
 | miniBlur、登录/当前对象及显示入口 | 精确核对静态/实例调用、显示语义与手机/平板资源；不用直接改 visibility 代替原生显示 |
 | 原生滚动容器、Compose 场景与 pager | 由宿主绑定识别并缓存，经端口提供位移和方向边界，应用不发现反射或强转宿主 AndroidX |
+
+导航菜单就绪与原生布局完成分别判断。当前 Fragment 平板顶栏须从仅抽屉按钮的方形占位展开为宽大于高的材质；新构建须确认这一形态语义，不以固定像素或菜单数量代替布局完成。接管还要求原生锚点与玻璃承载均无待布局、宽高一致，且 Compose 内容度量满足当前布局约束。窗口或配置变化、导航暂时透明时仍继续跟随锚点；每帧先同步几何，再用同一就绪结果控制原生显隐、玻璃透明度与背景采样启停。布局尚未稳定时保留或恢复原生，并使玻璃导航在同一帧透明，避免两套导航重叠。
 
 #### 通用维护：sheet 与 mini 生命周期
 
@@ -566,6 +633,8 @@ Fragment 手机/平板共用 `FragmentMiniStartup`，在 `FragmentSurfaceBinding
 
 封面约束只用当前档案已恢复的字段映射，区分 physical left/right 与 relative start/end，不能靠相对锚掩盖左右反向，也不能拿宿主字段操作模块视觉树。资源与反射在安装/绑定时缓存，视图/配置重建重新解析。
 
+**歌词 View 重建。** 独立右栏须核对 Fragment 保留、View 重建时的 adapter 创建、结果观察及安装去重。如果原生创建新 adapter，却保留以歌词指针身份去重的旧安装字段，可在 `fragmentLyricsRuntime.fields.installedPointer` 声明该构建的精确字段。预检确认字段属于歌词 Fragment、类型对应当前档案的 `SONG_INFO_PTR` 且可写；未声明的构建不启用此修复，也不推测字段。`BetaLyricsPaneRuntime` 仅在独立右栏 `onCreateView` 原生方法执行前清除旧安装标记，使新 View 的原生观察者能按既有结果通道填充当前歌词。保留 ViewModel 结果及指针所有权，不重入安装、不强制重新请求；普通 resume 或逐帧刷新不得清除此标记。人工验收须包含原生设置返回后的同曲原生/补全歌词，以及关闭自定义歌词后的原生显示。
+
 #### 通用维护：响应式视觉与原生交互
 
 共享左栏由真实原生 View 构成，core 的 [TabletArtworkLayoutPolicy](../core/src/main/kotlin/dev/amenhancer/module/hook/TabletArtworkLayoutPolicy.kt) 计算参考 grid/flex，宿主 [TabletSongColumnLayout](../host-applemusic/src/main/java/dev/amenhancer/module/hook/tabletmedia/TabletSongColumnLayout.kt) 接入。左栏保留父链、binding、动作、selector、字体和无损/杜比/卡拉 OK 标识，只按策略布局；音量、输出与模式等补充控件沿既有组件，不另建替代原生左栏的树。
@@ -663,13 +732,13 @@ GenericProfileViewModel 发布不可变Success状态，复用 `AppleArtistSurfac
 
 普通参数通过共享EmbeddedSettingsDraft合并最新草稿并持久化，无全局“保存”；输入弹窗和歌词编辑器保留确认保存。失败提示并保留当前草稿，后续仍走同一保存链。子页共用对话框/草稿/主题，不另建Activity或配置管线；维护页面枚举时核对渲染、标题、尺寸、返回和销毁清理，子页编辑刷新停留原页。
 
-LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/思考/测试集中管理；配置和测试不随翻译关闭隐藏，启用仍受上级开关约束。长字段标题与值上下分行、值单行省略、密钥遮蔽。图标使用EmbeddedSettingsSvgAssets各自viewport/描边与主题：已有填充资产保留1254 viewport，新轮廓使用24 viewport及圆角描边，避免改全局缩放。底栏动画二级页复用原四项配置/defaults，入口受宿主/玻璃/收缩资格，恢复单项/返回不能覆盖其他参数。
+LLM设置在自定义歌词页进入二级页，开关/API地址/密钥/模型/思考开关/思考强度/测试集中管理；思考强度提供默认/低/高/最高四档，关闭思考时禁用强度选择并保留已选值。配置和测试不随翻译关闭隐藏，启用仍受上级开关约束。长字段标题与值上下分行、值单行省略、密钥遮蔽。图标使用EmbeddedSettingsSvgAssets各自viewport/描边与主题：已有填充资产保留1254 viewport，新轮廓使用24 viewport及圆角描边，避免改全局缩放。底栏动画二级页复用原四项配置/defaults，入口受宿主/玻璃/收缩资格，恢复单项/返回不能覆盖其他参数。
 
-手动“测试连接”只显式点击时读取当前API/模型/密钥快照，在后台通过共享客户端发简短Chat Completions，验证非空模型内容；不读写歌词/缓存、不改开关、不代替整首翻译资格验证。在途单次、离页/关对话框取消并丢迟到结果；固定本地化原因区分缺配置、认证、404、429、其他HTTP、超时、DNS/TLS/连接及响应错误，不显示密钥、原异常或服务正文。
+手动“测试连接”只显式点击时读取当前API/模型/密钥、思考开关及强度快照，在后台通过共享客户端发简短Chat Completions，并采用与正式翻译相同的请求参数映射，验证非空模型内容；不读写歌词/缓存、不改开关、不代替整首翻译资格验证。在途单次、离页/关对话框取消并丢迟到结果；固定本地化原因区分缺配置、认证、404、429、其他HTTP、超时、DNS/TLS/连接及响应错误，不显示密钥、原异常或服务正文。
 
 #### 通用维护：数据和公共协议
 
-配置schema/键、文件ID/目录、迁移marker、SQLite/cache namespace及ZIP格式有明确归属，普通设置保存不覆盖字体/歌词等资产。继续使用既有原子发布、事务恢复、只读迁移重试、导入冲突与取消路径；格式变更单独设计迁移/回退。
+配置schema/键、文件ID/目录、迁移marker、SQLite/cache namespace及ZIP格式有明确归属，普通设置保存不覆盖字体/歌词等资产。LLM思考强度使用普通设置键 `llm_lyrics_thinking_effort`，纳入普通设置编解码、键集合与既有 schema 升级，不创建独立存储、迁移目录或宿主 profile 契约。继续使用既有原子发布、事务恢复、只读迁移重试、导入冲突与取消路径；格式变更单独设计迁移/回退。
 
 宿主普通设置通过 `decodeOrdinarySettings` 解码，跳过独立歌词索引及旧内联歌词 JSON；显示/动画与资格检查不能因读取开关而反复解析歌词资产。歌词查询继续通过 `customLyricsManifest()` 的独立后台读取与缓存，完整 `decode` 保留导入/迁移语义。调整读取路径时核对消费者是否需要资产字段，不能用普通设置快照代替歌词索引。
 

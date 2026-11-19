@@ -100,6 +100,9 @@ class AutoLyricsSourceResolver(
     /** Optional presence index; null keeps the "ask every repository" behaviour. */
     private val presence: LyricPresenceIndex? = null,
 ) {
+    fun fetch(appleMusicId: Long): AutoLyricsCandidate? =
+        fetch(appleMusicId, DEFAULT_CHAIN_BUDGET_MS)
+
     /**
      * The first acceptable candidate, or null.
      *
@@ -125,10 +128,31 @@ class AutoLyricsSourceResolver(
             if (System.nanoTime() > deadline) return null
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
+
+    /** Uses the caller's provider order and consults [cached] only at its recorded source. */
+    fun fetch(
+        appleMusicId: Long,
+        sourceOrder: List<String>,
+        cached: AutoLyricsCandidate? = null,
+    ): AutoLyricsCandidate? {
+        if (appleMusicId <= 0L) return null
+        val sourcesById = sources.associateBy { it.name }
+        sourceOrder.forEach { sourceId ->
+            if (sourceId == CustomLyricsSources.AM_NATIVE) return@forEach
+            val source = sourcesById[sourceId] ?: return@forEach
+            cached?.takeIf { it.source == sourceId && isUsable(it.ttml) }?.let { return it }
+            val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
+            if (!isUsable(ttml)) return@forEach
             return AutoLyricsCandidate(source.name, ttml)
         }
         return null
     }
+        }
+        return null
+    }
+
+    private fun isUsable(ttml: String): Boolean =
+        TtmlInputPolicy.isAcceptable(ttml) && TtmlTimingPolicy.isWord(ttml)
 
     companion object {
         /**

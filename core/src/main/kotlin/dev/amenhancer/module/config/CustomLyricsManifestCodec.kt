@@ -28,6 +28,7 @@ object CustomLyricsManifestCodec {
                         put(KEY_SOURCE, entry.source)
                         put(KEY_ENABLED, entry.enabled)
                         put(KEY_USER_EDITED, entry.userEdited)
+                        put(KEY_AUTO_MANAGED, entry.autoManaged)
                     })
                 }
             })
@@ -106,6 +107,7 @@ object CustomLyricsManifestCodec {
         // entry may only be auto-updated if its source is one of the automatic
         // ones, which is exactly what the old behaviour did.
         userEdited = entry.optBoolean(KEY_USER_EDITED, false),
+        autoManaged = entry.optBoolean(KEY_AUTO_MANAGED, false),
     )
 
     private const val VERSION = 2
@@ -120,4 +122,5 @@ object CustomLyricsManifestCodec {
     private const val KEY_SOURCE = "source"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_USER_EDITED = "userEdited"
+    private const val KEY_AUTO_MANAGED = "autoManaged"
 }

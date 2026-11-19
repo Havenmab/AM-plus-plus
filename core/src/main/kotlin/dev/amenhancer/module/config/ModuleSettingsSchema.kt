@@ -3,6 +3,7 @@ package dev.amenhancer.module.config
 import dev.amenhancer.module.model.EnhancementDefaults
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
+import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
@@ -151,6 +152,8 @@ object ModuleSettingsSchema {
                 default = values.boolean(KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT, default = false),
             ),
             automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
+            automaticLyricsPreferNative = values.boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = true),
+            automaticLyricsSourceOrder = values.automaticLyricsSourceOrder(),
             customLyricsSourceBaseUrl = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(
                 values.string(KEY_CUSTOM_LYRICS_SOURCE_BASE_URL),
             ),
@@ -168,6 +171,7 @@ object ModuleSettingsSchema {
                 KEY_LLM_LYRICS_THINKING_ENABLED,
                 default = false,
             ),
+            llmLyricsThinkingEffort = LlmLyricsThinkingEffort.decode(values.string(KEY_LLM_LYRICS_THINKING_EFFORT)),
             llmPronunciationBoundaryEnabled = values.boolean(
                 KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
                 default = false,
@@ -291,6 +295,10 @@ object ModuleSettingsSchema {
                 settings.metadataCacheClearGeneration.coerceAtLeast(0L),
             KEY_CUSTOM_LYRICS_ENABLED to settings.customLyricsEnabled,
             KEY_AUTOMATIC_LYRICS_ENABLED to settings.automaticLyricsEnabled,
+            KEY_AUTOMATIC_LYRICS_PREFER_NATIVE to settings.automaticLyricsPreferNative,
+            KEY_AUTOMATIC_LYRICS_SOURCE_ORDER to
+                ModuleSettings.normalizeAutomaticLyricsSourceOrder(settings.automaticLyricsSourceOrder)
+                    .joinToString(","),
             KEY_CUSTOM_LYRICS_SOURCE_BASE_URL to
                 ModuleSettings.normalizeCustomLyricsSourceBaseUrl(settings.customLyricsSourceBaseUrl),
             KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED to settings.onlineLyricsSupplementEnabled,
@@ -315,6 +323,7 @@ object ModuleSettingsSchema {
             KEY_LLM_LYRICS_MODEL to
                 ModuleSettings.normalizeLlmLyricsModel(settings.llmLyricsModel),
             KEY_LLM_LYRICS_THINKING_ENABLED to settings.llmLyricsThinkingEnabled,
+            KEY_LLM_LYRICS_THINKING_EFFORT to settings.llmLyricsThinkingEffort.storageValue,
             KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED to settings.llmPronunciationBoundaryEnabled,
         )
         values[KEY_SCHEMA_VERSION] = ModuleConstants.CONFIG_SCHEMA_VERSION
@@ -457,6 +466,11 @@ object ModuleSettingsSchema {
         boolean(KEY_TITLE_CORRECTION_ENABLED, default = false) &&
             regionSelection().replacesRegion
 
+    private fun Map<String, *>.automaticLyricsSourceOrder(): List<String> =
+        ModuleSettings.normalizeAutomaticLyricsSourceOrder(
+            string(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER).split(','),
+        )
+
     /**
      * Returns the host-local values required before removing the retired keys.  This
      * is intentionally independent of the schema version: an already-initialized
@@ -558,6 +572,8 @@ object ModuleSettingsSchema {
         KEY_TITLE_CORRECTION_TARGET_LANGUAGE,
         KEY_CUSTOM_LYRICS_ENABLED,
         KEY_AUTOMATIC_LYRICS_ENABLED,
+        KEY_AUTOMATIC_LYRICS_PREFER_NATIVE,
+        KEY_AUTOMATIC_LYRICS_SOURCE_ORDER,
         KEY_CUSTOM_LYRICS_SOURCE_BASE_URL,
         KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED,
         KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
@@ -574,6 +590,7 @@ object ModuleSettingsSchema {
         KEY_LLM_LYRICS_API_KEY,
         KEY_LLM_LYRICS_MODEL,
         KEY_LLM_LYRICS_THINKING_ENABLED,
+        KEY_LLM_LYRICS_THINKING_EFFORT,
         KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED,
         KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT,
         KEY_FONT_ENABLED,
@@ -640,6 +657,8 @@ object ModuleSettingsSchema {
     private const val KEY_TITLE_CORRECTION_TARGET_LANGUAGE = "title_correction_target_language"
     private const val KEY_CUSTOM_LYRICS_ENABLED = "custom_lyrics_enabled"
     private const val KEY_AUTOMATIC_LYRICS_ENABLED = "automatic_lyrics_enabled"
+    private const val KEY_AUTOMATIC_LYRICS_PREFER_NATIVE = "automatic_lyrics_prefer_native"
+    private const val KEY_AUTOMATIC_LYRICS_SOURCE_ORDER = "automatic_lyrics_source_order"
     private const val KEY_CUSTOM_LYRICS_SOURCE_BASE_URL = "custom_lyrics_source_base_url"
     private const val KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED =
         "online_lyrics_supplement_enabled"
@@ -666,6 +685,7 @@ object ModuleSettingsSchema {
     private const val KEY_LLM_LYRICS_API_KEY = "llm_lyrics_api_key"
     private const val KEY_LLM_LYRICS_MODEL = "llm_lyrics_model"
     private const val KEY_LLM_LYRICS_THINKING_ENABLED = "llm_lyrics_thinking_enabled"
+    private const val KEY_LLM_LYRICS_THINKING_EFFORT = "llm_lyrics_thinking_effort"
     private const val KEY_LLM_PRONUNCIATION_BOUNDARY_ENABLED = "llm_pronunciation_boundary_enabled"
     private const val KEY_LEGACY_ONLINE_LYRIC_REPLACEMENT = "online_lyric_replacement_enabled"
     private const val KEY_FONT_ENABLED = "lyrics_font_enabled"

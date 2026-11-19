@@ -111,7 +111,8 @@
     "cellular": true,
     "staticCollapsedIntercept": false,
     "playerRecovery": true,
-    "startupPagePrewarm": true
+    "startupPagePrewarm": true,
+    "lineLyricAgentAlignment": true
   },
   "evidence": {
     "status": "descriptor-verified-user-testing",
@@ -2729,7 +2730,7 @@
     }
   },
   "knownDegradations": [],
-  "profileRevision": 7,
+  "profileRevision": 8,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -2877,6 +2878,7 @@
   "ambiguityPolicy": "reject-ambiguous",
   "legacyFirstMatchExceptions": [],
   "cjk": {
+    "splitWordGlow": true,
     "foregroundTextField": "X",
     "maxSpanGlowCharacters": 3,
     "bindingOwners": [
@@ -4363,6 +4365,11 @@
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$x",
         "name": "c",
         "type": "int"
+      },
+      "installedPointer": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "f1",
+        "type": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
       }
     }
   },

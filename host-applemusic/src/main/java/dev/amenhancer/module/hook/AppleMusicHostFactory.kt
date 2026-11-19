@@ -97,6 +97,39 @@ object AppleMusicHostFactory {
             },
             presentationMethod = nativePresentationMethod,
         )
+        val customLyrics = AppleMusicCustomLyricsTarget(
+            config = config,
+            symbols = resolver,
+            currentSong = currentSong,
+            autoLyricsRuntime = autoLyricsRuntime,
+            timingObservations = timingObservations,
+            nativeLyricDelivery = nativeLyricsTarget,
+        )
+        val karaokeAnimation = AppleMusicCjkKaraokeAnimationTarget(
+            symbols = resolver,
+            foregroundTextField = profile.document.optJSONObject("cjk")
+                ?.optString("foregroundTextField", "U") ?: "U",
+            maxSpanGlowCharacters = profile.document.optJSONObject("cjk")
+                ?.optInt("maxSpanGlowCharacters", 1) ?: 1,
+        )
+        val lyricRepairs by lazy {
+            val parser = customLyrics.installParserRepair()
+            val alignment = installLineLyricAgentAlignment(profile, classLoader, application.resources) {
+                config.settings().lyricEffectsOptimizationEnabled
+            }
+            val terminal = AppleMusicCjkTerminalGradientTarget(profile, classLoader).install()
+            val splitGlow = karaokeAnimation.installSplitWordGlow(
+                profile.document.optJSONObject("cjk")?.optBoolean("splitWordGlow", false) == true,
+            )
+            val repairs = listOf(parser) + listOf(alignment, terminal, splitGlow)
+                .filterNot { it is TargetCapabilityInstall.Unsupported }
+            val message = listOf(parser, alignment, terminal, splitGlow).joinToString("; ") { it.message }
+            when {
+                repairs.all { it is TargetCapabilityInstall.Active } -> TargetCapabilityInstall.Active(message)
+                repairs.all { it is TargetCapabilityInstall.Unsupported } -> TargetCapabilityInstall.Unsupported(message)
+                else -> TargetCapabilityInstall.Degraded(message)
+            }
+        }
         return TargetAdaptation(
             identity = build.displayName,
             build = build,
@@ -124,14 +157,7 @@ object AppleMusicHostFactory {
                 enabled = { config.settings().forceCellularDataEntryEnabled },
             ),
             bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(profile, classLoader),
-            cjkKaraokeAnimation = AppleMusicCjkKaraokeAnimationTarget(
-                symbols = resolver,
-                foregroundTextField = profile.document.optJSONObject("cjk")
-                    ?.optString("foregroundTextField", "U") ?: "U",
-                terminalGradient = AppleMusicCjkTerminalGradientTarget(profile, classLoader),
-                maxSpanGlowCharacters = profile.document.optJSONObject("cjk")
-                    ?.optInt("maxSpanGlowCharacters", 1) ?: 1,
-            ),
+            cjkKaraokeAnimation = karaokeAnimation,
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
             lyricBackgroundHighlight = AppleMusicLyricBackgroundHighlightTarget(profile, classLoader,
                 onFailure = { message -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(
@@ -144,14 +170,8 @@ object AppleMusicHostFactory {
                 session = lyricsTypefaceSession as LyricsTypefaceSession,
             ),
             nativeLyrics = nativeLyricsTarget,
-            customLyrics = AppleMusicCustomLyricsTarget(
-                config = config,
-                symbols = resolver,
-                currentSong = currentSong,
-                autoLyricsRuntime = autoLyricsRuntime,
-                timingObservations = timingObservations,
-                nativeLyricDelivery = nativeLyricsTarget,
-            ),
+            customLyrics = customLyrics,
+            lyricsParser = LyricsParserTarget { lyricRepairs },
             currentSongIdentity = AppleMusicCurrentSongIdentityTarget(
                 resolver,
                 currentSong,

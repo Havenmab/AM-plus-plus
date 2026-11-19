@@ -73,6 +73,7 @@ object ModuleConstants {
     const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
     const val FEATURE_LYRIC_BACKGROUND_HIGHLIGHT = "lyric_background_highlight"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
+    const val FEATURE_LYRICS_PARSER = "lyrics_parser"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"
     const val FEATURE_NATIVE_LYRICS = "native_lyrics"
 

@@ -12,9 +12,10 @@ import org.junit.Test
  * ledger: every source (configured mappings, automatic fallback, cache
  * refresh and LLM translation) submits its replacement through the exact-profile
  * LyricsResultSubmissionBridge, which owns the host result/index contract.
- * Selection happens upstream of publication, and the Fragment install hook
- * observes the owner and acknowledges installation, so no hook path mutates
- * installer arguments or performs IO, native parsing or lyric-state mutation.
+ * Selection and recovery publish upstream, and the Fragment install hook
+ * observes the owner, guards empty fallback and acknowledges installation.
+ * Installer hooks do not write arguments. The shared parser hook may repair
+ * input TTML; hooks and their parser observer perform no IO or native parsing.
  */
 class CustomLyricsItemUpdateStructuralRegressionTest {
     private fun projectFile(relativePath: String): String = sequenceOf(
@@ -51,11 +52,11 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         val installHook = target.substringAfter("val hooked = hook(installMethod")
             .substringBefore("val availabilityResolution")
 
-        assertTrue(installHook.contains("resultBridge::attach"))
+        assertTrue(installHook.contains("resultBridge.attach("))
         assertTrue(installHook.contains("param.thisObject"))
         assertTrue(installHook.contains("resultBridge.onInstalled(fragment, param.args.getOrNull(0))"))
         assertTrue(installHook.contains("param.throwable == null"))
-        assertFalse(installHook.contains("param.args[0] ="))
+        assertFalse(Regex("""param\.args\[0\]\s*=(?!=)""").containsMatchIn(installHook))
         assertFalse(installHook.contains("param.extras"))
         assertFalse(installHook.contains("mLyricsResult"))
         assertFalse(installHook.contains("loadLyrics"))
@@ -65,7 +66,8 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         assertFalse(installHook.contains("parseTtml"))
         assertFalse(installHook.contains("HttpLyricTransport"))
         assertFalse(target.contains("installMethod.invoke"))
-        assertFalse(target.contains("param.args[0] ="))
+        val installPath = target.substringAfter("private fun installOnce(): TargetCapabilityInstall {")
+        assertFalse(Regex("""param\.args\[0\]\s*=(?!=)""").containsMatchIn(installPath))
         assertFalse(target.contains("ampp-installed-lyrics"))
     }
 
@@ -100,12 +102,13 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
         )
 
-        assertTrue(target.contains("val selectReplacement: (Long, Any?) -> Any?"))
+        assertTrue(target.contains("val selectReplacement: (Long, Long, Any?) -> Any?"))
         assertTrue(target.contains("selectReplacement = selectReplacement,"))
         assertTrue(target.contains("session.replacementFor(id)"))
-        assertTrue(target.contains("autoSession?.takeoverReplacementFor("))
-        assertTrue(target.contains("autoSession?.markTakeoverApplied(id)"))
-        assertTrue(target.contains("parser.unwrap(manual ?: automatic ?: translated)"))
+        assertTrue(target.contains("automaticLyricsLookupSources(settings, native != null, metadata)"))
+        assertTrue(target.contains("autoSession?.configureSources(id, sources)"))
+        assertTrue(target.contains("if (sources.isNotEmpty()) autoSession?.replacementFor(id) else null"))
+        assertTrue(target.contains("parser.forSubmission(manual ?: automatic ?: translated ?: native, id, nativeId)"))
         assertTrue(
             target.indexOf("val selectReplacement:") <
                 target.indexOf("LyricsResultSubmissionBridge.create("),
@@ -129,13 +132,21 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         val target = projectFile(
             "host-applemusic/src/main/java/dev/amenhancer/module/hook/AppleMusicCustomLyricsTarget.kt",
         )
-        val parseHook = target.substringAfter("hook(parseMethod, object : ModernMethodHook()")
-            .substringBefore("// Observe installation")
+        val parseHookStart = "check(ModernXposedRuntime.hookMethod(method, object : ModernMethodHook()"
+        val parseHookEnd = "}, parserRegistration))"
+        assertTrue(target.contains(parseHookStart))
+        assertTrue(target.contains(parseHookEnd))
+        val parseHook = target.substringAfter(parseHookStart).substringBefore(parseHookEnd)
+        val observerStart = "parserObserver = { ttml, pointer ->"
+        val observerEnd = "registration.onClose { parserObserver = null }"
+        assertTrue(target.contains(observerStart))
+        assertTrue(target.contains(observerEnd))
+        val parseObserver = target.substringAfter(observerStart).substringBefore(observerEnd)
         val availabilityHook = target.substringAfter(
             "hook(availabilityMethod, object : ModernMethodHook()",
         )
 
-        for (hookPath in listOf(parseHook, availabilityHook)) {
+        for (hookPath in listOf(parseHook, parseObserver, availabilityHook)) {
             assertFalse(hookPath.contains("openRemoteFile"))
             assertFalse(hookPath.contains("readTtml"))
             assertFalse(hookPath.contains("parseTtml"))
@@ -154,8 +165,9 @@ class CustomLyricsItemUpdateStructuralRegressionTest {
         )
 
         assertTrue(target.contains("metadataOfAppleMusicId(id)"))
-        assertTrue(target.contains("shouldTryAutoLyricsForMetadata(metadata)"))
-        assertTrue(target.contains("session.readyReplacementFor(appleMusicId) == null"))
+        assertTrue(target.contains("automaticLyricsLookupSources(config.settings(), true, metadata)"))
+        assertTrue(target.contains("(!session.isMapped(appleMusicId) || session.isAutoManaged(appleMusicId))"))
+        assertTrue(target.contains("if (manual == null && automaticEnabled)"))
     }
 
     @Test

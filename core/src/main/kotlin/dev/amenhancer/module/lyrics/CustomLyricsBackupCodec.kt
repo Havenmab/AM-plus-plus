@@ -63,6 +63,7 @@ object CustomLyricsBackupCodec {
     private const val KEY_SOURCE = "source"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_USER_EDITED = "userEdited"
+    private const val KEY_AUTO_MANAGED = "autoManaged"
 
     /**
      * Independent resource guards for untrusted backups, not user-facing
@@ -243,5 +244,6 @@ object CustomLyricsBackupCodec {
         source = entry.optString(KEY_SOURCE),
         enabled = entry.optBoolean(KEY_ENABLED, false),
         userEdited = entry.optBoolean(KEY_USER_EDITED, false),
+        autoManaged = entry.optBoolean(KEY_AUTO_MANAGED, false),
     )
 }

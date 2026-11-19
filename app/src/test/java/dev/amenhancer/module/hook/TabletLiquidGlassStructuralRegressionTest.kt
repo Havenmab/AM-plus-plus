@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.ModuleConstants
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -152,7 +153,6 @@ class TabletLiquidGlassStructuralRegressionTest {
     @Test
     fun `keeps the glass configuration keys under schema 28`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
-        val constants = source("dev/amenhancer/module/ModuleConstants.kt")
 
         // Keep the serialized glass keys, including the inactive tablet-collapse compatibility key.
         // Tablet forms use the glass toggle, gap and blur but never opt into scroll collapse.

@@ -3065,7 +3065,7 @@
     }
   },
   "knownDegradations": [],
-  "profileRevision": 8,
+  "profileRevision": 9,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -3161,6 +3161,7 @@
   "ambiguityPolicy": "reject-ambiguous",
   "legacyFirstMatchExceptions": [],
   "cjk": {
+    "splitWordGlow": true,
     "foregroundTextField": "X",
     "bindingOwners": [
       "q8.H9",

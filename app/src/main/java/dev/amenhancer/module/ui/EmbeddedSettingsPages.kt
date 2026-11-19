@@ -6,7 +6,10 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -14,13 +17,17 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.RippleDrawable
+import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.Button
@@ -31,11 +38,15 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.lyrics.LlmLyricsClient
 import dev.amenhancer.module.lyrics.LlmLyricsConfig
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
 import java.lang.ref.WeakReference
@@ -286,8 +297,9 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 return
             }
             val customLyricsPage = nextPage == EmbeddedSettingsPage.CUSTOM_LYRICS
+            val automaticLyricsPage = nextPage == EmbeddedSettingsPage.AUTOMATIC_LYRICS
             val llmLyricsPage = nextPage == EmbeddedSettingsPage.LLM_LYRICS
-            val lyricsPage = customLyricsPage || llmLyricsPage
+            val lyricsPage = customLyricsPage || automaticLyricsPage || llmLyricsPage
             val bottomInset = dp(activity, when {
                 nextPage == EmbeddedSettingsPage.MAIN -> 0
                 lyricsPage -> 8
@@ -343,7 +355,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 stopPageTransition = null
                 clearOutgoingPage()
                 val startBounds = RectF(panelBounds)
-                val snapshot = if (dialogReady) pageHost.captureEmbeddedSettingsBackdrop() else null
+                val snapshot = if (dialogReady && changingPage) pageHost.captureEmbeddedSettingsBackdrop() else null
                 val outgoing = snapshot?.let { backdrop ->
                     ImageView(activity).apply {
                         setImageDrawable(backdrop)
@@ -370,6 +382,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                 pageTitle.text = when (page) {
                     EmbeddedSettingsPage.MAIN -> "AM++"
                     EmbeddedSettingsPage.CUSTOM_LYRICS -> localizedText(ModuleText.CATEGORY_LYRICS_MANAGEMENT)
+                    EmbeddedSettingsPage.AUTOMATIC_LYRICS -> localizedText(ModuleText.AUTO_LYRICS)
                     EmbeddedSettingsPage.LYRICS_EFFECTS -> localizedText(ModuleText.CATEGORY_LYRICS_EFFECTS)
                     EmbeddedSettingsPage.INTERFACE -> localizedText(ModuleText.CATEGORY_INTERFACE)
                     EmbeddedSettingsPage.TITLE_REGION -> localizedText(ModuleText.CATEGORY_TITLE_REGION)
@@ -434,6 +447,16 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
                     onOpenLlmLyrics = {
                         renderPage(EmbeddedSettingsPage.LLM_LYRICS)
                     },
+                    onOpenAutomaticLyrics = {
+                        renderPage(EmbeddedSettingsPage.AUTOMATIC_LYRICS)
+                    },
+                )
+            } else if (automaticLyricsPage) {
+                renderEmbeddedAutomaticLyricsPage(
+                    activity = activity,
+                    parent = content,
+                    currentSettings = { draft.settings },
+                    onSettingsChanged = ::updateDraft,
                 )
             } else if (llmLyricsPage) {
                 renderEmbeddedLlmLyricsPage(
@@ -545,6 +568,7 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
 
         fun navigateBack() {
             val parentPage = when (page) {
+                EmbeddedSettingsPage.AUTOMATIC_LYRICS -> EmbeddedSettingsPage.CUSTOM_LYRICS
                 EmbeddedSettingsPage.LLM_LYRICS -> EmbeddedSettingsPage.CUSTOM_LYRICS
                 EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> EmbeddedSettingsPage.INTERFACE
                 EmbeddedSettingsPage.MAIN -> {
@@ -706,7 +730,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedCategoryPage(
                     settings.cjkKaraokeAnimationEnabled) {
                     onSettingsChanged(currentSettings().copy(cjkKaraokeAnimationEnabled = it))
                 }
-                setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.SHORT_LYRIC_EFFECTS_SUMMARY,
+                setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
                     settings.lyricEffectsOptimizationEnabled) {
                     onSettingsChanged(currentSettings().copy(lyricEffectsOptimizationEnabled = it))
                 }
@@ -913,7 +937,15 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
         EmbeddedSettingsPage.CUSTOM_LYRICS -> listOf(
             ModuleText.CUSTOM_LYRICS_REPLACEMENT to ModuleText.CUSTOM_LYRICS_REPLACEMENT_SUMMARY,
             ModuleText.AUTO_LYRICS to ModuleText.AUTO_LYRICS_SUMMARY,
-            ModuleText.LLM_LYRICS_FALLBACK to ModuleText.LLM_LYRICS_ENABLED_SUMMARY,
+            ModuleText.LLM_LYRICS_FALLBACK to ModuleText.SHORT_LLM_LYRICS_SUMMARY,
+        )
+        EmbeddedSettingsPage.AUTOMATIC_LYRICS -> listOf(
+            ModuleText.AUTO_LYRICS_ENABLED to ModuleText.AUTO_LYRICS_SUMMARY,
+            ModuleText.AUTO_LYRICS_PREFER_NATIVE to ModuleText.AUTO_LYRICS_PREFER_NATIVE_SUMMARY,
+            ModuleText.AUTO_LYRICS_SOURCE_ORDER to
+                if (controller.currentSettings().automaticLyricsPreferNative) {
+                    ModuleText.AUTO_LYRICS_SOURCE_ORDER_NATIVE_HIDDEN
+                } else ModuleText.AUTO_LYRICS_SOURCE_ORDER_ALL,
         )
         EmbeddedSettingsPage.LYRICS_EFFECTS -> listOf(
             ModuleText.BIDIRECTIONAL_LYRIC_BLUR to ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
@@ -949,6 +981,7 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.LLM_LYRICS_API_KEY to ModuleText.LLM_LYRICS_API_KEY_SUMMARY,
             ModuleText.LLM_LYRICS_MODEL to ModuleText.LLM_LYRICS_MODEL_SUMMARY,
             ModuleText.LLM_LYRICS_THINKING to ModuleText.LLM_LYRICS_THINKING_SUMMARY,
+            ModuleText.LLM_LYRICS_THINKING_EFFORT to ModuleText.LLM_LYRICS_THINKING_EFFORT_SUMMARY,
         )
         EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> listOf(
             ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND to ModuleText.BOTTOM_BAR_COLLAPSE_REBOUND_SUMMARY,
@@ -979,6 +1012,7 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
         song: CurrentSongDetails?,
         onSettingsChanged: (ModuleSettings) -> Unit,
         onOpenLlmLyrics: () -> Unit,
+        onOpenAutomaticLyrics: () -> Unit,
     ) {
         val entries = runCatching { controller.lyricsEntries() }.getOrDefault(emptyList())
         customLyricsListState.update(entries, customLyricsSearchQuery)
@@ -996,12 +1030,10 @@ internal fun EmbeddedSettingsHost.renderEmbeddedCustomLyricsPage(
             pageRefresh?.invoke()
         })
         parent.addView(embeddedSpacer(activity, if (isEmbeddedPhone(activity)) 10 else 14))
-        parent.addView(embeddedSettingRow(
-            activity,
-            localizedText(ModuleText.AUTO_LYRICS),
-            localizedText(ModuleText.SHORT_AUTO_LYRICS_SUMMARY),
-            settings.automaticLyricsEnabled,
-            enabled = settings.customLyricsEnabled,
+        parent.addView(embeddedNavigationRow(
+            activity = activity,
+            title = localizedText(ModuleText.AUTO_LYRICS),
+            summary = localizedText(ModuleText.SHORT_AUTO_LYRICS_SUMMARY),
             compactWidePadding = true,
         ) {
             onSettingsChanged(settings.copy(automaticLyricsEnabled = it))
@@ -1430,6 +1462,7 @@ private fun EmbeddedSettingsHost.renderEmbeddedLlmLyricsPage(
         apiKey = settings.llmLyricsApiKey,
         model = settings.llmLyricsModel,
         thinkingEnabled = settings.llmLyricsThinkingEnabled,
+        thinkingEffort = settings.llmLyricsThinkingEffort,
     ))
 }
 

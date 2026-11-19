@@ -504,8 +504,11 @@ class AutoLyricsReplacementSession(
             var candidate: AutoLyricsCandidate? = null
             for (source in requestedSources) {
                 if (!current()) return
+                // The seam decides: a persisted candidate the resolver accepted for this source is
+                // still acceptable here, so a line-timed search source keeps its cache hit instead
+                // of paying another network round trip. Structural validity is re-checked.
                 candidate = runCatching { cache.readCandidate(appleMusicId, source) }.getOrNull()?.takeIf {
-                    it.source == source && TtmlInputPolicy.isAcceptable(it.ttml) && TtmlTimingPolicy.isWord(it.ttml)
+                    it.source == source && AutoLyricsTimingPolicy.isAcceptableAtSeam(it.ttml)
                 }
                 if (candidate != null) break
                 if (!current()) return

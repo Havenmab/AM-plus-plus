@@ -187,6 +187,32 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
+    fun `a persisted line timed candidate from its own source skips the network`() {
+        val queued = QueuedExecutor()
+        val cache = MemoryCache(
+            mapOf(
+                (42L to CustomLyricsSources.KUWO) to
+                    AutoLyricsCandidate(CustomLyricsSources.KUWO, LINE_TTML),
+            ),
+        )
+        val pointer = Pointer()
+        var fetches = 0
+        val session = session(
+            queued = queued,
+            cache = cache,
+            fetch = { _, _ -> fetches += 1; AutoLyricsCandidate("network", WORD_TTML) },
+            parse = { pointer },
+            sources = listOf(CustomLyricsSources.KUWO),
+        )
+
+        session.replacementFor(42L)
+        queued.runAll()
+
+        assertSame(pointer, session.readyReplacementFor(42L))
+        assertEquals(0, fetches)
+    }
+
+    @Test
     fun `a line timed candidate is still prepared from the provider-less cache slot`() {
         // The merged per-source read only accepts word timing; the legacy AUTO_CACHE slot stays the
         // one place a persisted line-timed document may win, and the seam policy accepts it.

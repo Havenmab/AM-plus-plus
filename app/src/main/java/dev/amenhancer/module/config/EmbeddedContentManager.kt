@@ -375,16 +375,35 @@ internal class EmbeddedContentManager(
      */
     fun clearAllLyrics(): CustomLyricsClearResult = synchronized(mutationLock) {
         session.withCustomLyricsMutation {
+            val initial = session.customLyricsIndexState()
+            if (!initial.canCommit) {
+                return@withCustomLyricsMutation CustomLyricsClearResult.Failed(
+                    "歌词索引文件不可读，无法清空",
+                )
+            }
+            // Upstream 1.6.9 keeps source bodies, the source index and the Lunabeat catalog in
+            // their own store; clearing only the manual index would leave those behind. This
+            // runs first because it needs a readable manual index to protect shared bodies.
+            val hadSourceContent = sourceCache.entries().isNotEmpty() || sourceCache.sizeBytes() > 0L
+            val sourceCleared = sourceCache.clear()
+            // Clearing the source store may prune legacy third-party entries from the manual
+            // index, so re-read the state before the manual transaction plans its retirement.
             val state = session.customLyricsIndexState()
             if (!state.canCommit) {
                 return@withCustomLyricsMutation CustomLyricsClearResult.Failed(
                     "歌词索引文件不可读，无法清空",
                 )
             }
-            CustomLyricsClearTransaction(
+            val cleared = CustomLyricsClearTransaction(
                 resetIndex = session::resetCustomLyricsIndex,
                 deleteRemoteFile = session::deleteFile,
             ).clear(oldManifest = state.manifest, pointer = state.pointer)
+            when {
+                cleared !is CustomLyricsClearResult.Cleared -> cleared
+                !sourceCleared && hadSourceContent ->
+                    CustomLyricsClearResult.Failed("无法清空来源缓存")
+                else -> cleared
+            }
         }
     }
 

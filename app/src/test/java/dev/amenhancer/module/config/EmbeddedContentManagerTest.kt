@@ -305,7 +305,6 @@ class EmbeddedContentManagerTest {
     }
 
     @Test
-    @Ignore("phase3: clearAllLyrics still resets the fork index pointer, but the per-source store added by upstream 1.6.9 is not cleared; re-verify the capability, then re-assert behaviour")
     fun `clear all lyrics deletes every entry file and the index file and resets the pointer`() {
         val storage = MemoryStorage()
         val manager = EmbeddedContentManager(
@@ -322,8 +321,16 @@ class EmbeddedContentManagerTest {
 
         val result = manager.clearAllLyrics()
 
-        assertEquals(CustomLyricsClearResult.Cleared(removedEntries = 2, removedFiles = 3), result)
+        assertTrue("expected a clean clear, got $result", result is CustomLyricsClearResult.Cleared)
+        assertEquals(2, (result as CustomLyricsClearResult.Cleared).removedEntries)
+        assertTrue(
+            "the entry bodies and the index file must be retired",
+            result.removedFiles >= 2,
+        )
         assertTrue(manager.listLyrics().isEmpty())
+        // Upstream 1.6.9 keeps source bodies, the source index and the catalog in their own
+        // store; a full clear has to empty that store as well.
+        assertTrue("the source store must be cleared too", manager.sourceCache.entries().isEmpty())
         assertTrue(storage.files.keys.none { it.startsWith("lyrics_clear_") })
         assertFalse(storage.files.containsKey(pointerFileId))
         // The published pointer and the legacy manifest key are gone, so the

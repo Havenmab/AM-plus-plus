@@ -509,10 +509,6 @@ private val EmbeddedSettingsPage.title: ModuleText
         EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS
     }
 
-/** On/off summary text shared by the settings rows and the category pages. */
-private fun EmbeddedSettingsHost.state(enabled: Boolean) =
-    localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
-
 @Composable
 private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
     activity: Activity,

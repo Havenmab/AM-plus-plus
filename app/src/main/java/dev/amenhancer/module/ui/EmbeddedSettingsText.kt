@@ -10,3 +10,7 @@ internal fun EmbeddedSettingsHost.localizedText(key: ModuleText, vararg argument
     val locale = if (locales.isEmpty) Locale.getDefault() else locales[0]
     return key.text(*arguments, locale = locale)
 }
+
+/** On/off summary text shared by the settings rows, the category pages and the lyrics pages. */
+internal fun EmbeddedSettingsHost.state(enabled: Boolean): String =
+    localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)

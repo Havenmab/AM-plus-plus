@@ -5,7 +5,7 @@
     "contractVersion": 1,
     "methods": {
       "resultSet": {
-        "owner": "androidx.lifecycle.H",
+        "owner": "androidx.lifecycle.I",
         "name": "setValue",
         "parameters": [
           "java.lang.Object"
@@ -14,7 +14,7 @@
         "static": false
       },
       "resultPost": {
-        "owner": "androidx.lifecycle.H",
+        "owner": "androidx.lifecycle.I",
         "name": "postValue",
         "parameters": [
           "java.lang.Object"
@@ -78,7 +78,7 @@
         "static": false
       },
       "resultValue": {
-        "owner": "androidx.lifecycle.H",
+        "owner": "androidx.lifecycle.I",
         "name": "getValue",
         "parameters": [],
         "returns": "java.lang.Object",
@@ -102,7 +102,7 @@
     "fields": {
       "fragmentViewModel": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "m1",
+        "name": "n1",
         "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel"
       },
       "lyricsResult": {
@@ -129,10 +129,10 @@
     "dexCount": 4,
     "splitCount": 2,
     "sourceIdentity": "com.apple.android.music / 7.0.0 / 1614 (binary base Manifest)",
-    "analysis": "Direct paired 1613 beta to 1614 release raw DEX/smali review. RecyclerView adapter method insertion and utils owner renaming are traced through current native callers; instrumental-row cleanup changes are reviewed independently. Runtime acceptance pending.",
+    "analysis": "Symbols re-derived from the user's Apple Music 7.0.0 (1614) base APK DEX by structural fingerprint (superclass chains, field/parameter type multisets, inner-class and binding relationships), not by name diff. The 1614 build inserts one class member in several hierarchies, so the 1613-derived names were off by one: fragmentLyricsRuntime used q8.X4 (subclass) instead of q8.W4, lyric menu/fragment fields l0/l1/n0/m1/a1-e1/G0 instead of m0/m1/o0/n1/b1-f1/H0-I0, RecyclerView.i0 instead of j0, BottomSheetBehavior.n0/i0 instead of o0/j0, PlayerMainFragment.X/a0 instead of Y/b0, FullWidthAlphaGradientFlexboxLayout.T/U instead of U/V. The lyric adapters were re-identified (word adapter player.z with holder z$a, line adapter player.U0, base player.i1), the lyrics reader moved from ttml.i to ttml.j, and the row callback from player.fragment.K to player.fragment.M. androidx alias drift (Fragment m, FragmentManager E, FragmentTransaction P, FragmentActivity r, LiveData I), kotlin function interfaces (ji.*), Compose Composer z0.n, BottomNavigationView uf.j, SettingsViewModel.getPreferenceItems(SettingsViewModel), the SettingsFragment PageContent signature and the indexed method/field contracts were re-resolved against the same DEX. All 99 install-time relationship invariants of the fragment contracts hold. Runtime acceptance still pending.",
     "resourceComparison": "Directly paired 1613/1614 base, arm64_v8a and xxxhdpi APKs: all 4175 base resource files and all 379 density resource files are byte-identical; 16689 merged resource names/IDs unchanged. All 42 explicit profile resources, 24 layout variants with 24 recursive include edges and 79 referenced dimensions retain current values. Two unrelated privacy/family-offer strings changed; runtime visuals pending.",
     "nativeComparison": "1614 arm64 split retains 25 libraries: 23 byte-identical and two changed implementations. The changed libandroidappmusic/libmedialibrarycore keep 7607/13421 exported names and kinds; all 920 named JNI entries remain present. This records the existing Java/native boundary only; native behavior and other ABI splits are not runtime-verified.",
-    "hleComparison": "All 79 hook-point groups, 69 targets and 187 runtime-member roles reviewed against 1614 raw DEX/smali. Queue ea.a submit w->x, bind k->l and inherited displayed-entry v->w are traced through current callers and RecyclerView inheritance. Catalog query, Compose artist and metadata presentation seams retain their reviewed roles; optional members absent in both builds keep existing fallback behavior. Runtime pending."
+    "hleComparison": "All hook-point groups, targets and runtime-member roles were re-resolved against the 1614 base APK DEX (4 dex, 41707 classes) instead of the 1613 beta diff; every section role now resolves through the same getDeclaredField/getDeclaredMethod/getDeclaredConstructor semantics the module uses, including exact types, static flags and abstract/bridge/synthetic rejection. One role stays unresolved: lyricsMenu.constructors.menuReadyCallback still names Hf.A, which does not exist in 1614, and no 1614 class declares a constructor whose first parameter is the lyrics-menu click listener (player.fragment.a0) or an Object-typed capture of it, so the 1613 preparation seam cannot be located statically. Runtime pending."
   },
   "indexed": {
     "classes": {
@@ -142,7 +142,7 @@
       "LYRICS_FRAGMENT": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
       "LYRICS_VIEW_MODEL": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel",
       "SONG_INFO_PTR": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
-      "CJK_KARAOKE_ANIMATION_OWNER": "com.apple.android.music.player.x",
+      "CJK_KARAOKE_ANIMATION_OWNER": "com.apple.android.music.player.z",
       "TTML_PARSER_NATIVE": "com.apple.android.music.ttml.javanative.TTMLParser$TTMLParserNative",
       "SONG_INFO_NATIVE": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
       "CELLULAR_AVAILABILITY_OWNER": "com.apple.android.music.playback.connectivity.FuseConnectivityChecker",
@@ -155,7 +155,7 @@
       "PLAYER_METADATA_HUB": "com.apple.android.music.player.e",
       "EDITORIAL_VIDEO_OWNER": "com.apple.android.music.player.d1",
       "LYRICS_AVAILABILITY_OWNER": "com.apple.android.music.player.c1",
-      "CJK_UNICODE_BLOCK_HELPER_OWNER": "com.apple.android.music.utils.R0$a",
+      "CJK_UNICODE_BLOCK_HELPER_OWNER": "com.apple.android.music.utils.M0$a",
       "SETTINGS_FRAGMENT": "com.apple.android.music.settings2.fragment.SettingsFragment",
       "MEDIA_ENTITY_TO_SONG_CONVERTER": "C9.F"
     },
@@ -188,7 +188,7 @@
         "static": false
       },
       "metadata-to-playback-item-method": {
-        "owner": "com.apple.android.music.player.M",
+        "owner": "com.apple.android.music.player.N",
         "name": "b",
         "parameters": [
           "z3.y"
@@ -197,7 +197,7 @@
         "static": true
       },
       "player-metadata-publish-method": {
-        "owner": "com.apple.android.music.player.e",
+        "owner": "com.apple.android.music.player.d",
         "name": "D",
         "parameters": [
           "z3.y"
@@ -206,10 +206,10 @@
         "static": false
       },
       "cjk-karaoke-animation-method": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "W",
         "parameters": [
-          "com.apple.android.music.player.x$a",
+          "com.apple.android.music.player.z$a",
           "int",
           "int",
           "int",
@@ -219,7 +219,7 @@
         "static": false
       },
       "cjk-unicode-block-predicate-method": {
-        "owner": "com.apple.android.music.utils.R0$a",
+        "owner": "com.apple.android.music.utils.M0$a",
         "name": "a",
         "parameters": [
           "java.lang.CharSequence",
@@ -229,7 +229,7 @@
         "static": true
       },
       "lyrics-availability-predicate": {
-        "owner": "com.apple.android.music.player.c1",
+        "owner": "com.apple.android.music.player.e1",
         "name": "i",
         "parameters": [
           "com.apple.android.music.model.PlaybackItem"
@@ -238,7 +238,7 @@
         "static": true
       },
       "editorial-video-url-selector": {
-        "owner": "com.apple.android.music.player.d1",
+        "owner": "com.apple.android.music.player.f1",
         "name": "e",
         "parameters": [
           "com.apple.android.music.model.Song",
@@ -299,7 +299,7 @@
         "owner": "com.apple.android.music.settings2.model.SettingsViewModel",
         "name": "getDataCategory",
         "parameters": [
-          "pi.a"
+          "ji.a"
         ],
         "returns": "com.apple.android.music.settings2.model.b$a",
         "static": false
@@ -343,7 +343,7 @@
         "static": true
       },
       "player-action-sheet-method": {
-        "owner": "com.apple.android.music.player.b1",
+        "owner": "com.apple.android.music.player.d1",
         "name": "G0",
         "parameters": [
           "com.apple.android.music.model.PlaybackItem",
@@ -356,14 +356,14 @@
         "static": false
       },
       "metadata-fragment-resume-method": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "onResume",
         "parameters": [],
         "returns": "void",
         "static": false
       },
       "metadata-fragment-pause-method": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "onPause",
         "parameters": [],
         "returns": "void",
@@ -444,7 +444,7 @@
         "static": false
       },
       "player-fragment-view": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getView",
         "parameters": [],
         "returns": "android.view.View",
@@ -485,10 +485,10 @@
         "static": false
       },
       "player-fragment-parent": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getParentFragment",
         "parameters": [],
-        "returns": "androidx.fragment.app.n",
+        "returns": "androidx.fragment.app.m",
         "static": false
       },
       "player-background-detach": {
@@ -508,7 +508,7 @@
         "static": false
       },
       "player-fragment-destroy-view": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "onDestroyView",
         "parameters": [],
         "returns": "void",
@@ -598,12 +598,12 @@
       },
       "player-artwork-size-animation": {
         "owner": "com.apple.android.music.player.fragment.l",
-        "name": "T",
+        "name": "U",
         "type": "android.animation.AnimatorSet"
       },
       "player-artwork-static-baseline": {
         "owner": "com.apple.android.music.player.fragment.PlayerSongViewFragment",
-        "name": "f0",
+        "name": "g0",
         "type": "android.util.Size"
       },
       "player-artwork-target-size": {
@@ -628,7 +628,7 @@
       },
       "player-page-behavior-state": {
         "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
-        "name": "n0",
+        "name": "o0",
         "type": "int"
       },
       "player-background-source": {
@@ -674,10 +674,10 @@
       "tablet-playback-main-state": {
         "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
         "name": "H",
-        "type": "com.apple.android.music.player.V0"
+        "type": "com.apple.android.music.player.X0"
       },
       "tablet-playback-mode-blocked": {
-        "owner": "com.apple.android.music.player.V0",
+        "owner": "com.apple.android.music.player.X0",
         "name": "M",
         "type": "boolean"
       },
@@ -854,8 +854,8 @@
     "COMPOSE_OBSERVE_AS_STATE": [
       {
         "parameterTypeNames": [
-          "androidx.lifecycle.H",
-          "z0.m"
+          "androidx.lifecycle.I",
+          "z0.n"
         ],
         "isStatic": true,
         "includeSynthetic": false,
@@ -2062,7 +2062,7 @@
     "LIBRARY_COMPOSE_CONTENT": [
       {
         "parameterTypeNames": [
-          "z0.m",
+          "z0.n",
           "int"
         ],
         "isStatic": false,
@@ -2130,13 +2130,13 @@
     "CONTENT_HTTP_LOCALIZATION": [
       {
         "parameterTypeNames": [
-          "pk.f"
+          "jk.f"
         ],
         "isStatic": false,
         "includeSynthetic": false,
         "requiredInvokedMethodNames": [],
         "parameterCount": 1,
-        "returnTypeName": "kk.D",
+        "returnTypeName": "ek.D",
         "allowFirstMatch": false,
         "methodName": "a",
         "requiredInvokedMethodDescriptors": [],
@@ -2737,8 +2737,10 @@
       "B": "F"
     }
   },
-  "knownDegradations": [],
-  "profileRevision": 4,
+  "knownDegradations": [
+    "lyricsMenu.constructors.menuReadyCallback is not re-derivable from the 1614 DEX: Hf.A no longer exists and no class declares a (listener, int) constructor for player.fragment.a0, so the native lyrics-menu row append reports a degraded capability instead of installing."
+  ],
+  "profileRevision": 5,
   "chrome": {
     "resources": {
       "NAVIGATION_HOST_GROUP": {
@@ -2788,11 +2790,11 @@
     "preferenceItemsMethod": "getPreferenceItems",
     "dataCategoryMethod": "getDataCategory",
     "composeMethod": "PageContent",
-    "composerClass": "z0.m",
+    "composerClass": "z0.n",
     "categoryClass": "com.apple.android.music.settings2.model.b$a",
     "actionClass": "com.apple.android.music.settings2.model.b$b$b",
     "artworkClass": "Ra.J",
-    "callbackClass": "pi.a",
+    "callbackClass": "ji.a",
     "unitClass": "kotlin.Unit",
     "unitField": "a",
     "categoryItemsField": "c",
@@ -2805,22 +2807,22 @@
           "name": "getPreferenceItems",
           "parameters": [
             "boolean",
-            "pi.a",
-            "pi.a",
-            "pi.a",
-            "pi.a",
-            "pi.a",
-            "pi.a",
-            "pi.a",
-            "pi.l",
-            "pi.q",
-            "pi.l",
-            "pi.a",
-            "pi.l",
-            "pi.a",
-            "pi.a",
-            "pi.l",
-            "pi.l",
+            "ji.a",
+            "ji.a",
+            "ji.a",
+            "ji.a",
+            "ji.a",
+            "ji.a",
+            "ji.a",
+            "ji.l",
+            "ji.q",
+            "ji.l",
+            "ji.a",
+            "ji.l",
+            "ji.a",
+            "ji.a",
+            "ji.l",
+            "ji.l",
             "java.lang.String",
             "boolean",
             "boolean",
@@ -2840,7 +2842,7 @@
           "owner": "com.apple.android.music.settings2.fragment.SettingsFragment",
           "name": "PageContent",
           "parameters": [
-            "z0.m",
+            "z0.n",
             "int"
           ],
           "returns": "void",
@@ -2884,10 +2886,10 @@
         "static": false
       },
       "getActivity": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getActivity",
         "parameters": [],
-        "returns": "androidx.fragment.app.s",
+        "returns": "androidx.fragment.app.r",
         "static": false
       }
     },
@@ -2908,17 +2910,17 @@
       },
       "fragmentBinding": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "l0",
-        "type": "q8.X4"
+        "name": "m0",
+        "type": "q8.W4"
       },
       "fragmentPopup": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "l1",
+        "name": "m1",
         "type": "android.widget.PopupWindow"
       },
       "menuAnchor": {
-        "owner": "q8.X4",
-        "name": "o0",
+        "owner": "q8.W4",
+        "name": "p0",
         "type": "android.widget.ImageView"
       }
     },
@@ -2971,7 +2973,7 @@
       "aggregateTrimLine": 88,
       "methods": {
         "bind": {
-          "owner": "com.apple.android.music.player.x",
+          "owner": "com.apple.android.music.player.z",
           "name": "c0",
           "parameters": [
             "com.apple.android.music.ttml.javanative.model.LyricsWordVector",
@@ -2986,8 +2988,8 @@
           "static": false
         },
         "trim": {
-          "owner": "Hj.y",
-          "name": "t0",
+          "owner": "Bj.z",
+          "name": "o0",
           "parameters": [
             "java.lang.CharSequence"
           ],
@@ -3002,12 +3004,12 @@
           "type": "int"
         },
         "riseFunction": {
-          "owner": "com.apple.android.music.player.i",
+          "owner": "com.apple.android.music.player.h",
           "name": "a",
-          "type": "com.apple.android.music.player.h"
+          "type": "com.apple.android.music.player.g"
         },
         "riseView": {
-          "owner": "com.apple.android.music.player.h",
+          "owner": "com.apple.android.music.player.g",
           "name": "a",
           "type": "com.apple.android.music.common.views.CustomTextView"
         }
@@ -3025,7 +3027,7 @@
       "contractVersion": 1,
       "methods": {
         "build": {
-          "owner": "com.apple.android.music.player.x",
+          "owner": "com.apple.android.music.player.z",
           "name": "e0",
           "parameters": [
             "java.lang.Integer",
@@ -3042,7 +3044,7 @@
           "static": false
         },
         "margin": {
-          "owner": "com.apple.android.music.player.x",
+          "owner": "com.apple.android.music.player.z",
           "name": "d0",
           "parameters": [
             "float",
@@ -3056,7 +3058,7 @@
           "static": true
         },
         "readerLine": {
-          "owner": "com.apple.android.music.ttml.i",
+          "owner": "com.apple.android.music.ttml.j",
           "name": "a",
           "parameters": [
             "int"
@@ -3140,9 +3142,9 @@
       },
       "fields": {
         "reader": {
-          "owner": "com.apple.android.music.player.x",
+          "owner": "com.apple.android.music.player.z",
           "name": "p",
-          "type": "com.apple.android.music.ttml.i"
+          "type": "com.apple.android.music.ttml.j"
         },
         "rowId": {
           "owner": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
@@ -3209,17 +3211,17 @@
         "static": false
       },
       "getView": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getView",
         "parameters": [],
         "returns": "android.view.View",
         "static": false
       },
       "parent": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getParentFragment",
         "parameters": [],
-        "returns": "androidx.fragment.app.n",
+        "returns": "androidx.fragment.app.m",
         "static": false
       },
       "browser": {
@@ -3260,7 +3262,7 @@
       },
       "sizeAnimation": {
         "owner": "com.apple.android.music.player.fragment.l",
-        "name": "T",
+        "name": "U",
         "type": "android.animation.AnimatorSet"
       },
       "videoWidth": {
@@ -3275,7 +3277,7 @@
       },
       "staticBaseline": {
         "owner": "com.apple.android.music.player.fragment.PlayerSongViewFragment",
-        "name": "f0",
+        "name": "g0",
         "type": "android.util.Size"
       },
       "targetSize": {
@@ -3290,24 +3292,24 @@
     "playerClass": "com.apple.android.music.player.fragment.PlayerMainFragment",
     "navigationModelClass": "com.apple.android.music.common.A",
     "navigationKindClass": "com.apple.android.music.common.B",
-    "navigationCallbackClass": "pi.l",
-    "composerClass": "z0.m",
+    "navigationCallbackClass": "ji.l",
+    "composerClass": "z0.n",
     "renderTab": "g1",
     "navigationViewModel": "s1",
     "modelKind": "a",
-    "kindId": "m",
+    "kindId": "n",
     "kindLabel": "p",
     "kindIcon": "g",
     "slideCallbackClass": "com.apple.android.music.player.fragment.PlayerMainFragment$i",
     "slideMethod": "b",
     "slidePlayerField": "h",
-    "playerSlideCallbackField": "a0",
+    "playerSlideCallbackField": "b0",
     "slideProgressField": "f",
     "playerOf": "q1",
     "accentColor": "color_primary",
     "blurClass": "eightbitlab.com.blurview.BlurView",
-    "menuListenerClass": "com.apple.android.music.common.fragment.f",
-    "menuListenerField": "L",
+    "menuListenerClass": "com.apple.android.music.common.fragment.h",
+    "menuListenerField": "M",
     "menuSelectMethod": "a",
     "resources": {
       "topNavigation": "top_nav_tabs",
@@ -3439,7 +3441,7 @@
         "pagerType": "androidx.viewpager2.widget.ViewPager2"
       }
     },
-    "behaviorStateField": "n0",
+    "behaviorStateField": "o0",
     "members": {
       "methods": {
         "renderTab": {
@@ -3448,8 +3450,8 @@
           "parameters": [
             "com.apple.android.music.common.A",
             "long",
-            "pi.l",
-            "z0.m",
+            "ji.l",
+            "z0.n",
             "int"
           ],
           "returns": "void",
@@ -3464,7 +3466,7 @@
         },
         "kindId": {
           "owner": "com.apple.android.music.common.B",
-          "name": "m",
+          "name": "n",
           "parameters": [],
           "returns": "int",
           "static": false
@@ -3484,7 +3486,7 @@
           "static": false
         },
         "invokeCallback": {
-          "owner": "pi.l",
+          "owner": "ji.l",
           "name": "invoke",
           "parameters": [
             "java.lang.Object"
@@ -3548,7 +3550,7 @@
           "static": false
         },
         "selectMenuItem": {
-          "owner": "com.apple.android.music.common.fragment.f",
+          "owner": "com.apple.android.music.common.fragment.h",
           "name": "a",
           "parameters": [
             "android.view.MenuItem"
@@ -3577,10 +3579,10 @@
           "static": false
         },
         "getActivity": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getActivity",
           "parameters": [],
-          "returns": "androidx.fragment.app.s",
+          "returns": "androidx.fragment.app.r",
           "static": false
         },
         "createView": {
@@ -3612,7 +3614,7 @@
           "static": false
         },
         "getView": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getView",
           "parameters": [],
           "returns": "android.view.View",
@@ -3629,32 +3631,32 @@
           "owner": "com.apple.android.music.common.NavTabsViewModel",
           "name": "getGetBottomTabsLiveData",
           "parameters": [],
-          "returns": "androidx.lifecycle.H",
+          "returns": "androidx.lifecycle.I",
           "static": false
         },
         "liveDataValue": {
-          "owner": "androidx.lifecycle.H",
+          "owner": "androidx.lifecycle.I",
           "name": "getValue",
           "parameters": [],
           "returns": "java.lang.Object",
           "static": false
         },
         "navigationMenu": {
-          "owner": "vf.j",
+          "owner": "uf.j",
           "name": "getMenu",
           "parameters": [],
           "returns": "android.view.Menu",
           "static": false
         },
         "navigationSelected": {
-          "owner": "vf.j",
+          "owner": "uf.j",
           "name": "getSelectedItemId",
           "parameters": [],
           "returns": "int",
           "static": false
         },
         "navigationSelect": {
-          "owner": "vf.j",
+          "owner": "uf.j",
           "name": "setSelectedItemId",
           "parameters": [
             "int"
@@ -3764,12 +3766,12 @@
         },
         "behaviorState": {
           "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
-          "name": "n0",
+          "name": "o0",
           "type": "int"
         },
         "playerSlide": {
           "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
-          "name": "a0",
+          "name": "b0",
           "type": "com.apple.android.music.player.fragment.PlayerMainFragment$i"
         },
         "slideProgress": {
@@ -3780,11 +3782,11 @@
         "menuListener": {
           "owner": "com.apple.android.music.common.fragment.MusicContentFragment",
           "name": "M",
-          "type": "com.apple.android.music.common.fragment.f"
+          "type": "com.apple.android.music.common.fragment.h"
         },
         "collapsedSheetTop": {
           "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
-          "name": "i0",
+          "name": "j0",
           "type": "int"
         },
         "peek": {
@@ -3806,20 +3808,20 @@
     }
   },
   "fragmentKaraokeWidth": {
-    "adapterClass": "com.apple.android.music.player.x",
-    "adapterField": "p0",
+    "adapterClass": "com.apple.android.music.player.z",
+    "adapterField": "q0",
     "widthField": "S",
     "holderClass": "androidx.recyclerview.widget.RecyclerView$D",
     "bindMethod": "l",
-    "holderBindingClass": "com.apple.android.music.player.g1$b",
+    "holderBindingClass": "com.apple.android.music.player.i1$b",
     "bindingField": "u",
     "itemField": "a",
-    "bindingClass": "q8.p9",
-    "flexboxField": "Y",
+    "bindingClass": "q8.n9",
+    "flexboxField": "Z",
     "flexboxClass": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
     "methods": {
       "bind": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "l",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -3832,16 +3834,16 @@
     "fields": {
       "adapter": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "p0",
-        "type": "com.apple.android.music.player.x"
+        "name": "q0",
+        "type": "com.apple.android.music.player.z"
       },
       "width": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "S",
         "type": "int"
       },
       "binding": {
-        "owner": "com.apple.android.music.player.g1$b",
+        "owner": "com.apple.android.music.player.i1$b",
         "name": "u",
         "type": "androidx.databinding.ViewDataBinding"
       },
@@ -3851,8 +3853,8 @@
         "type": "android.view.View"
       },
       "flexbox": {
-        "owner": "q8.p9",
-        "name": "Y",
+        "owner": "q8.n9",
+        "name": "Z",
         "type": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout"
       }
     }
@@ -3871,7 +3873,7 @@
       "controller": "com.apple.android.music.player.fragment.PlayerMainFragment",
       "lyrics": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
       "state": "com.apple.android.music.player.fragment.PlayerMainFragment$l",
-      "manager": "androidx.fragment.app.F",
+      "manager": "androidx.fragment.app.E",
       "transaction": "androidx.fragment.app.a"
     },
     "methods": {
@@ -3930,31 +3932,31 @@
         "static": false
       },
       "context": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getContext",
         "parameters": [],
         "returns": "android.content.Context",
         "static": false
       },
       "parent": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getParentFragment",
         "parameters": [],
-        "returns": "androidx.fragment.app.n",
+        "returns": "androidx.fragment.app.m",
         "static": false
       },
       "fragmentId": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getId",
         "parameters": [],
         "returns": "int",
         "static": false
       },
       "childManager": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getChildFragmentManager",
         "parameters": [],
-        "returns": "androidx.fragment.app.F",
+        "returns": "androidx.fragment.app.E",
         "static": false
       },
       "fragmentAccessor": {
@@ -3972,27 +3974,27 @@
         "static": false
       },
       "stateSaved": {
-        "owner": "androidx.fragment.app.F",
+        "owner": "androidx.fragment.app.E",
         "name": "Q",
         "parameters": [],
         "returns": "boolean",
         "static": false
       },
       "findFragment": {
-        "owner": "androidx.fragment.app.F",
+        "owner": "androidx.fragment.app.E",
         "name": "E",
         "parameters": [
           "java.lang.String"
         ],
-        "returns": "androidx.fragment.app.n",
+        "returns": "androidx.fragment.app.m",
         "static": false
       },
       "replace": {
-        "owner": "androidx.fragment.app.Q",
+        "owner": "androidx.fragment.app.P",
         "name": "e",
         "parameters": [
           "int",
-          "androidx.fragment.app.n",
+          "androidx.fragment.app.m",
           "java.lang.String"
         ],
         "returns": "void",
@@ -4002,7 +4004,7 @@
         "owner": "androidx.fragment.app.a",
         "name": "p",
         "parameters": [
-          "androidx.fragment.app.n"
+          "androidx.fragment.app.m"
         ],
         "returns": "androidx.fragment.app.a",
         "static": false
@@ -4011,13 +4013,13 @@
         "owner": "androidx.fragment.app.a",
         "name": "m",
         "parameters": [
-          "androidx.fragment.app.n"
+          "androidx.fragment.app.m"
         ],
         "returns": "androidx.fragment.app.a",
         "static": false
       },
       "onCommit": {
-        "owner": "androidx.fragment.app.Q",
+        "owner": "androidx.fragment.app.P",
         "name": "f",
         "parameters": [
           "java.lang.Runnable"
@@ -4092,7 +4094,7 @@
         "static": false
       },
       "supportsLyrics": {
-        "owner": "com.apple.android.music.player.c1",
+        "owner": "com.apple.android.music.player.e1",
         "name": "i",
         "parameters": [
           "com.apple.android.music.model.PlaybackItem"
@@ -4148,12 +4150,12 @@
       },
       "paneLiveData": {
         "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
-        "name": "X",
+        "name": "Y",
         "type": "androidx.lifecycle.MutableLiveData"
       },
       "callback": {
         "owner": "com.apple.android.music.player.fragment.PlayerMainFragment",
-        "name": "a0",
+        "name": "b0",
         "type": "com.apple.android.music.player.fragment.PlayerMainFragment$i"
       },
       "behavior": {
@@ -4163,7 +4165,7 @@
       },
       "behaviorState": {
         "owner": "com.google.android.material.bottomsheet.BottomSheetBehavior",
-        "name": "n0",
+        "name": "o0",
         "type": "int"
       },
       "currentItem": {
@@ -4246,7 +4248,7 @@
         },
         "setSeekbarPadding": {
           "owner": "q8.u2",
-          "name": "y0",
+          "name": "x0",
           "parameters": [
             "java.lang.Float"
           ],
@@ -4292,7 +4294,7 @@
         },
         "seekbarPadding": {
           "owner": "q8.t2",
-          "name": "x0",
+          "name": "y0",
           "type": "java.lang.Float"
         }
       },
@@ -4315,7 +4317,7 @@
       "transaction": {
         "owner": "androidx.fragment.app.a",
         "parameters": [
-          "androidx.fragment.app.F"
+          "androidx.fragment.app.E"
         ]
       }
     },
@@ -4330,7 +4332,7 @@
     }
   },
   "fragmentLyricsRuntime": {
-    "bindingClass": "q8.X4",
+    "bindingClass": "q8.W4",
     "auxiliaryFields": [
       "bindingContainer",
       "bindingControls"
@@ -4405,14 +4407,14 @@
         "static": false
       },
       "getView": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getView",
         "parameters": [],
         "returns": "android.view.View",
         "static": false
       },
       "fragmentId": {
-        "owner": "androidx.fragment.app.n",
+        "owner": "androidx.fragment.app.m",
         "name": "getId",
         "parameters": [],
         "returns": "int",
@@ -4441,48 +4443,48 @@
     },
     "fields": {
       "bindingContainer": {
-        "owner": "q8.X4",
-        "name": "Y",
+        "owner": "q8.W4",
+        "name": "Z",
         "type": "android.widget.FrameLayout"
       },
       "bindingControls": {
-        "owner": "q8.X4",
-        "name": "i0",
+        "owner": "q8.W4",
+        "name": "j0",
         "type": "q8.t2"
       },
       "listenerList": {
         "owner": "androidx.recyclerview.widget.RecyclerView",
-        "name": "i0",
+        "name": "j0",
         "type": "java.util.ArrayList"
       },
       "binding": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "l0",
-        "type": "q8.X4"
+        "name": "m0",
+        "type": "q8.W4"
       },
       "container": {
-        "owner": "q8.X4",
-        "name": "X",
+        "owner": "q8.W4",
+        "name": "Y",
         "type": "androidx.constraintlayout.widget.ConstraintLayout"
       },
       "recycler": {
-        "owner": "q8.X4",
-        "name": "d0",
+        "owner": "q8.W4",
+        "name": "e0",
         "type": "androidx.recyclerview.widget.RecyclerView"
       },
       "gradients": {
-        "owner": "q8.X4",
-        "name": "j0",
+        "owner": "q8.W4",
+        "name": "k0",
         "type": "com.apple.android.music.common.views.AlphaGradientFrameLayout"
       },
       "syncFirst": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "C0",
+        "name": "D0",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$x"
       },
       "syncSecond": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "D0",
+        "name": "E0",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$x"
       },
       "metricOffset": {
@@ -4502,7 +4504,7 @@
       },
       "installedPointer": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "f1",
+        "name": "g1",
         "type": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
       }
     }
@@ -4527,7 +4529,7 @@
         "parameters": [
           "com.apple.android.music.mediaapi.models.MediaEntity"
         ],
-        "returns": "com.apple.android.music.profiles.a0",
+        "returns": "com.apple.android.music.profiles.Z",
         "static": false
       },
       "shelves": {
@@ -4582,7 +4584,7 @@
       "header": {
         "owner": "com.apple.android.music.profiles2.d$d",
         "name": "c",
-        "type": "com.apple.android.music.profiles.a0"
+        "type": "com.apple.android.music.profiles.Z"
       },
       "shelves": {
         "owner": "com.apple.android.music.profiles2.d$d",
@@ -4606,7 +4608,7 @@
         "parameters": [
           "java.lang.String",
           "java.lang.String",
-          "com.apple.android.music.profiles.a0",
+          "com.apple.android.music.profiles.Z",
           "java.util.List",
           "com.apple.android.music.mediaapi.models.MediaEntity",
           "long"
@@ -4618,10 +4620,10 @@
     "contractVersion": 1,
     "classes": {
       "fragment": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-      "lineAdapter": "com.apple.android.music.player.S0",
-      "wordAdapter": "com.apple.android.music.player.x",
-      "adapterBase": "com.apple.android.music.player.g1",
-      "wordHolder": "com.apple.android.music.player.x$a",
+      "lineAdapter": "com.apple.android.music.player.U0",
+      "wordAdapter": "com.apple.android.music.player.z",
+      "adapterBase": "com.apple.android.music.player.i1",
+      "wordHolder": "com.apple.android.music.player.z$a",
       "wordModel": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
       "recycler": "androidx.recyclerview.widget.RecyclerView",
       "mediaBrowser": "J4.w",
@@ -4663,7 +4665,7 @@
         "static": false
       },
       "lineCommit": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "P",
         "parameters": [
           "java.util.List",
@@ -4674,14 +4676,14 @@
         "static": false
       },
       "lineSnapshot": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "x",
         "parameters": [],
         "returns": "java.util.TreeSet",
         "static": false
       },
       "lineMap": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "F",
         "parameters": [
           "int",
@@ -4691,7 +4693,7 @@
         "static": false
       },
       "lineType": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "f",
         "parameters": [
           "int"
@@ -4700,7 +4702,7 @@
         "static": false
       },
       "lineId": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "e",
         "parameters": [
           "int"
@@ -4709,21 +4711,21 @@
         "static": false
       },
       "lineReader": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "y",
         "parameters": [],
-        "returns": "com.apple.android.music.ttml.i",
+        "returns": "com.apple.android.music.ttml.j",
         "static": false
       },
       "lineToken": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "z",
         "parameters": [],
         "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
         "static": false
       },
       "lineDocument": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "S",
         "parameters": [
           "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
@@ -4732,7 +4734,7 @@
         "static": false
       },
       "lineBind": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "l",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -4742,7 +4744,7 @@
         "static": false
       },
       "linePayload": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "m",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -4753,7 +4755,7 @@
         "static": false
       },
       "lineRecycle": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "s",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D"
@@ -4762,7 +4764,7 @@
         "static": false
       },
       "wordCommit": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "P",
         "parameters": [
           "java.util.List",
@@ -4773,14 +4775,14 @@
         "static": false
       },
       "wordSnapshot": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "x",
         "parameters": [],
         "returns": "java.util.TreeSet",
         "static": false
       },
       "wordMap": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "F",
         "parameters": [
           "int",
@@ -4790,7 +4792,7 @@
         "static": false
       },
       "wordType": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "f",
         "parameters": [
           "int"
@@ -4799,7 +4801,7 @@
         "static": false
       },
       "wordId": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "e",
         "parameters": [
           "int"
@@ -4808,21 +4810,21 @@
         "static": false
       },
       "wordReader": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "y",
         "parameters": [],
-        "returns": "com.apple.android.music.ttml.i",
+        "returns": "com.apple.android.music.ttml.j",
         "static": false
       },
       "wordToken": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "z",
         "parameters": [],
         "returns": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr",
         "static": false
       },
       "wordDocument": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "S",
         "parameters": [
           "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
@@ -4831,7 +4833,7 @@
         "static": false
       },
       "wordBind": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "l",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -4841,7 +4843,7 @@
         "static": false
       },
       "wordPayload": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "m",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -4852,7 +4854,7 @@
         "static": false
       },
       "wordRecycle": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "s",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D"
@@ -4861,14 +4863,14 @@
         "static": false
       },
       "readerCount": {
-        "owner": "com.apple.android.music.ttml.i",
+        "owner": "com.apple.android.music.ttml.j",
         "name": "b",
         "parameters": [],
         "returns": "int",
         "static": false
       },
       "readerLine": {
-        "owner": "com.apple.android.music.ttml.i",
+        "owner": "com.apple.android.music.ttml.j",
         "name": "a",
         "parameters": [
           "int"
@@ -5089,7 +5091,7 @@
         "static": false
       },
       "wordProgressStart": {
-        "owner": "com.apple.android.music.player.x$e",
+        "owner": "com.apple.android.music.player.z$e",
         "name": "onAnimationStart",
         "parameters": [
           "android.animation.Animator"
@@ -5098,7 +5100,7 @@
         "static": false
       },
       "wordProgressEnd": {
-        "owner": "com.apple.android.music.player.x$e",
+        "owner": "com.apple.android.music.player.z$e",
         "name": "onAnimationEnd",
         "parameters": [
           "android.animation.Animator"
@@ -5184,22 +5186,22 @@
     "fields": {
       "binding": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "l0",
-        "type": "q8.X4"
+        "name": "m0",
+        "type": "q8.W4"
       },
       "recycler": {
-        "owner": "q8.X4",
-        "name": "d0",
+        "owner": "q8.W4",
+        "name": "e0",
         "type": "androidx.recyclerview.widget.RecyclerView"
       },
       "activeAdapter": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "n0",
-        "type": "com.apple.android.music.player.g1"
+        "name": "o0",
+        "type": "com.apple.android.music.player.i1"
       },
       "viewModel": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "m1",
+        "name": "n1",
         "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel"
       },
       "holderView": {
@@ -5229,66 +5231,66 @@
       },
       "childListeners": {
         "owner": "androidx.recyclerview.widget.RecyclerView",
-        "name": "i0",
+        "name": "j0",
         "type": "java.util.ArrayList"
       },
       "words": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "G",
         "type": "android.util.ArrayMap"
       },
       "backgroundWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "H",
         "type": "android.util.ArrayMap"
       },
       "pronunciationWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "I",
         "type": "android.util.ArrayMap"
       },
       "pronunciationBackgroundWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "J",
         "type": "android.util.ArrayMap"
       },
       "wordProgressModel": {
-        "owner": "com.apple.android.music.player.x$e",
+        "owner": "com.apple.android.music.player.z$e",
         "name": "a",
         "type": "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e"
       },
       "nativeLine": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "a1",
+        "name": "b1",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f"
       },
       "nativeWord": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "b1",
+        "name": "c1",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$g"
       },
       "nativeBackground": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "c1",
+        "name": "d1",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$n"
       },
       "nativePronunciation": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "d1",
+        "name": "e1",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$p"
       },
       "nativePronunciationBackground": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "e1",
+        "name": "f1",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$r"
       },
       "instrumentalPosition": {
-        "owner": "com.apple.android.music.player.S0",
+        "owner": "com.apple.android.music.player.U0",
         "name": "x",
         "type": "int"
       },
       "wordInstrumentalPosition": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "F",
         "type": "int"
       }
@@ -5314,7 +5316,7 @@
     "contractVersion": 1,
     "methods": {
       "build": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "e0",
         "parameters": [
           "java.lang.Integer",
@@ -5349,7 +5351,7 @@
         "static": false
       },
       "fadeUpdate": {
-        "owner": "com.apple.android.music.player.x$o",
+        "owner": "com.apple.android.music.player.z$o",
         "name": "onAnimationUpdate",
         "parameters": [
           "android.animation.ValueAnimator"
@@ -5358,7 +5360,7 @@
         "static": false
       },
       "staticMask": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "X",
         "parameters": [
           "com.apple.android.music.player.viewmodel.PlayerLyricsViewModel$e",
@@ -5373,17 +5375,17 @@
         "static": false
       },
       "rebind": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "j0",
         "parameters": [
-          "com.apple.android.music.player.x$a",
+          "com.apple.android.music.player.z$a",
           "int"
         ],
         "returns": "void",
         "static": false
       },
       "bind": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "l",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D",
@@ -5393,7 +5395,7 @@
         "static": false
       },
       "recycle": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "s",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView$D"
@@ -5402,7 +5404,7 @@
         "static": false
       },
       "document": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "S",
         "parameters": [
           "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
@@ -5418,7 +5420,7 @@
         "static": false
       },
       "textView": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "w0",
         "parameters": [
           "androidx.databinding.ViewDataBinding"
@@ -5446,21 +5448,21 @@
         "invocationOnly": true
       },
       "pause": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "J",
         "parameters": [],
         "returns": "void",
         "static": false
       },
       "pauseRequested": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "K",
         "parameters": [],
         "returns": "void",
         "static": false
       },
       "resume": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "L",
         "parameters": [],
         "returns": "void",
@@ -5494,12 +5496,12 @@
     "fields": {
       "topMasks": {
         "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
-        "name": "T",
+        "name": "U",
         "type": "android.util.SparseArray"
       },
       "bottomMasks": {
         "owner": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout",
-        "name": "U",
+        "name": "V",
         "type": "android.util.SparseArray"
       },
       "maskFirst": {
@@ -5528,22 +5530,22 @@
         "type": "android.view.View"
       },
       "holderBinding": {
-        "owner": "com.apple.android.music.player.g1$b",
+        "owner": "com.apple.android.music.player.i1$b",
         "name": "u",
         "type": "androidx.databinding.ViewDataBinding"
       },
       "adapterCallback": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "y",
-        "type": "com.apple.android.music.player.fragment.K"
+        "type": "com.apple.android.music.player.fragment.M"
       },
       "callbackFragment": {
-        "owner": "com.apple.android.music.player.fragment.K",
+        "owner": "com.apple.android.music.player.fragment.M",
         "name": "a",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
       },
       "featherPixels": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "b0",
         "type": "float"
       },
@@ -5578,37 +5580,37 @@
         "type": "android.animation.Animator"
       },
       "words": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "G",
         "type": "android.util.ArrayMap"
       },
       "backgroundWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "H",
         "type": "android.util.ArrayMap"
       },
       "pronunciationWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "I",
         "type": "android.util.ArrayMap"
       },
       "pronunciationBackgroundWords": {
-        "owner": "com.apple.android.music.player.x$a",
+        "owner": "com.apple.android.music.player.z$a",
         "name": "J",
         "type": "android.util.ArrayMap"
       },
       "foregroundInactiveColors": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "P",
         "type": "[I"
       },
       "backgroundInactiveColors": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "Y",
         "type": "[I"
       },
       "fadeMask": {
-        "owner": "com.apple.android.music.player.x$o",
+        "owner": "com.apple.android.music.player.z$o",
         "name": "f",
         "type": "com.apple.android.music.common.views.FullWidthAlphaGradientFlexboxLayout$a"
       }
@@ -5651,28 +5653,28 @@
           "static": false
         },
         "activity": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getActivity",
           "parameters": [],
-          "returns": "androidx.fragment.app.s",
+          "returns": "androidx.fragment.app.r",
           "static": false
         },
         "view": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getView",
           "parameters": [],
           "returns": "android.view.View",
           "static": false
         },
         "childManager": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getChildFragmentManager",
           "parameters": [],
-          "returns": "androidx.fragment.app.F",
+          "returns": "androidx.fragment.app.E",
           "static": false
         },
         "resumed": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "isResumed",
           "parameters": [],
           "returns": "boolean",
@@ -5689,11 +5691,11 @@
           "owner": "com.apple.android.music.common.NavTabsViewModel",
           "name": "getGetBottomTabsLiveData",
           "parameters": [],
-          "returns": "androidx.lifecycle.H",
+          "returns": "androidx.lifecycle.I",
           "static": false
         },
         "value": {
-          "owner": "androidx.lifecycle.H",
+          "owner": "androidx.lifecycle.I",
           "name": "getValue",
           "parameters": [],
           "returns": "java.lang.Object",
@@ -5715,20 +5717,20 @@
         },
         "kindId": {
           "owner": "com.apple.android.music.common.B",
-          "name": "m",
+          "name": "n",
           "parameters": [],
           "returns": "int",
           "static": false
         },
         "menu": {
-          "owner": "vf.j",
+          "owner": "uf.j",
           "name": "getMenu",
           "parameters": [],
           "returns": "android.view.Menu",
           "static": false
         },
         "selectedId": {
-          "owner": "vf.j",
+          "owner": "uf.j",
           "name": "getSelectedItemId",
           "parameters": [],
           "returns": "int",
@@ -5742,23 +5744,23 @@
           "static": false
         },
         "find": {
-          "owner": "androidx.fragment.app.F",
+          "owner": "androidx.fragment.app.E",
           "name": "E",
           "parameters": [
             "java.lang.String"
           ],
-          "returns": "androidx.fragment.app.n",
+          "returns": "androidx.fragment.app.m",
           "static": false
         },
         "stateSaved": {
-          "owner": "androidx.fragment.app.F",
+          "owner": "androidx.fragment.app.E",
           "name": "Q",
           "parameters": [],
           "returns": "boolean",
           "static": false
         },
         "arguments": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "setArguments",
           "parameters": [
             "android.os.Bundle"
@@ -5771,7 +5773,7 @@
           "name": "d",
           "parameters": [
             "int",
-            "androidx.fragment.app.n",
+            "androidx.fragment.app.m",
             "java.lang.String",
             "int"
           ],
@@ -5782,13 +5784,13 @@
           "owner": "androidx.fragment.app.a",
           "name": "l",
           "parameters": [
-            "androidx.fragment.app.n"
+            "androidx.fragment.app.m"
           ],
           "returns": "androidx.fragment.app.a",
           "static": false
         },
         "onCommit": {
-          "owner": "androidx.fragment.app.Q",
+          "owner": "androidx.fragment.app.P",
           "name": "f",
           "parameters": [
             "java.lang.Runnable"
@@ -5806,31 +5808,31 @@
           "static": false
         },
         "tag": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getTag",
           "parameters": [],
           "returns": "java.lang.String",
           "static": false
         },
         "hidden": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "isHidden",
           "parameters": [],
           "returns": "boolean",
           "static": false
         },
         "parent": {
-          "owner": "androidx.fragment.app.n",
+          "owner": "androidx.fragment.app.m",
           "name": "getParentFragment",
           "parameters": [],
-          "returns": "androidx.fragment.app.n",
+          "returns": "androidx.fragment.app.m",
           "static": false
         },
         "observePlayContext": {
           "owner": "com.apple.android.music.common.fragment.NavHostContainerFragment",
           "name": "d1",
           "parameters": [
-            "O4.I",
+            "O4.G",
             "boolean"
           ],
           "returns": "void",
@@ -5875,12 +5877,12 @@
           "type": "com.apple.android.music.common.B"
         },
         "primary": {
-          "owner": "androidx.fragment.app.F",
+          "owner": "androidx.fragment.app.E",
           "name": "y",
-          "type": "androidx.fragment.app.n"
+          "type": "androidx.fragment.app.m"
         },
         "reordering": {
-          "owner": "androidx.fragment.app.Q",
+          "owner": "androidx.fragment.app.P",
           "name": "p",
           "type": "boolean"
         }
@@ -5893,7 +5895,7 @@
         "transaction": {
           "owner": "androidx.fragment.app.a",
           "parameters": [
-            "androidx.fragment.app.F"
+            "androidx.fragment.app.E"
           ]
         }
       }
@@ -5902,23 +5904,33 @@
   "lyricPronunciation": {
     "methods": {
       "requestLyrics": {
-        "owner": "com.apple.android.music.ttml.e",
+        "owner": "com.apple.android.music.ttml.f",
         "name": "e",
-        "parameters": ["long", "[Ljava.lang.String;", "long", "[Ljava.lang.String;", "hi.c"],
+        "parameters": [
+          "long",
+          "[Ljava.lang.String;",
+          "long",
+          "[Ljava.lang.String;",
+          "bi.c"
+        ],
         "returns": "java.io.Serializable",
         "static": false
       },
       "evaluate": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
         "name": "F2",
-        "parameters": ["com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"],
+        "parameters": [
+          "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
+        ],
         "returns": "void",
         "static": false
       },
       "match": {
         "owner": "com.apple.android.music.playback.util.LocaleUtil",
         "name": "matchToSystemLyricsScript",
-        "parameters": ["com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative"],
+        "parameters": [
+          "com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative"
+        ],
         "returns": "java.lang.String",
         "static": true
       },
@@ -5946,7 +5958,9 @@
       "setTranslation": {
         "owner": "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoNative",
         "name": "setTranslation",
-        "parameters": ["java.lang.String"],
+        "parameters": [
+          "java.lang.String"
+        ],
         "returns": "boolean",
         "static": false
       },
@@ -5967,7 +5981,9 @@
       "vectorGet": {
         "owner": "com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative",
         "name": "get",
-        "parameters": ["long"],
+        "parameters": [
+          "long"
+        ],
         "returns": "java.lang.String",
         "static": false
       }
@@ -5977,7 +5993,7 @@
     "contractVersion": 4,
     "methods": {
       "lineSubset": {
-        "owner": "com.apple.android.music.player.g1",
+        "owner": "com.apple.android.music.player.i1",
         "name": "E",
         "parameters": [
           "java.util.TreeSet",
@@ -5987,7 +6003,7 @@
         "static": true
       },
       "document": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "S",
         "parameters": [
           "com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"
@@ -5996,7 +6012,7 @@
         "static": false
       },
       "detach": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "o",
         "parameters": [
           "androidx.recyclerview.widget.RecyclerView"
@@ -6005,14 +6021,14 @@
         "static": false
       },
       "lineCount": {
-        "owner": "com.apple.android.music.ttml.i",
+        "owner": "com.apple.android.music.ttml.j",
         "name": "b",
         "parameters": [],
         "returns": "int",
         "static": false
       },
       "lineAt": {
-        "owner": "com.apple.android.music.ttml.i",
+        "owner": "com.apple.android.music.ttml.j",
         "name": "a",
         "parameters": [
           "int"
@@ -6114,21 +6130,21 @@
         "static": false
       },
       "pause": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "J",
         "parameters": [],
         "returns": "void",
         "static": false
       },
       "pauseRequested": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "K",
         "parameters": [],
         "returns": "void",
         "static": false
       },
       "resume": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "L",
         "parameters": [],
         "returns": "void",
@@ -6142,7 +6158,7 @@
         "static": false
       },
       "commit": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "P",
         "parameters": [
           "java.util.List",
@@ -6162,7 +6178,7 @@
         "static": false
       },
       "mapPosition": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "F",
         "parameters": [
           "int",
@@ -6172,7 +6188,7 @@
         "static": false
       },
       "focus": {
-        "owner": "com.apple.android.music.player.fragment.K",
+        "owner": "com.apple.android.music.player.fragment.M",
         "name": "b",
         "parameters": [
           "int",
@@ -6182,58 +6198,58 @@
         "static": false
       },
       "payloadKind": {
-        "owner": "com.apple.android.music.player.g1$a",
+        "owner": "com.apple.android.music.player.i1$a",
         "name": "valueOf",
         "parameters": [
           "java.lang.String"
         ],
-        "returns": "com.apple.android.music.player.g1$a",
+        "returns": "com.apple.android.music.player.i1$a",
         "static": true
       }
     },
     "fields": {
       "reader": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "p",
-        "type": "com.apple.android.music.ttml.i"
+        "type": "com.apple.android.music.ttml.j"
       },
       "currentLines": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "r",
         "type": "java.util.TreeSet"
       },
       "previousLines": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "s",
         "type": "java.util.TreeSet"
       },
       "adapterCallback": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "y",
-        "type": "com.apple.android.music.player.fragment.K"
+        "type": "com.apple.android.music.player.fragment.M"
       },
       "callbackFragment": {
-        "owner": "com.apple.android.music.player.fragment.K",
+        "owner": "com.apple.android.music.player.fragment.M",
         "name": "a",
         "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
       },
       "focusStart": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "G0",
+        "name": "H0",
         "type": "int"
       },
       "focusEnd": {
         "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "H0",
+        "name": "I0",
         "type": "int"
       },
       "wordHighlightIds": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "w",
         "type": "android.util.SparseArray"
       },
       "backgroundHighlightIds": {
-        "owner": "com.apple.android.music.player.x",
+        "owner": "com.apple.android.music.player.z",
         "name": "x",
         "type": "android.util.SparseArray"
       }
@@ -6253,8 +6269,8 @@
     "contractVersion": 1,
     "methods": {
       "createState": {
-        "owner": "Fi.N",
-        "name": "n",
+        "owner": "Re.K",
+        "name": "k",
         "parameters": [
           "java.lang.Object"
         ],
@@ -6262,14 +6278,14 @@
         "static": true
       },
       "readState": {
-        "owner": "z0.p1",
+        "owner": "z0.o1",
         "name": "getValue",
         "parameters": [],
         "returns": "java.lang.Object",
         "static": false
       },
       "writeState": {
-        "owner": "z0.p1",
+        "owner": "z0.o1",
         "name": "setValue",
         "parameters": [
           "java.lang.Object"
@@ -6288,16 +6304,16 @@
         "owner": "Yb.f",
         "name": "a",
         "parameters": [
-          "O0.i",
+          "O0.j",
           "int",
           "java.util.List",
           "W8.d",
           "boolean",
           "java.lang.String",
-          "pi.q",
-          "pi.p",
+          "ji.q",
+          "ji.p",
           "boolean",
-          "z0.m",
+          "z0.n",
           "int"
         ],
         "returns": "void",

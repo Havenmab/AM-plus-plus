@@ -295,11 +295,7 @@ internal fun EmbeddedSettingsHost.EmbeddedCustomLyricsPage(
         EmbeddedSettingsGroup {
             EmbeddedSettingLink(
                 title = localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
-                summary = if (entries.isEmpty()) {
-                    localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL)
-                } else {
-                    localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, entries.size)
-                },
+                summary = localizedText(clearCustomLyricsSummaryKey(entries.size), entries.size),
                 icon = EmbeddedSvgIcon.Delete,
                 onClick = {
                     showClearCustomLyricsDialog(activity, entries.size) {
@@ -1318,6 +1314,13 @@ private fun EmbeddedSettingsHost.EmbeddedOnlineLyricsSourceSection(
  * `http(s)` address is refused instead of being normalized to "" behind the user's back: a
  * half-typed host would otherwise silently fall back to the public mirrors on the next launch.
  */
+/**
+ * The summary a clear-all row deserves: "all of them" while the list is empty, otherwise the
+ * count, so a tap on a populated list never reads like a no-op.
+ */
+internal fun clearCustomLyricsSummaryKey(count: Int): ModuleText =
+    if (count <= 0) ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL else ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT
+
 internal fun normalizeLyricsSourceAddressInput(input: String): String? {
     val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(input)
     return if (input.isNotBlank() && normalized.isEmpty()) null else normalized

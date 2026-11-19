@@ -398,12 +398,17 @@ internal class EmbeddedContentManager(
                 resetIndex = session::resetCustomLyricsIndex,
                 deleteRemoteFile = session::deleteFile,
             ).clear(oldManifest = state.manifest, pointer = state.pointer)
-            when {
-                cleared !is CustomLyricsClearResult.Cleared -> cleared
-                !sourceCleared && hadSourceContent ->
-                    CustomLyricsClearResult.Failed("无法清空来源缓存")
-                else -> cleared
+            if (cleared !is CustomLyricsClearResult.Cleared) {
+                return@withCustomLyricsMutation cleared
             }
+            // The source store mirrors the manual index in memory; resetting the published
+            // pointer does not touch that mirror, so listLyrics() would keep reporting the
+            // entries the reset just removed. Drop them before reporting success.
+            sourceCache.onManualManifestChanged(CustomLyricsManifest.empty())
+            if (!sourceCleared && hadSourceContent) {
+                return@withCustomLyricsMutation CustomLyricsClearResult.Failed("无法清空来源缓存")
+            }
+            cleared
         }
     }
 

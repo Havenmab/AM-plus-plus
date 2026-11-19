@@ -6,7 +6,6 @@ import android.text.PrecomputedText
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import kotlin.math.roundToInt
 
 /** Compensate for edge spacing after span centering, before the row reads the child positions. */
 internal fun compensateLyricPronunciationEdges(group: LinearLayout) {
@@ -28,9 +27,9 @@ internal fun compensateLyricPronunciationEdges(group: LinearLayout) {
     val correction = anchorBias - movingBias
     if (correction == 0f) return
 
-    // Use the original LinearLayout center, so a second layout never adds to the previous offset.
-    val centeredLeft = minLeft + (maxLeft - minLeft) / 2
-    val left = (centeredLeft + correction).roundToInt().coerceIn(minLeft, maxLeft)
+    // The centre is recomputed from the layout bounds, so a second pass never adds to the
+    // previous offset; the pure arithmetic lives in PronunciationAlignmentMath.
+    val left = PronunciationAlignmentMath.centeredLeft(minLeft, maxLeft, correction)
     moving.offsetLeftAndRight(left - moving.left)
 }
 
@@ -47,7 +46,7 @@ private fun View.edgeBias(): Float? {
     val rtl = if (this is TextView) layout.getParagraphDirection(0) == Layout.DIR_RIGHT_TO_LEFT
         else layoutDirection == View.LAYOUT_DIRECTION_RTL
     // Leading occupies the physical left in LTR; a larger left edge shifts the body right.
-    return (if (rtl) trailing - leading else leading - trailing) / 2f
+    return PronunciationAlignmentMath.edgeBias(leading, trailing, rtl)
 }
 
 private fun List<TextView>.edgeAdvance(leading: Boolean): Float? {
@@ -85,38 +84,6 @@ private fun List<TextView>.edgeAdvance(leading: Boolean): Float? {
     return null // A symbol-only track has no body to align.
 }
 
-private fun CharSequence.bodyStart(): Int {
-    var start = 0
-    while (start < length) {
-        val codePoint = Character.codePointAt(this, start)
-        if (isLyricBodyCharacter(codePoint)) break
-        start += Character.charCount(codePoint)
-    }
-    return start
-}
+private fun CharSequence.bodyStart(): Int = PronunciationAlignmentMath.bodyStart(this)
 
-private fun CharSequence.bodyEnd(): Int {
-    var end = length
-    while (end > 0) {
-        val codePoint = Character.codePointBefore(this, end)
-        if (isLyricBodyCharacter(codePoint)) {
-            // Keep combining marks attached to the last letter, including decomposed romanization.
-            while (end < length) {
-                val mark = Character.codePointAt(this, end)
-                if (Character.getType(mark) !in
-                    Character.NON_SPACING_MARK.toInt()..Character.COMBINING_SPACING_MARK.toInt()
-                ) break
-                end += Character.charCount(mark)
-            }
-            return end
-        }
-        end -= Character.charCount(codePoint)
-    }
-    return 0
-}
-
-private fun isLyricBodyCharacter(codePoint: Int): Boolean =
-    Character.isLetterOrDigit(codePoint) || when (Character.getType(codePoint)) {
-        Character.LETTER_NUMBER.toInt(), Character.OTHER_NUMBER.toInt() -> true
-        else -> false
-    }
+private fun CharSequence.bodyEnd(): Int = PronunciationAlignmentMath.bodyEnd(this)

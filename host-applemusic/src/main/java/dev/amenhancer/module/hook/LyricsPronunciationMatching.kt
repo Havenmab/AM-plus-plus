@@ -123,10 +123,8 @@ internal object LyricsPronunciationMatching {
         }
     }
 
-    private fun isCjk(language: String): Boolean = when (language) {
-        "zh", "yue", "ja", "ko" -> true
-        else -> false
-    }
+    private fun isCjk(language: String): Boolean =
+        PronunciationAlignmentMath.isCjkLanguage(language)
 
     private class Evaluation(val songAddress: Long, val uiLanguage: String) {
         var languageRead = false

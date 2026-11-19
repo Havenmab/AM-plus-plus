@@ -153,10 +153,8 @@ internal fun installLineLyricAgentAlignment(
 }
 
 /** Match the host's first-letter predicate without changing TextView text direction. */
-private fun lineLyricTextIsRtl(text: CharSequence): Boolean {
-    val first = text.indices.firstOrNull { Character.isLetter(Character.codePointAt(text, it)) } ?: return false
-    return text[first] in '\u0590'..'\u06ff'
-}
+private fun lineLyricTextIsRtl(text: CharSequence): Boolean =
+    PronunciationAlignmentMath.isRtlText(text)
 
 private fun alignLineLyricPivot(view: TextView) {
     val right = when (view.textAlignment) {

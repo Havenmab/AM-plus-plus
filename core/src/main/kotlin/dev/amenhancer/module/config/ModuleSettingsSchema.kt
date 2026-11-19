@@ -553,7 +553,9 @@ object ModuleSettingsSchema {
             .filter { it in enabled }
         val search = if (supplement) searchOrder else emptyList()
 
-        val preferNative = boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = !supplement)
+        // The fork always walked AM native first; upstream's switch only ever existed for a
+        // store that came through upstream 1.6.8, so its explicit value still wins.
+        val preferNative = boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = true)
         val fixed = if (preferNative) {
             listOf(CustomLyricsSources.AM_NATIVE) + FORK_FIXED_PROVIDERS
         } else {

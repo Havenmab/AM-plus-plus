@@ -55,11 +55,13 @@ class AutomaticLyricsOrderMigrationTest {
                 "online_lyrics_source_netease_enabled" to false,
             ),
         )
+        // The user's stored search order wins and the disabled source is dropped; AM native is
+        // first because a fork store without the retired switch still preferred native.
         assertEquals(
             listOf(
+                CustomLyricsSources.AM_NATIVE,
                 CustomLyricsSources.AMLL,
                 CustomLyricsSources.AM_LYRICS,
-                CustomLyricsSources.AM_NATIVE,
                 CustomLyricsSources.LUNABEAT,
                 CustomLyricsSources.QQ,
                 CustomLyricsSources.KUWO,
@@ -125,7 +127,17 @@ class AutomaticLyricsOrderMigrationTest {
                 "automatic_lyrics_source_order" to "amll-ttml-db,am-lyrics,am-native,lunabeat-ttml-hub",
             ),
         )
-        assertEquals(fixedNativeFirst, settings.automaticLyricsSourceOrder)
+        // No fork key, so the migration stays out: an upstream store keeps upstream's own
+        // order, where AM native sits between AM-Lyrics and Lunabeat.
+        assertEquals(
+            listOf(
+                CustomLyricsSources.AMLL,
+                CustomLyricsSources.AM_LYRICS,
+                CustomLyricsSources.AM_NATIVE,
+                CustomLyricsSources.LUNABEAT,
+            ),
+            settings.automaticLyricsSourceOrder,
+        )
     }
 
     @Test

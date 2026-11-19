@@ -8,12 +8,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Structural guard for the AM-Lyrics index wiring.
+ * Guards the AM-Lyrics mirror wiring.
  *
- * [createAutoLyricsRuntime] needs a real Android `Application`, so the behaviour that cannot
- * be unit-tested is asserted against its source: the custom source root reaches both fixed
- * providers, the cached index is installed as the client's provider, the 6h TTL check is a
- * daemon scheduler, and the settings page edits and normalizes the address.
+ * [createAutoLyricsRuntime] needs a real Android `Application` and the settings process builds
+ * its own clients, so both are asserted against their source: the stored root reaches every
+ * AMLL / AM-Lyrics client, the cached index is installed as the client's provider, and the 6h
+ * TTL check is a daemon scheduler. The address rule the page applies is pure, so it is driven
+ * directly through [normalizeLyricsSourceAddressInput] instead of being read out of the page.
  */
 class AutoLyricsIndexCacheWiringTest {
 
@@ -72,7 +73,6 @@ class AutoLyricsIndexCacheWiringTest {
             "app/src/main/java/dev/amenhancer/module/settings/EmbeddedRuntimeSettingsController.kt",
         )
         assertTrue(controller.contains("customSourceRoot()"))
-        assertTrue(controller.contains("AmllTtmlClient(HttpLyricTransport(), customRoot)"))
         assertTrue(controller.contains("AmllTtmlClient(transport, customRoot)"))
         assertTrue(controller.contains("AmLyricsClient(transport, customRoot)"))
 

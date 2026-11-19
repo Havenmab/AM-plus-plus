@@ -1276,7 +1276,9 @@ private fun EmbeddedSettingsHost.EmbeddedOnlineLyricsSourceSection(
                 checked = settings.onlineLyricsAutomaticOrderEnabled,
                 icon = EmbeddedSvgIcon.Refresh,
                 onCheckedChange = { enabled ->
-                    onSettingsSaved { it.copy(onlineLyricsAutomaticOrderEnabled = enabled) }
+                    onSettingsSaved {
+                        it.copy(onlineLyricsAutomaticOrderEnabled = enabled).withUnifiedSearchTier()
+                    }
                 },
             )
             OnlineLyricSources.DEFAULT_ORDER.forEach { source ->
@@ -1286,12 +1288,40 @@ private fun EmbeddedSettingsHost.EmbeddedOnlineLyricsSourceSection(
                     summary = localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY),
                     checked = settings.onlineLyricsSourceEnabled(source),
                     onCheckedChange = { enabled ->
-                        onSettingsSaved { it.withOnlineLyricsSourceEnabled(source, enabled) }
+                        onSettingsSaved {
+                            it.withOnlineLyricsSourceEnabled(source, enabled).withUnifiedSearchTier()
+                        }
                     },
                 )
             }
         }
     }
+}
+
+/**
+ * Publishes the search tier into the unified order schema 29 reads.
+ *
+ * The runtime walks `automaticLyricsSourceOrder` first: when the automatic flag is on it takes
+ * that list's search tail, and turning the flag off falls back to `onlineLyricsSourceOrder`. A
+ * page that only wrote the per-source flags and the order key would leave the unified list at
+ * whatever the migration produced, so a source switched on later could never run and the tail
+ * would disagree with the order the page shows.
+ *
+ * The fixed repositories keep the position they already have and are completed, so the search
+ * sources always stay at the tail; disabled sources stay in the visible order (so a user keeps
+ * their position) but are filtered out of the unified list, exactly like the 28 -> 29 migration.
+ */
+internal fun ModuleSettings.withUnifiedSearchTier(): ModuleSettings {
+    val searchOrder = OnlineLyricSources.normalizeOrder(onlineLyricsSourceOrder)
+    val fixed = ModuleSettings.normalizeAutomaticLyricsSourceOrder(
+        automaticLyricsSourceOrder.filterNot { it in OnlineLyricSources.ALL },
+    )
+    return copy(
+        onlineLyricsSourceOrder = searchOrder.joinToString(","),
+        automaticLyricsSourceOrder = ModuleSettings.normalizeAutomaticLyricsSourceOrder(
+            fixed + searchOrder.filter(::onlineLyricsSourceEnabled),
+        ),
+    )
 }
 
 private fun onlineSearchSourceName(source: String): ModuleText = when (source) {

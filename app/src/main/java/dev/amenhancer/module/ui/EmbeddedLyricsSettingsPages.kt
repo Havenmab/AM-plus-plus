@@ -1311,6 +1311,18 @@ private fun EmbeddedSettingsHost.EmbeddedOnlineLyricsSourceSection(
  * sources always stay at the tail; disabled sources stay in the visible order (so a user keeps
  * their position) but are filtered out of the unified list, exactly like the 28 -> 29 migration.
  */
+/**
+ * The address to store for a typed mirror root, or null when the input cannot be used.
+ *
+ * Blank commits the public mirrors (the stored value is "" ), and anything that is not an
+ * `http(s)` address is refused instead of being normalized to "" behind the user's back: a
+ * half-typed host would otherwise silently fall back to the public mirrors on the next launch.
+ */
+internal fun normalizeLyricsSourceAddressInput(input: String): String? {
+    val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(input)
+    return if (input.isNotBlank() && normalized.isEmpty()) null else normalized
+}
+
 internal fun ModuleSettings.withUnifiedSearchTier(): ModuleSettings {
     val searchOrder = OnlineLyricSources.normalizeOrder(onlineLyricsSourceOrder)
     val fixed = ModuleSettings.normalizeAutomaticLyricsSourceOrder(
@@ -1368,11 +1380,11 @@ private fun EmbeddedSettingsHost.showLyricsSourceBaseUrlDialog(
             onDismiss = dismiss,
             confirmText = localizedText(ModuleText.SAVE),
         ) {
-            val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(input)
-            if (input.isNotBlank() && normalized.isEmpty()) {
+            val address = normalizeLyricsSourceAddressInput(input)
+            if (address == null) {
                 invalid = true
             } else {
-                onCommit(normalized)
+                onCommit(address)
                 dismiss()
             }
         }

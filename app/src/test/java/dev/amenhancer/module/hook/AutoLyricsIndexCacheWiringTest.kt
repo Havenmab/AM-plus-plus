@@ -1,9 +1,11 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.ui.normalizeLyricsSourceAddressInput
 import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.Ignore
 
 /**
  * Structural guard for the AM-Lyrics index wiring.
@@ -38,18 +40,28 @@ class AutoLyricsIndexCacheWiringTest {
     }
 
     @Test
-    @Ignore("ui-migration: the settings page is being rewritten in Miuix; re-assert behaviour after the port")
-    fun `the online lyrics page edits and normalizes the custom source address`() {
-        val source = projectFile(
-            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsPages.kt",
+    fun `the online lyrics page normalizes the custom source address before storing it`() {
+        // Blank means "public mirrors only"; a usable address keeps its root without the
+        // trailing slash; anything that is not an http(s) URL is refused rather than being
+        // normalized to "" behind the user's back.
+        assertEquals("", normalizeLyricsSourceAddressInput(""))
+        assertEquals("", normalizeLyricsSourceAddressInput("   "))
+        assertEquals(
+            "https://m.example/lyrics",
+            normalizeLyricsSourceAddressInput("  https://m.example/lyrics/  "),
         )
+        assertEquals("http://host:8080/x", normalizeLyricsSourceAddressInput("http://host:8080/x"))
+        assertNull(normalizeLyricsSourceAddressInput("lyrics.example.com"))
+        assertNull(normalizeLyricsSourceAddressInput("ftp://host/x"))
+        assertNull(normalizeLyricsSourceAddressInput("https://" + "a".repeat(400)))
 
-        assertTrue(source.contains("ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL"))
-        assertTrue(source.contains("ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_HINT"))
-        assertTrue(source.contains("settings.customLyricsSourceBaseUrl"))
-        assertTrue(source.contains("ModuleSettings.normalizeCustomLyricsSourceBaseUrl(value)"))
-        assertTrue(source.contains("settings.copy(customLyricsSourceBaseUrl = normalized)"))
-        assertTrue(source.contains("MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH"))
+        // The row still edits the stored key through that decision, never the raw field.
+        val page = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedLyricsSettingsPages.kt",
+        )
+        assertTrue(page.contains("ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL"))
+        assertTrue(page.contains("normalizeLyricsSourceAddressInput(input)"))
+        assertTrue(page.contains("copy(customLyricsSourceBaseUrl = value)"))
     }
 
     // The settings process builds its own clients (import/update), so it must derive them

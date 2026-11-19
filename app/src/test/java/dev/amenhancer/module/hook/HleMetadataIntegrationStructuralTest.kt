@@ -1,10 +1,16 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.module.config.RegionSelection
+import dev.amenhancer.module.i18n.ModuleText
+import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.ui.RegionControlVisibility
+import dev.amenhancer.module.ui.regionControlVisibility
 import java.io.File
+import java.util.Locale
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.Ignore
 
 class HleMetadataIntegrationStructuralTest {
     @Test
@@ -470,42 +476,41 @@ class HleMetadataIntegrationStructuralTest {
     }
 
     @Test
-    @Ignore("ui-migration: the settings page is being rewritten in Miuix; re-assert behaviour after the port")
     fun `embedded settings expose HLE's four region controls without restoring refresh action`() {
-        val embedded = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt")
-        val text = source("core/src/main/kotlin/dev/amenhancer/module/i18n/ModuleText.kt")
-        // HLE's four controls, with HLE's own labels, in HLE's order. The labels now live
-        // in ModuleText, which is where upstream routes every user-visible settings string,
-        // so the fidelity assertions read the catalog and the component asserts the keys.
-        assertTrue(embedded.contains("ModuleText.REGION_SELECTION"))
-        assertTrue(text.contains("将Apple Music改成其他地区"))
-        assertTrue(embedded.contains("regionSelection"))
-        assertTrue(embedded.contains("ModuleText.REGION_METADATA_LANGUAGE"))
-        assertTrue(text.contains("歌曲信息替换至设定地区语言"))
-        assertTrue(embedded.contains("overrideAccountLanguage"))
-        assertTrue(embedded.contains("ModuleText.REGION_RESTORE_ORIGINAL"))
-        assertTrue(text.contains("替换中日韩歌曲信息为原地区原名"))
-        assertTrue(embedded.contains("restoreCjkOriginalMetadata"))
-        assertTrue(embedded.contains("ModuleText.REGION_METADATA_CACHE"))
-        assertTrue(text.contains("创建检索库以提升替换体验"))
-        assertTrue(embedded.contains("localizedMetadataCache"))
-        // The retired fork-only master switch is gone.
-        assertFalse(embedded.contains("titleCorrectionEnabled"))
-        // HLE's visibility rules: the override only with a region, the cache only while
-        // the metadata lookup is enabled, and the restore switch always.
-        assertTrue(embedded.contains("settings.regionSelection.replacesRegion"))
-        assertTrue(embedded.contains("regionReplacementEnabled"))
-        assertTrue(embedded.contains("metadataLookupEnabled"))
-        // The picker enumerates the model, so new regions appear without a UI change.
-        assertTrue(embedded.contains("RegionSelection.values()"))
-        assertFalse(embedded.contains("刷新资料库"))
-        // AM++ adds the one-shot 「清空检索库」 action right after HLE's four controls,
-        // with its own confirmation dialog and the persisted generation signal.
-        assertTrue(embedded.contains("ModuleText.REGION_CACHE_CLEAR"))
-        assertTrue(text.contains("清空检索库"))
-        assertTrue(embedded.contains("metadataCacheClearGeneration"))
-        assertTrue(embedded.contains("confirmEmbeddedMetadataCacheClear"))
-        assertTrue(text.contains("下次读取时重新向 Apple Music 获取"))
+        // HLE's visibility rules, driven as a table: the account-language switch follows the
+        // region, the library follows a lookup that can run, and the clear action follows either.
+        val off = ModuleSettings(regionSelection = RegionSelection.NONE)
+        val restored = off.copy(restoreCjkOriginalMetadata = true)
+        val regionOnly = ModuleSettings(regionSelection = RegionSelection.MAINLAND_CHINA)
+        val regionAndLanguage = regionOnly.copy(overrideAccountLanguage = true)
+
+        assertEquals(RegionControlVisibility(accountLanguage = false, metadataCache = false, clearCache = false), regionControlVisibility(off))
+        assertEquals(RegionControlVisibility(accountLanguage = false, metadataCache = true, clearCache = true), regionControlVisibility(restored))
+        assertEquals(RegionControlVisibility(accountLanguage = true, metadataCache = false, clearCache = true), regionControlVisibility(regionOnly))
+        assertEquals(RegionControlVisibility(accountLanguage = true, metadataCache = true, clearCache = true), regionControlVisibility(regionAndLanguage))
+
+        // HLE's own labels, read from the catalog rather than from the page source.
+        fun chinese(key: ModuleText) = key.text(locale = Locale.CHINESE)
+        assertEquals("将Apple Music改成其他地区", chinese(ModuleText.REGION_SELECTION))
+        assertEquals("歌曲信息替换至设定地区语言", chinese(ModuleText.REGION_METADATA_LANGUAGE))
+        assertEquals("替换中日韩歌曲信息为原地区原名", chinese(ModuleText.REGION_RESTORE_ORIGINAL))
+        assertEquals("创建检索库以提升替换体验", chinese(ModuleText.REGION_METADATA_CACHE))
+        assertEquals("清空检索库", chinese(ModuleText.REGION_CACHE_CLEAR))
+        assertTrue(chinese(ModuleText.REGION_CACHE_CLEAR_SUMMARY).contains("下次读取时重新向 Apple Music 获取"))
+
+        // The page renders those four rows from the region model, gates them through the rule
+        // above, and never resurrects the retired fork-only title-correction switch.
+        val page = source("app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsPages.kt")
+        assertTrue(page.contains("regionControlVisibility(settings)"))
+        assertTrue(page.contains("RegionSelection.entries"))
+        assertTrue(page.contains("ModuleText.REGION_SELECTION"))
+        assertTrue(page.contains("ModuleText.REGION_METADATA_LANGUAGE"))
+        assertTrue(page.contains("ModuleText.REGION_RESTORE_ORIGINAL"))
+        assertTrue(page.contains("ModuleText.REGION_METADATA_CACHE"))
+        assertTrue(page.contains("ModuleText.REGION_CACHE_CLEAR"))
+        assertTrue(page.contains("metadataCacheClearGeneration"))
+        assertTrue(page.contains("showRegionCacheClearDialog(activity)"))
+        assertFalse(page.contains("titleCorrectionEnabled"))
     }
 
     @Test

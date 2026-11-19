@@ -766,6 +766,11 @@ private fun sourceLabel(source: String, locale: Locale): String = when (source) 
     CustomLyricsSources.AMLL -> ModuleText.LYRICS_SOURCE_AMLL.text(locale = locale)
     CustomLyricsSources.AM_LYRICS -> ModuleText.LYRICS_SOURCE_AM_LYRICS.text(locale = locale)
     CustomLyricsSources.LUNABEAT -> ModuleText.LYRICS_SOURCE_LUNABEAT.text(locale = locale)
+    // A search provider can be the source actually playing; the row must not print its raw id.
+    CustomLyricsSources.NETEASE -> ModuleText.ONLINE_LYRICS_SOURCE_NETEASE.text(locale = locale)
+    CustomLyricsSources.QQ -> ModuleText.ONLINE_LYRICS_SOURCE_QQ.text(locale = locale)
+    CustomLyricsSources.KUWO -> ModuleText.ONLINE_LYRICS_SOURCE_KUWO.text(locale = locale)
+    CustomLyricsSources.KUGOU -> ModuleText.ONLINE_LYRICS_SOURCE_KUGOU.text(locale = locale)
     CustomLyricsSources.MANUAL -> ModuleText.LYRICS_SOURCE_MANUAL.text(locale = locale)
     CustomLyricsSources.AUTO_CACHE -> ModuleText.AUTO_CACHE.text(locale = locale)
     else -> source

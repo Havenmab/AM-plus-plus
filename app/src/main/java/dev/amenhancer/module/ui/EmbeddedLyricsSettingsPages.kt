@@ -1423,11 +1423,22 @@ private fun EmbeddedSettingsHost.showClearCustomLyricsDialog(
 }
 
 
-private fun automaticLyricsSourceName(source: String, localizedText: (ModuleText) -> String): String = when (source) {
+/**
+ * Names one row of the automatic order.
+ *
+ * The four search providers are fed into the same list by schema 29, so they borrow the online
+ * section's label table instead of falling through to the manual fallback below — every search
+ * source used to read "手动 TTML" there.
+ */
+internal fun automaticLyricsSourceName(source: String, localizedText: (ModuleText) -> String): String = when (source) {
     CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)
     CustomLyricsSources.AMLL -> "AMLL"
     CustomLyricsSources.AM_LYRICS -> localizedText(ModuleText.LYRICS_SOURCE_AM_LYRICS)
     CustomLyricsSources.LUNABEAT -> "Lunabeat"
     CustomLyricsSources.AM_NATIVE -> localizedText(ModuleText.AM_NATIVE)
+    CustomLyricsSources.NETEASE,
+    CustomLyricsSources.QQ,
+    CustomLyricsSources.KUWO,
+    CustomLyricsSources.KUGOU -> localizedText(onlineSearchSourceName(source))
     else -> localizedText(ModuleText.MANUAL_TTML)
 }

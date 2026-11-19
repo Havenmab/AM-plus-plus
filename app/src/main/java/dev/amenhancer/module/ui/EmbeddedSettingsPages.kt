@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.amenhancer.glass.GlassPolicy
+import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.TitleCorrectionMode
 import dev.amenhancer.module.i18n.ModuleText
 import dev.amenhancer.module.model.ModuleSettings
@@ -548,8 +549,8 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         ) { onOpen(EmbeddedSettingsPage.INTERFACE) }
         EmbeddedSettingLink(
             localizedText(ModuleText.CATEGORY_TITLE_REGION),
-            localizedText(ModuleText.SUMMARY_TITLE_REGION, state(settings.titleCorrectionEnabled),
-                localizedText(settings.titleCorrectionMode.displayText)),
+            localizedText(ModuleText.SUMMARY_TITLE_REGION, state(settings.regionSelection != RegionSelection.NONE),
+                localizedText(settings.regionSelection.displayName)),
             EmbeddedSvgIcon.TitleMode,
         ) { onOpen(EmbeddedSettingsPage.TITLE_REGION) }
     }
@@ -664,19 +665,19 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
             }
         }
         EmbeddedSettingsPage.TITLE_REGION -> EmbeddedSettingsGroup {
-            Setting(ModuleText.TITLE_CORRECTION, ModuleText.TITLE_CORRECTION_SUMMARY,
-                settings.titleCorrectionEnabled, EmbeddedSvgIcon.TitleCorrection) { value -> onEdit { it.copy(titleCorrectionEnabled = value) } }
-            val modes = TitleCorrectionMode.entries
-            OverlayDropdownPreference(
-                items = modes.map { localizedText(it.displayText) },
-                selectedIndex = modes.indexOf(settings.titleCorrectionMode),
-                title = localizedText(ModuleText.TITLE_CORRECTION_MODE),
-                summary = localizedText(ModuleText.VALUE_RESTART_REQUIRED, localizedText(settings.titleCorrectionMode.displayText)),
-                startAction = { EmbeddedSettingsIcon(EmbeddedSvgIcon.TitleMode, modifier = Modifier.size(22.dp)) },
-                insideMargin = EmbeddedPreferencePadding,
-                showValue = false,
-                onSelectedIndexChange = { index -> onEdit { it.copy(titleCorrectionMode = modes[index]) } },
-            )
+            // TODO(ui-migration): TITLE_REGION 页按 04-settings-migration-map.md §3 R1–R5 重写
+            // 上游 1.6.9 的该页仍引用已退役的 titleCorrectionEnabled / titleCorrectionMode；
+            // fork 运行时由 RegionTitleRequestPolicy + regionSelection 驱动，这里先给语义
+            // 等价的一行摘要（开/关 = 是否选了地区，值 = 地区名），交互留给 UI 子代理。
+            EmbeddedSettingLink(
+                localizedText(ModuleText.CATEGORY_TITLE_REGION),
+                localizedText(
+                    ModuleText.SUMMARY_TITLE_REGION,
+                    state(settings.regionSelection != RegionSelection.NONE),
+                    localizedText(settings.regionSelection.displayName),
+                ),
+                EmbeddedSvgIcon.TitleMode,
+            ) {}
         }
         EmbeddedSettingsPage.ADVANCED -> EmbeddedSettingsGroup {
             if (nativeBridge.supportsStartupPagePrewarm(activity)) Setting(

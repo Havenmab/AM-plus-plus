@@ -37,6 +37,7 @@ import dev.amenhancer.module.lyrics.LlmLyricsConfig
 import dev.amenhancer.module.lyrics.LlmLyricsPhase
 import dev.amenhancer.module.lyrics.LlmLyricsDocument
 import dev.amenhancer.module.lyrics.LlmTransliterationDocument
+import dev.amenhancer.module.lyrics.LyricsPlaybackSources
 import dev.amenhancer.module.lyrics.source.LunabeatCatalogCache
 import java.io.File
 import java.util.concurrent.Executor
@@ -324,32 +325,10 @@ internal fun createAutoLyricsRuntime(
             )
         }
     }
-    runCatching {
-        executor.execute {
-            cache.cachedIds().forEach { appleMusicId ->
-                if (appleMusicId in suppressedIds) return@forEach
-                val candidate = cache.readCandidate(appleMusicId)
-                    ?: return@forEach
-                when (
-                    runCatching {
-                        android.util.Log.i("AMPP-Bndry", "bndry path=publish-start entered song=" + appleMusicId)
-                        publisher.publish(
-                            appleMusicId,
-                            candidate,
-                        )
-                    }.getOrDefault(AutoLyricsPublishResult.FAILED)
-                ) {
-                    AutoLyricsPublishResult.PUBLISHED,
-                    AutoLyricsPublishResult.ALREADY_CONFIGURED,
-                    -> {
-                        candidate?.let { triggerBoundary("publish-start", appleMusicId, it.ttml) }
-                        cache.delete(appleMusicId)
-                    }
-                    AutoLyricsPublishResult.FAILED -> Unit
-                }
-            }
-        }
-    }
+    // TODO(phase3): the fork used to publish every cached candidate into the configured
+    // lyrics index at start-up (AutoLyricsPublisher). Upstream 1.6.9 publishes into the
+    // per-source store instead, so that sweep has no consumer left; re-point it at
+    // sourceStore once the two publication paths are reconciled.
     val refreshExecutor = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
         { runnable -> Thread(runnable, "ampp-lyrics-refresh").apply { isDaemon = true } },

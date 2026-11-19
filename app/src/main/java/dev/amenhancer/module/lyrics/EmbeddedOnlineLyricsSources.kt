@@ -13,7 +13,6 @@ import dev.amenhancer.module.model.ModuleSettings
 import java.io.File
 
 internal fun createEmbeddedOnlineLyricsImporter(
-    application: android.app.Application,
     catalogCache: LunabeatCatalogCache,
     customSourceBaseUrl: String = "",
 ): CustomLyricsOnlineImporter {

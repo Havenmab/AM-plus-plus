@@ -198,7 +198,6 @@ internal class EmbeddedRuntimeSettingsController(
         appleMusicId: Long,
     ): CustomLyricsOnlineImportResult {
         val importer = createEmbeddedOnlineLyricsImporter(
-            appContext,
             lunabeatCatalogCache,
             customSourceRoot().orEmpty(),
         )

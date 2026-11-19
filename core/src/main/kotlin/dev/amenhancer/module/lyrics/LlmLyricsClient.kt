@@ -273,7 +273,7 @@ class LlmLyricsClient(
             onFailure("request_too_large", null)
             return null
         }
-        val response = post(endpoint, config.apiKey, body, isCancelled, onFailure) ?: return null
+        val response = post(endpoint, config, body, isCancelled, onFailure) ?: return null
         if (isCancelled()) return null
         return messageContent(response) ?: run {
             onFailure("invalid_response", null)

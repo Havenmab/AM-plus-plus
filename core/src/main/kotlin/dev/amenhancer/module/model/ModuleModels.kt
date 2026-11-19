@@ -133,6 +133,8 @@ data class ModuleSettings(
     val customLyricsEnabled: Boolean = false,
     /** Enables background AMLL/Lunabeat/user-repository lyric completion. */
     val automaticLyricsEnabled: Boolean = true,
+    /** Prefers qualifying AM native lyrics over provider order; folded into the order on 1.6.9. */
+    val automaticLyricsPreferNative: Boolean = true,
     /** Automatic provider priority, normalized against [DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER]. */
     val automaticLyricsSourceOrder: List<String> = DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER,
     /**

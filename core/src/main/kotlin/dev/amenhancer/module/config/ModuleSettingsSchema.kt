@@ -177,8 +177,10 @@ object ModuleSettingsSchema {
                 values.string(KEY_LLM_LYRICS_API_KEY),
             ),
             llmLyricsModel = ModuleSettings.normalizeLlmLyricsModel(
-            llmLyricsCustomHeaders = ModuleSettings.normalizeLlmLyricsCustomHeaders(values.string(KEY_LLM_LYRICS_CUSTOM_HEADERS)),
                 values.string(KEY_LLM_LYRICS_MODEL),
+            ),
+            llmLyricsCustomHeaders = ModuleSettings.normalizeLlmLyricsCustomHeaders(
+                values.string(KEY_LLM_LYRICS_CUSTOM_HEADERS),
             ),
             llmLyricsThinkingEnabled = values.boolean(
                 KEY_LLM_LYRICS_THINKING_ENABLED,

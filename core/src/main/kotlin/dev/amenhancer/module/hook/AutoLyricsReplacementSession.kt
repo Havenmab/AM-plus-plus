@@ -12,6 +12,14 @@ import dev.amenhancer.module.lyrics.LyricsPlaybackRuntime
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.ModuleSettings
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.LinkedHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
@@ -375,7 +383,10 @@ class AutoLyricsReplacementSession(
             attempted
         }
         if (retry) {
-            synchronized(lock) { generation += 1L }
+            // The merged session replaced the fork generation counter with per-request
+            // stamps; bumping the stamp is the equivalent invalidate-in-flight-work signal.
+            // TODO(phase3): re-point this at the per-source store generation.
+            synchronized(lock) { nextRequestStamp += 1L }
         }
         ensureRequested(appleMusicId)
     }

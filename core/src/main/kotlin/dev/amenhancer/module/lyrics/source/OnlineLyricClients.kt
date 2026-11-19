@@ -4,6 +4,7 @@ import dev.amenhancer.module.i18n.ModuleText
 
 import dev.amenhancer.module.hook.AutoLyricsCandidate
 import dev.amenhancer.module.hook.AutoLyricsTimingPolicy
+import dev.amenhancer.module.hook.TtmlTimingPolicy
 
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
@@ -129,6 +130,10 @@ class AutoLyricsSourceResolver(
             if (System.nanoTime() > deadline) return null
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!AutoLyricsTimingPolicy.isAcceptable(ttml, source.acceptsLineTiming)) return@forEach
+            return AutoLyricsCandidate(source.name, ttml)
+        }
+        return null
+    }
 
     /** Explicit user choice accepts timed line lyrics as well as word lyrics. */
     fun fetchSelected(
@@ -166,9 +171,6 @@ class AutoLyricsSourceResolver(
             val ttml = runCatching { source.fetch(appleMusicId) }.getOrNull() ?: return@forEach
             if (!isUsable(ttml)) return@forEach
             return AutoLyricsCandidate(source.name, ttml)
-        }
-        return null
-    }
         }
         return null
     }

@@ -57,12 +57,17 @@ object OnlineLyricSourcePolicy {
      * The order the chain walks: the built-in default when the automatic flag is
      * on, otherwise the user's stored, normalized order.
      */
-    fun order(settings: ModuleSettings): List<String> =
-        if (settings.onlineLyricsAutomaticOrderEnabled) {
+    fun order(settings: ModuleSettings): List<String> {
+        // A migrated 29 store carries the whole chain - fixed providers and search sources - in
+        // the unified order; as soon as it names search sources, that list is the single truth.
+        val unified = settings.automaticLyricsSourceOrder.filter { it in OnlineLyricSources.ALL }
+        if (unified.isNotEmpty()) return unified
+        return if (settings.onlineLyricsAutomaticOrderEnabled) {
             OnlineLyricSources.DEFAULT_ORDER
         } else {
             OnlineLyricSources.normalizeOrder(settings.onlineLyricsSourceOrder)
         }
+    }
 
     /**
      * The one mapping from the global-best setting to the match policy's

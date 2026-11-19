@@ -161,7 +161,8 @@ object ModuleSettingsSchema {
             ),
             automaticLyricsEnabled = values.boolean(KEY_AUTOMATIC_LYRICS_ENABLED, default = true),
             automaticLyricsPreferNative = values.boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = true),
-            automaticLyricsSourceOrder = values.automaticLyricsSourceOrder(),
+            automaticLyricsSourceOrder =
+                values.forkAutomaticLyricsSourceOrder() ?: values.automaticLyricsSourceOrder(),
             customLyricsSourceBaseUrl = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(
                 values.string(KEY_CUSTOM_LYRICS_SOURCE_BASE_URL),
             ),
@@ -498,6 +499,68 @@ object ModuleSettingsSchema {
     private fun Map<String, *>.hasLegacyAutomaticLyricsSourceOrder(): Boolean =
         (number(KEY_SCHEMA_VERSION) ?: 0) < SOURCE_ORDER_SCHEMA_VERSION &&
             (containsKey(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE) || containsKey(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER))
+
+    /**
+     * Fixed repositories in the fork's 28-era order (native's position is decided separately).
+     */
+    private val FORK_FIXED_PROVIDERS: List<String> = listOf(
+        CustomLyricsSources.AMLL,
+        CustomLyricsSources.AM_LYRICS,
+        CustomLyricsSources.LUNABEAT,
+    )
+
+    /** One enable flag per search source, exactly as the fork's 28 store wrote them. */
+    private val FORK_ONLINE_SOURCE_FLAGS: Map<String, String> = linkedMapOf(
+        CustomLyricsSources.NETEASE to KEY_ONLINE_LYRICS_SOURCE_NETEASE_ENABLED,
+        CustomLyricsSources.QQ to KEY_ONLINE_LYRICS_SOURCE_QQ_ENABLED,
+        CustomLyricsSources.KUWO to KEY_ONLINE_LYRICS_SOURCE_KUWO_ENABLED,
+        CustomLyricsSources.KUGOU to KEY_ONLINE_LYRICS_SOURCE_KUGOU_ENABLED,
+    )
+
+    /**
+     * The fork's 28 -> 29 source-order migration.
+     *
+     * A fork store at 28 keeps its search chain in [KEY_ONLINE_LYRICS_SOURCE_ORDER] plus one
+     * enable flag per source, and its fixed providers carry no stored order at all. Schema 29
+     * publishes a single unified order, so the migration derives it from that state:
+     *
+     *  - search sources participate only when the supplement switch was on, in the user's stored
+     *    order (or the built-in order when the automatic flag was on), filtered by their enable
+     *    flags, so a source the user switched off never comes back;
+     *  - the fixed providers keep their old relative position, with AM native first when the old
+     *    store effectively preferred native (the supplement was off, or the retired switch said
+     *    so) and after them otherwise;
+     *  - [KEY_AUTOMATIC_LYRICS_PREFER_NATIVE] is folded into that position, not re-read later.
+     *
+     * Returns null when the store is already at the current schema or carries none of the fork
+     * keys, so upstream's own legacy handling stays in charge of upstream-only stores.
+     */
+    internal fun Map<String, *>.forkAutomaticLyricsSourceOrder(): List<String>? {
+        val schemaVersion = number(KEY_SCHEMA_VERSION) ?: return null
+        if (schemaVersion >= ModuleConstants.CONFIG_SCHEMA_VERSION) return null
+        val hasForkKeys = containsKey(KEY_ONLINE_LYRICS_SOURCE_ORDER) ||
+            containsKey(KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED) ||
+            FORK_ONLINE_SOURCE_FLAGS.keys.any(::containsKey)
+        if (!hasForkKeys) return null
+
+        val supplement = boolean(KEY_ONLINE_LYRICS_SUPPLEMENT_ENABLED, default = false)
+        val automaticOrder = boolean(KEY_ONLINE_LYRICS_AUTOMATIC_ORDER_ENABLED, default = true)
+        val enabled = OnlineLyricSources.ALL.filter { id ->
+            boolean(FORK_ONLINE_SOURCE_FLAGS.getValue(id), default = true)
+        }
+        val stored = OnlineLyricSources.normalizeOrder(string(KEY_ONLINE_LYRICS_SOURCE_ORDER))
+        val searchOrder = (if (automaticOrder) OnlineLyricSources.DEFAULT_ORDER else stored)
+            .filter { it in enabled }
+        val search = if (supplement) searchOrder else emptyList()
+
+        val preferNative = boolean(KEY_AUTOMATIC_LYRICS_PREFER_NATIVE, default = !supplement)
+        val fixed = if (preferNative) {
+            listOf(CustomLyricsSources.AM_NATIVE) + FORK_FIXED_PROVIDERS
+        } else {
+            FORK_FIXED_PROVIDERS + listOf(CustomLyricsSources.AM_NATIVE)
+        }
+        return ModuleSettings.normalizeAutomaticLyricsSourceOrder(fixed + search)
+    }
 
     private fun Map<String, *>.automaticLyricsSourceOrder(): List<String> {
         val order = string(KEY_AUTOMATIC_LYRICS_SOURCE_ORDER).split(',')

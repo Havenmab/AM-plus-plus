@@ -299,8 +299,15 @@ data class ModuleSettings(
             CustomLyricsSources.LUNABEAT,
         )
 
+        /**
+         * Providers the unified order may carry: the fixed repositories plus the fork's search
+         * sources. The 28 -> 29 migration folds the online chain's order into this one list.
+         */
+        val KNOWN_AUTOMATIC_LYRICS_SOURCES: List<String> =
+            DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER + OnlineLyricSources.ALL
+
         fun normalizeAutomaticLyricsSourceOrder(values: List<String>): List<String> {
-            val known = DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER.toSet()
+            val known = KNOWN_AUTOMATIC_LYRICS_SOURCES.toSet()
             val normalized = values.map { it.trim() }.filter { it in known }.distinct()
             val ordered = (normalized + DEFAULT_AUTOMATIC_LYRICS_SOURCE_ORDER.filterNot { it in normalized })
                 .toMutableList()

@@ -52,8 +52,9 @@ class AutoLyricsIndexCacheWiringTest {
         assertTrue(source.contains("MAX_CUSTOM_LYRICS_SOURCE_BASE_URL_LENGTH"))
     }
 
+    // The settings process builds its own clients (import/update), so it must derive them
+    // from the same stored root as the playback runtime; only the UI was in flux, not this.
     @Test
-    @Ignore("ui-migration: the settings page is being rewritten in Miuix; re-assert behaviour after the port")
     fun `the settings-process import and update actions use the same mirror`() {
         val controller = projectFile(
             "app/src/main/java/dev/amenhancer/module/settings/EmbeddedRuntimeSettingsController.kt",

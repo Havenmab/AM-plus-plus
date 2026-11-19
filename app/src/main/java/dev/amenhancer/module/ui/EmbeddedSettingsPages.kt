@@ -681,15 +681,9 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
             }
         }
         EmbeddedSettingsPage.TITLE_REGION -> {
-            // HLE's four region controls. The two gates below reproduce its page
-            // verbatim, so the picker and the switches keep their visibility:
-            // the account-language switch only exists once a region is selected,
-            // and the lookup library only once a lookup can run.
+            // HLE's four region controls; the gates live in regionControlVisibility().
             val regions = RegionSelection.entries
-            val regionReplacementEnabled =
-                settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
-            val metadataLookupEnabled =
-                regionReplacementEnabled || settings.restoreCjkOriginalMetadata
+            val visibility = regionControlVisibility(settings)
             EmbeddedSettingsGroup {
                 OverlayDropdownPreference(
                     entry = DropdownEntry(
@@ -711,7 +705,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     },
                     insideMargin = EmbeddedPreferencePadding,
                 )
-                if (settings.regionSelection.replacesRegion) {
+                if (visibility.accountLanguage) {
                     EmbeddedSettingSwitch(
                         title = localizedText(ModuleText.REGION_METADATA_LANGUAGE),
                         checked = settings.overrideAccountLanguage,
@@ -731,7 +725,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                         pageRefresh?.invoke()
                     },
                 )
-                if (metadataLookupEnabled) {
+                if (visibility.metadataCache) {
                     EmbeddedSettingSwitch(
                         title = localizedText(ModuleText.REGION_METADATA_CACHE),
                         summary = localizedText(ModuleText.REGION_METADATA_CACHE_SUMMARY),
@@ -743,7 +737,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     )
                 }
             }
-            if (settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata) {
+            if (visibility.clearCache) {
                 EmbeddedSettingsGroup {
                     EmbeddedSettingLink(
                         title = localizedText(ModuleText.REGION_CACHE_CLEAR),
@@ -796,6 +790,29 @@ private fun EmbeddedSettingsHost.Setting(
     icon: EmbeddedSvgIcon,
     onCheckedChange: (Boolean) -> Unit,
 ) = EmbeddedSettingSwitch(localizedText(title), localizedText(summary), checked, icon = icon, onCheckedChange = onCheckedChange)
+
+/**
+ * HLE's page gates.
+ *
+ * The picker and the original-name switch are always shown; the account-language switch only
+ * appears once a region is selected, and the lookup library - with its one-shot clear action -
+ * only while a lookup can actually run. Pure over the settings, so the rules stay testable.
+ */
+internal data class RegionControlVisibility(
+    val accountLanguage: Boolean,
+    val metadataCache: Boolean,
+    val clearCache: Boolean,
+)
+
+internal fun regionControlVisibility(settings: ModuleSettings): RegionControlVisibility {
+    val regionReplacementEnabled =
+        settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
+    return RegionControlVisibility(
+        accountLanguage = settings.regionSelection.replacesRegion,
+        metadataCache = regionReplacementEnabled || settings.restoreCjkOriginalMetadata,
+        clearCache = settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata,
+    )
+}
 
 /** Confirms the one-shot cache reset; the generation bump is what the runtime sees. */
 private fun EmbeddedSettingsHost.showRegionCacheClearDialog(

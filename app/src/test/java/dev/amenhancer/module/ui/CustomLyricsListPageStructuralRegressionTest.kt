@@ -1,11 +1,14 @@
 package dev.amenhancer.module.ui
 import dev.amenhancer.module.hook.readRefactorComponent
+import dev.amenhancer.module.i18n.ModuleText
+import dev.amenhancer.module.model.ModuleSettings
+import dev.amenhancer.module.model.OnlineLyricSources
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.Ignore
 
 class CustomLyricsListPageStructuralRegressionTest {
     private fun projectFile(relativePath: String): String = sequenceOf(
@@ -114,55 +117,51 @@ class CustomLyricsListPageStructuralRegressionTest {
     }
 
     @Test
-    @Ignore("ui-migration: the settings page is being rewritten in Miuix; re-assert behaviour after the port")
     fun `the custom lyrics page clears all mappings behind a count confirmation`() {
-        val host = projectFile(
-            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsHost.kt",
-        )
-        val text = projectFile("core/src/main/kotlin/dev/amenhancer/module/i18n/ModuleText.kt")
+        // An empty list reads as "all of them"; a populated one carries the count, which is
+        // the difference between a no-op-looking tap and a confirmation that says what it does.
+        assertEquals(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL, clearCustomLyricsSummaryKey(0))
+        assertEquals(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, clearCustomLyricsSummaryKey(3))
+        assertEquals(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL, clearCustomLyricsSummaryKey(-1))
+        assertTrue(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT.text(3).contains("3"))
 
-        // The clear-all row and its count-carrying confirmation now route their
-        // user-visible text through ModuleText, like every other settings string.
-        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS"))
-        assertTrue(text.contains("清空自定义歌词"))
-        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT"))
-        assertTrue(text.contains("删除全部 %1\\\$s 条自定义歌词"))
-        assertTrue(host.contains("confirmEmbeddedCustomLyricsClear(activity, entries.size)"))
-        assertTrue(
-            host.contains(
-                "internal fun EmbeddedSettingsHost.confirmEmbeddedCustomLyricsClear(",
-            ),
+        // The row hands the same count to the confirmation, and the delete only runs from
+        // that confirmation's positive action.
+        val page = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedLyricsSettingsPages.kt",
         )
-        assertTrue(host.contains("ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM"))
-        assertTrue(text.contains("将删除全部 %1\\\$s 条自定义歌词映射"))
-        assertTrue(host.contains("runAsync(activity) { controller.clearLyrics() }"))
+        assertTrue(page.contains("localizedText(clearCustomLyricsSummaryKey(entries.size), entries.size)"))
+        assertTrue(page.contains("showClearCustomLyricsDialog(activity, entries.size)"))
+        assertTrue(page.contains("ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM, count"))
+        assertTrue(page.contains("runAsync(activity) { controller.clearLyrics() }"))
     }
 
     @Test
-    @Ignore("ui-migration: the settings page is being rewritten in Miuix; re-assert behaviour after the port")
     fun `renders the online lyric chain toggles from plain source data only`() {
-        // The custom-lyrics page rows live in EmbeddedSettingsPages.kt (the
-        // settings host was split before this test was written); reading the host
-        // file pinned nothing and silently passed over an empty search.
-        val embeddedHost = projectFile(
-            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedSettingsPages.kt",
-        )
+        // The page reads and writes the plain model: the ids come from OnlineLyricSources and
+        // the per-source flag round-trips through ModuleSettings, so no provider type ever
+        // reaches the settings UI.
+        assertFalse(ModuleSettings().withOnlineLyricsSourceEnabled(OnlineLyricSources.ALL[0], false)
+            .onlineLyricsSourceEnabled(OnlineLyricSources.ALL[0]))
+        assertFalse(ModuleSettings().withOnlineLyricsSourceEnabled("not-a-source", false).onlineLyricsSourceEnabled("not-a-source"))
 
+        val page = projectFile(
+            "app/src/main/java/dev/amenhancer/module/ui/EmbeddedLyricsSettingsPages.kt",
+        )
         listOf(
-            "onlineLyricsSupplementEnabled",
-            "onlineLyricsTranslationEnabled",
-            "onlineLyricsHideMandarinPinyinEnabled",
-            "onlineLyricsAutomaticOrderEnabled",
-            "onlineLyricsGlobalBestEnabled",
+            "copy(onlineLyricsSupplementEnabled = enabled)",
+            "copy(onlineLyricsTranslationEnabled = enabled)",
+            "copy(onlineLyricsHideMandarinPinyinEnabled = enabled)",
+            "copy(onlineLyricsAutomaticOrderEnabled = enabled)",
+            "copy(onlineLyricsGlobalBestEnabled = enabled)",
             "OnlineLyricSources.DEFAULT_ORDER.forEach",
-            "settings.onlineLyricsSourceEnabled(sourceId)",
-            "settings.withOnlineLyricsSourceEnabled(sourceId,",
+            "settings.onlineLyricsSourceEnabled(source)",
+            "withOnlineLyricsSourceEnabled(source, enabled)",
+            "withUnifiedSearchTier()",
         ).forEach { fragment ->
-            assertTrue("missing chain row fragment: $fragment", embeddedHost.contains(fragment))
+            assertTrue("missing chain row fragment: $fragment", page.contains(fragment))
         }
-        // The settings UI may read settings and plain model constants, but never
-        // the provider package or the host implementation.
-        assertFalse(embeddedHost.contains("import dev.amenhancer.module.lyrics.source."))
-        assertFalse(embeddedHost.contains("import dev.amenhancer.module.hook."))
+        // The page may read the model and the runtime registry, never a provider.
+        assertFalse(page.contains("import dev.amenhancer.module.lyrics.source."))
     }
 }

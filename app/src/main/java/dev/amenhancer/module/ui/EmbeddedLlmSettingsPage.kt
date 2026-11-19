@@ -150,6 +150,20 @@ internal fun EmbeddedSettingsHost.EmbeddedLlmLyricsPage(
                     )
                 },
             )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            // The boundary pass reuses the same channel, so it is only meaningful while it is on.
+            EmbeddedSettingSwitch(
+                title = localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY),
+                summary = localizedText(ModuleText.LLM_PRONUNCIATION_BOUNDARY_SUMMARY),
+                checked = settings.llmPronunciationBoundaryEnabled,
+                enabled = settings.llmLyricsEnabled,
+                icon = EmbeddedSvgIcon.Thinking,
+                onCheckedChange = { checked ->
+                    currentOnSettingsChanged(
+                        currentSettings.copy(llmPronunciationBoundaryEnabled = checked),
+                    )
+                },
+            )
         }
 
         EmbeddedSettingsSection(

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -65,6 +66,7 @@ import dev.amenhancer.module.hook.LyricsPlaybackRuntimeRegistry
 import dev.amenhancer.module.i18n.ModuleText
 import dev.amenhancer.module.lyrics.LyricsPlaybackControls
 import dev.amenhancer.module.model.CustomLyricsSources
+import dev.amenhancer.module.model.OnlineLyricSources
 import dev.amenhancer.module.model.ModuleSettings
 import java.util.concurrent.ExecutorService
 import kotlinx.coroutines.Job
@@ -289,6 +291,23 @@ internal fun EmbeddedSettingsHost.EmbeddedCustomLyricsPage(
                 }
             }
         }
+
+        EmbeddedSettingsGroup {
+            EmbeddedSettingLink(
+                title = localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
+                summary = if (entries.isEmpty()) {
+                    localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_ALL)
+                } else {
+                    localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_SUMMARY_COUNT, entries.size)
+                },
+                icon = EmbeddedSvgIcon.Delete,
+                onClick = {
+                    showClearCustomLyricsDialog(activity, entries.size) {
+                        runAsync(activity) { controller.clearLyrics() }
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -332,6 +351,7 @@ internal fun EmbeddedSettingsHost.EmbeddedAutomaticLyricsPage(
             },
             onReset = { pageRefresh?.invoke() },
         )
+        EmbeddedOnlineLyricsSourceSection(settings, onSettingsSaved)
         EmbeddedLyricsCacheRow()
     }
 }
@@ -1166,6 +1186,197 @@ private fun EmbeddedSettingsHost.showBackupRestoreDialog(activity: Activity) {
         )
     }
 }
+
+/**
+ * The fork's online search tier.
+ *
+ * The repositories above are ordered by [AutomaticLyricsSourceOrderEditor] and
+ * live in `automaticLyricsSourceOrder`; the four search providers are a separate
+ * tier that is off until the user opts in, so each one keeps its own switch and
+ * they are never folded into that order. [OnlineLyricSourcePolicy] reads exactly
+ * these flags when it builds the chain.
+ */
+@Composable
+private fun EmbeddedSettingsHost.EmbeddedOnlineLyricsSourceSection(
+    settings: ModuleSettings,
+    onSettingsSaved: ((ModuleSettings) -> ModuleSettings) -> Unit,
+) {
+    val supplement = settings.onlineLyricsSupplementEnabled
+    EmbeddedSettingsSection(
+        title = localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SECTION),
+        summary = localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SECTION_SUMMARY),
+    )
+    EmbeddedSettingsGroup {
+        EmbeddedSettingLink(
+            title = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL),
+            summary = settings.customLyricsSourceBaseUrl.ifBlank {
+                localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_NOT_CONFIGURED)
+            },
+            icon = EmbeddedSvgIcon.ApiEndpoint,
+            onClick = {
+                showLyricsSourceBaseUrlDialog(settings.customLyricsSourceBaseUrl) { value ->
+                    onSettingsSaved { it.copy(customLyricsSourceBaseUrl = value) }
+                }
+            },
+        )
+        SettingsDivider()
+        EmbeddedSettingSwitch(
+            title = localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT),
+            summary = localizedText(ModuleText.ONLINE_LYRICS_SUPPLEMENT_SUMMARY),
+            checked = supplement,
+            icon = EmbeddedSvgIcon.DocumentSearch,
+            onCheckedChange = { enabled ->
+                onSettingsSaved { it.copy(onlineLyricsSupplementEnabled = enabled) }
+            },
+        )
+        if (supplement) {
+            SettingsDivider()
+            EmbeddedSettingSwitch(
+                title = localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION),
+                summary = localizedText(ModuleText.ONLINE_LYRICS_TRANSLATION_SUMMARY),
+                checked = settings.onlineLyricsTranslationEnabled,
+                icon = EmbeddedSvgIcon.Translation,
+                onCheckedChange = { enabled ->
+                    onSettingsSaved { it.copy(onlineLyricsTranslationEnabled = enabled) }
+                },
+            )
+            // Hiding Apple's pinyin rides the same native lane hooks, so it only
+            // has an effect while that lane is installed.
+            if (settings.onlineLyricsTranslationEnabled) {
+                SettingsDivider()
+                EmbeddedSettingSwitch(
+                    title = localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN),
+                    summary = localizedText(ModuleText.ONLINE_LYRICS_HIDE_MANDARIN_PINYIN_SUMMARY),
+                    checked = settings.onlineLyricsHideMandarinPinyinEnabled,
+                    icon = EmbeddedSvgIcon.Translation,
+                    onCheckedChange = { enabled ->
+                        onSettingsSaved { it.copy(onlineLyricsHideMandarinPinyinEnabled = enabled) }
+                    },
+                )
+            }
+            SettingsDivider()
+            EmbeddedSettingSwitch(
+                title = localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST),
+                summary = localizedText(ModuleText.ONLINE_LYRICS_GLOBAL_BEST_SUMMARY),
+                checked = settings.onlineLyricsGlobalBestEnabled,
+                icon = EmbeddedSvgIcon.Search,
+                onCheckedChange = { enabled ->
+                    onSettingsSaved { it.copy(onlineLyricsGlobalBestEnabled = enabled) }
+                },
+            )
+            SettingsDivider()
+            EmbeddedSettingSwitch(
+                title = localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER),
+                summary = if (settings.onlineLyricsAutomaticOrderEnabled) {
+                    localizedText(ModuleText.ONLINE_LYRICS_AUTOMATIC_ORDER_SUMMARY)
+                } else {
+                    OnlineLyricSources.normalizeOrder(settings.onlineLyricsSourceOrder)
+                        .joinToString(" → ") { localizedText(onlineSearchSourceName(it)) }
+                },
+                checked = settings.onlineLyricsAutomaticOrderEnabled,
+                icon = EmbeddedSvgIcon.Refresh,
+                onCheckedChange = { enabled ->
+                    onSettingsSaved { it.copy(onlineLyricsAutomaticOrderEnabled = enabled) }
+                },
+            )
+            OnlineLyricSources.DEFAULT_ORDER.forEach { source ->
+                SettingsDivider()
+                EmbeddedSettingSwitch(
+                    title = localizedText(onlineSearchSourceName(source)),
+                    summary = localizedText(ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY),
+                    checked = settings.onlineLyricsSourceEnabled(source),
+                    onCheckedChange = { enabled ->
+                        onSettingsSaved { it.withOnlineLyricsSourceEnabled(source, enabled) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun onlineSearchSourceName(source: String): ModuleText = when (source) {
+    CustomLyricsSources.NETEASE -> ModuleText.ONLINE_LYRICS_SOURCE_NETEASE
+    CustomLyricsSources.QQ -> ModuleText.ONLINE_LYRICS_SOURCE_QQ
+    CustomLyricsSources.KUWO -> ModuleText.ONLINE_LYRICS_SOURCE_KUWO
+    CustomLyricsSources.KUGOU -> ModuleText.ONLINE_LYRICS_SOURCE_KUGOU
+    else -> ModuleText.ONLINE_LYRICS_SOURCE_SEARCH_SUMMARY
+}
+
+/** Blank commits the public mirrors; a half-typed address is refused, never silently stored. */
+private fun EmbeddedSettingsHost.showLyricsSourceBaseUrlDialog(
+    current: String,
+    onCommit: (String) -> Unit,
+) {
+    val activity = currentActivity() ?: return
+    showEmbeddedMiuixDialog(
+        activity = activity,
+        title = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL),
+    ) { dismiss ->
+        var input by remember(current) { mutableStateOf(current) }
+        var invalid by remember(current) { mutableStateOf(false) }
+        TextField(
+            value = input,
+            onValueChange = {
+                input = it
+                invalid = false
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_HINT),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        )
+        EmbeddedSettingsNotice(localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_SUMMARY))
+        if (invalid) {
+            Text(
+                text = localizedText(ModuleText.CUSTOM_LYRICS_SOURCE_BASE_URL_INVALID),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.error,
+            )
+        }
+        EmbeddedDialogActions(
+            dismissText = localizedText(ModuleText.CANCEL),
+            onDismiss = dismiss,
+            confirmText = localizedText(ModuleText.SAVE),
+        ) {
+            val normalized = ModuleSettings.normalizeCustomLyricsSourceBaseUrl(input)
+            if (input.isNotBlank() && normalized.isEmpty()) {
+                invalid = true
+            } else {
+                onCommit(normalized)
+                dismiss()
+            }
+        }
+    }
+}
+
+private fun EmbeddedSettingsHost.showClearCustomLyricsDialog(
+    activity: Activity,
+    count: Int,
+    onConfirmed: () -> Unit,
+) {
+    var confirmed = false
+    showEmbeddedMiuixDialog(
+        activity = activity,
+        title = localizedText(ModuleText.CLEAR_CUSTOM_LYRICS),
+        onDismiss = {
+            if (confirmed && !activity.isFinishing && !activity.isDestroyed && currentActivity() === activity) {
+                onConfirmed()
+            }
+        },
+    ) { dismiss ->
+        EmbeddedSettingsNotice(localizedText(ModuleText.CLEAR_CUSTOM_LYRICS_CONFIRM, count))
+        EmbeddedDialogActions(
+            dismissText = localizedText(ModuleText.CANCEL),
+            onDismiss = dismiss,
+            confirmText = localizedText(ModuleText.CLEAR),
+            onConfirm = {
+                confirmed = true
+                dismiss()
+            },
+        )
+    }
+}
+
 
 private fun automaticLyricsSourceName(source: String, localizedText: (ModuleText) -> String): String = when (source) {
     CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)

@@ -79,6 +79,8 @@ import top.yukonga.miuix.kmp.nav.core.NavDisplay
 import top.yukonga.miuix.kmp.nav.core.navBackStackOf
 import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.nav.transition.NavTransitions
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -509,10 +511,6 @@ private val EmbeddedSettingsPage.title: ModuleText
         EmbeddedSettingsPage.BOTTOM_BAR_ANIMATION -> ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS
     }
 
-/** On/off summary text shared by the settings rows and the category pages. */
-private fun EmbeddedSettingsHost.state(enabled: Boolean) =
-    localizedText(if (enabled) ModuleText.STATE_ON else ModuleText.STATE_OFF)
-
 @Composable
 private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
     activity: Activity,
@@ -602,6 +600,22 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     range = ModuleSettings.MIN_LYRIC_BLUR_RADIUS_OFFSET_PX..ModuleSettings.MAX_LYRIC_BLUR_RADIUS_OFFSET_PX,
                     unit = " px",
                 ) { value -> onEdit { it.copy(lyricBlurRadiusOffsetPx = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRICS_FONT_SCALE),
+                    value = settings.lyricsFontScalePercent,
+                    range = ModuleSettings.MIN_LYRICS_FONT_SCALE_PERCENT..ModuleSettings.MAX_LYRICS_FONT_SCALE_PERCENT,
+                    unit = "%",
+                    summary = localizedText(ModuleText.LYRICS_FONT_SCALE_SUMMARY),
+                    defaultValue = ModuleSettings.DEFAULT_LYRICS_FONT_SCALE_PERCENT,
+                ) { value -> onEdit { it.copy(lyricsFontScalePercent = value) } }
+                EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE),
+                    value = settings.lyricsLineSpacingScalePercent,
+                    range = ModuleSettings.MIN_LYRICS_LINE_SPACING_SCALE_PERCENT..ModuleSettings.MAX_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                    unit = "%",
+                    summary = localizedText(ModuleText.LYRICS_LINE_SPACING_SCALE_SUMMARY),
+                    defaultValue = ModuleSettings.DEFAULT_LYRICS_LINE_SPACING_SCALE_PERCENT,
+                ) { value -> onEdit { it.copy(lyricsLineSpacingScalePercent = value) } }
             }
             val font = remember(revision) { runCatching { controller.currentSettings().fontManifest }.getOrDefault(settings.fontManifest) }
             EmbeddedSettingsSection(
@@ -666,20 +680,91 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                 ) { value -> onEdit { it.copy(phoneLiquidGlassPanelBlurDp = value) } }
             }
         }
-        EmbeddedSettingsPage.TITLE_REGION -> EmbeddedSettingsGroup {
-            // TODO(ui-migration): TITLE_REGION 页按 04-settings-migration-map.md §3 R1–R5 重写
-            // 上游 1.6.9 的该页仍引用已退役的 titleCorrectionEnabled / titleCorrectionMode；
-            // fork 运行时由 RegionTitleRequestPolicy + regionSelection 驱动，这里先给语义
-            // 等价的一行摘要（开/关 = 是否选了地区，值 = 地区名），交互留给 UI 子代理。
-            EmbeddedSettingLink(
-                localizedText(ModuleText.CATEGORY_TITLE_REGION),
-                localizedText(
-                    ModuleText.SUMMARY_TITLE_REGION,
-                    state(settings.regionSelection != RegionSelection.NONE),
-                    settings.regionSelection.displayName,
-                ),
-                EmbeddedSvgIcon.TitleMode,
-            ) {}
+        EmbeddedSettingsPage.TITLE_REGION -> {
+            // HLE's four region controls. The two gates below reproduce its page
+            // verbatim, so the picker and the switches keep their visibility:
+            // the account-language switch only exists once a region is selected,
+            // and the lookup library only once a lookup can run.
+            val regions = RegionSelection.entries
+            val regionReplacementEnabled =
+                settings.regionSelection.replacesRegion && settings.overrideAccountLanguage
+            val metadataLookupEnabled =
+                regionReplacementEnabled || settings.restoreCjkOriginalMetadata
+            EmbeddedSettingsGroup {
+                OverlayDropdownPreference(
+                    entry = DropdownEntry(
+                        items = regions.map { region ->
+                            DropdownItem(
+                                text = region.displayName,
+                                selected = region == settings.regionSelection,
+                                onClick = {
+                                    onEdit { it.copy(regionSelection = region) }
+                                    pageRefresh?.invoke()
+                                },
+                            )
+                        },
+                    ),
+                    title = localizedText(ModuleText.REGION_SELECTION),
+                    summary = localizedText(ModuleText.REGION_SELECTION_SUMMARY),
+                    startAction = {
+                        EmbeddedSettingsIcon(EmbeddedSvgIcon.TitleMode, modifier = Modifier.size(22.dp))
+                    },
+                    insideMargin = EmbeddedPreferencePadding,
+                )
+                if (settings.regionSelection.replacesRegion) {
+                    EmbeddedSettingSwitch(
+                        title = localizedText(ModuleText.REGION_METADATA_LANGUAGE),
+                        checked = settings.overrideAccountLanguage,
+                        icon = EmbeddedSvgIcon.Translation,
+                        onCheckedChange = { enabled ->
+                            onEdit { it.copy(overrideAccountLanguage = enabled) }
+                            pageRefresh?.invoke()
+                        },
+                    )
+                }
+                EmbeddedSettingSwitch(
+                    title = localizedText(ModuleText.REGION_RESTORE_ORIGINAL),
+                    checked = settings.restoreCjkOriginalMetadata,
+                    icon = EmbeddedSvgIcon.Document,
+                    onCheckedChange = { enabled ->
+                        onEdit { it.copy(restoreCjkOriginalMetadata = enabled) }
+                        pageRefresh?.invoke()
+                    },
+                )
+                if (metadataLookupEnabled) {
+                    EmbeddedSettingSwitch(
+                        title = localizedText(ModuleText.REGION_METADATA_CACHE),
+                        summary = localizedText(ModuleText.REGION_METADATA_CACHE_SUMMARY),
+                        checked = settings.localizedMetadataCache,
+                        icon = EmbeddedSvgIcon.DocumentSearch,
+                        onCheckedChange = { enabled ->
+                            onEdit { it.copy(localizedMetadataCache = enabled) }
+                        },
+                    )
+                }
+            }
+            if (settings.regionSelection.replacesRegion || settings.restoreCjkOriginalMetadata) {
+                EmbeddedSettingsGroup {
+                    EmbeddedSettingLink(
+                        title = localizedText(ModuleText.REGION_CACHE_CLEAR),
+                        summary = localizedText(ModuleText.REGION_CACHE_CLEAR_SUMMARY),
+                        icon = EmbeddedSvgIcon.Delete,
+                        onClick = {
+                            showRegionCacheClearDialog(activity) {
+                                onEdit {
+                                    it.copy(metadataCacheClearGeneration = it.metadataCacheClearGeneration + 1L)
+                                }
+                                pageRefresh?.invoke()
+                                Toast.makeText(
+                                    activity,
+                                    localizedText(ModuleText.REGION_CACHE_CLEAR_REQUESTED),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        },
+                    )
+                }
+            }
         }
         EmbeddedSettingsPage.ADVANCED -> EmbeddedSettingsGroup {
             if (nativeBridge.supportsStartupPagePrewarm(activity)) Setting(
@@ -711,6 +796,34 @@ private fun EmbeddedSettingsHost.Setting(
     icon: EmbeddedSvgIcon,
     onCheckedChange: (Boolean) -> Unit,
 ) = EmbeddedSettingSwitch(localizedText(title), localizedText(summary), checked, icon = icon, onCheckedChange = onCheckedChange)
+
+/** Confirms the one-shot cache reset; the generation bump is what the runtime sees. */
+private fun EmbeddedSettingsHost.showRegionCacheClearDialog(
+    activity: Activity,
+    onConfirmed: () -> Unit,
+) {
+    var confirmed = false
+    showEmbeddedMiuixDialog(
+        activity = activity,
+        title = localizedText(ModuleText.REGION_CACHE_CLEAR),
+        onDismiss = {
+            if (confirmed && !activity.isFinishing && !activity.isDestroyed && currentActivity() === activity) {
+                onConfirmed()
+            }
+        },
+    ) { dismiss ->
+        EmbeddedSettingsNotice(localizedText(ModuleText.REGION_CACHE_CLEAR_CONFIRM))
+        EmbeddedDialogActions(
+            dismissText = localizedText(ModuleText.CANCEL),
+            onDismiss = dismiss,
+            confirmText = localizedText(ModuleText.CLEAR),
+            onConfirm = {
+                confirmed = true
+                dismiss()
+            },
+        )
+    }
+}
 
 private fun EmbeddedSettingsHost.showEmbeddedDpiDialog(activity: Activity, current: Int, onSelected: (Int) -> Unit) {
     showEmbeddedMiuixDialog(activity, localizedText(ModuleText.MUSIC_DPI), maxWidth = 420.dp) { dismiss ->
@@ -764,7 +877,11 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.BOTTOM_BAR_COLLAPSE to ModuleText.BOTTOM_BAR_COLLAPSE_SUMMARY,
             ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS to ModuleText.BOTTOM_BAR_ANIMATION_SETTINGS_SUMMARY,
         )
-        EmbeddedSettingsPage.TITLE_REGION -> listOf(ModuleText.TITLE_CORRECTION to ModuleText.TITLE_CORRECTION_SUMMARY)
+        EmbeddedSettingsPage.TITLE_REGION -> listOf(
+            ModuleText.REGION_SELECTION to ModuleText.REGION_SELECTION_SUMMARY,
+            ModuleText.REGION_METADATA_LANGUAGE to ModuleText.REGION_METADATA_CACHE_SUMMARY,
+            ModuleText.REGION_RESTORE_ORIGINAL to ModuleText.REGION_CACHE_CLEAR_SUMMARY,
+        )
         EmbeddedSettingsPage.ADVANCED -> listOf(
             ModuleText.STARTUP_PAGE_PREWARM to ModuleText.STARTUP_PAGE_PREWARM_SUMMARY,
             ModuleText.CELLULAR_SETTINGS to ModuleText.CELLULAR_SETTINGS_SUMMARY,

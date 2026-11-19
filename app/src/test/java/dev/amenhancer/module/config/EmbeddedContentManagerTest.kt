@@ -389,11 +389,6 @@ class EmbeddedContentManagerTest {
             return true
         }
 
-        override fun removeValues(keys: Set<String>, synchronous: Boolean): Boolean {
-            keys.forEach(storedValues::remove)
-            return true
-        }
-
         override fun writeFile(name: String, bytes: ByteArray): Boolean {
             events += "write:$name"
             files[name] = bytes.copyOf()

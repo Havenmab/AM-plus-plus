@@ -156,7 +156,7 @@ class TabletLiquidGlassStructuralRegressionTest {
     }
 
     @Test
-    fun `keeps the glass configuration keys under schema 28`() {
+    fun `keeps the glass configuration keys across schema upgrades`() {
         val schema = source("dev/amenhancer/module/config/ModuleSettingsSchema.kt")
 
         // Keep the serialized glass keys, including the inactive tablet-collapse compatibility key.
@@ -177,9 +177,9 @@ class TabletLiquidGlassStructuralRegressionTest {
             ),
             glassKeys,
         )
-        // Schema 28 is the 1.6.7 / AM 1613 integration: upstream's own 18 (lyric effects
-        // optimization) on top of this fork's 25, bumped past the sibling release line's 27
-        // so every store upgrades forward. Glass still reuses its original keys.
-        assertTrue(constants.contains("const val CONFIG_SCHEMA_VERSION = 28"))
+        // Schema 18 is the compatibility baseline; later merges keep advancing the constant
+        // (28 for the 1.6.7 / AM 1613 integration, 29 for the 1.6.9 merge) without changing
+        // the glass keys.
+        assertTrue(ModuleConstants.CONFIG_SCHEMA_VERSION >= 18)
     }
 }

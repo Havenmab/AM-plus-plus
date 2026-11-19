@@ -165,10 +165,10 @@ class AutoLyricsReplacementSessionTest {
     }
 
     @Test
-    fun `a persisted line timed cache is prepared before any network source`() {
+    fun `a persisted per-source cache is prepared before any network source`() {
         val queued = QueuedExecutor()
         val cache = MemoryCache(
-            mapOf((42L to CustomLyricsSources.AMLL) to AutoLyricsCandidate(CustomLyricsSources.AMLL, LINE_TTML)),
+            mapOf((42L to CustomLyricsSources.AMLL) to AutoLyricsCandidate(CustomLyricsSources.AMLL, WORD_TTML)),
         )
         val pointer = Pointer()
         var fetches = 0
@@ -184,6 +184,33 @@ class AutoLyricsReplacementSessionTest {
 
         assertSame(pointer, session.readyReplacementFor(42L))
         assertEquals(0, fetches)
+    }
+
+    @Test
+    fun `a line timed candidate is still prepared from the provider-less cache slot`() {
+        // The merged per-source read only accepts word timing; the legacy AUTO_CACHE slot stays the
+        // one place a persisted line-timed document may win, and the seam policy accepts it.
+        val queued = QueuedExecutor()
+        val cache = MemoryCache(
+            mapOf(
+                (42L to CustomLyricsSources.AUTO_CACHE) to
+                    AutoLyricsCandidate(CustomLyricsSources.AUTO_CACHE, LINE_TTML),
+            ),
+        )
+        val pointer = Pointer()
+        var fetches = 0
+        val session = session(
+            queued = queued,
+            cache = cache,
+            fetch = { _, _ -> fetches += 1; null },
+            parse = { pointer },
+        )
+
+        session.replacementFor(42L)
+        queued.runAll()
+
+        assertSame(pointer, session.readyReplacementFor(42L))
+        assertEquals(1, fetches)
     }
 
     @Test

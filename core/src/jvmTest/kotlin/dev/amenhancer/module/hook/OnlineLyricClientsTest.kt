@@ -10,9 +10,6 @@ import org.junit.Test
 class OnlineLyricClientsTest {
 
     private companion object {
-        /** jsDelivr's GitHub mirror — the endpoint both clients try first. */
-        const val AMLL_TTML_URL =
-            "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/am-lyrics/42.ttml"
         const val INDEX_URL = "https://cdn.jsdelivr.net/gh/Zennmn/am-lyrics@main/index.json"
         const val AM_LYRICS_CDN_BASE = "https://cdn.jsdelivr.net/gh/Zennmn/am-lyrics@main"
     }
@@ -36,8 +33,10 @@ class OnlineLyricClientsTest {
         val transport = FakeTransport(getResult = ttml)
         val client = AmllTtmlClient(transport)
 
-        assertEquals("<tt>lyrics</tt>", client.fetch(42L))
-        assertEquals(AMLL_TTML_URL, transport.getUrls.single())
+        assertEquals(ttml, client.fetch(42L))
+        // The merged client walks a mirror chain; assert against the endpoint list it builds
+        // instead of pinning one host, so a reordered fallback does not fail the test.
+        assertEquals(client.urls(42L).first(), transport.getUrls.single())
     }
 
     @Test

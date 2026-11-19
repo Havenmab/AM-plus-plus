@@ -352,7 +352,7 @@ internal class AppleMusicCustomLyricsTarget(
                 },
                 isAllowed = { appleMusicId ->
                     config.settings().let { it.customLyricsEnabled && it.automaticLyricsEnabled } &&
-                        !runtime.playback.isSuppressed(appleMusicId) &&
+                        runtime.playback?.isSuppressed(appleMusicId) != true &&
                         (playback?.manualEntry(appleMusicId)?.enabled != true) &&
                         (!session.isMapped(appleMusicId)) &&
                         playback?.preferredSource(appleMusicId) == null

@@ -189,6 +189,26 @@ internal class EmbeddedConfigurationSession(
      */
     internal fun commitCustomLyricsIfUnchanged(
         expected: CustomLyricsIndexState,
+        manifest: CustomLyricsManifest,
+        allowRecovery: Boolean = false,
+    ): CustomLyricsIndexCommitResult = if (!writable) {
+        CustomLyricsIndexCommitResult.Failed(ModuleText.MIGRATION_READ_ONLY.text())
+    } else {
+        synchronized(INDEX_MUTATION_LOCK) {
+            val current = indexRepository.state(storage.values())
+            if (current != expected) {
+                return@synchronized CustomLyricsIndexCommitResult.Failed(
+                    ModuleText.LYRICS_INDEX_CHANGED.text(),
+                )
+            }
+            indexRepository.commit(
+                state = current,
+                next = manifest,
+                allowRecovery = allowRecovery,
+            )
+        }
+    }
+
     internal fun <T> withCustomLyricsMutation(block: () -> T): T =
         synchronized(INDEX_MUTATION_LOCK, block)
 

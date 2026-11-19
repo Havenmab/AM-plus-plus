@@ -140,6 +140,50 @@ class OnlineLyricSourcePolicyTest {
         )
     }
 
+    @Test
+    fun `a migrated unified order supplies the search chain when the automatic flag is on`() {
+        val selection = OnlineLyricSourcePolicy.resolve(
+            ModuleSettings(
+                automaticLyricsSourceOrder = listOf(
+                    CustomLyricsSources.AM_NATIVE,
+                    CustomLyricsSources.AMLL,
+                    CustomLyricsSources.AM_LYRICS,
+                    CustomLyricsSources.LUNABEAT,
+                    CustomLyricsSources.QQ,
+                    CustomLyricsSources.KUWO,
+                ),
+            ),
+        )
+
+        assertEquals(listOf(CustomLyricsSources.QQ, CustomLyricsSources.KUWO), selection.sources)
+    }
+
+    @Test
+    fun `the explicit custom order wins over a migrated unified order`() {
+        val selection = OnlineLyricSourcePolicy.resolve(
+            ModuleSettings(
+                automaticLyricsSourceOrder = listOf(
+                    CustomLyricsSources.AMLL,
+                    CustomLyricsSources.QQ,
+                    CustomLyricsSources.KUWO,
+                ),
+                onlineLyricsAutomaticOrderEnabled = false,
+                onlineLyricsSourceOrder = "kugou,kuwo",
+            ),
+        )
+
+        // normalizeOrder keeps a permutation: the user's two ids lead, the rest follow.
+        assertEquals(
+            listOf(
+                CustomLyricsSources.KUGOU,
+                CustomLyricsSources.KUWO,
+                CustomLyricsSources.NETEASE,
+                CustomLyricsSources.QQ,
+            ),
+            selection.sources,
+        )
+    }
+
     private fun song(source: Source): SongSearchResult = SongSearchResult(
         id = source.name,
         title = "Song",

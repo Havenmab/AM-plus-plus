@@ -472,6 +472,13 @@ internal class AppleMusicCustomLyricsTarget(
             } else display
             parser.forSubmission(adjusted, id, nativeId)
         }
+        // The native lane hooks are installed by NativeLyricsFeature; this capability only
+        // tells the shared delivery which songs carry a module-supplied document, so the
+        // app's own refresh never re-presents over it.
+        nativeLyricDelivery?.setModuleSupplementSongResolver { appleMusicId ->
+            session.replacementFor(appleMusicId) != null ||
+                autoSession?.readyReplacementFor(appleMusicId) != null
+        }
         resultBridge = LyricsResultSubmissionBridge.create(
             symbols = symbols,
             registration = registration,

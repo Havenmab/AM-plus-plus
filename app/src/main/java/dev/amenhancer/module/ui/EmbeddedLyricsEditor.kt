@@ -1,6 +1,7 @@
 package dev.amenhancer.module.ui
 
 import android.app.Activity
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -101,10 +102,39 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
             source = source,
             enabled = entry?.enabled ?: true,
         )
+        val replacingIds = group?.appleMusicIds.orEmpty()
         saveSubmitted = true
         closeEditor()
-        host.runAsync(activity) { host.controller.saveLyrics(draft, group?.appleMusicIds.orEmpty()) }
         dismiss()
+        // The settings list only re-reads the index when pageRefresh bumps its
+        // revision, so the save result has to drive both the toast and that
+        // refresh. A failure used to be dropped on the floor here: the dialog
+        // closed and 「已配置」 stayed at the old (zero) count.
+        host.worker.execute {
+            val result = runCatching { host.controller.saveLyrics(draft, replacingIds) }
+                .getOrElse { error ->
+                    EmbeddedActionResult.Failed(
+                        error.message.orEmpty().ifBlank { localizedText(ModuleText.OPERATION_FAILED) },
+                    )
+                }
+            val configured = runCatching { host.controller.lyricsEntries().size }.getOrDefault(-1)
+            android.util.Log.i(
+                SAVE_LOG_TAG,
+                "$SAVE_LOG_PREFIX result=${if (result is EmbeddedActionResult.Done) "done" else "failed"}" +
+                    " ids=${ids.joinToString(",")} replacing=${replacingIds.joinToString(",")}" +
+                    " source=${draft.source} chars=${lyrics.length} configured=$configured" +
+                    " message=${result.message}",
+            )
+            host.mainHandler.post {
+                if (activity.isFinishing || activity.isDestroyed || host.currentActivity() !== activity) return@post
+                Toast.makeText(
+                    activity,
+                    result.message,
+                    if (result is EmbeddedActionResult.Done) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                ).show()
+                host.pageRefresh?.invoke()
+            }
+        }
     }
 
     host.showEmbeddedMiuixDialog(
@@ -435,6 +465,10 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
         }
     }
 }
+
+/** One diagnostic line per editor save; prefix so `adb logcat -s AppleMusicEnhancer` can grep it. */
+private const val SAVE_LOG_TAG = "AppleMusicEnhancer"
+private const val SAVE_LOG_PREFIX = "custom-lyrics-save"
 
 internal fun EmbeddedSettingsHost.embeddedLyricsSourceName(source: String): String = when (source) {
     CustomLyricsSources.AUTO_CACHE -> localizedText(ModuleText.AUTO_CACHE)

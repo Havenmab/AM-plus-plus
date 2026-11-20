@@ -141,7 +141,11 @@ internal class EmbeddedContentManager(
     fun saveLyrics(
         draft: CustomLyricsDraft,
         replacingAppleMusicId: Long? = null,
-    ): CustomLyricsSaveResult = if (
+    ): CustomLyricsSaveResult = if (!session.writable) {
+        // A deferred migration leaves the store read-only; reporting that as an
+        // unreadable index sent every user to the wrong conclusion.
+        CustomLyricsSaveResult.Failed(ModuleText.MIGRATION_READ_ONLY.text())
+    } else if (
         CustomLyricsManifestPolicy.isThirdPartySource(
             CustomLyricsManifestPolicy.canonicalSource(draft.source),
         )
@@ -192,7 +196,9 @@ internal class EmbeddedContentManager(
     fun saveLyrics(
         draft: CustomLyricsMultiIdDraft,
         replacingAppleMusicIds: List<Long> = emptyList(),
-    ): CustomLyricsBatchSaveResult = if (
+    ): CustomLyricsBatchSaveResult = if (!session.writable) {
+        CustomLyricsBatchSaveResult.Failed(ModuleText.MIGRATION_READ_ONLY.text())
+    } else if (
         CustomLyricsManifestPolicy.isThirdPartySource(
             CustomLyricsManifestPolicy.canonicalSource(draft.source),
         )

@@ -3,12 +3,27 @@ package dev.amenhancer.module.hook
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import java.util.Locale
 
-/** Request and match lyric pronunciations, with extra fallbacks for CJK app languages. */
+/**
+ * Request and match lyric pronunciations, with extra fallbacks for CJK app languages.
+ *
+ * The hooks are installed once and stay installed; the module's own "lyrics
+ * pronunciation" preference is read at **call time** through [enabled] instead of
+ * at install time. Gating the install on the preference meant a toggle in the
+ * module's settings could not take effect until Apple Music was restarted (the
+ * factory reads the setting once, and [install] is idempotent), while the hooks'
+ * effects — the extra `en-Latn` request, the language short-circuit and the
+ * match fallback — are all per-call, so they can just as well be switched off
+ * between two calls.
+ */
 internal object LyricsPronunciationMatching {
     private var installed = false
 
     @Synchronized
-    fun install(profile: AppleMusicHostProfile, loader: ClassLoader) {
+    fun install(
+        profile: AppleMusicHostProfile,
+        loader: ClassLoader,
+        enabled: () -> Boolean = { true },
+    ) {
         val names = profile.document.optJSONObject("lyricPronunciation") ?: return
         if (installed) return
         val registration = HookRegistrationScope()
@@ -41,6 +56,9 @@ internal object LyricsPronunciationMatching {
                 return first
             }
 
+            /** The module's preference, read per call; a throwing provider keeps the hooks on. */
+            fun active(): Boolean = runCatching { enabled() }.getOrDefault(true)
+
             fun hook(role: String, callback: ModernMethodHook) {
                 check(ModernXposedRuntime.hookMethod(members.method(role), callback, registration)) { role }
             }
@@ -48,6 +66,7 @@ internal object LyricsPronunciationMatching {
             if (names.optJSONObject("methods")?.has("requestLyrics") == true) {
                 hook("requestLyrics", object : ModernMethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
+                        if (!active()) return
                         // This array feeds l[script]. Keep l[lyrics] and the native script order.
                         @Suppress("UNCHECKED_CAST")
                         val scripts = param.args.getOrNull(3) as? Array<String> ?: return
@@ -62,6 +81,7 @@ internal object LyricsPronunciationMatching {
             // and deciding whether the selected pronunciation is visible.
             hook("match", object : ModernMethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
+                    if (!active()) return
                     if (param.throwable != null || param.result != null) return
                     val allowOtherScripts = isCjk(Locale.getDefault().language)
                     runCatching { fallbackTag(param.args[0], allowOtherScripts) }
@@ -71,8 +91,11 @@ internal object LyricsPronunciationMatching {
 
             hook("evaluate", object : ModernMethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    // Always unwind, so a preference flip between the two callbacks can
+                    // never leak an armed evaluation into the next song.
                     param.extras["previousEvaluation"] = evaluation.get()
                     evaluation.remove()
+                    if (!active()) return
                     val language = Locale.getDefault().language
                     if (!isCjk(language)) return
                     val pointer = param.args[0] ?: return
@@ -89,6 +112,7 @@ internal object LyricsPronunciationMatching {
 
             hook("songLanguage", object : ModernMethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
+                    if (!active()) return
                     val current = evaluation.get() ?: return
                     val song = param.thisObject ?: return
                     if (current.languageRead || param.throwable != null || addressOf(song) != current.songAddress) return

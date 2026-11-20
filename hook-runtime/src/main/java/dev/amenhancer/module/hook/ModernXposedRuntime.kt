@@ -96,6 +96,16 @@ object ModernXposedRuntime {
         return CachedMethods.callLegacy(receiver, name, *args)
     }
 
+    /**
+     * Every diagnostic line, mirrored to logcat.
+     *
+     * The module's own channel only reaches LSPosed's log viewer
+     * (`activeModule.log` -> libxposed), so `adb logcat -s AppleMusicEnhancer`
+     * used to show nothing of what the hooks report, and device-time diagnosis of
+     * a lyrics regression meant exporting LSPosed's log instead. AGENTS.md 4.6
+     * requires the mirror, so it runs unconditionally while [MIRROR_TO_LOGCAT] is
+     * set; the module channel stays the primary one.
+     */
     fun log(message: String, error: Throwable? = null) {
         val activeModule = module
         if (activeModule != null) {
@@ -104,11 +114,60 @@ object ModernXposedRuntime {
             } else {
                 activeModule.log(Log.ERROR, TAG, message, error)
             }
-        } else if (error == null) {
-            Log.i(TAG, message)
-        } else {
-            Log.e(TAG, message, error)
         }
+        mirrorToLogcat(message, error)
     }
+
+    /**
+     * Logcat side of [log]: same tag, same text, throttled per message key.
+     *
+     * A hot hook path (a per-line getter, the word render adapter) repeats the
+     * same line hundreds of times per song and none of those repetitions carries
+     * new information within the window, so the first one is printed and the rest
+     * are counted. The count is printed with the next line of that key, which keeps
+     * a burst visible as a number instead of letting it disappear.
+     */
+    private fun mirrorToLogcat(message: String, error: Throwable?) {
+        if (!MIRROR_TO_LOGCAT) return
+        val line = throttledLine(message)
+        if (error == null) Log.i(TAG, line) else Log.e(TAG, line, error)
+    }
+
+    private fun throttledLine(message: String): String {
+        val key = message.take(MIRROR_KEY_LENGTH)
+        val now = System.currentTimeMillis()
+        var suppressed = 0L
+        synchronized(mirrorWindows) {
+            val last = mirrorWindows[key]
+            if (last != null && now - last.at < MIRROR_WINDOW_MS) {
+                last.suppressed += 1L
+                return "$message (mirror suppressed ${last.suppressed})"
+            }
+            suppressed = last?.suppressed ?: 0L
+            if (last == null && mirrorWindows.size >= MIRROR_MAX_KEYS) {
+                mirrorWindows.minByOrNull { it.value.at }?.let { mirrorWindows.remove(it.key) }
+            }
+            mirrorWindows[key] = MirrorWindow(now)
+        }
+        return if (suppressed > 0L) "$message (mirror suppressed $suppressed)" else message
+    }
+
+    private class MirrorWindow(val at: Long) {
+        var suppressed: Long = 0L
+    }
+
+    private val mirrorWindows = java.util.concurrent.ConcurrentHashMap<String, MirrorWindow>()
+
+    /** Off only when logcat noise outweighs diagnosability; on is the requirement. */
+    private const val MIRROR_TO_LOGCAT = true
+
+    /** A hot path repeats its line with its own arguments; the prefix is the key. */
+    private const val MIRROR_KEY_LENGTH = 96
+
+    /** At most one mirrored line per key per window. */
+    private const val MIRROR_WINDOW_MS = 1_000L
+
+    /** Bounded, so an unbounded set of distinct lines cannot grow the map. */
+    private const val MIRROR_MAX_KEYS = 256
 
 }

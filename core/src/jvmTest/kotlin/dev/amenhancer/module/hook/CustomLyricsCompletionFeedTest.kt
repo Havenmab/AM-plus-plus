@@ -378,6 +378,86 @@ class CustomLyricsCompletionFeedTest {
         assertTrue(lines.any { it.contains("published=true") })
     }
 
+    @Test
+    fun `an online document publishes its own lanes and asks for the refresh`() {
+        val published = mutableListOf<String>()
+        val requested = mutableListOf<Long>()
+        val feed = newFeed(
+            onDisplayedDocument = { _, ttml ->
+                published += ttml
+                true
+            },
+            onOverlayUpdated = { id -> requested += id },
+        ) { _, _ -> error("an online candidate is already enriched") }
+
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+
+        // Upstream keeps online candidates outside the custom manifest, so the
+        // selection path has to hand the document it submits to the feed itself.
+        // Once per (track, revision), and the enricher never runs again.
+        assertEquals(listOf(CUSTOM_DOCUMENT), published)
+        assertEquals(listOf(42L), requested)
+    }
+
+    @Test
+    fun `a changed online document is published again`() {
+        val published = mutableListOf<String>()
+        val feed = newFeed(onDisplayedDocument = { _, ttml -> published += ttml; true }) { _, _ -> null }
+
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+        feed.publishDisplayedLanes(42L, REVISION_B, CUSTOM_DOCUMENT_B)
+
+        assertEquals(listOf(CUSTOM_DOCUMENT, CUSTOM_DOCUMENT_B), published)
+    }
+
+    @Test
+    fun `a publish that changed nothing never asks for a refresh`() {
+        var requested = 0
+        val feed = newFeed(
+            onDisplayedDocument = { _, _ -> false },
+            onOverlayUpdated = { requested += 1 },
+        ) { _, _ -> null }
+
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+
+        assertEquals(0, requested)
+    }
+
+    @Test
+    fun `an empty document or id is ignored`() {
+        var published = 0
+        val feed = newFeed(onDisplayedDocument = { _, _ -> published += 1; true }) { _, _ -> null }
+
+        feed.publishDisplayedLanes(0L, REVISION, CUSTOM_DOCUMENT)
+        feed.publishDisplayedLanes(42L, REVISION, "  ")
+
+        assertEquals(0, published)
+    }
+
+    @Test
+    fun `a rejected lane publish leaves the track retryable`() {
+        var reject = true
+        var published = 0
+        val queued = QueuedExecutor()
+        val feed = CustomLyricsCompletionFeed(
+            enrich = { _, _ -> null },
+            executor = Executor { command ->
+                if (reject) throw RejectedExecutionException("busy") else queued.execute(command)
+            },
+            onDisplayedDocument = { _, _ -> published += 1; true },
+        )
+
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+        assertEquals(0, published)
+
+        reject = false
+        feed.publishDisplayedLanes(42L, REVISION, CUSTOM_DOCUMENT)
+        queued.runAll()
+
+        assertEquals(1, published)
+    }
+
     private fun newFeed(
         executor: Executor = Executor { command -> command.run() },
         log: (Long, String) -> Unit = { _, _ -> },

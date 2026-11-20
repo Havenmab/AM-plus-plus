@@ -126,6 +126,21 @@ class CustomLyricsCompletionFeed(
             size > maxTracks.coerceAtLeast(1)
     }
 
+    /**
+     * The (track, revision) whose lanes were last published by
+     * [publishDisplayedLanes]. Separate from [scheduled] because the two paths do
+     * different work: that one runs the enricher for a **manual** body, this one
+     * only republishes an already-produced document's own lanes.
+     */
+    private val published = object : LinkedHashMap<Long, String>(
+        maxTracks.coerceAtLeast(1),
+        0.75f,
+        true,
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?): Boolean =
+            size > maxTracks.coerceAtLeast(1)
+    }
+
     @Volatile
     private var displayedTrack: Long = 0L
 
@@ -164,6 +179,53 @@ class CustomLyricsCompletionFeed(
             log(appleMusicId, injectLine(appleMusicId, published = false))
         }
     }
+
+    /**
+     * Publishes the lanes of the document a *selection* is about to submit, for
+     * every document that did not come from the manual (custom) session.
+     *
+     * The fork used to get this for free: its automatic publisher wrote each
+     * candidate into the custom-lyrics manifest, the custom session then owned
+     * the id, and [onDisplayed] ran [complete] for it. Upstream 1.6.9 keeps its
+     * candidates in its own per-source store instead, so an online (AMLL /
+     * AM-Lyrics / Lunabeat) or LLM document is submitted by the host selection
+     * path and never reaches [onDisplayed] - its transliteration lane then never
+     * enters the native overlay, which is the lane the app reads back when it
+     * decides whether a pronunciation row exists at all.
+     *
+     * This is deliberately the *half* of [complete] such a document still needs:
+     * publish the displayed document's own lanes and ask for the post-overlay
+     * refresh. The enricher is not re-run (the chain that produced an online
+     * candidate already enriched it) and the merged-document callback is not
+     * invoked, so no second pointer can compete with the submitted one.
+     *
+     * Keyed by (track, revision) like [onDisplayed], queued on the same executor
+     * so the hook thread never parses, and fail-open end to end: a rejecting
+     * executor, a throwing publisher or a throwing refresh callback only leaves
+     * the document exactly as it was.
+     */
+    fun publishDisplayedLanes(appleMusicId: Long, revision: String, ttml: String) {
+        if (appleMusicId <= 0L || ttml.isBlank()) return
+        synchronized(published) {
+            if (published[appleMusicId] == revision) return
+            published[appleMusicId] = revision
+        }
+        try {
+            executor.execute {
+                val changed = runCatching { onDisplayedDocument(appleMusicId, ttml) }
+                    .getOrDefault(false)
+                log(appleMusicId, publishLine(appleMusicId, changed))
+                if (changed) runCatching { onOverlayUpdated(appleMusicId) }
+            }
+        } catch (_: RejectedExecutionException) {
+            // Nothing was published, so let the next presentation retry.
+            synchronized(published) { published.remove(appleMusicId) }
+            log(appleMusicId, publishLine(appleMusicId, changed = false))
+        }
+    }
+
+    private fun publishLine(appleMusicId: Long, changed: Boolean): String =
+        "online-translation inject id=$appleMusicId source=selection published=$changed"
 
     private fun complete(appleMusicId: Long, document: Document) {
         val metadata = TtmlTimingPolicy.metadataOf(document.ttml)

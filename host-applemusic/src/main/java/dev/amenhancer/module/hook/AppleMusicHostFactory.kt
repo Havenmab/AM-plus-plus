@@ -131,7 +131,12 @@ object AppleMusicHostFactory {
             },
             presentationMethod = nativePresentationMethod,
         )
-        if (settings.lyricsPronunciationEnabled) LyricsPronunciationMatching.install(profile, classLoader)
+        // Installed unconditionally: the preference is read per call, so toggling
+        // "lyrics pronunciation" in the module's settings takes effect on the next
+        // lyrics presentation instead of needing an Apple Music restart.
+        LyricsPronunciationMatching.install(profile, classLoader) {
+            config.settings().lyricsPronunciationEnabled
+        }
         val customLyrics = AppleMusicCustomLyricsTarget(
             config = config,
             symbols = resolver,

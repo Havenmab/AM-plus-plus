@@ -474,7 +474,29 @@ internal class AppleMusicCustomLyricsTarget(
             // automatic path runs, off the hook thread. The feed dedupes per track and document
             // revision, never touches the resolver, and only ever writes the native overlay or
             // asks the bridge to resubmit the session's merged pointer.
-            if (manual != null) customCompletion?.onDisplayed(id)
+            if (manual != null) {
+                customCompletion?.onDisplayed(id)
+            } else {
+                // An online (AMLL / AM-Lyrics / Lunabeat) or LLM document is submitted by this
+                // same pipeline. Upstream 1.6.9 keeps those candidates in its own per-source
+                // store, so no custom-session entry exists for them and `onDisplayed` would
+                // find no body to publish: the displayed document's own transliteration lane
+                // then never reaches the native overlay. The fork used to get this for free
+                // because its automatic publisher wrote every candidate into the custom
+                // manifest, which is exactly what made such an id "custom" here.
+                //
+                // Only the document's own lanes are published: the chain that produced the
+                // candidate already enriched it, and `adjusted` is the pointer being submitted,
+                // so re-running the enricher would only race a second pointer against it.
+                val laneDocument = displayRaw ?: raw
+                if (laneDocument != null && source != CustomLyricsSources.AM_NATIVE) {
+                    customCompletion?.publishDisplayedLanes(
+                        appleMusicId = id,
+                        revision = "$source#" + laneDocument.hashCode(),
+                        ttml = laneDocument,
+                    )
+                }
+            }
             parser.forSubmission(adjusted, id, nativeId)
         }
         // The native lane hooks are installed by NativeLyricsFeature; this capability only

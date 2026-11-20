@@ -65,9 +65,17 @@ class LyricsPronunciationRowCentringStructuralTest {
     @Test
     fun `the feature switch gates the write and defaults to off`() {
         assertFalse(LyricsPronunciationRowCentring.isEnabled(ModuleSettings()))
-        assertTrue(
+        // 「歌词效果优化」 is the switch the upstream build gates the centring on. The reading's own
+        // source (online translation, the native lane) must not turn the correction on by itself:
+        // that made a module whose effects were off still move Apple's per-word containers.
+        assertFalse(
             LyricsPronunciationRowCentring.isEnabled(
                 ModuleSettings(onlineLyricsTranslationEnabled = true),
+            ),
+        )
+        assertTrue(
+            LyricsPronunciationRowCentring.isEnabled(
+                ModuleSettings(lyricEffectsOptimizationEnabled = true),
             ),
         )
         // The callback checks the gate before it writes, rather than centring unconditionally.

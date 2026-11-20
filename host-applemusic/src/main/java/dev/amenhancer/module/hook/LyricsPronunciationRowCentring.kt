@@ -66,10 +66,11 @@ import kotlin.math.roundToInt
  * [applyReadingOffset], which is what keeps the correction and the splice from overwriting each other.
  *
  * Gating follows the other lyric presentation hooks (`DualPaneResourceHook.hookTabletLyricTextLayout`):
- * the registration is fixed and the callback decides per inflation. It applies only while the
- * module's own pronunciation/translation presentation switch is on — the same
- * [ModuleSettings.onlineLyricsTranslationEnabled] switch `NativeLyricsFeature` returns early on — and
- * is a no-op otherwise, so a module that is off leaves Apple's layout untouched.
+ * the registration is fixed and the callback decides per inflation. It applies only while
+ * [ModuleSettings.lyricEffectsOptimizationEnabled] is on — the same 「歌词效果优化」 switch the native
+ * line alignment and the other lyric effects use — and is a no-op otherwise. Centring a reading under
+ * its glyph is an *effect*, not a reading source: with the switch off Apple's own layout is left
+ * untouched, which is exactly how the upstream build behaves.
  */
 internal object LyricsPronunciationRowCentring {
     /** Log tag for the centring corrections; one line per layout pass per word. */
@@ -159,8 +160,8 @@ internal object LyricsPronunciationRowCentring {
         }
     }
 
-    /** The module feature switch; off means Apple's per-word container is never touched. */
-    fun isEnabled(settings: ModuleSettings): Boolean = settings.onlineLyricsTranslationEnabled
+    /** The 「歌词效果优化」 switch; off means Apple's per-word container is never touched. */
+    fun isEnabled(settings: ModuleSettings): Boolean = settings.lyricEffectsOptimizationEnabled
 
     /** Live read of [isEnabled]; an unreadable configuration keeps the callback a no-op. */
     private fun isFeatureEnabled(): Boolean =

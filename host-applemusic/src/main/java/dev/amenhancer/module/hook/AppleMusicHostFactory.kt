@@ -64,6 +64,15 @@ object AppleMusicHostFactory {
     private fun installLyricPronunciationPairAlignment(
         profile: AppleMusicHostProfile,
         resources: Resources,
+        /**
+         * 「歌词效果优化」, read at inflation time.
+         *
+         * Pair alignment centres the reading under its glyph, which is a lyric *effect*: with the
+         * switch off Apple's own container geometry has to stay untouched, exactly as the native
+         * line alignment and the karaoke effects do.  The registration itself is fixed so the
+         * switch can change without reinstalling the hooks.
+         */
+        enabled: () -> Boolean,
     ): TargetCapabilityInstall {
         val layoutName = profile.document.optJSONObject("layoutVariants")
             ?.optString("lyricPronunciationPairLayout").orEmpty()
@@ -74,6 +83,7 @@ object AppleMusicHostFactory {
             return TargetCapabilityInstall.Degraded("Word pronunciation pair layout is missing: $layoutName")
         }
         LayoutInflationRegistry.register(layoutName) { root ->
+            if (!runCatching(enabled).getOrDefault(false)) return@register
             if (root is LinearLayout && root.orientation == LinearLayout.VERTICAL &&
                 root.layoutParams?.width == ViewGroup.LayoutParams.WRAP_CONTENT
             ) {
@@ -158,7 +168,10 @@ object AppleMusicHostFactory {
             val alignment = installLineLyricAgentAlignment(profile, classLoader, application.resources) {
                 config.settings().lyricEffectsOptimizationEnabled
             }
-            val pronunciationAlignment = installLyricPronunciationPairAlignment(profile, application.resources)
+            val pronunciationAlignment = installLyricPronunciationPairAlignment(
+                profile,
+                application.resources,
+            ) { config.settings().lyricEffectsOptimizationEnabled }
             val terminal = AppleMusicCjkTerminalGradientTarget(profile, classLoader).install()
             val splitGlow = karaokeAnimation.installSplitWordGlow(
                 profile.document.optJSONObject("cjk")?.optJSONObject("splitWordGlow"),

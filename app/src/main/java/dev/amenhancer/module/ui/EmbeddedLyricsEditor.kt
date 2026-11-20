@@ -117,19 +117,24 @@ internal fun EmbeddedSettingsHost.showLyricsEditor(
                         error.message.orEmpty().ifBlank { localizedText(ModuleText.OPERATION_FAILED) },
                     )
                 }
+            // Done and Failed are separate data classes; the message is not on the sealed interface.
+            val message = when (result) {
+                is EmbeddedActionResult.Done -> result.message
+                is EmbeddedActionResult.Failed -> result.message
+            }
             val configured = runCatching { host.controller.lyricsEntries().size }.getOrDefault(-1)
             android.util.Log.i(
                 SAVE_LOG_TAG,
                 "$SAVE_LOG_PREFIX result=${if (result is EmbeddedActionResult.Done) "done" else "failed"}" +
                     " ids=${ids.joinToString(",")} replacing=${replacingIds.joinToString(",")}" +
                     " source=${draft.source} chars=${lyrics.length} configured=$configured" +
-                    " message=${result.message}",
+                    " message=$message",
             )
             host.mainHandler.post {
                 if (activity.isFinishing || activity.isDestroyed || host.currentActivity() !== activity) return@post
                 Toast.makeText(
                     activity,
-                    result.message,
+                    message,
                     if (result is EmbeddedActionResult.Done) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
                 ).show()
                 host.pageRefresh?.invoke()

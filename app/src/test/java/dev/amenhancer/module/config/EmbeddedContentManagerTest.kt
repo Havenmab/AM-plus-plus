@@ -2,6 +2,7 @@ package dev.amenhancer.module.config
 
 import dev.amenhancer.module.font.FontFilePolicy
 import dev.amenhancer.module.font.FontImportResult
+import dev.amenhancer.module.i18n.ModuleText
 import dev.amenhancer.module.lyrics.CustomLyricsBackupEncodeResult
 import dev.amenhancer.module.lyrics.CustomLyricsBatchSaveResult
 import dev.amenhancer.module.lyrics.CustomLyricsClearResult
@@ -224,6 +225,83 @@ class EmbeddedContentManagerTest {
         assertTrue(deleted is EmbeddedLyricsMutationResult.Updated)
         assertTrue(manager.listLyrics().isEmpty())
         assertTrue(storage.files.keys.none { it.startsWith("lyrics_multi_") })
+    }
+
+    @Test
+    fun `editor save keeps an imported body in the configured list`() {
+        val storage = MemoryStorage()
+        val manager = EmbeddedContentManager(
+            session = EmbeddedConfigurationSession(storage),
+            fileIdFactory = sequenceFileIds("lyrics_editor"),
+        )
+
+        // 添加 → 从 AMLL 导入 → 保存: the body comes from a provider, but the user
+        // saved it in the lyrics manager, so 「已配置」 has to keep listing it.
+        val saved = manager.saveManualLyrics(
+            CustomLyricsMultiIdDraft(
+                appleMusicIds = listOf(901L),
+                displayName = "Imported",
+                ttml = ttml("imported"),
+                source = CustomLyricsSources.AMLL,
+            ),
+        )
+
+        assertTrue("expected the save to succeed, got " + saved, saved is CustomLyricsBatchSaveResult.Saved)
+        val entry = manager.listLyrics().single()
+        assertEquals(901L, entry.appleMusicId)
+        assertEquals(CustomLyricsSources.MANUAL, entry.source)
+        assertTrue("a body the user saved is theirs", entry.userEdited)
+        assertEquals(ttml("imported"), manager.readLyrics(901L))
+        assertEquals(null, manager.sourceCache.entryFor(901L, CustomLyricsSources.AMLL))
+        assertTrue(manager.sourceCache.entries().isEmpty())
+    }
+
+    @Test
+    fun `an automatic source save still files the body as a provider candidate`() {
+        val manager = EmbeddedContentManager(
+            session = EmbeddedConfigurationSession(MemoryStorage()),
+            fileIdFactory = sequenceFileIds("lyrics_auto"),
+        )
+
+        // The automatic publisher keeps using the source index; only the editor
+        // is promoted to the manual index.
+        val saved = manager.saveLyrics(
+            CustomLyricsMultiIdDraft(
+                appleMusicIds = listOf(902L),
+                displayName = "Candidate",
+                ttml = ttml("candidate"),
+                source = CustomLyricsSources.AMLL,
+            ),
+        )
+
+        assertTrue("expected the save to succeed, got " + saved, saved is CustomLyricsBatchSaveResult.Saved)
+        assertTrue(manager.listLyrics().isEmpty())
+        assertEquals("Candidate", manager.sourceCache.entryFor(902L, CustomLyricsSources.AMLL)?.displayName)
+        assertEquals(ttml("candidate"), manager.sourceCache.readCandidate(902L, CustomLyricsSources.AMLL)?.ttml)
+    }
+
+    @Test
+    fun `a read-only store reports itself instead of an unreadable index`() {
+        val storage = MemoryStorage()
+        val manager = EmbeddedContentManager(
+            session = EmbeddedConfigurationSession(storage, writable = false),
+            fileIdFactory = sequenceFileIds("lyrics_read_only"),
+        )
+
+        val saved = manager.saveManualLyrics(
+            CustomLyricsMultiIdDraft(
+                appleMusicIds = listOf(903L),
+                displayName = "Read only",
+                ttml = ttml("read only"),
+            ),
+        )
+
+        assertEquals(
+            CustomLyricsBatchSaveResult.Failed(ModuleText.MIGRATION_READ_ONLY.text()),
+            saved,
+        )
+        assertTrue(manager.listLyrics().isEmpty())
+        assertTrue(storage.files.isEmpty())
     }
 
     @Test

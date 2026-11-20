@@ -418,7 +418,23 @@ internal fun createAutoLyricsRuntime(
             cacheRead = { id, hash, counts, config -> boundaryCache?.read(id, hash, counts, config) },
             cacheWrite = { id, hash, counts, config, lines -> boundaryCache?.write(id, hash, counts, config, lines) },
             request = { config, request, cancelled ->
-                llmClient.segmentBoundaries(config, request, cancelled)
+                // The session collapses every transport failure into "request-failed", which leaves a
+                // failed merge indistinguishable from a wrong endpoint, a rejected key or a timeout.
+                // The client already names the reason and the HTTP status; surface both, and the host
+                // and model (never the key) so a misconfigured base URL is obvious from one log line.
+                android.util.Log.i(
+                    "AMPP-Bndry",
+                    "bndry transport endpoint=" + (
+                        config.endpoint?.let { runCatching { java.net.URI(it).host }.getOrNull() }
+                            ?: "invalid"
+                        ) + " model=" + config.normalizedModel,
+                )
+                llmClient.segmentBoundaries(config, request, cancelled) { reason, status ->
+                    android.util.Log.i(
+                        "AMPP-Bndry",
+                        "bndry transport failed reason=" + reason + " status=" + (status ?: "-"),
+                    )
+                }
             },
             executor = Executor { task ->
                 boundaryExecutor?.let { executor ->

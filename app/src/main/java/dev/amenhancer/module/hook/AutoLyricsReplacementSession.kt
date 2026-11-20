@@ -404,12 +404,11 @@ internal fun createAutoLyricsRuntime(
             configuration = {
                 configuration().let { settings ->
                     if (!settings.llmPronunciationBoundaryEnabled) return@let null
-                    LlmLyricsConfig(
-                        baseUrl = settings.llmLyricsBaseUrl,
-                        apiKey = settings.llmLyricsApiKey,
-                        model = settings.llmLyricsModel,
-                        thinkingEnabled = settings.llmLyricsThinkingEnabled,
-                    ).takeIf { it.isConfigured }
+                    // The same snapshot the translation call builds. A bare constructor here left
+                    // thinkingFormat/effort at their defaults, so the request carried neither
+                    // `thinking.type` nor `reasoning_effort` and the server fell back to its own
+                    // reasoning default (minutes per answer) even with 「推理」 switched off.
+                    LlmLyricsConfig.fromSettings(settings).takeIf { it.isConfigured }
                 }
             },
             cacheRead = { id, hash, counts, config -> boundaryCache?.read(id, hash, counts, config) },
@@ -464,16 +463,15 @@ internal fun createAutoLyricsRuntime(
     run {
         // One line at start-up: whether the chain exists at all, and what the two gates said then.
         val settings = configuration()
-        val configured = LlmLyricsConfig(
-            baseUrl = settings.llmLyricsBaseUrl,
-            apiKey = settings.llmLyricsApiKey,
-            model = settings.llmLyricsModel,
-            thinkingEnabled = settings.llmLyricsThinkingEnabled,
-        ).isConfigured
+        val snapshot = LlmLyricsConfig.fromSettings(settings)
+        val configured = snapshot.isConfigured
         android.util.Log.i(
             "AMPP-Bndry",
             "bndry ready enabled=" + settings.llmPronunciationBoundaryEnabled +
-                " configured=" + configured,
+                " configured=" + configured +
+                " format=" + snapshot.thinkingFormat +
+                " effort=" + snapshot.effectiveThinkingEffort.storageValue +
+                " thinking=" + snapshot.effectiveThinkingEnabled,
         )
     }
     // The custom-lyrics quick path injects an already-configured document without ever entering the

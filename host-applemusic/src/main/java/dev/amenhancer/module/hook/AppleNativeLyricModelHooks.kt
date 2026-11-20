@@ -485,6 +485,23 @@ internal class AppleNativeLyricModelHooks(
     private var wordDecisionSawHidden: Boolean = false
 
     /**
+     * The song whose presentation last dispatched the app's pronunciation payload
+     * onto the live adapter, i.e. the song the adapter's pronunciation-selected
+     * flag (`n1.e`) is known to have been written for.
+     *
+     * The adapter belongs to the **fragment**, not to the model: the flag one
+     * track's payload set is still set when the next track's rows are built. A
+     * replay decision that reads that inherited value as "this model's rows were
+     * already told" is what lets a previous song's lane decide the next song's
+     * payload — the replay is skipped (`adapterE=already-true`) although
+     * nothing dispatched for the new model. Recorded only for an outcome that
+     * reached the adapter, and reset with the rest of the per-song state on a
+     * track change, so the next track always gets its own replay.
+     */
+    @Volatile
+    private var payloadFlagSongId: Long = 0L
+
+    /**
      * The last value the app's own pronunciation setter pushed (HLE's
      * `PreferencesMonitor.pronunciationSnapshot`). Wins over a cold DataStore read
      * in [AppleLyricsPreferenceReader], so the preference hook's result is visible
@@ -1954,6 +1971,11 @@ internal class AppleNativeLyricModelHooks(
                 fragment = fragment,
                 hasConfirmedOfficialLane = payloadLane.confirmed,
                 pronunciationSelected = state.pronunciationSelected,
+                // The adapter flag belongs to the fragment, so a value the
+                // previous track left behind is not this model's evidence: only a
+                // dispatch recorded for this song may turn the replay into a
+                // no-op.
+                flagConfirmedForModel = payloadFlagSongId == state.songId,
             )
         }.getOrElse { error ->
             log("online-translation presentation-refresh pronunciation payload failed: ${error.message}")
@@ -1963,6 +1985,14 @@ internal class AppleNativeLyricModelHooks(
                 before = false,
                 after = false,
             )
+        }
+        // The replay is recorded per song: an outcome that reached the adapter
+        // makes the next attempt for this same model a no-op (already-true),
+        // while the next track is still free to dispatch its own.
+        if (payload.outcome == PronunciationPayloadOutcome.DISPATCHED ||
+            payload.outcome == PronunciationPayloadOutcome.ALREADY_TRUE
+        ) {
+            payloadFlagSongId = state.songId
         }
         // A payload-only attempt has no re-presentation to succeed: it latches
         // when the payload surface was reachable at all, and keeps the
@@ -2235,6 +2265,14 @@ internal class AppleNativeLyricModelHooks(
             // previous track's ask (the hard per-song bound).
             wordReadyKey = null
             wordDecisionSawHidden = false
+            // The refresh bookkeeping and the payload flag are per presentation as
+            // well: an accepted-but-unapplied ask for the previous track must not
+            // be re-dispatched onto this model by the binding seam, and the flag
+            // the previous track's payload wrote on the fragment's adapter is no
+            // evidence that these rows were told.
+            pendingPresentationRefresh = null
+            adapterRetryAttempts = 0
+            payloadFlagSongId = 0L
             // Word-vector item lists belong to the previous model; a new track must
             // never answer a getter from them (weak keys would also eventually drop
             // them, but a track change must be immediate).

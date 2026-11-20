@@ -482,10 +482,12 @@ class NativeLyricModelPolicyTest {
         lane: Boolean,
         selected: Boolean,
         adapterFlag: Boolean?,
+        flagConfirmedForModel: Boolean = true,
     ) = NativeLyricModelPolicy.pronunciationPayloadOutcome(
         hasConfirmedOfficialLane = lane,
         pronunciationSelected = selected,
         adapterPronunciationSelected = adapterFlag,
+        flagConfirmedForModel = flagConfirmedForModel,
     )
 
     /**
@@ -520,6 +522,45 @@ class NativeLyricModelPolicyTest {
         assertEquals(
             PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE,
             payloadOutcome(lane = true, selected = true, adapterFlag = null),
+        )
+    }
+
+    /**
+     * The adapter flag is the fragment's, not the model's: a previous track's
+     * payload leaves it true while the next track's rows are built. A flag that
+     * was not confirmed for the model being presented must therefore dispatch,
+     * otherwise the previous song's lane decides the next song's payload.
+     */
+    @Test
+    fun `a flag left by another track still dispatches the payload`() {
+        assertEquals(
+            PronunciationPayloadOutcome.DISPATCHED,
+            payloadOutcome(
+                lane = true,
+                selected = true,
+                adapterFlag = true,
+                flagConfirmedForModel = false,
+            ),
+        )
+        // The same flag, confirmed for this model, stays a no-op.
+        assertEquals(
+            PronunciationPayloadOutcome.ALREADY_TRUE,
+            payloadOutcome(
+                lane = true,
+                selected = true,
+                adapterFlag = true,
+                flagConfirmedForModel = true,
+            ),
+        )
+        // A false flag dispatches either way.
+        assertEquals(
+            PronunciationPayloadOutcome.DISPATCHED,
+            payloadOutcome(
+                lane = true,
+                selected = true,
+                adapterFlag = false,
+                flagConfirmedForModel = false,
+            ),
         )
     }
 

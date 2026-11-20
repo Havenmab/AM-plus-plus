@@ -911,8 +911,14 @@ object NativeLyricModelPolicy {
      *    user disabled;
      *  - the adapter's flag cannot be read ⇒
      *    [PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE];
-     *  - the flag is already set ⇒
+     *  - the flag is already set **for this model** ⇒
      *    [PronunciationPayloadOutcome.ALREADY_TRUE] (the rows were already told);
+     *  - the flag is set but was written for a different model
+     *    ([flagConfirmedForModel] false) ⇒ the payload is dispatched anyway. The
+     *    adapter belongs to the fragment, not to the model, so a flag the
+     *    previous track's payload left behind is no evidence that the rows built
+     *    for this track were told — reading it as such is what kept a previous
+     *    song's lane from being replayed for the next one;
      *  - otherwise the payload is dispatched.
      *
      * Kept pure so the truth table is JVM-tested; the host resolves the app's
@@ -922,11 +928,13 @@ object NativeLyricModelPolicy {
         hasConfirmedOfficialLane: Boolean,
         pronunciationSelected: Boolean,
         adapterPronunciationSelected: Boolean?,
+        flagConfirmedForModel: Boolean = true,
     ): PronunciationPayloadOutcome = when {
         !hasConfirmedOfficialLane -> PronunciationPayloadOutcome.NOT_AVAILABLE
         !pronunciationSelected -> PronunciationPayloadOutcome.PREFERENCE_OFF
         adapterPronunciationSelected == null -> PronunciationPayloadOutcome.ADAPTER_UNAVAILABLE
-        adapterPronunciationSelected -> PronunciationPayloadOutcome.ALREADY_TRUE
+        adapterPronunciationSelected && flagConfirmedForModel ->
+            PronunciationPayloadOutcome.ALREADY_TRUE
         else -> PronunciationPayloadOutcome.DISPATCHED
     }
 

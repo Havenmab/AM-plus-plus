@@ -75,11 +75,20 @@ internal class AppleLyricsPronunciationPayload(
      * the app's own pronunciation payload. This must run *after* the caller's
      * presentation invoke and adapter rebind, otherwise `F2`'s own `e=false` +
      * payload would undo it.
+     *
+     * [flagConfirmedForModel] exists because the adapter is the **fragment's**,
+     * not the model's: the flag one track's payload set is still set when the
+     * next track's rows are built, and reading that inherited value as "these
+     * rows were already told" skipped the replay for a model nothing had
+     * dispatched for. The host passes false when its recorded dispatch song is
+     * not the one presenting.
      */
     fun apply(
         fragment: Any?,
         hasConfirmedOfficialLane: Boolean,
         pronunciationSelected: Boolean,
+        // True when the flag read below was written for the model presenting.
+        flagConfirmedForModel: Boolean = true,
     ): Result {
         if (!hasConfirmedOfficialLane) {
             return Result(PronunciationPayloadOutcome.NOT_AVAILABLE, null, false, false)
@@ -94,6 +103,7 @@ internal class AppleLyricsPronunciationPayload(
             hasConfirmedOfficialLane = true,
             pronunciationSelected = true,
             adapterPronunciationSelected = before,
+            flagConfirmedForModel = flagConfirmedForModel,
         )
         if (outcome != PronunciationPayloadOutcome.DISPATCHED) {
             val flag = before ?: false

@@ -366,6 +366,12 @@ internal fun EmbeddedSettingsHost.showSettingsDialog(activity: Activity) {
             dialogReference = null
             pageRefresh = null
         }
+        // The toast only carries the message; the frame names the file and the call that failed.
+        android.util.Log.e(
+            "AppleMusicEnhancer",
+            "settings-open failed: " + (error.message ?: error.javaClass.name),
+            error,
+        )
         Toast.makeText(activity, localizedText(ModuleText.SETTINGS_OPEN_FAILED, error.message.orEmpty()), Toast.LENGTH_LONG).show()
     }
 }

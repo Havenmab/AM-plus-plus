@@ -132,7 +132,10 @@ class PronunciationBoundarySession(
         stamp: Long,
         deadline: Long,
     ) {
-        val isCancelled = { !isCurrent(appleMusicId, stamp) || System.nanoTime() >= deadline }
+        // Switching songs must not throw the answer away: the plan is cached under its own song and
+        // the next play installs it without another request. Only shutdown and the per-request budget
+        // stop the call, so a user who skips on still ends up with a cached plan.
+        val isCancelled = { isClosed() || System.nanoTime() >= deadline }
         runCatching {
             val cached = runtime.cacheRead(appleMusicId, kanaHash, tokenCounts, config)
             if (cached != null) {
@@ -141,7 +144,7 @@ class PronunciationBoundarySession(
                 return@runCatching
             }
             val lines = ArrayList<PronunciationBoundary.BoundaryLine>(request.lines.size)
-            for (slice in PronunciationBoundary.slices(request)) {
+            for (slice in PronunciationBoundary.slices(request, maxLinesPerRequest = LINES_PER_REQUEST)) {
                 if (isCancelled()) return@runCatching
                 log(
                     "bndry llm request song=" + appleMusicId +
@@ -157,7 +160,10 @@ class PronunciationBoundarySession(
                 val content = attempt(slice, config, isCancelled)
                 val elapsedMs = (System.nanoTime() - started) / NANOS_PER_MILLI
                 if (content == null) {
-                    log("bndry llm failed song=" + appleMusicId + " reason=request-failed")
+                    log(
+                        "bndry llm failed song=" + appleMusicId + " reason=request-failed" +
+                            " ms=" + elapsedMs,
+                    )
                     return@runCatching
                 }
                 if (content.isBlank()) {
@@ -216,7 +222,9 @@ class PronunciationBoundarySession(
         stamp: Long,
         lines: List<PronunciationBoundary.BoundaryLine>,
     ) {
-        if (!isCurrent(appleMusicId, stamp)) return
+        // The store is keyed by line key and the splice only reads it, so a plan that finished after
+        // the user moved on is still worth installing: coming back to the song then costs nothing.
+        if (isClosed()) return
         if (!store.install(appleMusicId.toString(), lines)) return
         runtime.log("boundary installed lines=" + lines.size)
         runCatching { runtime.onInstalled(appleMusicId) }
@@ -234,6 +242,9 @@ class PronunciationBoundarySession(
         !closed && generation == stamp && activeSongId == appleMusicId
     }
 
+    /** Whether the module has shut the chain down; the only cancellation a plan may not survive. */
+    private fun isClosed(): Boolean = synchronized(lock) { closed }
+
     /** Still here so a later batch can assert the budget without touching internals. */
     fun callCount(): Int = calls.get()
 
@@ -249,10 +260,26 @@ class PronunciationBoundarySession(
     }
 
     private companion object {
-        const val MAX_CALLS_PER_SESSION = 20
+        /** With sixteen lines a call, a three-song session needs well over twenty. */
+        const val MAX_CALLS_PER_SESSION = 40
+        /**
+         * Lines per request.
+         *
+         * The document may keep [PronunciationBoundary.MAX_LINES_PER_REQUEST] lines, but one call
+         * carrying sixty of them is a large prompt on a small model and regularly outlived the user's
+         * patience. Sixteen lines keep every call short enough that the answer arrives while the song
+         * is still playing, and the plan is cached per slice like before.
+         */
+        const val LINES_PER_REQUEST = 16
         const val RETRY_DELAY_MS = 2_000L
-        /** The client's own total timeout is 60s; the session allows five more before giving up. */
-        const val TOTAL_TIMEOUT_MS = 65_000L
+        /**
+         * The whole plan's budget, across its slices.
+         *
+         * It has to cover several 16-line calls on a slow endpoint: a self-hosted gateway regularly
+         * answers a small prompt in twenty seconds, and one song is three to five slices. The
+         * per-request ceiling stays the client's own 300s.
+         */
+        const val TOTAL_TIMEOUT_MS = 180_000L
         const val NANOS_PER_MILLI = 1_000_000L
     }
 }

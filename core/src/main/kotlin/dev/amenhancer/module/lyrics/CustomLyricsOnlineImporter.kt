@@ -25,8 +25,12 @@ class CustomLyricsOnlineImporter(
         if (appleMusicId <= 0L) return CustomLyricsOnlineImportResult.Failed(ModuleText.MUSIC_ID_POSITIVE_REQUIRED.text())
         val fetched = runCatching { fetchAmll(appleMusicId) }.getOrNull()
             ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.AMLL_TTML_MISSING.text())
-        // AMLL serves its own TTML format; reformat it before Apple's parser sees it.
-        val conversion = AmllTtmlFormatConverter.toAppleFormat(fetched)
+        // AMLL serves its own TTML format; reformat it before Apple's parser sees
+        // it, and drop a line-level pronunciation lane a Word-timed body can never
+        // render.
+        val conversion = AppleTransliterationLaneSanitizer.sanitizeConversion(
+            AmllTtmlFormatConverter.toAppleFormat(fetched),
+        )
         val ttml = conversion.ttml.takeIf(TtmlInputPolicy::isAcceptable)
             ?: return CustomLyricsOnlineImportResult.Failed(ModuleText.AMLL_TTML_MISSING.text())
         return CustomLyricsOnlineImportResult.Imported(

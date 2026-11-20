@@ -110,7 +110,12 @@ class CustomLyricsOnlineImporterTest {
                 "<translation type=\"subtitle\" xml:lang=\"zh-Hans\"><text for=\"L1\">T1</text>",
             ),
         )
-        assertTrue(imported.ttml.contains("<transliteration xml:lang=\"und-Latn\"><text for=\"L1\">R1</text>"))
+        // The reported bug shape, end to end: the body is Word-timed, so the app
+        // lays the song out from the word getter alone and never reads the
+        // per-line text. A line-level reading therefore names a lane it would
+        // advertise, select and never draw, and the import does not carry it.
+        assertFalse(imported.ttml.contains("<transliterations"))
+        assertFalse(imported.ttml.contains("R1"))
         assertTrue(TtmlInputPolicy.isAcceptable(imported.ttml))
     }
 

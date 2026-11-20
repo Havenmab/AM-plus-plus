@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
+import dev.amenhancer.module.lyrics.AppleTransliterationLaneSanitizer
 import dev.amenhancer.module.lyrics.CustomLyricsFilePolicy
 import dev.amenhancer.module.lyrics.CustomLyricsFileReader
 import dev.amenhancer.module.lyrics.online.TrackScopedDiagnostics
@@ -163,6 +164,14 @@ internal class AppleMusicCustomLyricsTarget(
             },
             logger = ModernXposedRuntime::log,
         )
+        // The one seam every submitted document passes through — the user's own
+        // file, an automatic candidate and an LLM replacement are all parsed
+        // here before the app ever sees them. Filtering the pipeline instead
+        // would miss a document already stored (or cached) before the rule
+        // existed, so the parse input is what gets the rule applied.
+        val parseDeliverable: (String) -> Any? = { ttml ->
+            parser.parse(AppleTransliterationLaneSanitizer.sanitize(ttml))
+        }
         registration.onClose { preparationExecutor.shutdownNow() }
         val fileReader = CustomLyricsFileReader { fileId ->
             config.openFile(fileId)?.let { input ->
@@ -234,7 +243,7 @@ internal class AppleMusicCustomLyricsTarget(
                 )
             },
             readTtml = readCustomTtml,
-            parseTtml = parser::parse,
+            parseTtml = parseDeliverable,
             onDocument = { id, ttml ->
                 LyricsPronunciationCentringBridge.reportDocument(id, ttml)
             },
@@ -338,7 +347,7 @@ internal class AppleMusicCustomLyricsTarget(
                     }
                 },
                 cache = runtime.cache,
-                parseTtml = parser::parse,
+                parseTtml = parseDeliverable,
                 isAlive = parser::isAlive,
                 verifyPtr = parser::isValid,
                 readAdamId = parser::adamIdOf,
@@ -379,7 +388,7 @@ internal class AppleMusicCustomLyricsTarget(
         llmSession = autoLyricsRuntime?.llm?.let { runtime ->
             LlmLyricsReplacementSession(
                 runtime = runtime,
-                parseTtml = parser::parse,
+                parseTtml = parseDeliverable,
                 isAlive = parser::isAlive,
                 verifyPtr = parser::isValid,
                 readAdamId = parser::adamIdOf,
@@ -488,7 +497,11 @@ internal class AppleMusicCustomLyricsTarget(
                 // Only the document's own lanes are published: the chain that produced the
                 // candidate already enriched it, and `adjusted` is the pointer being submitted,
                 // so re-running the enricher would only race a second pointer against it.
-                val laneDocument = displayRaw ?: raw
+                // The lane document is published into the native overlay and read
+                // back by the module's own getters, so it carries the same rule as
+                // what Apple parses: a reading it cannot render must not gate the
+                // pronunciation row on.
+                val laneDocument = (displayRaw ?: raw)?.let(AppleTransliterationLaneSanitizer::sanitize)
                 if (laneDocument != null && source != CustomLyricsSources.AM_NATIVE) {
                     // The boundary planner only ever saw the manual custom document
                     // (CustomLyricsReplacementSession.onDocument). Online candidates are
@@ -538,7 +551,7 @@ internal class AppleMusicCustomLyricsTarget(
             controls.onSongChanged(currentSong.current()?.details?.appleMusicId)
             registration.onClose(controls.bind(
                 prepare = { id, ttml ->
-                    parser.parse(ttml)?.takeIf { payload ->
+                    parseDeliverable(ttml)?.takeIf { payload ->
                         parser.isValid(payload) && parser.bindAdamId(payload, id) && parser.adamIdOf(payload) == id
                     }
                 },

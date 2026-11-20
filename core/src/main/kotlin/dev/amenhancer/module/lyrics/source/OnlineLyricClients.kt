@@ -6,6 +6,7 @@ import dev.amenhancer.module.hook.AutoLyricsCandidate
 import dev.amenhancer.module.hook.AutoLyricsTimingPolicy
 import dev.amenhancer.module.hook.TtmlTimingPolicy
 
+import dev.amenhancer.module.lyrics.AppleTransliterationLaneSanitizer
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.AmllTtmlFormatConverter
 import dev.amenhancer.module.model.CustomLyricsSources
@@ -211,7 +212,14 @@ class AutoLyricsSourceResolver(
         ): AutoLyricsSourceResolver = AutoLyricsSourceResolver(
             leading + listOf(
                 AutoLyricsSource(CustomLyricsSources.AMLL, presenceId = LyricPresence.AMLL) { raw ->
-                    amll.fetch(raw)?.let { AmllTtmlFormatConverter.toAppleFormat(it).ttml }
+                    // Converted and filtered in one step: a line-level reading on a
+                    // Word-timed body is a pronunciation lane the app advertises
+                    // and selects but can never draw.
+                    amll.fetch(raw)?.let {
+                        AppleTransliterationLaneSanitizer.sanitizeConversion(
+                            AmllTtmlFormatConverter.toAppleFormat(it),
+                        ).ttml
+                    }
                 },
                 AutoLyricsSource(
                     CustomLyricsSources.LUNABEAT,

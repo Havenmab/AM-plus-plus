@@ -202,7 +202,14 @@ class CustomLyricsUpdateCoordinator(
         ) { id, raw ->
             val entry = entriesById.getValue(id)
             val ttml = raw?.let {
-                runCatching { AmllTtmlFormatConverter.toAppleFormat(it).ttml }.getOrNull()
+                runCatching {
+                    // The library holds what the app will parse, so the lane rule
+                    // belongs here too: a line-level reading on a Word-timed body
+                    // is a pronunciation lane the app advertises and never draws.
+                    AppleTransliterationLaneSanitizer.sanitizeConversion(
+                        AmllTtmlFormatConverter.toAppleFormat(it),
+                    ).ttml
+                }.getOrNull()
             }
             if (ttml == null) {
                 record(

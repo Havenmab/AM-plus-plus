@@ -490,6 +490,12 @@ internal class AppleMusicCustomLyricsTarget(
                 // so re-running the enricher would only race a second pointer against it.
                 val laneDocument = displayRaw ?: raw
                 if (laneDocument != null && source != CustomLyricsSources.AM_NATIVE) {
+                    // The boundary planner only ever saw the manual custom document
+                    // (CustomLyricsReplacementSession.onDocument). Online candidates are
+                    // submitted by this same pipeline but never enter that session, so
+                    // the planner was never asked for a song the user actually plays
+                    // from AMLL/AM-Lyrics/Lunabeat: no request, no plan, no splice.
+                    LyricsPronunciationCentringBridge.reportDocument(id, laneDocument)
                     customCompletion?.publishDisplayedLanes(
                         appleMusicId = id,
                         revision = "$source#" + laneDocument.hashCode(),

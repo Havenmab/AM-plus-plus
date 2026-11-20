@@ -98,6 +98,29 @@ internal class EmbeddedContentManager(
 
     fun listLyrics(): List<CustomLyricsEntry> = lyricsManifest().entries
 
+    /**
+     * Settings-editor save (「歌词管理 → 添加/编辑」).
+     *
+     * Whatever source the body was imported from, a body the user saved in the
+     * editor is their own configuration: it has to land in the manual index that
+     * [listLyrics] reports and that the manual playback lane reads. Upstream
+     * 1.6.9 files third-party sources into [sourceCache] instead, so routing the
+     * editor through plain [saveLyrics] saved the body as an invisible provider
+     * candidate: the toast said "saved" while 「已配置」 stayed at 0.
+     */
+    fun saveManualLyrics(
+        draft: CustomLyricsMultiIdDraft,
+        replacingAppleMusicIds: List<Long> = emptyList(),
+    ): CustomLyricsBatchSaveResult = saveLyrics(
+        draft = draft.copy(
+            source = CustomLyricsSources.MANUAL,
+            // The user wrote or adopted this document; the automatic refresh
+            // must not convert over it.
+            userEdited = true,
+        ),
+        replacingAppleMusicIds = replacingAppleMusicIds,
+    )
+
     /** Reads and verifies the TTML body; disabled entries remain readable for editing. */
     fun readLyrics(appleMusicId: Long): String? = synchronized(mutationLock) {
         val entry = sourceCache.manualEntry(appleMusicId) ?: return@synchronized null

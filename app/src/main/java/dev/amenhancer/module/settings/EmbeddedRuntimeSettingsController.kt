@@ -84,10 +84,15 @@ internal class EmbeddedRuntimeSettingsController(
         replacingAppleMusicId: Long?,
     ): EmbeddedActionResult = content.saveLyrics(draft, replacingAppleMusicId).toActionResult()
 
+    /**
+     * The editor's 保存 always writes the manual index: the user is editing the
+     * list they are looking at, so an imported body must not be filed as an
+     * automatic provider candidate behind their back.
+     */
     override fun saveLyrics(
         draft: CustomLyricsMultiIdDraft,
         replacingAppleMusicIds: List<Long>,
-    ): EmbeddedActionResult = content.saveLyrics(draft, replacingAppleMusicIds).toActionResult()
+    ): EmbeddedActionResult = content.saveManualLyrics(draft, replacingAppleMusicIds).toActionResult()
 
     override fun setLyricsEnabled(appleMusicId: Long, enabled: Boolean): EmbeddedActionResult =
         content.setLyricsEnabled(appleMusicId, enabled).toActionResult(ModuleText.LYRICS_STATE_UPDATED.text())

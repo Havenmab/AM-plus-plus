@@ -524,12 +524,18 @@ class PronunciationBoundaryTest {
         assertTrue(prompt.contains("appears exactly once"))
         assertTrue(prompt.contains("only punctuation is a group of its own"))
         assertTrue(prompt.contains("when in doubt, merge"))
-        assertTrue(prompt.contains("ト デ ハ ヲ ニ ガ モ ノ ネ ヨ"))
+        assertTrue(prompt.contains("never a word of its own"))
+        assertTrue(prompt.contains("キミ|ト|ボク"))
         assertTrue(prompt.contains("STRICT JSON only"))
+        // マジカル / トリック / で: the one-kana ト heads the loanword トリック, it is not a
+        // particle. The example used to teach the split reading and the model copied it verbatim.
         assertTrue(
             prompt.contains(
-                "マジカルトリックで | マ(ma) ジ(ji) カ(ka) ル(ru) ト(to) リッ(rik) ク(ku) で(de) => [[0,1,2,3],[4],[5,6],[7]]",
+                "マジカルトリックで | マ(ma) ジ(ji) カ(ka) ル(ru) ト(to) リッ(rik) ク(ku) で(de) => [[0,1,2,3],[4,5,6],[7]]",
             ),
+        )
+        assertTrue(
+            prompt.contains("キミトボクで | キ(ki) ミ(mi) ト(to) ボ(bo) ク(ku) で(de) => [[0,1],[2],[3,4],[5]]"),
         )
         assertTrue(
             prompt.contains(

@@ -98,7 +98,9 @@ class PronunciationBoundarySession(
             runtime.log("bndry skip reason=no-lines song=" + appleMusicId)
             return false
         }
-        val kanaHash = PronunciationBoundaryRequests.kanaHash(request)
+        // The cached plan is keyed by the kana only; a corrected prompt must not keep serving the
+        // groupings the old prompt taught, so the version is part of the key (and the file name).
+        val kanaHash = PronunciationBoundaryRequests.kanaHash(request) + PROMPT_VERSION
         val tokenCounts = PronunciationBoundaryRequests.tokenCounts(request)
         val stamp = synchronized(lock) {
             if (closed) return false
@@ -271,6 +273,12 @@ class PronunciationBoundarySession(
          * is still playing, and the plan is cached per slice like before.
          */
         const val LINES_PER_REQUEST = 16
+
+        /**
+         * Cache-key suffix, bumped whenever [PronunciationBoundary.buildSystemPrompt] changes what it
+         * teaches. v2: the マジカルトリックで example stopped splitting ト out of トリック.
+         */
+        const val PROMPT_VERSION = "-p2"
         const val RETRY_DELAY_MS = 2_000L
         /**
          * The whole plan's budget, across its slices.

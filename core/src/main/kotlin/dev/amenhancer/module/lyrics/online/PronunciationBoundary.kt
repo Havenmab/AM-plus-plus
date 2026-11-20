@@ -332,18 +332,22 @@ Hard constraints:
    lines.
 3. A token that is only punctuation is a group of its own.
 4. Consecutive tokens of the same script are ONE word by default - when in doubt, merge.
-   A katakana particle (ト デ ハ ヲ ニ ガ モ ノ ネ ヨ) standing inside a katakana word is a word of
-   its own, but at the start of a word it is the head of a loanword (トリック, トマト).
+   A one-kana katakana token inside a katakana run is never a word of its own: it is the head of
+   the loanword spelled by the tokens after it (マジカル|トリック|で, 赤い|トマト|を), even when a
+   particle would be written the same way. Split a katakana run only where the line itself writes
+   separate words (space, punctuation, a change of script), or where the particle reading is the
+   only one that makes sense (キミ|ト|ボク = "you and me").
 5. A hiragana particle joins the word in front of it when that reads naturally (いつも, だね,
    だめだめ); it stands alone when it links two phrases (全身|が).
 6. Never leave a token out and never repeat one. If unsure, keep the plain default grouping.
 
 Output: STRICT JSON only, no prose and no code fences:
-{"lines":[{"i":0,"g":[[0,1,2,3],[4],[5,6],[7]]}]}
+{"lines":[{"i":0,"g":[[0,1,2,3],[4,5,6],[7]]}]}
 "g" is the list of groups; each group lists its token indices.
 
 Examples (line text | tokens | groups):
-マジカルトリックで | マ(ma) ジ(ji) カ(ka) ル(ru) ト(to) リッ(rik) ク(ku) で(de) => [[0,1,2,3],[4],[5,6],[7]]
+マジカルトリックで | マ(ma) ジ(ji) カ(ka) ル(ru) ト(to) リッ(rik) ク(ku) で(de) => [[0,1,2,3],[4,5,6],[7]]
+キミトボクで | キ(ki) ミ(mi) ト(to) ボ(bo) ク(ku) で(de) => [[0,1],[2],[3,4],[5]]
 赤いトマトを | 赤(aka) い(i) ト(to) マ(ma) ト(to) を(o) => [[0,1,2,3,4],[5]]
 キラキラ！ | キ(ki) ラ(ra) キ(ki) ラ(ra) ！(!) => [[0,1,2,3],[4]]
 ダメダメ！ | ダ(da) メ(me) ダ(da) メ(me) ！(!) => [[0,1,2,3],[4]]

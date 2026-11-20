@@ -49,10 +49,17 @@ object AppleMusicHostFactory {
         DualPaneResourceHook.install()
         FragmentDualPaneResources.install()
     }
-    /** Auxiliary lyric resource hooks: credits row identity, plus the per-word romanization row. */
+    /**
+     * Auxiliary lyric resource hooks: credits row identity, plus the word-splice reading row.
+     *
+     * The reading's own centring is not registered here any more — the host's pronunciation pair
+     * alignment does it (see [installLyricPronunciationPairAlignment]) — so what is left is the one
+     * placement that is ours: several mora readings spliced into one word, and only where a plan
+     * says so.
+     */
     fun registerLyricAuxiliaryResources() {
         LyricCreditsRowResourceHook.install()
-        LyricsPronunciationRowCentring.install()
+        LyricsPronunciationWordAlignment.install()
     }
     fun installLayoutCallbacks() = LayoutInflationRegistry.install()
     fun registerChromeResources(observer: (View) -> Unit) {

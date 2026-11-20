@@ -9,6 +9,12 @@ import android.widget.TextView
 
 /** Compensate for edge spacing after span centering, before the row reads the child positions. */
 internal fun compensateLyricPronunciationEdges(group: LinearLayout) {
+    // A word the model planned out of several mora readings belongs to the splice: it places every
+    // one of its fragments itself, from the row's own coordinates. Compensating the same group here
+    // would give one reading two writers, and each of them would measure the frame the other wrote.
+    // The predicate is derived from the plan, not from what was written earlier, so the order in
+    // which the two layout callbacks run cannot matter.
+    if (LyricsPronunciationWordAlignment.ownsGroup(group)) return
     if (group.childCount != 2) return
     val top = group.getChildAt(0)
     val bottom = group.getChildAt(1)

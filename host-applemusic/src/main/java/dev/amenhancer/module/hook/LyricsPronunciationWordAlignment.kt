@@ -1,5 +1,7 @@
 package dev.amenhancer.module.hook
 
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.ViewGroup
 import android.widget.TextView
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
@@ -20,8 +22,35 @@ import kotlin.math.roundToInt
  *
  * Nothing else is written: the text, the widths, the container's layout params (except in
  * [ShiftMode.LAYOUT], see below) and Apple's own timing all stay as they are. A block that is not
- * spliced keeps exactly the correction [LyricsPronunciationRowCentring.alignToCoreText] applied
- * before this object existed, because [alignRow] answers false for it.
+ * spliced keeps exactly the layout the host gave it, because [alignRow] answers false for it and
+ * nothing here writes anything else.
+ *
+ * ## What it is, and is not, responsible for
+ *
+ * Centring a reading under its kana is the host's own pair alignment
+ * (`lyrics_pronunciation_vertical_group` → `LyricPronunciationPairAlignment`); this object only
+ * splices, and only where the model planned a word out of several morae. It therefore answers false —
+ * and writes nothing — for every row that has no plan, so a module with the LLM word merge off leaves
+ * the readings to Apple and to the host, unchanged.
+ *
+ * ## Registration and gating
+ *
+ * [install] registers the per-word container itself (`LayoutInflationRegistry`, the same
+ * `lyrics_pronunciation_vertical_group` name the host's pair alignment uses; the registry keeps both
+ * callbacks and runs each once per inflation). The registration is fixed and every callback decides
+ * per pass, like the other lyric presentation hooks: a plan provider that appears, or a plan that
+ * lands for a song already on screen, needs no reinstall. The only gate is [boundaryPlans] — the
+ * provider the app installs when the boundary chain exists — so with no provider every entry point
+ * returns before touching a view.
+ *
+ * ## One writer per reading
+ *
+ * The host compensates pronunciation edges on its own layout callback and the splice places fragments
+ * on its own, so a group must belong to exactly one of them. [ownsGroup] answers that from the plan
+ * (never from what was written before, since the two callbacks run in registration order and a
+ * remembered flag would be a race), and `compensateLyricPronunciationEdges` returns before writing
+ * for a group this object owns. All of the splice's own movement still goes through the module's
+ * single write, [LyricsPronunciationRowGeometry.applyReadingOffset].
  *
  * ## Why the timing survives
  *
@@ -43,8 +72,8 @@ import kotlin.math.roundToInt
  */
 internal object LyricsPronunciationWordAlignment {
 
-    /** The centring hook's tag: this is one feature with one write path, so it logs under one name. */
-    const val LOG_TAG = LyricsPronunciationRowCentring.LOG_TAG
+    /** The row geometry's tag: one feature with one write path, so it logs under one name. */
+    const val LOG_TAG = LyricsPronunciationRowGeometry.LOG_TAG
 
     /** The most kana one visual word may hold; six reads as one word and still fits a row. */
     const val WORD_MAX_KANA = 6
@@ -83,12 +112,15 @@ internal object LyricsPronunciationWordAlignment {
     /** How many distinct lines the one-shot "no plan here" log remembers before it forgets them. */
     const val BOUNDARY_MISS_LOG_LIMIT = 512
 
+    /** The key the one line about a missing provider is remembered under; there is only ever one. */
+    private const val NO_PROVIDER_KEY = "no-provider"
+
     /**
      * A reading this much wider than its own kana is the reading of the **whole** word
      * (`suappu` over `ス`), so its container already ends the word and must not join a
-     * neighbour. Shares [LyricsPronunciationRowCentring.WHOLE_WORD_RATIO]'s threshold on purpose.
+     * neighbour. Shares [LyricsPronunciationRowGeometry.WHOLE_WORD_RATIO]'s threshold on purpose.
      */
-    const val WHOLE_WORD_READING_RATIO = LyricsPronunciationRowCentring.WHOLE_WORD_RATIO
+    const val WHOLE_WORD_READING_RATIO = LyricsPronunciationRowGeometry.WHOLE_WORD_RATIO
 
     /** Katakana particles: a one-character token from this set always ends the word before it. */
     const val KATAKANA_PARTICLE = "トデハヲニガモノネヨ"
@@ -168,7 +200,7 @@ internal object LyricsPronunciationWordAlignment {
 
         /** Whitespace and nothing else: Apple's own word separator. */
         val isBlankOnly: Boolean
-            get() = kana.isNotEmpty() && kana.all { it in LyricsPronunciationRowCentring.EDGE_BLANKS }
+            get() = kana.isNotEmpty() && kana.all { it in LyricsPronunciationRowGeometry.EDGE_BLANKS }
 
         /** Marks and blanks only: shows no reading and never a word (`！`). */
         val isPureMark: Boolean get() = core.isEmpty()
@@ -220,14 +252,14 @@ internal object LyricsPronunciationWordAlignment {
     fun coreText(text: String): String {
         var start = 0
         var end = text.length
-        while (start < end && LyricsPronunciationRowCentring.isEdgeIgnorable(text[start])) start++
-        while (end > start && LyricsPronunciationRowCentring.isEdgeIgnorable(text[end - 1])) end--
+        while (start < end && LyricsPronunciationRowGeometry.isEdgeIgnorable(text[start])) start++
+        while (end > start && LyricsPronunciationRowGeometry.isEdgeIgnorable(text[end - 1])) end--
         return text.substring(start, end)
     }
 
     /** Whether Apple appended whitespace after the word: the source's own word boundary. */
     fun trailingBlank(text: String): Boolean =
-        text.isNotEmpty() && text.last() in LyricsPronunciationRowCentring.EDGE_BLANKS
+        text.isNotEmpty() && text.last() in LyricsPronunciationRowGeometry.EDGE_BLANKS
 
     /** The script of a token's core, or [Script.MIXED] when it spans more than one. */
     fun scriptOf(core: String): Script {
@@ -260,11 +292,15 @@ internal object LyricsPronunciationWordAlignment {
      * can prove. A plan that crosses one of those proofs is refused whole and the rules' own grouping
      * is returned, so [plan] can only ever change a line the rules were guessing about. A null plan
      * takes the rules' path unchanged.
+     *
+     * [log] carries the two decision lines. The ownership question ([ownsGroup]) asks for the same
+     * grouping on every host layout pass, and must not report a plan twice.
      */
     fun group(
         tokens: List<ContainerToken>,
         maxKana: Int = WORD_MAX_KANA,
         plan: PronunciationBoundary.BoundaryLine? = null,
+        log: Boolean = true,
     ): List<Block> {
         // The rules no longer guess word boundaries: with no plan the row keeps Apple's own shape,
         // one container per block, which the splice reads as "nothing to join".
@@ -280,27 +316,31 @@ internal object LyricsPronunciationWordAlignment {
         )
         return when (outcome) {
             is PronunciationBoundary.MergeOutcome.Rejected -> {
-                android.util.Log.i(
-                    LOG_TAG,
-                    "plan rejected reason=" + outcome.error.code + " line=" + plan.lineKey,
-                )
+                if (log) {
+                    android.util.Log.i(
+                        LOG_TAG,
+                        "plan rejected reason=" + outcome.error.code + " line=" + plan.lineKey,
+                    )
+                }
                 baseline
             }
             is PronunciationBoundary.MergeOutcome.Groups -> {
                 val applied = blocksOf(tokens, outcome.groups)
-                android.util.Log.i(
-                    BOUNDARY_LOG_TAG,
-                    "bndry plan apply key=" + plan.lineKey.take(12) +
-                        " tokens=" + tokens.size +
-                        " groups=" + plan.groups.size +
-                        " blocks=" + applied.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex } +
-                        " baseline=" + baseline.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex },
-                )
-                if (outcome.softened.isNotEmpty()) {
+                if (log) {
                     android.util.Log.i(
-                        LOG_TAG,
-                        "plan softened segments=" + outcome.softened + " line=" + plan.lineKey,
+                        BOUNDARY_LOG_TAG,
+                        "bndry plan apply key=" + plan.lineKey.take(12) +
+                            " tokens=" + tokens.size +
+                            " groups=" + plan.groups.size +
+                            " blocks=" + applied.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex } +
+                            " baseline=" + baseline.joinToString(",") { it.firstIndex.toString() + ".." + it.lastIndex },
                     )
+                    if (outcome.softened.isNotEmpty()) {
+                        android.util.Log.i(
+                            LOG_TAG,
+                            "plan softened segments=" + outcome.softened + " line=" + plan.lineKey,
+                        )
+                    }
                 }
                 applied
             }
@@ -391,7 +431,7 @@ internal object LyricsPronunciationWordAlignment {
         measure: (TextView, Int, Int) -> Float = ::measureAdvance,
     ): Float {
         val text = reading.text?.toString().orEmpty()
-        val leading = text.takeWhile(LyricsPronunciationRowCentring::isEdgeIgnorable).length
+        val leading = text.takeWhile(LyricsPronunciationRowGeometry::isEdgeIgnorable).length
         if (leading == 0 || leading >= text.length) return 0f
         return measure(reading, 0, leading)
     }
@@ -400,8 +440,8 @@ internal object LyricsPronunciationWordAlignment {
     fun visibleRange(text: String): IntRange? {
         var start = 0
         var end = text.length
-        while (start < end && LyricsPronunciationRowCentring.isEdgeIgnorable(text[start])) start++
-        while (end > start && LyricsPronunciationRowCentring.isEdgeIgnorable(text[end - 1])) end--
+        while (start < end && LyricsPronunciationRowGeometry.isEdgeIgnorable(text[start])) start++
+        while (end > start && LyricsPronunciationRowGeometry.isEdgeIgnorable(text[end - 1])) end--
         if (start >= end) return null
         return start..(end - 1)
     }
@@ -414,21 +454,157 @@ internal object LyricsPronunciationWordAlignment {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Registration
+    // ---------------------------------------------------------------------------------------
+
+    /** Containers this object already listens to (see [observe]). */
+    private val observed = Collections.synchronizedMap(WeakHashMap<ViewGroup, Unit>())
+
+    /** Readings this object already listens to, keyed weakly by the view itself (see [watchReading]). */
+    private val watchedReadings = Collections.synchronizedMap(WeakHashMap<TextView, Unit>())
+
+    /**
+     * Registers the splice on the per-word container Apple inflates.
+     *
+     * The registration is fixed and every callback decides per pass, like the other lyric
+     * presentation hooks: a plan provider that appears, or a plan that lands for a song already on
+     * screen, needs neither a reinstall nor a lyrics restart. The container name is the same one the
+     * host's pair alignment registers (`lyrics_pronunciation_vertical_group`); the registry keeps
+     * both callbacks and runs each of them once per inflated view.
+     */
+    fun install() {
+        LayoutInflationRegistry.register(LyricsPronunciationRowGeometry.LAYOUT_NAME) { view ->
+            val group = view as? ViewGroup ?: return@register
+            observe(group)
+        }
+    }
+
+    /**
+     * Listens to one container.
+     *
+     * Everything is registered unconditionally and each pass is a no-op while [boundaryPlans] is
+     * null: the provider is installed by the app once the boundary chain exists, which is not
+     * necessarily before the first lyrics inflation, and [reapplyObserved] is what brings the rows
+     * that were inflated before it in line.
+     *
+     * The reading's own text arrives through a future and a reading narrower than its word does not
+     * change the container's bounds, so the reading is watched as well: a container-only trigger
+     * would never see the text that makes a splice possible.
+     */
+    private fun observe(group: ViewGroup) {
+        if (observed.put(group, Unit) != null) return
+        LyricsPronunciationRowGeometry.readingChild(group)?.let { reading -> watchReading(group, reading) }
+        group.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> splice(group) }
+        group.post { splice(group) }
+    }
+
+    /** Re-runs the splice when [reading] gets its text or its size. */
+    private fun watchReading(group: ViewGroup, reading: TextView) {
+        if (watchedReadings.put(reading, Unit) != null) return
+        reading.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> splice(group) }
+        reading.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(text: Editable?) {
+                // The new text is not measured yet, and the row's own layout pass may still be
+                // pending, so try now and again once the queue has run the layout.
+                splice(group)
+                group.post { splice(group) }
+            }
+        })
+    }
+
+    /**
+     * Splices [group]'s row, and nothing at all while the splice has no provider.
+     *
+     * The callback runs on Apple's layout path, so a failure here must never reach the host: it is
+     * contained and reported as one log line.
+     */
+    private fun splice(group: ViewGroup) {
+        if (boundaryPlans == null) return
+        runCatching {
+            val row = LyricsPronunciationRowGeometry.findRowContainer(group) ?: group
+            alignRow(row, group)
+        }.onFailure { error ->
+            android.util.Log.i(LOG_TAG, "splice failed " + (error.message ?: error.javaClass.simpleName))
+        }
+    }
+
+    /**
+     * Re-runs the splice for every container that is still inflated.
+     *
+     * A plan arriving from the model changes how the rows of a song should be grouped, and the rows
+     * that are already laid out were grouped before it arrived. Walking the containers this object
+     * already listens to is the cheapest way to bring them in line: the splice is idempotent, so a
+     * row whose target did not move is not written again, and a row that is no longer inflated has
+     * already fallen out of the weak map.
+     *
+     * Called on the main thread; it never touches the network and never waits for one.
+     */
+    fun reapplyObserved() {
+        if (boundaryPlans == null) return
+        val groups = synchronized(observed) { observed.keys.toList() }
+        for (group in groups) splice(group)
+    }
+
+    /**
+     * Whether this word container is placed by the splice, so the host's own pronunciation
+     * compensation must leave it alone.
+     *
+     * The answer is derived from the same plan [alignRow] uses, never from what was written before:
+     * the host registers a layout listener and this object registers its own, so the two run in
+     * registration order — a remembered "I moved this" flag would be a race between them. A group is
+     * therefore ours as soon as its line has a plan whose block holds more than one reading; with no
+     * provider, no plan, or a block of a single reading, the host keeps the group and centres it.
+     */
+    fun ownsGroup(group: ViewGroup): Boolean =
+        runCatching { planFor(group) }.getOrNull() != null
+
+    // ---------------------------------------------------------------------------------------
     // View layer
     // ---------------------------------------------------------------------------------------
 
     /**
      * Splices [anchor]'s word when it needs splicing, and reports whether it did.
      *
-     * False means "nothing to splice here": the container is alone, its word holds a single reading,
-     * the line is already word-level, or a guard rejected the block. The caller then keeps the
-     * single-container correction, so a row this object cannot help never changes behaviour.
+     * False means "nothing to splice here": no provider, no plan for the line, the container is
+     * alone, its word holds a single reading, or a guard rejected the block. Nothing is written in
+     * that case, so the host's pair alignment keeps the group exactly as upstream lays it out.
      */
     fun alignRow(row: ViewGroup, anchor: ViewGroup): Boolean {
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-        if (containers.size < 2) return false
+        val planned = planRow(row, anchor, log = true) ?: return false
+        return place(row, planned)
+    }
+
+    /** What one splice needs: the row's containers, the line's key and the block the anchor is in. */
+    private class Planned(
+        val containers: List<ViewGroup>,
+        val lineKey: String,
+        val block: Block,
+    )
+
+    /** The plan for [group]'s own row, read the way [alignRow] reads it and without the traces. */
+    private fun planFor(group: ViewGroup): Planned? {
+        val row = LyricsPronunciationRowGeometry.findRowContainer(group) ?: return null
+        return planRow(row, group, log = false)
+    }
+
+    /**
+     * The block [anchor] belongs to, or null when this row has nothing to splice.
+     *
+     * [log] controls the diagnostic lines only: the ownership question the host asks from its own
+     * layout callback must not report the same line twice.
+     */
+    private fun planRow(row: ViewGroup, anchor: ViewGroup, log: Boolean): Planned? {
+        val provider = boundaryPlans
+        if (provider == null) {
+            if (log) logBoundaryOnce(NO_PROVIDER_KEY, "no-provider")
+            return null
+        }
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
+        if (containers.size < 2) return null
         val anchorIndex = containers.indexOf(anchor)
-        if (anchorIndex < 0) return false
+        if (anchorIndex < 0) return null
 
         val tokens = containers.mapIndexed { index, container -> token(container, index) }
         // One key for both lookups: the line's kana join is how a plan and a timing row are found.
@@ -436,26 +612,34 @@ internal object LyricsPronunciationWordAlignment {
         // document's tokens the same way (PronunciationBoundaryRequests.lineKey), so a plan is found
         // as long as both sides strip the same marks and blanks.
         val lineKey = tokens.joinToString("") { it.core }
-        val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
-
-        val provider = boundaryPlans
-        val plan = provider?.invoke(lineKey)
-        if (plan != null) {
+        val plan = provider(lineKey)
+        if (plan == null) {
+            if (log) logBoundaryOnce(lineKey, "no-plan")
+            return null
+        }
+        if (log) {
             android.util.Log.i(
                 BOUNDARY_LOG_TAG,
                 "bndry plan hit key=" + lineKey.take(24) + " groups=" + plan.groups.size,
             )
-        } else {
-            logBoundaryOnce(lineKey, if (provider == null) "no-provider" else "no-plan")
         }
-        val block = blockOf(group(timed, plan = plan), anchorIndex) ?: run {
-            logBoundaryOnce(lineKey + "|anchor", "anchor=" + anchorIndex + " no-block")
-            return false
+        val timed = attachTimings(tokens, lineSpans?.invoke(lineKey))
+        val block = blockOf(group(timed, plan = plan, log = log), anchorIndex) ?: run {
+            if (log) logBoundaryOnce(lineKey + "|anchor", "anchor=" + anchorIndex + " no-block")
+            return null
         }
         if (block.fragments.size < 2) {
-            logBoundaryOnce(block.firstIndex.toString() + "|single", "single-fragment")
-            return false
+            if (log) logBoundaryOnce(block.firstIndex.toString() + "|single", "single-fragment")
+            return null
         }
+        return Planned(containers, lineKey, block)
+    }
+
+    /** Places a planned block's fragments, in one pass, through the single write. */
+    private fun place(row: ViewGroup, planned: Planned): Boolean {
+        val block = planned.block
+        val containers = planned.containers
+        val lineKey = planned.lineKey
         // A silent container inside the block would be skipped by the splice, which would slide every
         // fragment after it off its own kana; a block therefore only splices when every container it
         // covers shows a reading (Apple's whole-word reading in the first container never does).
@@ -475,7 +659,7 @@ internal object LyricsPronunciationWordAlignment {
 
         val moves = ArrayList<Pair<ContainerToken, TextView>>(block.fragments.size)
         for (fragment in block.fragments) {
-            val reading = LyricsPronunciationRowCentring.shownReading(containers[fragment.index]) ?: return false
+            val reading = LyricsPronunciationRowGeometry.shownReading(containers[fragment.index]) ?: return false
             if (!isLeftToRight(fragment.readingCore)) return false
             if (reading.width <= 0) return false
             moves += fragment to reading
@@ -483,7 +667,7 @@ internal object LyricsPronunciationWordAlignment {
         val geometry = moves.map { (fragment, reading) ->
             FragmentGeometry(
                 index = fragment.index,
-                leftInRow = LyricsPronunciationRowCentring.leftIn(row, reading).toFloat(),
+                leftInRow = LyricsPronunciationRowGeometry.leftIn(row, reading).toFloat(),
                 width = reading.width.toFloat(),
                 visibleWidth = fragmentAdvance(reading),
                 leadingInset = leadingInset(reading),
@@ -507,12 +691,14 @@ internal object LyricsPronunciationWordAlignment {
 
         for ((fragment, reading) in moves) {
             val target = splice.targetLefts[fragment.index] ?: return false
-            LyricsPronunciationRowCentring.applyReadingOffset(row, reading, shiftMode, target)
+            LyricsPronunciationRowGeometry.applyReadingOffset(row, reading, shiftMode, target)
+            // A fragment's text can still arrive after this pass put it in place; watching it keeps
+            // the block flush when it does.
+            watchReading(containers[fragment.index], reading)
         }
         android.util.Log.i(
             BOUNDARY_LOG_TAG,
             "align run key=" + lineKey.take(12) +
-                " plan=" + (plan != null) +
                 " blocks=" + block.firstIndex + ".." + block.lastIndex +
                 " span=" + span.left + ".." + span.right +
                 " shifts=" + moves.size,
@@ -539,9 +725,9 @@ internal object LyricsPronunciationWordAlignment {
         for (token in block.fragments) {
             val container = containers[token.index]
             if (pinned.put(container, Unit) != null) continue
-            val glyphs = LyricsPronunciationRowCentring.wordChunks(
+            val glyphs = LyricsPronunciationRowGeometry.wordChunks(
                 container,
-                LyricsPronunciationRowCentring.shownReading(container),
+                LyricsPronunciationRowGeometry.shownReading(container),
             )
             if (glyphs.isEmpty()) continue
             val glyphWidth = glyphs.fold(0f) { total, chunk -> total + chunk.width } +
@@ -590,10 +776,10 @@ internal object LyricsPronunciationWordAlignment {
 
     /** The values the rules read, taken from one inflated container. */
     fun token(container: ViewGroup, index: Int): ContainerToken {
-        val reading = LyricsPronunciationRowCentring.shownReading(container)
+        val reading = LyricsPronunciationRowGeometry.shownReading(container)
         // The reading view must be excluded by identity: a container built without Apple's ids is
         // recognised by shape only, and there the reading is just another text child.
-        val glyphs = LyricsPronunciationRowCentring.wordChunks(container, reading)
+        val glyphs = LyricsPronunciationRowGeometry.wordChunks(container, reading)
         val kana = glyphs.fold("") { text, chunk -> text + chunk.text.toString() }
         val glyphWidth = glyphs.fold(0f) { total, chunk -> total + chunk.width }
         val wholeWord = reading != null && glyphWidth > 0f &&
@@ -616,26 +802,26 @@ internal object LyricsPronunciationWordAlignment {
         if (firstIndex !in containers.indices || lastIndex !in containers.indices) return null
         val first = containers[firstIndex]
         val last = containers[lastIndex]
-        val firstGlyphs = LyricsPronunciationRowCentring.wordChunks(
+        val firstGlyphs = LyricsPronunciationRowGeometry.wordChunks(
             first,
-            LyricsPronunciationRowCentring.shownReading(first),
+            LyricsPronunciationRowGeometry.shownReading(first),
         )
-        val lastGlyphs = LyricsPronunciationRowCentring.wordChunks(
+        val lastGlyphs = LyricsPronunciationRowGeometry.wordChunks(
             last,
-            LyricsPronunciationRowCentring.shownReading(last),
+            LyricsPronunciationRowGeometry.shownReading(last),
         )
         if (firstGlyphs.isEmpty() || lastGlyphs.isEmpty()) return null
         val firstText = firstGlyphs.fold("") { text, chunk -> text + chunk.text.toString() }
         val lastText = lastGlyphs.fold("") { text, chunk -> text + chunk.text.toString() }
-        val left = LyricsPronunciationRowCentring.advanceFromStart(
+        val left = LyricsPronunciationRowGeometry.advanceFromStart(
             row,
             firstGlyphs,
-            LyricsPronunciationRowCentring.leadingEdge(firstText).length,
+            LyricsPronunciationRowGeometry.leadingEdge(firstText).length,
         )
-        val right = LyricsPronunciationRowCentring.retreatFromEnd(
+        val right = LyricsPronunciationRowGeometry.retreatFromEnd(
             row,
             lastGlyphs,
-            LyricsPronunciationRowCentring.trailingEdge(lastText).length,
+            LyricsPronunciationRowGeometry.trailingEdge(lastText).length,
         )
         if (right <= left) return null
         return Span(left, right)

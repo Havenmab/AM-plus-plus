@@ -10,7 +10,6 @@ import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,11 +18,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * The rules and the geometry of the word-form splice, plus the single write path it shares with
- * [LyricsPronunciationRowCentring].
+ * The rules and the geometry of the word-form splice, and the single write path it goes through.
  *
- * The fixtures are laid out with explicit widths, like the centring tests, so nothing here depends on
- * a font's metrics: every expected number is arithmetic on the fixture's own widths.
+ * The fixtures are laid out with explicit widths so nothing here depends on a font's metrics: every
+ * expected number is arithmetic on the fixture's own widths.
+ *
+ * The reading's own centring is not covered here any more — it is the host's pronunciation pair
+ * alignment (see `LyricPronunciationPairAlignment`), not this module's — so a case that only asserted
+ * the old per-container correction is gone. What remains is what this module still decides: which
+ * containers form one word, where its fragments go, and which writer owns a group.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE)
@@ -33,8 +36,8 @@ class LyricsPronunciationWordAlignmentTest {
         "host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricsPronunciationWordAlignment.kt",
     )
 
-    private val centringSource = projectFile(
-        "host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricsPronunciationRowCentring.kt",
+    private val geometrySource = projectFile(
+        "host-applemusic/src/main/java/dev/amenhancer/module/hook/LyricsPronunciationRowGeometry.kt",
     )
 
     // ---- 1. one word out of three readings --------------------------------------------------------
@@ -67,20 +70,12 @@ class LyricsPronunciationWordAlignmentTest {
 
 
 
-    // ---- 3/4. single-reading blocks fall back to the old correction --------------------------------
-
-    @Test
-    fun `a reading and its mark in one container keep the single container correction`() {
-        val row = karaokeRow(word(listOf("の", "?"), "no"))
-        val group = row.getChildAt(0) as LinearLayout
-        val reading = LyricsPronunciationRowCentring.readingChild(group)!!
-
-        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, group))
-        assertEquals(0f, reading.translationX, 0.001f)
-        // the fallback still pulls the reading off the mark, exactly as before the splice existed:
-        // half of the mark the container carries, which is 50px wide here
-        assertEquals(-50f, LyricsPronunciationRowCentring.readingShift(row, group, reading), 0.5f)
-    }
+    // ---- 3/4. single-reading blocks are left to the host -----------------------------------------
+    //
+    // The case that used to live here ("a reading and its mark in one container keep the single
+    // container correction") is gone on purpose: it asserted the per-container shift this module no
+    // longer computes. Centring a lone reading under its kana is the host's pair alignment now, so
+    // the only thing left to assert is that the splice keeps its hands off such a container.
 
     @Test
     fun `a whole word reading over silent containers is not spliced`() {
@@ -89,10 +84,17 @@ class LyricsPronunciationWordAlignmentTest {
             word(listOf("アップ"), null),
             word(listOf("！"), null),
         )
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-
-        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
-        assertEquals(0f, readingOf(row, 0).translationX, 0.001f)
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
+        // Even a plan that asks for all three leaves this row alone: the whole-word reading is a hard
+        // boundary of its own, so the plan is refused and each container stays a block.
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..2))
+        LyricsPronunciationWordAlignment.boundaryPlans = { plan }
+        try {
+            assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+            assertEquals(0f, readingOf(row, 0).translationX, 0.001f)
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
     }
 
     // ---- 5. hiragana word with particles ----------------------------------------------------------
@@ -145,22 +147,28 @@ class LyricsPronunciationWordAlignmentTest {
             word(listOf("ス"), "su", readingWidth = 0),
             word(listOf("ア"), "a", readingWidth = 0),
         )
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
-
-        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..1))
+        LyricsPronunciationWordAlignment.boundaryPlans = { plan }
+        try {
+            assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+            assertEquals(0f, readingOf(row, 0).translationX, 0.001f)
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
     }
 
     // ---- 9. one write site for each shift mode ----------------------------------------------------
 
     @Test
     fun `the reading position has one write site and the mode decides it`() {
-        // Every write lives in the centring hook's single helper; the alignment object writes nothing.
-        assertEquals(1, Regex("""\.translationX\s*=(?!=)""").findAll(centringSource).count())
-        assertEquals(1, Regex("""\.offsetLeftAndRight\(""").findAll(centringSource).count())
+        // Every write lives in the row geometry's single helper; the splice itself writes nothing.
+        assertEquals(1, Regex("""\.translationX\s*=(?!=)""").findAll(geometrySource).count())
+        assertEquals(1, Regex("""\.offsetLeftAndRight\(""").findAll(geometrySource).count())
         assertEquals(0, Regex("""\.translationX\s*=(?!=)""").findAll(alignmentSource).count())
         assertEquals(0, Regex("""\.offsetLeftAndRight\(""").findAll(alignmentSource).count())
         // The helper switches on the mode, and both arms sit inside it.
-        val helper = centringSource.substringAfter("fun applyReadingOffset(").substringBefore("fun advanceFromStart(")
+        val helper = geometrySource.substringAfter("fun applyReadingOffset(").substringBefore("fun leftIn(")
         assertTrue(helper.contains("ShiftMode.TRANSLATION"))
         assertTrue(helper.contains("ShiftMode.LAYOUT"))
         assertTrue(helper.indexOf("ShiftMode.TRANSLATION") < helper.indexOf(".translationX"))
@@ -174,7 +182,7 @@ class LyricsPronunciationWordAlignmentTest {
     fun `the hook never writes a view tag`() {
         // DataBinding owns the container's tag and rejects a foreign one, which crashed the lyrics
         // screen once already; the bookkeeping is keyed off the views themselves instead.
-        listOf(alignmentSource, centringSource).forEach { source ->
+        listOf(alignmentSource, geometrySource).forEach { source ->
             assertFalse(source.contains(".tag ="))
             assertFalse(source.contains("setTag("))
         }
@@ -193,7 +201,7 @@ class LyricsPronunciationWordAlignmentTest {
     @Test
     fun `the row asks the plan provider for the line key`() {
         val row = karaokeRow(word(listOf("ア"), "a"), word(listOf("イ"), "i"))
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
         val asked = ArrayList<String>()
         LyricsPronunciationWordAlignment.boundaryPlans = { key ->
             asked += key
@@ -272,7 +280,7 @@ class LyricsPronunciationWordAlignmentTest {
     @Test
     fun aPlanDrivesTheSpliceAcrossThreeReadings() {
         val row = karaokeRow(word(listOf("ス"), "su"), word(listOf("ア"), "a"), word(listOf("ッ"), "ppu"))
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
         val key = containers.joinToString("") { "" }
         val plan = PronunciationBoundary.BoundaryLine(key, listOf(0..2))
         LyricsPronunciationWordAlignment.boundaryPlans = { plan }
@@ -290,7 +298,7 @@ class LyricsPronunciationWordAlignmentTest {
     @Test
     fun aSecondPassWritesTheSameOffsets() {
         val row = karaokeRow(word(listOf("ス"), "su"), word(listOf("ア"), "a"), word(listOf("ッ"), "ppu"))
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
         val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..2))
         LyricsPronunciationWordAlignment.boundaryPlans = { plan }
         try {
@@ -308,18 +316,74 @@ class LyricsPronunciationWordAlignmentTest {
     @Test
     fun aSplicedWordKeepsItsFragmentsFlush() {
         val row = karaokeRow(word(listOf("お"), "o"), word(listOf("は"), "ha"), word(listOf("よ"), "yo"), word(listOf("う"), "u"))
-        val containers = LyricsPronunciationRowCentring.wordContainers(row)
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
         val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..3))
         LyricsPronunciationWordAlignment.boundaryPlans = { plan }
         try {
             assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
             val lefts = (0..3).map { index ->
-                LyricsPronunciationRowCentring.leftIn(row, readingOf(row, index)) + readingOf(row, index).translationX
+                LyricsPronunciationRowGeometry.leftIn(row, readingOf(row, index)) + readingOf(row, index).translationX
             }
             println("[plan-test] flush lefts=" + lefts)
             (1 until lefts.size).forEach { index ->
                 assertEquals(80f, lefts[index] - lefts[index - 1], 0.5f)
             }
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
+    }
+
+    // ---- who owns a group -------------------------------------------------------------------------
+
+    @Test
+    fun `a plan owns every group it splices and the host keeps the rest`() {
+        val row = karaokeRow(word(listOf("ス"), "su"), word(listOf("ア"), "a"), word(listOf("ッ"), "ppu"))
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
+
+        // No provider: nothing here writes and nothing here is ours, so the host centres all three.
+        assertFalse(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+        (0..2).forEach { index -> assertEquals(0f, readingOf(row, index).translationX, 0.001f) }
+        assertFalse(LyricsPronunciationWordAlignment.ownsGroup(containers[0]))
+        assertFalse(LyricsPronunciationWordAlignment.ownsGroup(containers[1]))
+        assertFalse(LyricsPronunciationWordAlignment.ownsGroup(containers[2]))
+
+        // A plan that keeps ス on its own: one reading cannot be spliced, so that group stays the
+        // host's and only the other two become ours.
+        val split = PronunciationBoundary.BoundaryLine("line", listOf(0..0, 1..2))
+        LyricsPronunciationWordAlignment.boundaryPlans = { split }
+        try {
+            assertFalse(LyricsPronunciationWordAlignment.ownsGroup(containers[0]))
+            assertTrue(LyricsPronunciationWordAlignment.ownsGroup(containers[1]))
+            assertTrue(LyricsPronunciationWordAlignment.ownsGroup(containers[2]))
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
+
+        // A plan that joins all three hands the whole run to the splice.
+        val whole = PronunciationBoundary.BoundaryLine("line", listOf(0..2))
+        LyricsPronunciationWordAlignment.boundaryPlans = { whole }
+        try {
+            assertTrue(LyricsPronunciationWordAlignment.ownsGroup(containers[0]))
+        } finally {
+            LyricsPronunciationWordAlignment.boundaryPlans = null
+        }
+    }
+
+    @Test
+    fun `the host compensation leaves a group the splice owns untouched`() {
+        // One reading, one writer: the host's edge compensation asks ownsGroup before it writes and
+        // returns for a spliced group, so that group's children keep the frames the splice placed.
+        val row = karaokeRow(word(listOf("ス"), "su"), word(listOf("ア"), "a"), word(listOf("ッ"), "ppu"))
+        val containers = LyricsPronunciationRowGeometry.wordContainers(row)
+        val plan = PronunciationBoundary.BoundaryLine("line", listOf(0..2))
+        LyricsPronunciationWordAlignment.boundaryPlans = { plan }
+        try {
+            assertTrue(LyricsPronunciationWordAlignment.alignRow(row, containers[0]))
+            val group = containers[0] as LinearLayout
+            val before = (0 until group.childCount).map { group.getChildAt(it).left }
+            compensateLyricPronunciationEdges(group)
+            val after = (0 until group.childCount).map { group.getChildAt(it).left }
+            assertEquals(before, after)
         } finally {
             LyricsPronunciationWordAlignment.boundaryPlans = null
         }
@@ -433,7 +497,7 @@ class LyricsPronunciationWordAlignmentTest {
     }
 
     private fun readingOf(row: LinearLayout, index: Int): TextView =
-        LyricsPronunciationRowCentring.readingChild(row.getChildAt(index) as LinearLayout)!!
+        LyricsPronunciationRowGeometry.readingChild(row.getChildAt(index) as LinearLayout)!!
 
     private fun textView(activity: Activity, text: String): TextView = TextView(activity).apply {
         this.text = text

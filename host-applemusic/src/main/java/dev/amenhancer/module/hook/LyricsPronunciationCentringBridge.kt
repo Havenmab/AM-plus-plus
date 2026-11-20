@@ -5,11 +5,12 @@ import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 /**
  * The narrow door the app needs into the romanization-row hooks.
  *
- * [LyricsPronunciationRowCentring] and [LyricsPronunciationWordAlignment] stay internal on purpose:
- * they are one feature with one write path, and every other caller lives inside this module. The app
- * module owns the runtime wiring, though, so it has to do exactly two things from outside — hand the
- * splice a plan provider, and ask the rows to repaint once a plan landed. Those two calls are the
- * whole API surface, and they live here rather than widening either object.
+ * [LyricsPronunciationWordAlignment] — and the shared row geometry it writes through
+ * ([LyricsPronunciationRowGeometry]) — stay internal on purpose: they are one feature with one write
+ * path, and every other caller lives inside this module. The app module owns the runtime wiring,
+ * though, so it has to do exactly two things from outside — hand the splice a plan provider, and ask
+ * the rows to repaint once a plan landed. Those two calls are the whole API surface, and they live
+ * here rather than widening either object.
  */
 object LyricsPronunciationCentringBridge {
 
@@ -24,9 +25,9 @@ object LyricsPronunciationCentringBridge {
         LyricsPronunciationWordAlignment.boundaryPlans = provider
     }
 
-    /** Re-runs the correction for the containers that are still inflated; idempotent, main thread. */
+    /** Re-runs the splice for the containers that are still inflated; idempotent, main thread. */
     fun reapplyObservedRows() {
-        LyricsPronunciationRowCentring.reapplyObserved()
+        LyricsPronunciationWordAlignment.reapplyObserved()
     }
 
     /**

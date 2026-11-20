@@ -279,9 +279,6 @@ internal fun createAutoLyricsRuntime(
         // Null while unknown keeps the old "ask every repository" path; a loaded index that does
         // not name the track skips the bundled repositories without a single request.
         presence = lyricPresenceCache,
-        // Debug builds only (`log.tag.AMPP-Meta=DEBUG`): what the AMLL document offered the
-        // pronunciation lane and what the converted head actually carries.
-        conversionDebug = AmllConversionDiagnostics::log,
     )
     val cache = object : AutoLyricsCache {
         override fun readCandidate(appleMusicId: Long, source: String): AutoLyricsCandidate? =

@@ -4,6 +4,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.ViewGroup
 import android.widget.TextView
+import dev.amenhancer.module.config.TargetConfigClient
 import dev.amenhancer.module.lyrics.online.NativePronunciationSpan
 import dev.amenhancer.module.lyrics.online.PronunciationBoundary
 import java.util.Collections
@@ -521,7 +522,7 @@ internal object LyricsPronunciationWordAlignment {
      * contained and reported as one log line.
      */
     private fun splice(group: ViewGroup) {
-        if (boundaryPlans == null) return
+        if (boundaryPlans == null || !effectsEnabled()) return
         runCatching {
             val row = LyricsPronunciationRowGeometry.findRowContainer(group) ?: group
             alignRow(row, group)
@@ -559,6 +560,17 @@ internal object LyricsPronunciationWordAlignment {
      */
     fun ownsGroup(group: ViewGroup): Boolean =
         runCatching { planFor(group) }.getOrNull() != null
+
+    /**
+     * 「歌词效果优化」, read at layout time.
+     *
+     * Re-placing a reading is a lyric *effect* like the host's own centring and the karaoke masks, so
+     * with the switch off Apple's placement is left exactly as it is — including for a planned row.
+     * The host's compensation is gated on the same switch, so neither writer moves anything then.
+     */
+    private fun effectsEnabled(): Boolean =
+        runCatching { TargetConfigClient.currentSettings().lyricEffectsOptimizationEnabled }
+            .getOrDefault(false)
 
     // ---------------------------------------------------------------------------------------
     // View layer

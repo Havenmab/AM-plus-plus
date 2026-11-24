@@ -22,16 +22,31 @@ internal class HleMetadataSurfaceBridge(
     internal val contentItemHooks: AppleContentItemMetadataHooks,
     internal val queueMetadataHooks: AppleQueueMetadataHooks,
     internal val actionSheetMetadataHooks: AppleActionSheetMetadataHooks,
-    internal val configuredContentUiLanguage: Int,
+    /**
+     * HLE's `configuredContentUiLanguage()`: the current 将Apple Music改成其他地区 selection.
+     * A supplier, because the region can change while the process is alive.
+     */
+    internal val configuredContentUiLanguage: () -> Int,
     /**
      * HLE's `AppleOrchestratorCatalogLanguageAssembly.shouldOverrideAccountLanguage`: true only
-     * when a region is selected **and** the 「歌曲信息替换至设定地区语言」 switch is on.  The
-     * fork's pure projection of that pair is `RegionTitleRequestPlan.overrideAccountLanguage`,
-     * which is what [HleMetadataRuntime] passes here.
+     * when the selection the caller passes is a region **and** the 「歌曲信息替换至设定地区语言」
+     * switch is on.  Supplied rather than snapshotted so the switch is read at call time, which
+     * is the whole point of HLE's version taking the selection as a parameter.
      */
-    internal val overrideAccountLanguage: Boolean,
-    internal val restoreOriginalMetadata: Boolean,
-    internal val profileId: String,
+    internal val overrideAccountLanguage: (selection: Int) -> Boolean,
+    /**
+     * HLE's `isRestoreCjkOriginalMetadataEnabled()`: read per call, never captured, so turning
+     * 「替换中日韩歌曲信息为原地区原名」 off stops the original-name probe immediately.
+     */
+    internal val restoreOriginalMetadata: () -> Boolean,
+    /** The in-memory profile the runtime published when it was installed. */
+    initialProfileId: String,
+    /**
+     * HLE's "no work, no cache": while false the bridge must not publish the cache profile, so
+     * an all-off configuration leaves [MediaMetadataCache] exactly as an install that never
+     * happened would have left it.
+     */
+    private val publishMetadataCache: () -> Boolean = { true },
     private val installation: HleMetadataInstallation,
     /**
      * Runs once before every resolution seam so the one-shot 「清空检索库」 signal
@@ -39,7 +54,24 @@ internal class HleMetadataSurfaceBridge(
      * observer drops the signal after the first clear.
      */
     private val observeMetadataCacheClear: () -> Unit = {},
+    /**
+     * Runs on the same request seams, right after [observeMetadataCacheClear]: samples the
+     * live metadata configuration so a switch flipped in the settings page is noticed by the
+     * next request instead of the next process.
+     */
+    private val observeMetadataConfiguration: () -> Unit = {},
 ) {
+    /**
+     * The in-memory profile this runtime considers current.
+     *
+     * Not the install-time value: switching the region switches the profile
+     * ([updateCacheProfile]), and the stale-callback guard below has to compare against the
+     * profile callbacks are actually written under.
+     */
+    @Volatile
+    internal var profileId: String = initialProfileId
+        private set
+
     internal val traceSequence = AtomicLong(0L)
     internal val registry = AppleInAppMetadataRegistry()
     internal lateinit var refreshQueue: AppleInAppMetadataRefreshQueue
@@ -60,9 +92,25 @@ internal class HleMetadataSurfaceBridge(
     internal lateinit var playbackItemConversionHooks: ApplePlaybackItemConversionHooks
     internal lateinit var inAppArtworkContinuityHooks: AppleInAppArtworkContinuityHooks
     internal lateinit var visibleMetadataDiagnostics: AppleVisibleMetadataDiagnostics
+    /**
+     * HLE's `AppleMetadataConfigurationDispatcher`, wired exactly like
+     * `AppleOrchestratorInAppMetadataAssembly` wires it.  It used to be dead code in this
+     * fork: the runtime snapshotted its controls, so nothing could ever change them.
+     */
+    internal lateinit var metadataConfigurationDispatcher: AppleMetadataConfigurationDispatcher
+
+    /**
+     * Follows a region change: republishes the in-memory profile so new entries land under the
+     * new region instead of the old one.  The persistent stores keep their install-time
+     * namespace (see HleMetadataRuntime.applyConfiguredRegion).
+     */
+    fun updateCacheProfile(profile: String) {
+        profileId = profile
+        if (publishMetadataCache()) MediaMetadataCache.setProfile(profile)
+    }
 
     fun install() {
-        MediaMetadataCache.setProfile(profileId)
+        if (publishMetadataCache()) MediaMetadataCache.setProfile(profileId)
         refreshQueue = AppleInAppMetadataRefreshQueue(
             postToMain = { callback -> runtime.mainHandler.post { callback() } },
             diagnostics = if (BuildConfig.DEBUG) {
@@ -167,7 +215,7 @@ internal class HleMetadataSurfaceBridge(
             metadataApplier = metadataApplier,
             surfaceRuntime = surfaceRuntime,
             dataBindingHooks = dataBindingHooks,
-            configuredContentUiLanguage = { this@HleMetadataSurfaceBridge.configuredContentUiLanguage },
+            configuredContentUiLanguage = this@HleMetadataSurfaceBridge.configuredContentUiLanguage,
         )
         visibleMetadataDiagnostics = AppleVisibleMetadataDiagnostics(
             runtime = runtime,
@@ -189,7 +237,7 @@ internal class HleMetadataSurfaceBridge(
             frameworkMetadataHooks = frameworkHooks,
             visibleMetadataDiagnostics = visibleMetadataDiagnostics,
             media3MetadataCoordinator = media3MetadataCoordinator,
-            configuredContentUiLanguage = { this@HleMetadataSurfaceBridge.configuredContentUiLanguage },
+            configuredContentUiLanguage = this@HleMetadataSurfaceBridge.configuredContentUiLanguage,
             traceSequence = traceSequence,
         )
         playbackItemConversionHooks = ApplePlaybackItemConversionHooks(
@@ -200,6 +248,24 @@ internal class HleMetadataSurfaceBridge(
             runtime = runtime,
             host = hosts.artworkContinuity,
         )
+        metadataConfigurationDispatcher = AppleMetadataConfigurationDispatcher(
+            // HLE's order.  `artistSurfaceHooks.clearBrowseState()` has no counterpart here:
+            // this fork has no browse/search surface module (see AppleArtistSurfaceHooks), so
+            // that owner is a logged omission rather than a silently missing clear.
+            clearStateOwners = listOf<() -> Unit>(
+                metadataStore::onConfigurationChanged,
+                { librarySurfaceHooks.clearConfigurationState() },
+                { dataBindingHooks.clearConfigurationState() },
+                { listenNowHooks.clearMetadataState() },
+                {
+                    metadataApplier.clearCallbackState()
+                    resolutionCoordinator.clearDeferredResolutions()
+                },
+            ),
+            restoreCapturedModels = metadataApplier::restoreCapturedModels,
+            scheduleConsumerRefresh = { scheduleConsumerRefresh() },
+        )
+        logMissingConfigurationStateOwner()
 
         installSafely("metadata-surface-lifecycle") { surfaceRuntime.installLifecycleHooks() }
         installSafely("library-entity") { librarySurfaceHooks.installEntityHooks() }
@@ -224,13 +290,80 @@ internal class HleMetadataSurfaceBridge(
         installSafely("playback-item-conversion") { playbackItemConversionHooks.installHooks() }
     }
 
+    /**
+     * The metadata request seam.
+     *
+     * Both live signals ride on it: the one-shot 「清空检索库」 generation and the four
+     * metadata controls.  HLE gets the second one pushed from a cross-process preference
+     * listener; AM++ has no such listener, so every request that could resolve metadata
+     * re-samples the value behind a short TTL cache (see HleMetadataRuntime).
+     */
+    private fun observeRuntimeSignals() {
+        observeMetadataCacheClear()
+        observeMetadataConfiguration()
+    }
+
+    /**
+     * HLE's `scheduleConsumerRefresh`: restore the MediaSession payloads we rewrote, refresh
+     * the queue/now-playing callbacks and re-resolve the item that is playing now, so the new
+     * display language is visible immediately instead of on the next page load.
+     *
+     * Everything here is main-thread work (MediaSession, RecyclerView notify, queue item
+     * lookup) and every call is failure-tolerant: a language change must never crash the host.
+     */
+    private fun scheduleConsumerRefresh() {
+        runtime.mainHandler.post {
+            runCatching {
+                frameworkHooks.restoreMediaSessionMetadata()
+                frameworkHooks.restoreMediaSessionQueue()
+                metadataApplier.refreshMetadataCallbacks()
+            }.onFailure { error ->
+                ProviderLogger.error("Apple Music 元数据回调刷新失败", error)
+            }
+            runCatching {
+                playbackHooks.activePlayer()?.let { mediaPlayer ->
+                    playbackCoordinator.refreshCurrentQueueItem(
+                        mediaPlayer,
+                        "Apple Music 语言覆盖设置变更",
+                    )
+                }
+            }.onFailure { error ->
+                ProviderLogger.error("Apple Music 当前播放项刷新失败", error)
+            }
+        }
+    }
+
+    /**
+     * HLE's `dispatch()`, called by the runtime once it decided a change is owed.
+     *
+     * False means an owner threw: the runtime keeps the previous baseline so the next request
+     * seam offers the same change again instead of recording it as applied.
+     */
+    fun dispatchMetadataConfigurationChange(): Boolean {
+        if (!::metadataConfigurationDispatcher.isInitialized) return true
+        return runCatching { metadataConfigurationDispatcher.dispatch() }
+            .onFailure { ProviderLogger.error("Apple Music 元数据配置状态清理失败", it) }
+            .isSuccess
+    }
+
+    /**
+     * HLE's `clearStateOwners` also clears `artistSurfaceHooks.clearBrowseState()`, which this
+     * fork has no equivalent for: there is no browse/search surface module here.  Say so once
+     * instead of pretending the clear is complete.
+     */
+    private fun logMissingConfigurationStateOwner() {
+        ProviderLogger.diagnostic(
+            "Apple Music 元数据配置状态清理: artistSurfaceHooks.clearBrowseState 在本仓无等价实现，已跳过"
+        )
+    }
+
     fun ensureOverride(
         mediaId: String,
         preBind: Boolean = false,
         priority: AppleInternalCatalogResolver.RequestPriority =
             AppleInternalCatalogResolver.RequestPriority.VISIBLE,
     ) {
-        observeMetadataCacheClear()
+        observeRuntimeSignals()
         resolutionCoordinator.ensureOverride(mediaId, preBind, priority)
     }
 
@@ -239,7 +372,7 @@ internal class HleMetadataSurfaceBridge(
         preBind: Boolean = false,
         originalResolutionLimit: Int = mediaIds.size,
     ) {
-        observeMetadataCacheClear()
+        observeRuntimeSignals()
         resolutionCoordinator.ensureOverrides(mediaIds, preBind, originalResolutionLimit)
     }
 
@@ -250,7 +383,7 @@ internal class HleMetadataSurfaceBridge(
         preBind: Boolean,
         priority: AppleInternalCatalogResolver.RequestPriority,
     ) {
-        observeMetadataCacheClear()
+        observeRuntimeSignals()
         metadataRegistrationCoordinator.registerMetadata(
             mediaId = mediaId,
             metadata = metadata,
@@ -266,7 +399,7 @@ internal class HleMetadataSurfaceBridge(
         notifyChange: Boolean,
         analyzeMetadata: Boolean,
     ) {
-        observeMetadataCacheClear()
+        observeRuntimeSignals()
         metadataRegistrationCoordinator.registerPlaybackItem(
             mediaId = mediaId,
             playbackItem = playbackItem,
@@ -353,7 +486,7 @@ internal class HleMetadataSurfaceBridge(
         artistOnly: Boolean,
         propagateArtistEntity: Boolean,
     ) {
-        if (originalMetadata && !restoreOriginalMetadata) return
+        if (originalMetadata && !restoreOriginalMetadata()) return
         if (::metadataOverrideApplicationCoordinator.isInitialized) {
             applyPlaybackMetadataOverride(
                 mediaId = mediaId,
@@ -417,14 +550,14 @@ internal class HleMetadataSurfaceBridge(
         localizedTitle: String?,
         localizedArtist: String?,
         alias: AppleInternalCatalogResolver.Alias?,
-    ): Boolean = restoreOriginalMetadata && resolutionCoordinator.shouldShareOriginalSongLanguage(
+    ): Boolean = restoreOriginalMetadata() && resolutionCoordinator.shouldShareOriginalSongLanguage(
         localizedTitle = localizedTitle,
         localizedArtist = localizedArtist,
         alias = alias,
     )
 
     fun rememberOriginalLanguageForArtist(mediaId: String, language: String) {
-        if (restoreOriginalMetadata) {
+        if (restoreOriginalMetadata()) {
             resolutionCoordinator.rememberOriginalLanguageForArtist(mediaId, language)
         }
     }

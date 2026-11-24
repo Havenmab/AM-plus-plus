@@ -259,6 +259,10 @@ object AppleMusicHostFactory {
                         // Live read: the settings page can clear the index at any
                         // time, so the runtime must not snapshot the generation.
                         metadataCacheClearSignal = { config.metadataCacheClearGeneration() },
+                        // Live read too: HLE re-reads its three metadata controls on every
+                        // call, so the runtime polls this reader instead of keeping the
+                        // values that happened to be on disk when the hook was installed.
+                        metadataConfiguration = { config.metadataConfiguration() },
                     ).install()
                 }.getOrElse { error ->
                     ModernXposedRuntime.log("HLE metadata runtime install failed", error)

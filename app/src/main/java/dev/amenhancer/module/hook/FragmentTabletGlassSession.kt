@@ -76,6 +76,9 @@ internal class FragmentTabletGlassSession(
     private var slide = 0f
     private var glassExpansion by mutableFloatStateOf(0f)
     private var miniContent: View? = null
+    private var miniForeground: GlassMiniForeground? = null
+    private var miniForegroundEnabled by mutableStateOf(false)
+    private var adaptiveForeground by mutableStateOf(config.settings().glassAdaptiveForegroundEnabled)
     private var configuration by mutableStateOf(Configuration(root.resources.configuration))
     private var blurDp = -1
     private var bottomGapDp = dev.amenhancer.module.model.EnhancementDefaults.GLASS_BOTTOM_DP
@@ -121,6 +124,7 @@ internal class FragmentTabletGlassSession(
             if (now >= nextMenuCheck) {
                 nextMenuCheck = now + 500
                 val settings = config.settings()
+                adaptiveForeground = settings.glassAdaptiveForegroundEnabled
                 bottomGapDp = dev.amenhancer.module.model.ModuleSettings.normalizePhoneLiquidGlassBottomGapDp(
                     settings.phoneLiquidGlassBottomGapDp)
                 if (blurDp >= 0 && blurDp != settings.phoneLiquidGlassPanelBlurDp) refreshSettings()
@@ -161,6 +165,7 @@ internal class FragmentTabletGlassSession(
             val transition = FragmentPlayerSurfaceMotion.tabletFrame(slide)
             val miniOpacity = if (miniWasVisible) transition.alpha else 0f
             val miniVisible = miniOpacity > .001f
+            updateMiniForeground(adaptiveForeground && active && replacing && slide <= .001f && miniVisible && backdrop?.ready == true)
             if (min.glass.visibility != if (miniVisible) View.VISIBLE else View.GONE) {
                 min.glass.visibility = if (miniVisible) View.VISIBLE else View.GONE
             }
@@ -220,6 +225,7 @@ internal class FragmentTabletGlassSession(
         bottomGapDp = dev.amenhancer.module.model.ModuleSettings.normalizePhoneLiquidGlassBottomGapDp(
             config.settings().phoneLiquidGlassBottomGapDp)
         miniContent = content
+        miniForeground = GlassMiniForeground(content)
         // Native transform ownership is maintained by the host port.
         val sheet = find(TabletChromeRegion.SHEET) ?: error("Native sheet missing")
         slide = surface.snapshot().expansion
@@ -263,11 +269,16 @@ internal class FragmentTabletGlassSession(
                             GlassNavigation(tabs, selectedId, accent, foreground, bg, ::selectTab,
                                 panelHeight = panelHeight, panelBlur = blurDp.dp,
                                 style = GlassNavigationStyle.TabletLabels, drawerIcon = drawerIcon,
-                                drawerDescription = ModuleText.OPEN_SIDEBAR.text(), onDrawer = { safely { this@FragmentTabletGlassSession.surface.navigation.openDrawer() } })
+                                drawerDescription = ModuleText.OPEN_SIDEBAR.text(), onDrawer = { safely { this@FragmentTabletGlassSession.surface.navigation.openDrawer() } },
+                                adaptiveForeground = adaptiveForeground)
                         }
                     } else {
+                        val miniForegroundSink: ((Color?) -> Unit)? = if (miniForegroundEnabled) {
+                            { color -> if (miniForegroundEnabled && mini?.glass === glass) miniForeground?.apply(color) }
+                        } else null
                         NativeLiquidButton(bg, surface.input, glassExpansion, panelBlur = blurDp.dp, autoClip = true,
-                            miniHeightDp = (anchor.height / root.resources.displayMetrics.density).toInt().coerceAtLeast(1)) { sx, sy, x, y ->
+                            miniHeightDp = (anchor.height / root.resources.displayMetrics.density).toInt().coerceAtLeast(1),
+                            onForegroundColor = miniForegroundSink) { sx, sy, x, y ->
                             transformMini(sx, sy, x, y)
                         }
                     }
@@ -456,10 +467,19 @@ internal class FragmentTabletGlassSession(
         navigation?.glass?.foreground(value)
         mini?.glass?.foreground(value)
         if (!value) {
+            updateMiniForeground(false)
             captureWait.timedOut(0L, false)
             listOfNotNull(navigation, mini).forEach(::release)
             backdrop?.setCaptureEnabled(false)
         } else root.invalidate()
+    }
+
+    private fun updateMiniForeground(enabled: Boolean) {
+        if (miniForegroundEnabled != enabled) {
+            miniForegroundEnabled = enabled
+            if (!enabled) miniForeground?.reset()
+        }
+        if (enabled) miniForeground?.refresh()
     }
 
     fun refreshSettings() {
@@ -483,12 +503,14 @@ internal class FragmentTabletGlassSession(
     }
 
     private fun removeMaterials() {
+        updateMiniForeground(false)
         captureWait.timedOut(0L, false)
         replacing = false; navGesture = null; navContentWidth = 0; navContentHeight = 0
         listOfNotNull(navigation, mini).forEach(::release)
         native.restore()
         miniFrame?.let { (it.parent as? ViewGroup)?.removeView(it) }; miniFrame = null
         playerRoot = null; collapsedMini = null; miniWasVisible = false; glassExpansion = 0f; miniContent = null
+        miniForeground = null
         overlay?.let { (it.parent as? ViewGroup)?.removeView(it) }; overlay = null
         navigation = null; mini = null; backdrop?.close(); backdrop = null
     }

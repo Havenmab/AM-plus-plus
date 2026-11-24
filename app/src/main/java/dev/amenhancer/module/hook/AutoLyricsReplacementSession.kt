@@ -19,6 +19,8 @@ import dev.amenhancer.module.lyrics.online.PronunciationBoundaryStore
 import dev.amenhancer.module.CurrentSongDetails
 import dev.amenhancer.module.config.EmbeddedConfigurationSession
 import dev.amenhancer.module.config.EmbeddedContentManager
+import dev.amenhancer.module.config.cachedSongDisplayName
+import dev.amenhancer.module.config.isCompleteCacheSongName
 import dev.amenhancer.module.lyrics.TtmlInputPolicy
 import dev.amenhancer.module.lyrics.online.NativeLyricOverlayStore
 import dev.amenhancer.module.lyrics.online.NeSessionStore
@@ -166,6 +168,7 @@ internal fun createAutoLyricsRuntime(
     application: Application,
     content: EmbeddedContentManager,
     lunabeatCatalogCache: LunabeatCatalogCache,
+    currentSong: CurrentSongIdentityCache,
     suppressedIds: Set<Long> = emptySet(),
     onlineLyricsSupplementEnabled: Boolean = false,
     onlineLyricsTranslationEnabled: Boolean = false,
@@ -280,11 +283,95 @@ internal fun createAutoLyricsRuntime(
         // not name the track skips the bundled repositories without a single request.
         presence = lyricPresenceCache,
     )
+
+    fun cacheSongName(title: String?, artist: String?): String? {
+        val songTitle = title?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        return listOfNotNull(songTitle, artist?.trim()?.takeIf(String::isNotEmpty)).joinToString(" - ")
+    }
+
+    fun AutoLyricsCandidate.withSongTitle(appleMusicId: Long, existingName: String? = null): AutoLyricsCandidate {
+        fun usableName(name: String?): String? =
+            name?.trim()?.takeIf { it.isNotEmpty() && it != source }
+
+        val ownName = usableName(displayName)
+        val previousName = usableName(existingName)
+            ?: sourceStore.entryFor(appleMusicId, source)?.cachedSongDisplayName()
+        val details = currentSong.current()?.details?.takeIf { it.appleMusicId == appleMusicId }
+        val currentName = cacheSongName(details?.title, details?.artist)
+        val resolvedName = when {
+            ownName?.isCompleteCacheSongName() == true -> ownName
+            previousName?.isCompleteCacheSongName() == true -> previousName
+            currentName != null -> currentName
+            ownName != null -> ownName
+            else -> previousName
+        }
+        return if (resolvedName == null) this else copy(displayName = resolvedName)
+    }
+
+    fun lookupCacheSongNames(
+        appleMusicIds: List<Long>,
+        isCancelled: () -> Boolean,
+    ): Map<Long, String> {
+        failures.remove()
+        return try {
+            val requested = appleMusicIds.asSequence()
+                .filter { it > 0L }
+                .toCollection(linkedSetOf())
+            if (requested.isEmpty() || isCancelled()) return emptyMap()
+
+            val names = linkedMapOf<Long, String>()
+            currentSong.current()?.details?.let { details ->
+                if (details.appleMusicId in requested) {
+                    cacheSongName(details.title, details.artist)
+                        ?.takeIf(String::isCompleteCacheSongName)
+                        ?.let { names[details.appleMusicId] = it }
+                }
+            }
+
+            var remaining = requested - names.keys
+            if (remaining.isNotEmpty() && !isCancelled()) {
+                // Our mirror and the 12h disk copy must stay in this path: a bare client reads
+                // GitHub raw directly, so a blocked network loses the backfill and every cold
+                // start re-downloads the index.
+                val index = runCatching { amLyricsIndexCache.index() ?: amLyrics.fetchIndex() }.getOrNull()
+                if (index != null) {
+                    for (entry in index.entries) {
+                        if (isCancelled()) return names
+                        for (appleMusicId in entry.allAppleMusicIds) {
+                            if (appleMusicId in remaining &&
+                                entry.displayName.isCompleteCacheSongName()
+                            ) {
+                                names.putIfAbsent(appleMusicId, entry.displayName)
+                            }
+                        }
+                    }
+                }
+                remaining = requested - names.keys
+            }
+
+            if (remaining.isNotEmpty() && !isCancelled()) {
+                val catalog = runCatching { lunabeat.loadCatalog() }.getOrNull()
+                if (catalog != null) {
+                    for (song in catalog.songs) {
+                        if (isCancelled()) return names
+                        for (appleMusicId in song.appleMusicIds) {
+                            if (appleMusicId in remaining && song.displayName.isCompleteCacheSongName()) {
+                                names.putIfAbsent(appleMusicId, song.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+            names
+        } finally {
+            failures.remove()
+        }
+    }
     val cache = object : AutoLyricsCache {
         override fun readCandidate(appleMusicId: Long, source: String): AutoLyricsCandidate? =
             sourceStore.readCandidate(appleMusicId, source)
         override fun writeCandidateIfCurrent(appleMusicId: Long, candidate: AutoLyricsCandidate, generation: Long): Boolean =
-            sourceStore.writeCandidate(appleMusicId, candidate, generation)
+            sourceStore.writeCandidate(appleMusicId, candidate.withSongTitle(appleMusicId), generation)
         override fun generation(): Long = sourceStore.generation()
     }
     val executor = ThreadPoolExecutor(
@@ -571,7 +658,10 @@ internal fun createAutoLyricsRuntime(
         },
         onPrepared = { request, translated ->
             // Persist only a host-accepted result; never use the custom-lyrics publisher.
-            llmCache.write(request.appleMusicId, request.originalTtml, request.config, translated)
+            llmCache.write(
+                request.appleMusicId, request.originalTtml, request.config, translated,
+                expectedGeneration = request.cacheGeneration,
+            )
         },
         translationEnabled = {
             configuration().let { it.customLyricsEnabled && it.automaticLyricsEnabled && it.llmLyricsEnabled }
@@ -605,10 +695,14 @@ internal fun createAutoLyricsRuntime(
             )?.takeUnless { isCancelled() }
         },
         onTransliterationPrepared = { request, ttml ->
-            llmCache.write(request.appleMusicId, request.originalTtml, request.config, ttml, kind = "transliteration")
+            llmCache.write(
+                request.appleMusicId, request.originalTtml, request.config, ttml,
+                kind = "transliteration", expectedGeneration = request.cacheGeneration,
+            )
         },
         discardPending = { llmExecutor.queue.clear() },
         onStatusChanged = { LyricsPlaybackRuntimeRegistry.publishLlmStatus(llmExecutor, it) },
+        cacheGeneration = llmCache::generation,
     )
     val playbackExecutor = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(8),
@@ -624,10 +718,18 @@ internal fun createAutoLyricsRuntime(
             val result = resolver.fetchSelected(id, source) {
                 failures.set(dev.amenhancer.module.lyrics.source.LyricFetchFailure.INVALID)
             }
-            result to failures.get().also { failures.remove() }
+            result?.withSongTitle(id) to failures.get().also { failures.remove() }
         },
+        lookupCacheSongNames = ::lookupCacheSongNames,
+        llmCache = llmCache,
     )
     LyricsPlaybackRuntimeRegistry.attach(playback)
+    val songNameSubscription = currentSong.addListener { song ->
+        val details = song?.details ?: return@addListener
+        val artist = details.artist?.takeIf(String::isNotBlank) ?: return@addListener
+        val name = cacheSongName(details.title, artist) ?: return@addListener
+        playback.backfillCacheSongName(details.appleMusicId, name)
+    }
     return AutoLyricsRuntime(
         resolver = resolver,
         cache = cache,
@@ -644,6 +746,7 @@ internal fun createAutoLyricsRuntime(
             refreshExecutor.execute(task)
         },
         closeRefresh = {
+            songNameSubscription.close()
             refreshExecutor.shutdownNow()
             amLyricsIndexScheduler.shutdownNow()
             playbackExecutor.shutdownNow()
@@ -660,9 +763,12 @@ internal fun createAutoLyricsRuntime(
             val candidate = resolver.fetchSelected(appleMusicId, source) ?: return@refresh null
             val current = playback.snapshot(appleMusicId)
             if (isCancelled() || !current.isCurrentSong || current.activeSource != source ||
-                (current.preferredSource == LyricsPlaybackSources.AUTOMATIC && !TtmlTimingPolicy.isWord(candidate.ttml)) ||
-                sourceStore.entryFor(appleMusicId, source) != previous ||
-                !sourceStore.writeCandidate(appleMusicId, candidate, epoch)
+                (current.preferredSource == LyricsPlaybackSources.AUTOMATIC && !TtmlTimingPolicy.isWord(candidate.ttml))
+            ) return@refresh null
+            val latest = sourceStore.entryFor(appleMusicId, source) ?: return@refresh null
+            // A display-name backfill does not invalidate a refresh of the same cached lyrics.
+            if (latest.copy(displayName = previous.displayName) != previous ||
+                !sourceStore.writeCandidate(appleMusicId, candidate.withSongTitle(appleMusicId, latest.displayName), epoch)
             ) return@refresh null
             sourceStore.entryFor(appleMusicId, source)?.takeIf { it.sha256 != previous.sha256 }
         },

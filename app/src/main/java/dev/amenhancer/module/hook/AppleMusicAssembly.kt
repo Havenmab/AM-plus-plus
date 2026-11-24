@@ -31,6 +31,7 @@ internal fun assembleAppleMusicTarget(
             application = application,
             content = settingsController.content,
             lunabeatCatalogCache = settingsController.lunabeatCatalogCache,
+            currentSong = currentSong,
             suppressedIds = suppressed,
             onlineLyricsSupplementEnabled = settings.onlineLyricsSupplementEnabled,
             onlineLyricsTranslationEnabled = settings.onlineLyricsTranslationEnabled,
@@ -53,14 +54,14 @@ internal fun assembleAppleMusicTarget(
         )
     } else null
     return AppleMusicHostFactory.appleMusic(
-        config,
-        application,
-        classLoader,
-        lyricsTypefaceSession,
-        currentSong,
-        automatic,
-        timingObservations,
-        nativeLyricOverlay,
+        config = config,
+        application = application,
+        classLoader = classLoader,
+        lyricsTypefaceSession = lyricsTypefaceSession,
+        currentSong = currentSong,
+        autoLyricsRuntime = automatic,
+        timingObservations = timingObservations,
+        nativeLyricOverlay = nativeLyricOverlay,
         onOpenLyricsMenu = { activity ->
             val playback = automatic?.playback
             if (playback != null) {

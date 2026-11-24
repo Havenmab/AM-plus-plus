@@ -137,6 +137,13 @@ internal fun EmbeddedSettingsHost.EmbeddedCustomLyricsPage(
             )
             SettingsDivider()
             EmbeddedSettingLink(
+                title = localizedText(ModuleText.LYRICS_CACHE_MANAGEMENT),
+                summary = localizedText(ModuleText.LYRICS_CACHE_MANAGEMENT_SUMMARY),
+                icon = EmbeddedSvgIcon.DocumentSearch,
+                onClick = { onOpenPage(EmbeddedSettingsPage.CACHED_LYRICS) },
+            )
+            SettingsDivider()
+            EmbeddedSettingLink(
                 title = localizedText(ModuleText.LLM_LYRICS_FALLBACK),
                 summary = localizedText(ModuleText.SHORT_LLM_LYRICS_SUMMARY),
                 icon = EmbeddedSvgIcon.Translation,
@@ -358,7 +365,6 @@ internal fun EmbeddedSettingsHost.EmbeddedAutomaticLyricsPage(
             onReset = { pageRefresh?.invoke() },
         )
         EmbeddedOnlineLyricsSourceSection(settings, onSettingsSaved)
-        EmbeddedLyricsCacheRow()
     }
 }
 
@@ -704,57 +710,6 @@ internal class LyricsCacheStatusState(
     fun close() {
         closed = true
         refreshQueued = false
-    }
-}
-
-@Composable
-private fun EmbeddedSettingsHost.EmbeddedLyricsCacheRow() {
-    var controls by remember { mutableStateOf(LyricsPlaybackRuntimeRegistry.controls()) }
-    val activity = currentActivity()
-    val mainHandler = remember { Handler(Looper.getMainLooper()) }
-    val cacheStatus = remember(activity, worker, mainHandler) {
-        LyricsCacheStatusState(
-            worker = worker,
-            mainHandler = mainHandler,
-            controls = { LyricsPlaybackRuntimeRegistry.controls() },
-            isAlive = {
-                val current = currentActivity()
-                current != null && current === activity &&
-                    !current.isFinishing && !current.isDestroyed
-            },
-        )
-    }
-
-    DisposableEffect(cacheStatus) {
-        val next = LyricsPlaybackRuntimeRegistry.controls()
-        controls = next
-        val subscription = next?.observe { cacheStatus.refresh() }
-        cacheStatus.refresh()
-        onDispose {
-            subscription?.close()
-            cacheStatus.close()
-        }
-    }
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        EmbeddedSettingsSection(
-            title = localizedText(ModuleText.LYRICS_THIRD_PARTY_CACHE),
-            summary = cacheStatus.usageBytes?.let {
-                localizedText(ModuleText.LYRICS_CACHE_SUMMARY, formatLyricsCacheSize(it))
-            }
-                ?: localizedText(if (controls == null) ModuleText.LYRICS_CACHE_UNAVAILABLE else ModuleText.LYRICS_CACHE_SIZE_UNAVAILABLE),
-        )
-        EmbeddedSettingsGroup {
-            EmbeddedSettingLink(
-                title = localizedText(ModuleText.LYRICS_CACHE_CLEAR),
-                summary = cacheStatus.message?.let { localizedText(it) },
-                icon = EmbeddedSvgIcon.Delete,
-                enabled = controls != null && !cacheStatus.busy,
-                onClick = { cacheStatus.refresh(clearFirst = true) },
-            )
-        }
     }
 }
 

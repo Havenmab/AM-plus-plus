@@ -1,5 +1,8 @@
 package dev.amenhancer.glass
 
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -113,6 +116,8 @@ fun GlassNavigation(
      */
     collapseReboundScale: Float = 1f,
     expandReboundScale: Float = 1f,
+    /** Adaptive black/white foreground; false keeps the host's static foreground colors. */
+    adaptiveForeground: Boolean = true,
 ) {
     // The reference drag animation normalizes by tabsCount - 1. Keep a one-tab host native.
     if (tabs.size < 2) return
@@ -138,10 +143,14 @@ fun GlassNavigation(
     val expandedInteractive by remember {
         derivedStateOf { GlassBarCollapsePolicy.expandedInteractive(liveProgress.value()) }
     }
+    val contrast = rememberGlassTextContrast(enabled = adaptiveForeground)
+    val sampledForeground = contrast?.foreground
+    val labelColor = sampledForeground ?: foreground
+    val neutralCompactGlyph = searchTab?.id == selectedId
     // The visible and refraction rows share only the latest layout for each current tab.
     // Keep BasicText in the visible row so its semantics and font invalidation stay native.
     val labelLayouts = if (collapseProgress != null) remember(
-        tabs, style, foreground, LocalConfiguration.current, LocalDensity.current,
+        tabs, style, labelColor, LocalConfiguration.current, LocalDensity.current,
         LocalLayoutDirection.current, LocalFontFamilyResolver.current,
     ) { HashMap<Int, Pair<Constraints, TextLayoutResult>>() } else null
     // A menu replacement must discard gestures whose indices refer to the old menu.
@@ -159,9 +168,9 @@ fun GlassNavigation(
         // label it is about to draw. The reference's labels are heavier still, hence SemiBold on
         // the tablet bar only.
         val labelStyle = if (tabletBar) {
-            TextStyle(color = foreground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            TextStyle(color = labelColor, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         } else {
-            TextStyle(color = foreground, fontSize = 11.sp)
+            TextStyle(color = labelColor, fontSize = 11.sp)
         }
         val density = LocalDensity.current
         val textMeasurer = rememberTextMeasurer()
@@ -222,14 +231,9 @@ fun GlassNavigation(
                                 contentDescription = tab.title
                             },
                         ) {
-                            if (style == GlassNavigationStyle.Stacked || tab.icon != null) Canvas(Modifier.size(24.dp)) {
-                                tab.icon?.let { icon ->
-                                    val save = drawContext.canvas.nativeCanvas.save()
-                                    try {
-                                        icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                                        icon.draw(drawContext.canvas.nativeCanvas)
-                                    } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
-                                }
+                            if (style == GlassNavigationStyle.Stacked || tab.icon != null) {
+                                // The moving lens supplies the accent over the adaptive row.
+                                NavigationIcon(tab.icon, if (refraction) null else sampledForeground)
                             }
                             if (style == GlassNavigationStyle.Stacked || tab.icon == null) {
                                 // The tablet bar's larger, heavier label also feeds the refraction
@@ -262,12 +266,7 @@ fun GlassNavigation(
                         Box(Modifier.width(drawerWidth).fillMaxHeight()
                             .semantics { contentDescription = drawerDescription }
                             .clickable(onClick = open), contentAlignment = Alignment.Center) {
-                            Canvas(Modifier.size(24.dp)) {
-                                drawerIcon?.let { icon ->
-                                    icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                                    icon.draw(drawContext.canvas.nativeCanvas)
-                                }
-                            }
+                            NavigationIcon(drawerIcon, sampledForeground)
                         }
                     } },
                     tabContentWidths = tabContentWidths,
@@ -276,10 +275,12 @@ fun GlassNavigation(
                     optimizeCollapseRendering = collapseProgress != null,
                     // Always present: the withdrawn capsule is the only way back, so it needs a
                     // face and a tap target whether or not search could be detached.
-                    compactContent = { CompactSelectionGlyph(tabs, selectedId, searchTab, accent, foreground) },
+                    compactContent = { CompactSelectionGlyph(tabs, selectedId, searchTab, accent, labelColor) },
                     onExpandRequest = onExpandRequest,
                     collapseReboundScale = collapseReboundScale,
                     expandReboundScale = expandReboundScale,
+                    onSampleMaterial = contrast?.sampleMaterial,
+                    sampleCompactForeground = neutralCompactGlyph,
                     refractionContent = if (labelLayouts != null) {
                         { contentIndex, weight -> tabContent(contentIndex, weight, true) }
                     } else null,
@@ -288,7 +289,6 @@ fun GlassNavigation(
                     DetachedSearchControl(
                         tab = searchTab,
                         selectedId = selectedId,
-                        foreground = foreground,
                         accent = accent,
                         backdrop = backdrop,
                         panelBlur = panelBlur,
@@ -303,6 +303,7 @@ fun GlassNavigation(
                         onSelect = { request(searchTab) },
                         collapseReboundScale = collapseReboundScale,
                         expandReboundScale = expandReboundScale,
+                        adaptiveForeground = adaptiveForeground,
                     )
                 }
             }
@@ -380,7 +381,6 @@ private fun NavigationLabel(
 private fun BoxScope.DetachedSearchControl(
     tab: GlassTab,
     selectedId: Int,
-    foreground: Color,
     accent: Color,
     backdrop: Backdrop,
     panelBlur: Dp,
@@ -392,6 +392,7 @@ private fun BoxScope.DetachedSearchControl(
     /** User-set rebound amplitudes, shared with the capsule. See [GlassNavigation]. */
     collapseReboundScale: Float = 1f,
     expandReboundScale: Float = 1f,
+    adaptiveForeground: Boolean = true,
 ) {
     val density = LocalDensity.current
     val liveProgress = rememberUpdatedState(collapseProgress)
@@ -409,9 +410,10 @@ private fun BoxScope.DetachedSearchControl(
     }
     val radiusPx = with(density) { panelBlur.toPx() }
     val material = remember(radiusPx) { VibrantBlur(radiusPx) }
-    val containerColor = if (isSystemInDarkTheme()) Color(0xFF121212).copy(alpha = 0.4f)
-        else Color(0xFFFAFAFA).copy(alpha = 0.4f)
+    val containerColor = if (isSystemInDarkTheme()) Color(0xFF121212).copy(alpha = 0.2f)
+        else Color(0xFFFAFAFA).copy(alpha = 0.2f)
     val selected = tab.id == selectedId
+    val contrast = rememberGlassTextContrast(enabled = adaptiveForeground && !selected && tab.icon != null)
     BoxWithConstraints(
         Modifier.align(Alignment.BottomEnd).fillMaxWidth().height(rowHeight),
         contentAlignment = Alignment.CenterEnd,
@@ -425,7 +427,7 @@ private fun BoxScope.DetachedSearchControl(
                 GlassBarCollapsePolicy.GAP_DP * density.density).roundToInt(),
             rowHeightPx.roundToInt(),
         ) else IntSize.Zero
-        val materialModifier = remember(backdrop, material, containerColor, minLayerSize) {
+        val materialModifier = remember(backdrop, material, containerColor, minLayerSize, contrast) {
             Modifier.drawBackdrop(
                 backdrop = backdrop,
                 minLayerSize = material.paddedSize(minLayerSize),
@@ -437,6 +439,7 @@ private fun BoxScope.DetachedSearchControl(
                     lens(edge, edge)
                 },
                 onDrawSurface = { drawRect(containerColor) },
+                onSampleMaterial = contrast?.sampleMaterial,
             )
         }
         val controls = remember(rowWidthPx, rowHeightPx, density, tabsCount, leadingPx,
@@ -489,28 +492,7 @@ private fun BoxScope.DetachedSearchControl(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // Search is a destination, so it carries the accent like the capsule's compact face.
-            // The tint goes on a **copy**: `tab.icon` is the drawable the expanded tab row paints,
-            // and tinting it in place would repaint that tab for the rest of the session.
-            val resources = LocalContext.current.resources
-            val icon = remember(tab.icon, selected, accent) {
-                val source = tab.icon
-                if (!selected) source
-                else {
-                    val copy = source?.constantState?.newDrawable(resources)?.mutate()
-                    copy?.setTint(accent.toArgb())
-                    copy ?: source
-                }
-            }
-            Canvas(Modifier.size(24.dp)) {
-                icon?.let {
-                    val save = drawContext.canvas.nativeCanvas.save()
-                    try {
-                        it.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                        it.draw(drawContext.canvas.nativeCanvas)
-                    } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
-                }
-            }
+            NavigationIcon(tab.icon, if (selected) accent else contrast?.foreground)
         }
     }
 }
@@ -518,8 +500,7 @@ private fun BoxScope.DetachedSearchControl(
 /**
  * The withdrawn capsule's face: the selected tab's glyph, so the user can still tell where they
  * are. Only when the selected tab is the detached search does it fall back to the first tab's glyph
- * and drop the accent. The glyph is **copied** before it is tinted, since a `Drawable`'s
- * tint belongs to the drawable and would repaint the expanded tab row.
+ * and use the normal foreground.
  */
 @Composable
 private fun CompactSelectionGlyph(
@@ -532,22 +513,38 @@ private fun CompactSelectionGlyph(
     val selected = tabs.firstOrNull { it.id == selectedId }
     val searchLeft = detachedSearchTab?.id == selectedId
     val glyph = if (searchLeft) tabs.firstOrNull() else selected
-    val tint = if (searchLeft) foreground else accent
+    NavigationIcon(glyph?.icon, if (searchLeft) foreground else accent)
+}
+
+@Composable
+private fun NavigationIcon(source: Drawable?, tint: Color?) {
     val resources = LocalContext.current.resources
-    val icon = remember(glyph?.icon, tint) {
-        val source = glyph?.icon
-        // No constant state means nothing safe to copy, so the glyph is drawn untinted.
-        val copy = source?.constantState?.newDrawable(resources)?.mutate()
-        copy?.setTint(tint.toArgb())
-        copy ?: source
+    val tinted = remember(source, tint, resources) {
+        if (tint == null || source == null) null
+        else if (source is GlassSidebarIcon) GlassSidebarIcon(tint.toArgb())
+        else source.constantState?.newDrawable(resources)?.mutate()?.apply {
+            state = source.state
+            level = source.level
+            alpha = source.alpha
+            setLayoutDirection(source.layoutDirection)
+            setTint(tint.toArgb())
+        }
+    }
+    // An icon without constant state can still be colored without mutating the host drawable.
+    val tintLayer = remember(source, tint, tinted) {
+        if (tinted == null && source != null && tint != null) Paint().apply {
+            colorFilter = PorterDuffColorFilter(tint.toArgb(), PorterDuff.Mode.SRC_IN)
+        } else null
     }
     Canvas(Modifier.size(24.dp)) {
-        icon?.let {
-            val save = drawContext.canvas.nativeCanvas.save()
+        (tinted ?: source)?.let { icon ->
+            val canvas = drawContext.canvas.nativeCanvas
+            val save = if (tintLayer == null) canvas.save() else
+                canvas.saveLayer(0f, 0f, size.width, size.height, tintLayer)
             try {
-                it.setBounds(0, 0, size.width.toInt(), size.height.toInt())
-                it.draw(drawContext.canvas.nativeCanvas)
-            } finally { drawContext.canvas.nativeCanvas.restoreToCount(save) }
+                icon.setBounds(0, 0, size.width.toInt(), size.height.toInt())
+                icon.draw(canvas)
+            } finally { canvas.restoreToCount(save) }
         }
     }
 }

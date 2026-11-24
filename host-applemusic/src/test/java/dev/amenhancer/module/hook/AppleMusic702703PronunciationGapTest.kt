@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import dev.amenhancer.host.applemusic.AppleMusicHostProfiles
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookPoint
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicHookProfiles
 import io.github.proify.lyricon.amprovider.xposed.AppleMusicVersion
@@ -22,15 +23,18 @@ import org.junit.Test
  */
 class AppleMusic702703PronunciationGapTest {
 
-    private val versions = listOf(
-        AppleMusicVersion("7.0.2", 1624L),
-        AppleMusicVersion("7.0.3", 1626L),
+    private val builds = listOf(
+        Triple("7.0.2", 1624L, AppleMusicVersion("7.0.2", 1624L)),
+        Triple("7.0.3", 1626L, AppleMusicVersion("7.0.3", 1626L)),
     )
 
     @Test
     fun `the pronunciation install seam is still unresolved on 1624 and 1626`() {
-        versions.forEach { version ->
-            assertNotNull("missing profile for ${version.displayName}", AppleMusicHookProfiles.profileFor(version))
+        builds.forEach { (_, _, version) ->
+            assertNotNull(
+                "missing profile for ${version.displayName}",
+                AppleMusicHookProfiles.profileFor(version),
+            )
             assertTrue(
                 "1624/1626 gained a pronunciation target; re-derive it from the APK and update this test",
                 AppleMusicHookProfiles.exactTargets(version, AppleMusicHookPoint.LYRICS_VIEW_MODEL_LOAD).isEmpty(),
@@ -40,15 +44,16 @@ class AppleMusic702703PronunciationGapTest {
 
     @Test
     fun `the pair layout and the result submission contract survive the gap`() {
-        versions.forEach { version ->
-            val profile = AppleMusicHookProfiles.profileFor(version)
-            assertNotNull("missing profile for ${version.displayName}", profile)
-            val pairLayout = profile!!.document.optJSONObject("layoutVariants")
+        builds.forEach { (name, code, _) ->
+            val profile = AppleMusicHostProfiles.find("com.apple.android.music", name, code)
+            assertNotNull("missing host profile for $name", profile)
+            val document = profile!!.document
+            val pairLayout = document.optJSONObject("layoutVariants")
                 ?.optString("lyricPronunciationPairLayout").orEmpty()
-            assertTrue("pair layout is missing on ${version.displayName}", pairLayout.isNotBlank())
+            assertTrue("pair layout is missing on $name", pairLayout.isNotBlank())
             assertNotNull(
-                "result submission is missing on ${version.displayName}",
-                profile.document.optJSONObject("lyricResultSubmission"),
+                "result submission is missing on $name",
+                document.optJSONObject("lyricResultSubmission"),
             )
         }
     }

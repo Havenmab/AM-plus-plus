@@ -119,6 +119,8 @@ class OrdinarySettingsWritePolicyTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "lyrics_pronunciation_enabled" to true,
                 "lyric_effects_optimization_enabled" to false,
+                "lyric_line_motion_enabled" to false,
+                "lyric_line_motion_duration_percent" to 100,
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,

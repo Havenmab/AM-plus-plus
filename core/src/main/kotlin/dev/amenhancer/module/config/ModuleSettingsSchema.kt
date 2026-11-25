@@ -9,6 +9,7 @@ import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LlmLyricsThinkingFormat
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
+import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
 
 object ModuleSettingsSchema {
     /** Keys removed by the profile migrations. */
@@ -111,6 +112,13 @@ object ModuleSettingsSchema {
             lyricEffectsOptimizationEnabled = values.boolean(
                 KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
                 default = false,
+            ),
+            lyricLineMotionEnabled = values.boolean(
+                KEY_LYRIC_LINE_MOTION_ENABLED,
+                default = false,
+            ),
+            lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(
+                values.number(KEY_LYRIC_LINE_MOTION_DURATION_PERCENT),
             ),
             navigationCompensationEnabled = values.boolean(
                 KEY_NAVIGATION_COMPENSATION,
@@ -284,6 +292,9 @@ object ModuleSettingsSchema {
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
             KEY_LYRICS_PRONUNCIATION_ENABLED to settings.lyricsPronunciationEnabled,
             KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED to settings.lyricEffectsOptimizationEnabled,
+            KEY_LYRIC_LINE_MOTION_ENABLED to settings.lyricLineMotionEnabled,
+            KEY_LYRIC_LINE_MOTION_DURATION_PERCENT to
+                LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
             KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
@@ -719,6 +730,8 @@ object ModuleSettingsSchema {
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
         KEY_LYRICS_PRONUNCIATION_ENABLED,
         KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
+        KEY_LYRIC_LINE_MOTION_ENABLED,
+        KEY_LYRIC_LINE_MOTION_DURATION_PERCENT,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_STARTUP_PAGE_PREWARM,
@@ -808,6 +821,13 @@ object ModuleSettingsSchema {
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
     private const val KEY_LYRICS_PRONUNCIATION_ENABLED = "lyrics_pronunciation_enabled"
     private const val KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED = "lyric_effects_optimization_enabled"
+    private const val KEY_LYRIC_LINE_MOTION_ENABLED = "lyric_line_motion_enabled"
+    /**
+     * The line-change multiplier is stored as an int percentage (50..200), because the embedded
+     * settings store persists booleans, ints, longs and strings only. See
+     * [LyricLineMotionPolicy.encodePercent].
+     */
+    private const val KEY_LYRIC_LINE_MOTION_DURATION_PERCENT = "lyric_line_motion_duration_percent"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"

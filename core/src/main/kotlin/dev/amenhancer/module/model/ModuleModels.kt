@@ -2,6 +2,7 @@ package dev.amenhancer.module.model
 
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.RegionSelection
+import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
 
 data class ModuleSettings(
     val dualPaneEnabled: Boolean = true,
@@ -63,6 +64,19 @@ data class ModuleSettings(
     val lyricsPronunciationEnabled: Boolean = true,
     /** Opt-in corrections for wrapped sweeps and main lyric highlighting; applied at host startup. */
     val lyricEffectsOptimizationEnabled: Boolean = false,
+    /**
+     * 「歌词换行节奏」: scale the duration Apple Music itself computes for a lyric line change.
+     *
+     * Off by default, and additionally gated by [lyricEffectsOptimizationEnabled] — this is a
+     * lyric *effect*, and that switch owns all of them. Read live, so switching it off (or
+     * moving its slider) takes effect on the next line change without restarting Apple Music.
+     */
+    val lyricLineMotionEnabled: Boolean = false,
+    /**
+     * Multiplier for that duration: 0.5 (twice as fast) .. 2.0 (twice as slow), coerced by
+     * [LyricLineMotionPolicy]. 1.0 is Apple Music's own timing and an exact no-op.
+     */
+    val lyricLineMotionDurationScale: Float = LyricLineMotionPolicy.NEUTRAL_SCALE,
     val navigationCompensationEnabled: Boolean = false,
     /** Restores native Data settings and the app's cellular availability predicate. */
     val forceCellularDataEntryEnabled: Boolean = false,

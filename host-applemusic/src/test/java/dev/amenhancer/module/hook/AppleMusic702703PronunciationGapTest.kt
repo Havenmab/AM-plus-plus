@@ -291,11 +291,9 @@ class AppleMusic702703PronunciationGapTest {
     @Test
     fun `the pair layout and the result submission contract survive the gap`() {
         listOf(gap, pinned).forEach { version ->
-            val profile = AppleMusicHostProfiles.find(
-                "com.apple.android.music",
-                version.versionName,
-                version.versionCode,
-            )
+            val name = requireNotNull(version.versionName) { "unset version name" }
+            val code = requireNotNull(version.versionCode) { "unset version code" }
+            val profile = AppleMusicHostProfiles.find("com.apple.android.music", name, code)
             assertNotNull("missing host profile for " + version.displayName, profile)
             val document = profile!!.document
             val pairLayout = document.optJSONObject("layoutVariants")

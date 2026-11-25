@@ -26,6 +26,17 @@ internal class LyricLineSpringRow(
      */
     val paneHeight: Int
         get() = runCatching { (view.parent as? View)?.height ?: 0 }.getOrDefault(0)
+
+    /**
+     * The row's current layout top, read back every frame by the wave.
+     *
+     * This is how a layout change that announced nothing — the background line's own height
+     * animation, the host's `height = 0`/`14` end states — becomes visible to the spring: the
+     * host's `top` moved, the row's `translationY` has to lose the same amount to keep the row
+     * where the eye left it. Null when the view cannot be read at all.
+     */
+    val top: Int?
+        get() = runCatching { view.top }.getOrNull()
 }
 
 /**
@@ -47,6 +58,8 @@ internal class LyricLineSpringRow(
 internal class LyricLineSpringTracks(
     private val writeOffset: (LyricLineSpringRow, Float) -> Unit,
     private val dispatchFinished: (LyricLineSpringRow) -> Unit,
+    /** One line per absorbed layout shift, i.e. per frame of a background line growing. */
+    private val layoutShift: (LyricLineSpringRow, Int, Float) -> Unit = { _, _, _ -> },
 ) {
     private val lock = Any()
     private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
@@ -143,6 +156,10 @@ internal class LyricLineSpringTracks(
     private fun newWave(): LyricLineSpringWave<Any> = LyricLineSpringWave(
         write = { holder, offset -> rows[holder]?.let { writeOffset(it, offset) } },
         finish = { holder -> rows[holder]?.let { dispatchFinished(it) } },
+        layoutTop = { holder -> rows[holder]?.top },
+        onLayoutShift = { holder, delta, lag ->
+            rows[holder]?.let { layoutShift(it, delta, lag) }
+        },
     )
 
     /** Drop a wave that has nothing left to move, unless a row of it has moved on to another. */

@@ -37,6 +37,12 @@ package dev.amenhancer.module.lyrics
  *  * a row still inside its stagger delay keeps its remaining delay: its layout moved, its visual did
  *    not, and it has no velocity to preserve either way.
  *
+ * **Layout changes that announce nothing are read back, once per frame.** The background line's
+ * growth is not a notify-driven layout, so it never reaches `animateMove` at all; [advance]
+ * therefore compares each tracked row's own `top` against the expectation the last move (or the
+ * previous frame) left, and folds any difference into the residual — see [absorbLayoutShifts]. This
+ * is the only place the wave reads layout instead of being told about it, and it never writes it.
+ *
  * **A row already in flight is never re-delayed.** AMLL queues the *new target* behind the delay and
  * lets the row finish travelling to the old one meanwhile; our host has already jumped the layout,
  * so the equivalent is to re-target the moving row immediately. Freezing it instead would stall a
@@ -55,6 +61,15 @@ package dev.amenhancer.module.lyrics
 class LyricLineSpringWave<H : Any>(
     private val write: (H, Float) -> Unit,
     private val finish: (H) -> Unit,
+    /**
+     * The row's current layout top, or null when it cannot be read (detached, recycled).
+     *
+     * Only used by the per-frame layout tracking (see [absorbLayoutShifts]); the wave never writes
+     * it, so the host stays the only writer of layout.
+     */
+    private val layoutTop: (H) -> Int? = { null },
+    /** Called for every layout shift that was absorbed, for the one diagnostic line. */
+    private val onLayoutShift: ((H, Int, Float) -> Unit)? = null,
 ) {
     /**
      * The height of the list the pending line change belongs to, as reported by [push].
@@ -121,13 +136,13 @@ class LyricLineSpringWave<H : Any>(
         val moving = existing != null && !existing.finished
         val previousLag = if (existing == null || existing.finished) 0f
         else existing.spring.offsetAt(existing.elapsedMs)
-        val offered = if (moving) existing!!.spring.velocityAt(existing.elapsedMs) else 0f
+        val offered = if (moving) existing.spring.velocityAt(existing.elapsedMs) else 0f
         // A row that has not left its stagger slot keeps the slot: its layout moved, its visual did
         // not, and it has no velocity yet either way.
-        val waiting = moving && existing!!.delayMs > 0f
+        val waiting = moving && existing.delayMs > 0f
         val kept = if (moving && !waiting) towardTarget(offered, lagPx) else 0f
         if (moving) {
-            existing!!.finished = true
+            existing.finished = true
             finish(holder)
         }
         val spring = tempo.at(lagPx, kept)
@@ -162,6 +177,7 @@ class LyricLineSpringWave<H : Any>(
      */
     fun advance(frameStepMs: Float): Boolean {
         if (unranked.isNotEmpty()) rank()
+        absorbLayoutShifts()
         val step = LyricLineSpringPolicy.frameStep(frameStepMs)
         var running = false
         members.forEach { member ->
@@ -225,6 +241,65 @@ class LyricLineSpringWave<H : Any>(
     fun prune() {
         members.removeAll { it.finished }
         unranked.removeAll { it.finished }
+    }
+
+    /**
+     * Take in every layout change that no `animateMove` announced.
+     *
+     * Apple Music grows a row's background-vocal line from a `ValueAnimator` that rewrites
+     * `layoutParams.height` once per frame. Those layouts carry no adapter notification, so
+     * RecyclerView never asks the item animator about them: there is no `dy` and [push] is never
+     * called. Reading each tracked row's own `top` once per frame is the only way to see it.
+     *
+     * For a row whose layout moved by `delta` its visual position is `top + translationY`, so
+     * keeping the visual where it is means `lag -= delta`; the spring then carries the row to its
+     * new home, which *is* the background line's extra height. The whole line change stays one
+     * monotone up move whose end point already contains the grow.
+     *
+     * Two refusals keep this from doing damage:
+     *
+     *  * a shift that **every** tracked row takes part in is a scroll or a re-anchor, not a row
+     *    growing — compensating it would glue the block to the screen under the user's finger. Those
+     *    only re-baseline;
+     *  * a shift beyond [LyricLineSpringPolicy.MAX_LAYOUT_SHIFT_PX] is a recycled row, a track
+     *    change or a jump, likewise re-baselined only.
+     *
+     * A `move` synchronises the same expectation ([Member.layoutTop] is the move's `toY`), so a
+     * layout that announced itself is never counted twice.
+     */
+    private fun absorbLayoutShifts() {
+        var live = 0
+        var shifted = 0
+        var first = 0
+        var uniform = true
+        members.forEach { member ->
+            if (member.finished) return@forEach
+            val top = layoutTop(member.holder) ?: return@forEach
+            live += 1
+            val delta = top - member.layoutTop
+            if (delta == 0) return@forEach
+            shifted += 1
+            if (shifted == 1) first = delta else if (delta != first) uniform = false
+        }
+        if (shifted == 0) return
+        // A shift every tracked row takes part in is a scroll or a re-anchor; a growth of one row's
+        // background line moves only the rows below it, which is the case worth absorbing.
+        val absorb = live <= 1 || shifted < live || !uniform
+        members.forEach { member ->
+            if (member.finished) return@forEach
+            val top = layoutTop(member.holder) ?: return@forEach
+            val delta = top - member.layoutTop
+            if (delta == 0) return@forEach
+            member.layoutTop = top
+            if (!absorb || !LyricLineSpringPolicy.acceptsLayoutShift(delta)) return@forEach
+            val lag = member.spring.offsetAt(member.elapsedMs) - delta.toFloat()
+            val velocity = towardTarget(member.spring.velocityAt(member.elapsedMs), lag)
+            member.spring = member.spring.relaunch(lag, velocity)
+            member.deadlineMs = member.spring.deadlineMs()
+            member.elapsedMs = 0f
+            write(member.holder, lag)
+            onLayoutShift?.invoke(member.holder, delta, lag)
+        }
     }
 
     /**

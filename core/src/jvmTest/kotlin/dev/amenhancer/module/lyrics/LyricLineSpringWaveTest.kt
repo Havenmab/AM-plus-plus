@@ -16,7 +16,7 @@ import org.junit.Test
  */
 class LyricLineSpringWaveTest {
     /** Stands in for a RecyclerView.ViewHolder: its itemView's translationY and its finish count. */
-    private class Row(val name: String, val top: Int) {
+    private class Row(val name: String, var top: Int) {
         var translationY = 0f
         var finished = 0
         override fun toString(): String = name + "@" + top
@@ -30,6 +30,8 @@ class LyricLineSpringWaveTest {
         LyricLineSpringWave<Row>(
             write = { row, offset -> row.translationY = offset },
             finish = { row -> row.finished += 1 },
+            // The real host reads the row's own layout top; the fake row is the same thing.
+            layoutTop = { row -> row.top },
         ).also { it.paneHeightPx = paneHeightPx }
 
     private fun LyricLineSpringWave<Row>.settle(limit: Int = 4_000): Int {
@@ -338,8 +340,9 @@ class LyricLineSpringWaveTest {
         assertTrue(applied.moving)
         assertEquals(0f, applied.keptVelocity, 0f)
         assertEquals(-40f, applied.layoutDeltaPx, 0.01f)
-        // Still in the same slot (minus the frame that just elapsed), same visual position.
-        assertEquals(slot - 16.6f, wave.delayOf(second), 0.6f)
+        // Still in the same slot: a correction never re-staggers a row, and this push consumed no
+        // frame (the slot only drains inside advance).
+        assertEquals(slot, wave.delayOf(second), 0.01f)
         assertEquals(visualBefore, second.top + second.translationY, 0.02f)
 
         wave.settle()
@@ -420,5 +423,102 @@ class LyricLineSpringWaveTest {
         assertEquals(0f, applied.previousLagPx, 0f)
         assertEquals(-120f, applied.lagPx, 0f)
         assertEquals(120f, applied.layoutDeltaPx, 0f) // 0 - (-120): the layout moved up 120
+    }
+
+    // ---- per-frame layout tracking: a growth that never announces itself ------------------------
+
+    @Test
+    fun `a background line growing frame by frame is absorbed without a downward frame`() {
+        // The host grows the background line from a ValueAnimator that rewrites layoutParams.height
+        // once per frame, with no adapter notification: no animateMove, no dy. Only the row's own
+        // top shows it. 12 frames x 4 px = 48 px, i.e. the whole background line.
+        val above = Row("above", top = 200)
+        val below = Row("below", top = 400)
+        val wave = wave()
+        wave.push(above, 240f, above.top, tempo())
+        wave.push(below, 240f, below.top, tempo())
+        val startVisual = below.top + below.translationY
+        assertEquals(240f, startVisual - below.top, 1e-3f)
+
+        var previous = startVisual
+        repeat(12) {
+            below.top += 4
+            wave.advance(16.6f)
+            val visual = below.top + below.translationY
+            assertTrue("went back down: " + previous + " -> " + visual, visual <= previous + 1e-3f)
+            previous = visual
+        }
+        // 48 px of the 240 were taken out of the travel, not added to it.
+        assertTrue("absorbed nothing?", startVisual - previous > 40f)
+
+        var frames = 0
+        while (wave.advance(16.6f)) {
+            val visual = below.top + below.translationY
+            assertTrue("went back down while settling", visual <= previous + 1e-3f)
+            previous = visual
+            frames += 1
+            assertTrue("never settles", frames < 4_000)
+        }
+        assertEquals(0f, below.translationY, 0f)
+        assertEquals(240f - 48f, startVisual - (below.top + below.translationY), 1f)
+    }
+
+    @Test
+    fun `a shift every row takes part in is a scroll and is not absorbed`() {
+        // A drag or a re-anchor moves every child by the same amount. Compensating that would glue
+        // the block to the screen under the user's finger, so the wave only re-baselines.
+        val first = Row("a", top = 200)
+        val second = Row("b", top = 320)
+        val wave = wave()
+        wave.push(first, 240f, first.top, tempo())
+        wave.push(second, 240f, second.top, tempo())
+        wave.advance(16.6f)
+        // The second row is still inside its 50 ms slot, so its translation cannot move at all.
+        val visualBefore = second.top + second.translationY
+
+        first.top += 40
+        second.top += 40
+        wave.advance(16.6f)
+        assertEquals(40f, (second.top + second.translationY) - visualBefore, 0.01f)
+        // Not absorbed at all: the row keeps the translation the move gave it.
+        assertEquals(240f, second.translationY, 1e-3f)
+    }
+
+    @Test
+    fun `a move and a frame shift for the same layout are not counted twice`() {
+        val row = Row("a", top = 500)
+        val wave = wave()
+        wave.push(row, 240f, row.top, tempo())
+        wave.advance(16.6f)
+        val lag = wave.lagOf(row)
+
+        // The layout moves 40 px *and* announces itself with a move that carries the new top.
+        row.top += 40
+        val applied = wave.push(row, lag - 40f, row.top, tempo())
+        assertEquals(40f, applied.layoutDeltaPx, 0.01f)
+        val afterPush = row.translationY
+
+        // The next frame must only step the spring: no second 40 px were absorbed.
+        wave.advance(16.6f)
+        assertTrue(
+            "absorbed twice: " + afterPush + " -> " + row.translationY,
+            kotlin.math.abs(row.translationY - afterPush) < 20f,
+        )
+    }
+
+    @Test
+    fun `a shift beyond the bound re-baselines instead of dragging the row`() {
+        val row = Row("a", top = 500)
+        val wave = wave()
+        wave.push(row, 120f, row.top, tempo())
+        wave.advance(16.6f)
+        val before = row.translationY
+
+        row.top += 900 // a seek: far beyond one frame of a growing line
+        wave.advance(16.6f)
+        assertTrue(
+            "absorbed a jump: " + before + " -> " + row.translationY,
+            kotlin.math.abs(row.translationY - before) < 20f,
+        )
     }
 }

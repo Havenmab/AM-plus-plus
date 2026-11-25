@@ -107,6 +107,19 @@ object LyricLineSpringPolicy {
     const val MIN_DURATION_MS: Long = 100L
     const val MAX_DURATION_MS: Long = 1_600L
 
+    /**
+     * The largest layout shift one frame may absorb before it is treated as a re-anchor.
+     *
+     * A background line growing from nothing moves the rows below it by its own height — tens of
+     * pixels over a few hundred milliseconds, i.e. a few pixels per frame. Anything this large
+     * inside one frame is a recycled row, a seek or a jump, where the layout moved for a reason we
+     * must not absorb.
+     */
+    const val MAX_LAYOUT_SHIFT_PX: Int = 240
+
+    /** True when a per-frame layout shift of [deltaPx] is a background line growing, not a jump. */
+    fun acceptsLayoutShift(deltaPx: Int): Boolean = abs(deltaPx) <= MAX_LAYOUT_SHIFT_PX
+
     /** True when [dy] is a displacement this feature is willing to own. */
     fun acceptsDisplacement(dy: Int): Boolean = dy != 0 && abs(dy) <= MAX_DISPLACEMENT_PX
 

@@ -115,6 +115,7 @@ internal class AppleMusicLyricLineSpringTarget(
         private val tracks = LyricLineSpringTracks(
             writeOffset = { row, offset -> row.view.translationY = offset },
             dispatchFinished = { row -> notifyFinished(row) },
+            layoutShift = { row, delta, lag -> diagnostics.layoutShift(row.holder, delta, lag) },
         )
         private var lastFrameNanos = 0L
         private var frameScheduled = false
@@ -345,6 +346,7 @@ internal class LyricLineSpringDiagnostics(
     private var lastCleanupAt = Long.MIN_VALUE
     private var emitted = 0
     private var retargets = 0
+    private var shifts = 0
 
     /**
      * A row was taken over: the feel, the spring it produced, and how many waves are live.
@@ -391,6 +393,29 @@ internal class LyricLineSpringDiagnostics(
                 (if (applied.velocityDropped) " dropped=1" else "") +
                 (if (applied.waiting) " waiting=1" else ""),
         )
+    }
+
+    /**
+     * One frame of a layout change that announced nothing — the background line growing or
+     * collapsing.
+     *
+     * `delta` is how far that row's layout moved in this frame and `residual` the translation the
+     * wave left on it afterwards (the visual position did not move). A device run reads this as:
+     * `delta=+4` repeated a dozen times is one background line growing; a single huge `delta` is a
+     * seek or a recycled row, which the wave refuses to absorb. Rate limited per holder, so a long
+     * song cannot flood logcat.
+     */
+    fun layoutShift(holder: Any, deltaPx: Int, lagPx: Float) {
+        val key = "shift:" + System.identityHashCode(holder)
+        val now = now()
+        synchronized(reported) {
+            val last = reported[key]
+            if (last != null && now - last < SHIFT_WINDOW_MS) return
+            if (shifts >= MAX_SHIFT_LINES) return
+            reported[key] = now
+            shifts += 1
+        }
+        emit("layout-shift delta=" + deltaPx + " residual=" + fixed(lagPx))
     }
 
     /** Something was handed back to the host, with the reason; each reason is printed once. */
@@ -445,5 +470,11 @@ internal class LyricLineSpringDiagnostics(
 
         /** A corrected row prints once per distinct key inside this window. */
         const val RETARGET_WINDOW_MS = 300L
+
+        /** One absorbed layout-shift line per holder inside this window. */
+        const val SHIFT_WINDOW_MS = 100L
+
+        /** Budget for the layout-shift lines, on top of [MAX_LINES]. */
+        const val MAX_SHIFT_LINES = 160
     }
 }

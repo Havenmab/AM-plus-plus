@@ -255,6 +255,7 @@ private fun productionFeatureInstallationModule(
             FeatureInstallationPlan(feature = LyricBackgroundHighlightFeature()),
             FeatureInstallationPlan(feature = LyricLineMotionFeature()),
             FeatureInstallationPlan(feature = LyricLineMotionProbeFeature()),
+            FeatureInstallationPlan(feature = LyricLineSpringFeature()),
             FeatureInstallationPlan(
                 feature = LyricsTypefaceFeature(),
                 registerResources = lyricsTypefaceSession::registerResources,

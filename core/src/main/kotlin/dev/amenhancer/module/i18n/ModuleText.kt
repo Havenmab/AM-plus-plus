@@ -214,6 +214,11 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "50%% is twice as fast, 100%% is Apple Music's own timing, 200%% twice as slow · Read live",
         "50%% 快一倍，100%% 为 Apple Music 原始时长，200%% 慢一倍 · 实时生效",
     ),
+    LYRIC_LINE_SPRING("Spring line-change displacement", "换行弹簧位移"),
+    LYRIC_LINE_SPRING_SUMMARY(
+        "Drives the whole lyric block's line-change displacement with one spring instead of Apple Music's own slide · Requires lyric effects optimization · Wins over the line-change rhythm when both are on · Restart Apple Music to apply",
+        "把歌词整块的换行位移改成一条弹簧推进，替换 Apple Music 自带的滑动 · 需同时开启「歌词效果优化」· 与「歌词换行节奏」同开时以本项为准 · 重开 Apple Music 后生效",
+    ),
     LYRIC_LINE_MOTION_PROBE("Line-change probe (diagnostic)", "换行诊断（临时）"),
     LYRIC_LINE_MOTION_PROBE_SUMMARY(
         "Read-only diagnostics in logcat (AMPP-LineProbe): what Apple Music's own line change does · Changes nothing on screen · Restart Apple Music to apply",

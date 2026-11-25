@@ -556,6 +556,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         settings.cjkKaraokeAnimationEnabled,
         settings.lyricEffectsOptimizationEnabled,
         settings.lyricLineMotionEnabled,
+        settings.lyricLineSpringEnabled,
         settings.lyricsPronunciationEnabled && nativeBridge.supportsLyricsPronunciation(activity),
     ).count { it }
     val dpi = if (settings.appleMusicDpiOverrideDpi == ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI) {
@@ -638,6 +639,13 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     defaultValue = LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.NEUTRAL_SCALE),
                 ) { percent ->
                     onEdit { it.copy(lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(percent)) }
+                }
+                // 「换行弹簧」: takes the line-change displacement over. It sits right after the rhythm
+                // control because the two compete for the same motion: when both switches are on the
+                // spring owns the displacement and the slider only supplies its tempo.
+                Setting(ModuleText.LYRIC_LINE_SPRING, ModuleText.LYRIC_LINE_SPRING_SUMMARY,
+                    settings.lyricLineSpringEnabled, EmbeddedSvgIcon.LyricEffects) { value ->
+                    onEdit { it.copy(lyricLineSpringEnabled = value) }
                 }
                 // Temporary diagnostic switch: it installs read-only probe hooks that only write
                 // AMPP-LineProbe log lines, and nothing at all while it is off. Remove it together

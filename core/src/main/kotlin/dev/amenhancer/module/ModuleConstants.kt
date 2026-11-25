@@ -75,6 +75,8 @@ object ModuleConstants {
     const val FEATURE_LYRIC_LINE_MOTION = "lyric_line_motion"
     /** 「换行诊断」: the read-only line-change probe. Installs nothing while it is off. */
     const val FEATURE_LYRIC_LINE_MOTION_PROBE = "lyric_line_motion_probe"
+    /** 「换行弹簧」: the spring takeover of the lyric line-change displacement. */
+    const val FEATURE_LYRIC_LINE_SPRING = "lyric_line_spring"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_LYRICS_PARSER = "lyrics_parser"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"

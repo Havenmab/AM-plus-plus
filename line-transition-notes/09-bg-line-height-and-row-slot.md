@@ -98,11 +98,33 @@ bg 行展开时多出来的高度：
 
 **净结论：在“不占位、不常驻、不改字号”的前提下，后行下移无法消除；E 只能把下移量削减到约 3/4。**
 
-## 5. 本次真正落地的修正：后续 move = 目标修正，不是第二次冲量
+## 5. 本次真正落地的修正（两条，缺一不可）
+
+### 5.1 逐帧读回 layout：bg 展开没有 move 也能看见
+
+`LyricLineSpringWave#advance` 每帧对每个被跟踪行读一次 `itemView.top`（**只读**，宿主的布局写入者不变），
+与“上一次 move 的 `toY` / 上一帧读到的值”比较：
+
+```
+delta = actualTop - expectedTop
+if (delta != 0) { lag -= delta; expectedTop = actualTop; 方向翻转则清零速度; 打 layout-shift }
+```
+
+视觉位置是 `top + translationY`，所以 `lag -= delta` 让视觉一像素都不动；随后弹簧把 residual 带回 0，
+而那个 0 就在 bg 展开后的位置 —— **整段换行仍然只往上走，终点已经含 ΔH**（这正是 iOS 的语义）。
+
+两条拒绝，都是为了不把别的布局变化误当 bg 展开：
+
+* **所有被跟踪行同幅度位移** ⇒ 滚动/重锚（会把整块粘在屏幕上顶着手指），只重设基线；
+* **单帧 |delta| > 240 px**（`LyricLineSpringPolicy.MAX_LAYOUT_SHIFT_PX`）⇒ 回收行/seek/跳转，只重设基线。
+
+与 move 不重复计数：`push` 把 `expectedTop` 同步成该 move 的 `toY`，下一帧读到的 `top` 与它相等，delta = 0。
+
+### 5.2 后续 move = 目标修正，不是第二次冲量
 
 乙-2 原来对“同一个 holder 又来一次 `animateMove`”的处理是**累加 lag + 保速**。宿主的 `dy` 已经把当前
 `translationY` 折进去了，所以 `-dy` 本来就是**绝对** lag：视觉位置不动、只挪终点。保速会让行冲过新终点
-再回落 —— 这正是“被推一下再弹回来”的一段。现在（`LyricLineSpringWave#push`）：
+再回落 —— 这也是一段“被推一下再弹回来”。现在（`LyricLineSpringWave#push`）：
 
 * 新的 lag = `-dy`（不变，天然是目标修正）；
 * **速度只在仍指向新终点时保留**（`v · lag < 0`），否则清零；
@@ -111,9 +133,14 @@ bg 行展开时多出来的高度：
   `moving` / `waiting` / `layoutDeltaPx` / `velocityDropped`），只有 `moving` 时才打一行
   `retarget`（限流：同 key 300 ms、整场 160 行）。
 
-真机上这条日志同时是**判据**：bg 展开时如果出现 `retarget ... layoutDelta=+40`，说明那次 layout 确实
-派发了 move（我们修正终点）；如果**没有** `retarget` 却仍看到下推，说明 bg 的高度变化是纯 layout、
-没有 `animateMove` —— 那就是第 2 节第 2 条，任何“只动 translationY”的方案都看不见它。
+### 5.3 日志判据
+
+| 日志 | 含义 |
+| --- | --- |
+| `layout-shift delta=+4 residual=236.0` 连续十几行 | bg 行正在逐帧展开；`residual` 应当逐步靠近 0 且**单调** |
+| 一次 `layout-shift delta=+48` | 高度是一次性跳的（`A#l` 的 `height=0`、`E` 的 `height=14` 之类），同样被吸收 |
+| `retarget layoutDelta=+40 …` | 这次 layout 恰好派发了 move，按目标修正处理（与 `layout-shift` 不会同时出现同一段位移） |
+| 完全没有 `layout-shift` 而下推仍在 | 说明读到的 `top` 没变（布局发生在我们的帧回调之后），需要复看 `getTop()` 的时机 |
 
 ## 6. 真机验收
 
@@ -122,22 +149,22 @@ adb logcat -c && adb logcat -s AMPP-LineSpring
 ```
 
 1. 播一首**有背景人声**的歌，等 4–6 次换行：
-   * 期望每行只上移一次；逐帧看屏幕 y **单调不减**（不回弹）；
-   * `retarget ... kept=<非 0>` 是正常修正；`dropped=1` 表示那次修正把终点翻到了行的另一侧（不会有回弹）；
-   * 若出现 `layoutDelta` 接近 48 dp 的一次修正，终点直接少了这一段，观感就是 iOS 的缩短式上移。
-2. 无 bg 的曲目：`takeover` 行照旧、`retarget` 行不该出现（没有第二次 layout 就没有修正）。
+   * 判据 A（最重要）：换行时后一行的屏幕 y **单调不回退** —— 不再有“先下去一点、再被波浪带回来”；
+   * 判据 B：出现成串的 `layout-shift delta=+N residual=…`，`residual` 单调靠近 0；
+   * 判据 C：`retarget ... kept=<非 0>` 是正常的目标修正；`dropped=1` 表示终点翻到了行的另一侧（无回弹）；
+   * 判据 D：bg 行本身**仍然只在轮到它时出现**（我们改的是位移补偿，不是可见性）。
+2. 无 bg 的曲目：只有 `takeover`，`layout-shift` / `retarget` 都不该出现。
 3. 连续换行 20 次不卡死（`finished` 计数由单测守住 18/18 那条）。
-4. seek 5 行 / 切歌：允许 `retarget`，但不允许残留 `translationY`（`endAnimation`/`endAnimations` 路径未改）。
+4. **拖动歌词**：拖动时整块应当跟着手指走（同幅位移不吸收）；松手吸回当前行不强跳。
+5. seek 5 行 / 切歌：允许 `retarget`，但不应有残留 `translationY`（`endAnimation`/`endAnimations` 路径未改）。
 
-## 7. 仍未解决的部分（需要产品决定）
+## 7. 仍需产品决定的部分
 
-如果第 5 节的真机日志里**没有** `retarget` 而下推仍在，说明 bg 行的展开不经过 `animateMove`。
-此时可选的只有：
+第 5 节的补偿**不改变后行的最终位置**（bg 行确实占了 48 dp，后行最终仍比原来低 48 dp），它只保证这一段位移
+不再是“先下后上”，而是**一次单调上移、终点已含 ΔH**。若要“连最终位置都不变”，只有下面两条：
 
-| 选项 | 后行是否下移 | 空白 | 代价 |
+| 选项 | 后行最终位置 | 空白 | 代价 |
 | --- | --- | --- | --- |
-| B/D 占位（常驻/按需） | **不下移** | 有（非激活行下方一片） | 用户已否 |
-| E 压缩 bg 前导（22 dp→0）+ 借下内边距 | 下移 ≈ 36 dp（原 48） | 无 | 改两个人的布局参数、`A$a.M` 与真实高度脱钩 |
-| C 同帧补偿（`r`/`t`/`E`/`A#l` 四个 hook，把 ΔH 折进后行 residual） | 下移但平滑（终点仍 +48 dp） | 无 | 需要 11 个新 profile 角色 + 逐帧补偿 |
+| B/D 占位（常驻或按需） | **不变** | 有（非激活行下方一片） | 用户已否 |
+| E 压缩 bg 前导（22 dp→0）+ 借下内边距 | 下移 ≈ 36 dp（原 48） | 无 | 改两个人的布局参数；`A$a.M` 与真实布局脱钩 |
 
-三条都需要用户拍板，本提交只落地第 5 节（不改变任何布局参数，纯弹簧语义修正）。

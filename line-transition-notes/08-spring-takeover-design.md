@@ -175,8 +175,9 @@ x(t) = (x0 + t (v0 + omega0 x0)) e^(-omega0 t)      // omega0 = sqrt(k/m)
    * 只有当携带的速度仍然指向新终点（`v · lag < 0`）时才保速；否则清零（否则会冲过终点再回落，观感就是"被推一下再弹回来"）；
    * 还在阶梯延迟里的行**保留剩余延迟**（它的 layout 动了、视觉没动，本来也没有速度）。
    若给在飞行的行重新排 50–250 ms，它会中途定格、lag 逐行累积 —— 这是唯一一处与「延迟按新批次重算」字面不同的地方。
-5. **到位**：`|lag| <= 0.5 px` **且** `|v| <= 30 px/s`（0.5 px / 一个 60 Hz 帧）；归零 + 逐个 `dispatchAnimationFinished`。deadline（`1.6 × t99`）是兜底，防止极端 re-target 让 `isRunning()` 无限为真。
-6. **契约**：`endAnimation(holder)` 归零 + 恰好一次 finished；`endAnimations()` 遍历该 animator 的 wave；收到 rest 时同样恰好一次。乙-1 的「每行一个 finished 标志」和回退路径原样保留。
+5. **逐帧读回 layout**：bg 行的高度动画是 `ValueAnimator` 逐帧改 `layoutParams.height`，**没有 adapter 通知 ⇒ 没有 `animateMove`**。所以 `advance` 每帧读一次被跟踪行的 `itemView.top`，与"上一次 move 的 `toY` / 上一帧读到的值"比较；不同就把差值折进 residual（`lag -= delta`，视觉不动）并重瞄弹簧（方向翻转则丢速度）。两条拒绝：**所有被跟踪行同幅度位移**（那是滚动/重锚）、**单帧超过 240 px**（回收行/跳转）都只重设基线。
+6. **到位**：`|lag| <= 0.5 px` **且** `|v| <= 30 px/s`（0.5 px / 一个 60 Hz 帧）；归零 + 逐个 `dispatchAnimationFinished`。deadline（`1.6 × t99`）是兜底，防止极端 re-target 让 `isRunning()` 无限为真。
+7. **契约**：`endAnimation(holder)` 归零 + 恰好一次 finished；`endAnimations()` 遍历该 animator 的 wave；收到 rest 时同样恰好一次。乙-1 的「每行一个 finished 标志」和回退路径原样保留。
 
 ### 8.4 已知的取舍
 
@@ -188,7 +189,9 @@ x(t) = (x0 + t (v0 + omega0 x0)) e^(-omega0 t)      // omega0 = sqrt(k/m)
 
 `LyricLineSpringPolicyTest`（17 条）：两档 ζ、`k=170(0.484/t)^2`、AMLL 档 t99=450±5%、HOST 档 1.31T±5% 且比值恒定、AMLL 形状 = 临界阻尼（与同参数精确解差 1.31 倍）、HOST 闭式解与 RK4 一致、单调无过冲、到位门限、`appliedFeel` 双开关门控。
 
-`LyricLineSpringWaveTest`（13 条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 恰好 18 次 finished、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
+`LyricLineSpringWaveTest`（21 条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 恰好 18 次 finished、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
+
+逐帧布局跟踪四条：**没有任何 move 的** bg 展开（12 帧 × 4 px = 48 px）被逐帧吸收、视觉 y 单调不回退、终点 = 位移 − 48；每行同幅度的位移按"滚动/重锚"处理、不吸收；move 与逐帧 delta 不重复计数；超界位移只重设基线。
 
 > 修订（2026-11-25）：第 1 条的"保速"改成了**有条件保速**（见 §8.3 第 4 点）。
 > 宿主对同一个 holder 可能在一屏内发多次 `animateMove`（重锚、批量 notify、bg 行高度动画落在一次带动画的 layout 里），

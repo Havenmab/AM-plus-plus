@@ -6365,6 +6365,95 @@
         "release": "no state is retained; the probe stops on its own budget (4000 lines) and reinstalls only on the next process start"
       }
     },
+    "spring": {
+      "contractVersion": 1,
+      "classes": {
+        "animator": "mc.y",
+        "holder": "androidx.recyclerview.widget.RecyclerView$D"
+      },
+      "methods": {
+        "animateMove": {
+          "owner": "mc.y",
+          "name": "m",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D",
+            "int",
+            "int",
+            "int",
+            "int"
+          ],
+          "returns": "boolean",
+          "static": false
+        },
+        "isRunning": {
+          "owner": "mc.y",
+          "name": "g",
+          "parameters": [],
+          "returns": "boolean",
+          "static": false
+        },
+        "endAnimation": {
+          "owner": "mc.y",
+          "name": "e",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "endAnimations": {
+          "owner": "mc.y",
+          "name": "f",
+          "parameters": [],
+          "returns": "void",
+          "static": false
+        },
+        "dispatchMoveStarting": {
+          "owner": "androidx.recyclerview.widget.F",
+          "name": "q",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "dispatchAnimationFinished": {
+          "owner": "androidx.recyclerview.widget.RecyclerView$k",
+          "name": "c",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        }
+      },
+      "fields": {
+        "holderItemView": {
+          "owner": "androidx.recyclerview.widget.RecyclerView$D",
+          "name": "a",
+          "type": "android.view.View"
+        },
+        "duration": {
+          "owner": "androidx.recyclerview.widget.RecyclerView$k",
+          "name": "e",
+          "type": "long"
+        },
+        "animatorFragment": {
+          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u",
+          "name": "z",
+          "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
+        }
+      },
+      "evidence": {
+        "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
+        "memberSource": "1626 instruction-level decode: mc.y extends androidx.recyclerview.widget.F (SimpleItemAnimator) which extends RecyclerView$k (ItemAnimator). mc.y declares m(ViewHolder,int,int,int,int)Z (animateMove), g()Z (isRunning), e(ViewHolder)V (endAnimation) and f()V (endAnimations); RecyclerView$k declares c(ViewHolder)V (dispatchAnimationFinished: holder.setIsRecyclable(true), shadowed-holder clear, removeAnimatingView/removeDetachedView) and the abstract endAnimation/endAnimations/isRunning/runPendingAnimations that mc.y implements, so a role declared on RecyclerView$k would be abstract and would never fire. dispatchAnimationStarted does not exist in this build: ItemAnimator's empty final started notification was removed by R8, and the notification a real move does emit is SimpleItemAnimator.dispatchMoveStarting, F.q(ViewHolder)V, called from the move animator's listener androidx.recyclerview.widget.j#onAnimationStart; it and RecyclerView$k#c are the two calls the host's own move path makes (j#onAnimationEnd calls RecyclerView$k#c directly, i.e. dispatchMoveFinished inlined). mc.y#m's non-zero branch sets translationY = -dy, queues an mc.y$e MoveInfo and returns true without dispatching anything, which is why a takeover owes exactly one started and exactly one finished.",
+        "runtimeVerified": false,
+        "timing": "the displacement is owned from the animateMove entry (the keyboard-visible translation is written here and then advanced once per Choreographer frame); the started/finished notifications are replayed at the same points the host's own ViewPropertyAnimator would have emitted them",
+        "ownership": "single writer for translationY of the rows in a taken-over batch; no host field, no adapter notification, no duration is written, and dy == 0 / dx != 0 / |dy| > 1200 / unusable duration are all handed back to the host untouched",
+        "dispatch": "exactly one RecyclerView$k#c per taken-over move, from a per-row finished flag that is shared by the spring reaching rest, endAnimation(holder) and endAnimations(); isRunning() answers true for that animator while any batch is live, so RecyclerView does not conclude the list is idle early",
+        "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no state outlives the animator instance"
+      }
+    },
     "evidence": {
       "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
       "memberSource": "1626 PlayerLyricsViewFragment$f.invoke(Object,Object,Object) computes round(lerp(480,800,clamp(gap,200,750))) from the line gap and, only when that differs from abs(getSuggestedLineOffset()), calls PlayerLyricsViewFragment.d2(fragment,-duration) and then iput-wide $k.e on the fragment's r0 animator. RecyclerView$k declares c/d/e/f as private longs; mc.y$a.run reads $k.e at offset 145 into ViewPropertyAnimator.setDuration for the move batch, and mc.y.j reads it as the change-batch delay while $k.d stays the remove duration. PlayerLyricsViewFragment$u extends mc.y and is the only construction site of that animator.",

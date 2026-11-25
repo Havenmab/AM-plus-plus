@@ -430,6 +430,67 @@ def verify_lyric_line_motion_contract(document, classes, failures):
                     failures.append('lyricLineMotion.probe.classes.%s: %s is missing' % (role, contract))
             else:
                 checks += check_member('lyricLineMotion.probe', group, role, contract)
+    # The spring takeover of the line-change displacement. All-or-nothing at runtime -- answering a
+    # move and then being unable to finish it leaves RecyclerView's pending-move ledger open, which
+    # is a hang rather than a wrong look -- so every role is required, and the two shapes that fail
+    # *silently* are pinned semantically:
+    #   * the four hooked members must be declared on the animator class itself. 1626 implements
+    #     isRunning/endAnimation/endAnimations on mc.y while RecyclerView$k declares them abstract;
+    #     a role on the abstract declaration would resolve and then never fire;
+    #   * the move duration must live on an ancestor of the animator, i.e. be readable off the
+    #     instance the hook holds, and the notification roles must do the same (they are inherited
+    #     from SimpleItemAnimator / ItemAnimator and are called through the concrete instance).
+    spring = data.get('spring')
+    if spring is None:
+        failures.append('lyricLineMotion.spring: missing spring takeover inventory')
+        return checks
+    if not isinstance(spring, dict) or spring.get('contractVersion') != 1:
+        failures.append('lyricLineMotion.spring: missing versioned contract')
+        return checks
+    required_spring = {
+        'classes': {'animator', 'holder'},
+        'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
+                    'dispatchMoveStarting', 'dispatchAnimationFinished'},
+        'fields': {'holderItemView', 'duration', 'animatorFragment'},
+    }
+    for group, roles in required_spring.items():
+        entries = spring.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.spring.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.spring.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            if group == 'classes':
+                checks += 1
+                if descriptor(str(contract)) not in classes:
+                    failures.append('lyricLineMotion.spring.classes.%s: %s is missing' % (role, contract))
+            else:
+                checks += check_member('lyricLineMotion.spring', group, role, contract)
+    try:
+        spring_animator = descriptor(spring['classes']['animator'])
+        spring_lineage = class_lineage(classes, spring_animator)
+        spring_holder = descriptor(spring['classes']['holder'])
+        if not spring_lineage:
+            failures.append('lyricLineMotion.spring: animator class %s is missing' % spring_animator)
+        else:
+            for role in ('animateMove', 'isRunning', 'endAnimation', 'endAnimations'):
+                if descriptor(spring['methods'][role]['owner']) != spring_animator:
+                    failures.append(
+                        'lyricLineMotion.spring.methods.%s: hooked on %s but the animator is %s'
+                        % (role, descriptor(spring['methods'][role]['owner']), spring_animator))
+            if descriptor(spring['fields']['duration']['owner']) not in spring_lineage:
+                failures.append('lyricLineMotion.spring: duration is not declared on the animator lineage')
+            for role in ('dispatchMoveStarting', 'dispatchAnimationFinished'):
+                if descriptor(spring['methods'][role]['owner']) not in spring_lineage:
+                    failures.append('lyricLineMotion.spring.methods.%s: not reached from the animator'
+                                    % role)
+        if descriptor(spring['fields']['holderItemView']['owner']) != spring_holder:
+            failures.append('lyricLineMotion.spring: holderItemView is not declared on the holder class')
+        if descriptor(spring['methods']['animateMove']['parameters'][0]) != spring_holder:
+            failures.append('lyricLineMotion.spring: animateMove does not take the holder class')
+    except (KeyError, TypeError, AttributeError, IndexError) as error:
+        failures.append('lyricLineMotion.spring: incomplete semantic keys (%s)' % error)
     return checks
 
 

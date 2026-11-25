@@ -63,6 +63,18 @@ def main():
             }
             for group, roles in required_probe.items():
                 assert roles <= probe.get(group, {}).keys(), f'missing line motion probe {group}: {filename}'
+            # The spring takeover installs all-or-nothing: a role this build does not have must
+            # stop the install, so the profile is where every role has to be pinned.
+            spring = motion.get('spring') or {}
+            assert spring.get('contractVersion') == 1, f'missing line motion spring contract: {filename}'
+            required_spring = {
+                'classes': {'animator', 'holder'},
+                'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
+                            'dispatchMoveStarting', 'dispatchAnimationFinished'},
+                'fields': {'holderItemView', 'duration', 'animatorFragment'},
+            }
+            for group, roles in required_spring.items():
+                assert roles <= spring.get(group, {}).keys(), f'missing line motion spring {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])
         artist_roles = [target['runtimeMemberNames'].get('ARTIST_RUNTIME_ROLE') for target in artist_targets]
         compose_roles = {'compose_profile_view_model', 'compose_profile_success_state'}

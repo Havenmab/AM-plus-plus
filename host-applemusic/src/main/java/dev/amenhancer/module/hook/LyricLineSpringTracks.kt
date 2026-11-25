@@ -2,6 +2,7 @@ package dev.amenhancer.module.hook
 
 import android.view.View
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
+import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import java.util.IdentityHashMap
 
@@ -58,8 +59,12 @@ internal class LyricLineSpringTracks(
      * A row that used to belong to another animator's wave (a recycled holder moving to the other
      * pane) ends that move first, **without** zeroing: its layout already jumped and the new lag is
      * written in this same host call, so zeroing would flash the old position.
+     *
+     * The result says whether this was a correction of a row already travelling, which is the case
+     * the diagnostics care about: a repeated move must move the *end point*, never add a second
+     * impulse (see [dev.amenhancer.module.lyrics.LyricLineSpringPush]).
      */
-    fun push(row: LyricLineSpringRow, lagPx: Float, tempo: LyricLineSpringTempo): Float =
+    fun push(row: LyricLineSpringRow, lagPx: Float, tempo: LyricLineSpringTempo): LyricLineSpringPush =
         synchronized(lock) {
             val wave = waves[row.animator] ?: newWave().also { waves[row.animator] = it }
             val previous = waveOf[row.holder]

@@ -6,6 +6,7 @@ import android.view.Choreographer
 import android.view.View
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
+import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import dev.amenhancer.module.model.LyricLineSpringFeel
@@ -189,10 +190,11 @@ internal class AppleMusicLyricLineSpringTarget(
             // started and exactly one finished notification.
             param.result = false
             // The host's dy already folds in this row's current translation, so -dy *is* the new
-            // lag: writing it here keeps the displayed position continuous, and a row that is still
-            // travelling keeps its velocity through the wave's own re-target.
+            // lag: writing it here keeps the displayed position continuous. A row that is still
+            // travelling gets its end point corrected, and keeps its velocity only while that
+            // velocity still points at the new end point (see LyricLineSpringPush).
             val row = LyricLineSpringRow(animator, holder, view, toY)
-            try {
+            val applied = try {
                 tracks.push(row, -dy.toFloat(), tempo)
             } catch (error: Throwable) {
                 // Nothing was dispatched for this row yet: give it back at rest, exactly once.
@@ -200,7 +202,15 @@ internal class AppleMusicLyricLineSpringTarget(
                 throw error
             }
             notifyStarted(row)
-            diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves())
+            // A repeat move for a row that is already travelling is a *target correction*: the
+            // layout moved by applied.layoutDeltaPx under an unchanged visual position, and the
+            // row's velocity is kept only while it still aims home. Printing both lets the device
+            // log answer "correction or impulse" without pasting a whole per-frame trajectory.
+            if (applied.moving) {
+                diagnostics.retargeted(applied)
+            } else {
+                diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves())
+            }
         }
 
         /** mc.y#g, after: keep RecyclerView from concluding the list is idle mid-spring. */
@@ -334,6 +344,7 @@ internal class LyricLineSpringDiagnostics(
     private var lastTakeOverKey = ""
     private var lastCleanupAt = Long.MIN_VALUE
     private var emitted = 0
+    private var retargets = 0
 
     /**
      * A row was taken over: the feel, the spring it produced, and how many waves are live.
@@ -351,6 +362,34 @@ internal class LyricLineSpringDiagnostics(
             "takeover dy=" + dy + " T=" + durationMs + "ms feel=" + tempo.feel.storageValue +
                 " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
                 " c=" + fixed(tempo.damping) + " waves=" + waves,
+        )
+    }
+
+    /**
+     * A row that was already travelling got its end point corrected instead of a second impulse.
+     *
+     * `layoutDelta` is how far that row's layout moved under it — the background line's own height
+     * animation, a second re-anchor, a decoration pass. The host's `dy` already folded the row's
+     * translation in, so the visual position does not move: the *end point* does, by this amount.
+     * `v` is the velocity offered to the new spring and `kept` the one it started with; `kept=0`
+     * on a drop means the correction put the end point on the other side of the row and the old
+     * velocity would have overshot it, which is exactly the "pushed down, then bounced" look.
+     */
+    fun retargeted(applied: LyricLineSpringPush) {
+        val key = fixed(applied.lagPx) + "/" + fixed(applied.layoutDeltaPx) + "/" + fixed(applied.keptVelocity)
+        val now = now()
+        synchronized(reported) {
+            val last = reported[key]
+            if (last != null && now - last < RETARGET_WINDOW_MS) return
+            if (retargets >= MAX_RETARGET_LINES) return
+            reported[key] = now
+            retargets += 1
+        }
+        emit(
+            "retarget lag=" + fixed(applied.lagPx) + " layoutDelta=" + fixed(applied.layoutDeltaPx) +
+                " v=" + fixed(applied.offeredVelocity) + " kept=" + fixed(applied.keptVelocity) +
+                (if (applied.velocityDropped) " dropped=1" else "") +
+                (if (applied.waiting) " waiting=1" else ""),
         )
     }
 
@@ -395,7 +434,16 @@ internal class LyricLineSpringDiagnostics(
 
     private companion object {
         const val TAG = "AMPP-LineSpring"
-        const val MAX_LINES = 60
+
+        /** Every line is bounded; retarget lines get their own budget on top of this one. */
+        const val MAX_LINES = 240
+
+        /** How many "the end point moved" lines one session may print, so a song cannot flood. */
+        const val MAX_RETARGET_LINES = 160
+
         const val REPEAT_WINDOW_MS = 500L
+
+        /** A corrected row prints once per distinct key inside this window. */
+        const val RETARGET_WINDOW_MS = 300L
     }
 }

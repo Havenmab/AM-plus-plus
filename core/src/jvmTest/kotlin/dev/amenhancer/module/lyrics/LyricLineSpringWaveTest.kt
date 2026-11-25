@@ -274,4 +274,151 @@ class LyricLineSpringWaveTest {
         assertEquals(0f, row.translationY, 0f)
         assertEquals(2, row.finished)
     }
+
+    // ---- target correction: a later move moves the end point, never adds an impulse ------------
+
+    @Test
+    fun `a line change and the background line's growth are one monotone up move`() {
+        // iOS semantics: the block travels up once, and the end point of that travel already
+        // contains the background line's extra height. 357 px up, then the bg line grows 40 px
+        // 50 ms later: the row must end 317 px above where it started, and its visual position must
+        // never move down on the way.
+        val row = Row("a", top = 1_000)
+        val wave = wave()
+        val first = wave.push(row, 357f, row.top, tempo())
+        assertFalse(first.moving)
+        assertEquals(357f, row.translationY, 1e-3f)
+        val initialVisual = row.top + row.translationY
+
+        repeat(3) { wave.advance(16.6f) } // ~50 ms
+        val before = wave.lagOf(row)
+        assertTrue("lag did not move: " + before, before < 357f)
+
+        // The host lays the row out again: its top moves down by the bg line's height, and the
+        // move it offers folds the current translation in, i.e. the new lag is `before - 40`.
+        row.top += 40
+        val applied = wave.push(row, before - 40f, row.top, tempo())
+        assertTrue(applied.moving)
+        assertEquals(40f, applied.layoutDeltaPx, 0.01f)
+        // The correction did not move the row on screen: layout +40, translation -40.
+        assertEquals(before - 40f, row.translationY, 0.01f)
+
+        var previous = row.top + row.translationY
+        var frames = 0
+        while (wave.advance(16.6f)) {
+            val visual = row.top + row.translationY
+            assertTrue("went back down: " + previous + " -> " + visual, visual <= previous + 1e-3f)
+            previous = visual
+            frames += 1
+            assertTrue("never settles", frames < 4_000)
+        }
+        // 357 px of travel, shortened by the 40 px the row was moved instead, so the whole line
+        // change is one up move of 317 px whose end point already contains the grow.
+        assertEquals(317f, initialVisual - (row.top + row.translationY), 0.5f)
+        assertEquals(2, row.finished)
+    }
+
+    @Test
+    fun `a correction inside the stagger slot keeps the slot and the start position`() {
+        val first = Row("a", top = 200)
+        val second = Row("b", top = 320)
+        val wave = wave()
+        wave.push(first, -300f, first.top, tempo())
+        wave.push(second, -300f, second.top, tempo())
+        wave.advance(16.6f)
+        val slot = wave.delayOf(second)
+        assertTrue("second should still be waiting, slot=" + slot, slot > 0f)
+        val before = second.translationY
+        val visualBefore = second.top + second.translationY
+
+        // Its layout moves by -40 (the bg line collapsing) while it has not started moving.
+        second.top -= 40
+        val applied = wave.push(second, before + 40f, second.top, tempo())
+        assertTrue(applied.waiting)
+        assertTrue(applied.moving)
+        assertEquals(0f, applied.keptVelocity, 0f)
+        assertEquals(-40f, applied.layoutDeltaPx, 0.01f)
+        // Still in the same slot (minus the frame that just elapsed), same visual position.
+        assertEquals(slot - 16.6f, wave.delayOf(second), 0.6f)
+        assertEquals(visualBefore, second.top + second.translationY, 0.02f)
+
+        wave.settle()
+        assertEquals(0f, second.translationY, 0f)
+    }
+
+    @Test
+    fun `a correction that moves the end point past the row drops the velocity`() {
+        // The row is travelling up with real velocity when a later layout puts the end point on the
+        // *other* side of it (a background line bigger than the remaining lag). Keeping that
+        // velocity would carry the row away from home and bounce it back; the wave drops it instead.
+        val row = Row("a", top = 1_000)
+        val wave = wave()
+        wave.push(row, 200f, row.top, tempo())
+        repeat(2) { wave.advance(16.6f) }
+        val lag = wave.lagOf(row)
+        val velocity = wave.velocityOf(row)
+        assertTrue("expected an upward velocity, got " + velocity, velocity < 0f)
+
+        row.top += 300 // a bigger growth than the remaining lag
+        val applied = wave.push(row, lag - 300f, row.top, tempo())
+        assertTrue(applied.moving)
+        assertTrue("velocity should have been dropped", applied.velocityDropped)
+        assertEquals(0f, applied.keptVelocity, 0f)
+        assertTrue("the end point flipped past the row", applied.lagPx < 0f)
+
+        // No overshoot and no reversal: the lag only ever grows towards 0 from below.
+        var previous = row.translationY
+        var frames = 0
+        while (wave.advance(16.6f)) {
+            val visual = row.translationY
+            assertTrue("reversed: " + previous + " -> " + visual, visual >= previous - 1e-3f)
+            assertTrue("overshot past zero: " + visual, visual <= 0f)
+            previous = visual
+            frames += 1
+            assertTrue("never settles", frames < 4_000)
+        }
+        assertEquals(0f, row.translationY, 0f)
+    }
+
+    @Test
+    fun `alternating background line corrections converge on the layout position`() {
+        val row = Row("a", top = 1_000)
+        val wave = wave()
+        wave.push(row, 240f, row.top, tempo())
+        repeat(4) { wave.advance(16.6f) }
+
+        // grow, shrink, grow: each is a target correction of the same row.
+        var frames = 0
+        listOf(40f, -40f, 40f, -40f).forEach { delta ->
+            val lag = wave.lagOf(row)
+            row.top += delta.toInt()
+            val applied = wave.push(row, lag - delta, row.top, tempo())
+            assertTrue(applied.moving)
+            assertEquals(delta, applied.layoutDeltaPx, 0.01f)
+            repeat(3) {
+                wave.advance(16.6f)
+                frames += 1
+                assertTrue("unbounded", frames < 4_000)
+            }
+            // Never further from home than the line-change displacement itself.
+            assertTrue("lag ran away: " + wave.lagOf(row), kotlin.math.abs(wave.lagOf(row)) <= 240f)
+        }
+        wave.settle()
+        assertEquals(0f, row.translationY, 0f)
+        // One finish per move the host started: the first and each of the four corrections.
+        assertEquals(5, row.finished)
+    }
+
+    @Test
+    fun `a first move reports itself as a new row, not a correction`() {
+        val row = Row("a", top = 500)
+        val wave = wave()
+        val applied = wave.push(row, -120f, row.top, tempo())
+        assertFalse(applied.moving)
+        assertFalse(applied.waiting)
+        assertFalse(applied.velocityDropped)
+        assertEquals(0f, applied.previousLagPx, 0f)
+        assertEquals(-120f, applied.lagPx, 0f)
+        assertEquals(120f, applied.layoutDeltaPx, 0f) // 0 - (-120): the layout moved up 120
+    }
 }

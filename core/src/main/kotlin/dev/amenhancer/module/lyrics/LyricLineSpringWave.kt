@@ -21,10 +21,26 @@ package dev.amenhancer.module.lyrics
  * so "the rows pushed since the last frame" is exactly one line change. The first [advance] after
  * it ranks those rows by their post-layout top — AMLL's line order — and gives each one its delay.
  *
+ * **A later move is a target correction, not a second impulse.** Apple Music lays the block out
+ * more than once per line change — the re-anchor, and then every frame of the background line's own
+ * height animation — and each of those layouts can offer a fresh `animateMove` for a row that is
+ * already travelling. Because the host computes `dy = toY - (fromY + translationY)`, a fresh move
+ * already folds the row's current translation in, so `-dy` is the *new absolute* lag: the visual
+ * position stays continuous across the correction and only the *end point* moves (see
+ * [LyricLineSpringPush.layoutDeltaPx]). That is iOS's behaviour — one monotone up-move whose end
+ * point already contains the background line's extra height — and it is why the spring must not
+ * treat the correction as a second impulse:
+ *
+ *  * the carried velocity is kept **only when it still points at the new target**
+ *    (`velocity * lag < 0`). A correction that flips the target to the other side of the row zeroes
+ *    it, so the row never overshoots its home and comes back — the "pushed down, then bounced" look;
+ *  * a row still inside its stagger delay keeps its remaining delay: its layout moved, its visual did
+ *    not, and it has no velocity to preserve either way.
+ *
  * **A row already in flight is never re-delayed.** AMLL queues the *new target* behind the delay and
  * lets the row finish travelling to the old one meanwhile; our host has already jumped the layout,
- * so the equivalent is to re-target the moving row immediately and carry its velocity. Freezing it
- * instead would stall a row mid-travel and let its lag grow with every fast line change.
+ * so the equivalent is to re-target the moving row immediately. Freezing it instead would stall a
+ * row mid-travel and let its lag grow with every fast line change.
  *
  * **The finish contract is unchanged from 乙-1.** RecyclerView's pending-move ledger accepts exactly
  * one "this animation is over" per started move, so every path that can end a row's animation (the
@@ -96,20 +112,25 @@ class LyricLineSpringWave<H : Any>(
      *
      * A row already in flight is retired first — its previous move gets its one [finish], without
      * zeroing, because its layout already jumped and [lagPx] is written in this same host call —
-     * and then re-aimed with the velocity it was travelling at. A row at rest (or a new one) joins
-     * the pending line change and receives a stagger delay when the batch is ranked.
-     *
-     * Returns the lag that was written.
+     * and then re-aimed at the new end point: the target is corrected, the motion is not re-impulsed
+     * (see the class doc and [LyricLineSpringPush]). A row at rest (or a new one) joins the pending
+     * line change and receives a stagger delay when the batch is ranked.
      */
-    fun push(holder: H, lagPx: Float, layoutTop: Int, tempo: LyricLineSpringTempo): Float {
+    fun push(holder: H, lagPx: Float, layoutTop: Int, tempo: LyricLineSpringTempo): LyricLineSpringPush {
         val existing = members.firstOrNull { it.holder === holder }
-        val inFlight = existing != null && !existing.finished
-        val carried = if (inFlight) existing.spring.velocityAt(existing.elapsedMs) else 0f
-        if (inFlight) {
-            existing.finished = true
+        val moving = existing != null && !existing.finished
+        val previousLag = if (existing == null || existing.finished) 0f
+        else existing.spring.offsetAt(existing.elapsedMs)
+        val offered = if (moving) existing!!.spring.velocityAt(existing.elapsedMs) else 0f
+        // A row that has not left its stagger slot keeps the slot: its layout moved, its visual did
+        // not, and it has no velocity yet either way.
+        val waiting = moving && existing!!.delayMs > 0f
+        val kept = if (moving && !waiting) towardTarget(offered, lagPx) else 0f
+        if (moving) {
+            existing!!.finished = true
             finish(holder)
         }
-        val spring = tempo.at(lagPx, carried)
+        val spring = tempo.at(lagPx, kept)
         val member = existing ?: Member(
             holder = holder,
             layoutTop = layoutTop,
@@ -124,12 +145,12 @@ class LyricLineSpringWave<H : Any>(
         member.spring = spring
         member.deadlineMs = spring.deadlineMs()
         member.elapsedMs = 0f
-        member.delayMs = 0f
+        if (!waiting) member.delayMs = 0f
         // A fresh (or re-launched from rest) row joins this frame's line change; a row that was
         // already travelling keeps going from where it is and is not staggered again.
-        if (!inFlight && unranked.none { it === member }) unranked += member
+        if (!moving && unranked.none { it === member }) unranked += member
         write(holder, lagPx)
-        return lagPx
+        return LyricLineSpringPush(lagPx, previousLag, offered, kept, moving, waiting)
     }
 
     /**
@@ -207,6 +228,17 @@ class LyricLineSpringWave<H : Any>(
     }
 
     /**
+     * The part of [velocity] that still points at a residual of [lagPx].
+     *
+     * A spring travelling home has `velocity * lag < 0` (a positive lag has to shrink, and the other
+     * way round). Anything else — a correction that moved the end point past the row, a sign flip —
+     * would keep the row moving *away* from its new home and overshoot it, which is exactly the
+     * "pushed down and then bounced back" look. Such a velocity is dropped instead of carried.
+     */
+    private fun towardTarget(velocity: Float, lagPx: Float): Float =
+        if (velocity.isFinite() && velocity * lagPx < 0f) velocity else 0f
+
+    /**
      * Give this frame's line change its AMLL delays.
      *
      * Ranked by post-layout top, so the wave always starts at the visual top of the batch and
@@ -223,4 +255,34 @@ class LyricLineSpringWave<H : Any>(
         }
         unranked.clear()
     }
+}
+
+/**
+ * What one [LyricLineSpringWave.push] did, for the hook's diagnostics and for tests.
+ *
+ * [layoutDeltaPx] is the one number that separates "target correction" from "second impulse": the
+ * host's move already folded the row's own translation into `dy`, so the layout moved by exactly
+ * [previousLagPx] - [lagPx] and the visual position did not move at all. The end point moved by the
+ * same amount, which is what makes the whole line change one monotone travel instead of a push
+ * followed by a bounce.
+ */
+class LyricLineSpringPush(
+    /** The residual that was written, i.e. the row's `translationY` right after this move. */
+    val lagPx: Float,
+    /** The residual the row was showing before this move (0 for a row this wave did not hold). */
+    val previousLagPx: Float,
+    /** The velocity the row was travelling at, as offered to the new spring. */
+    val offeredVelocity: Float,
+    /** The velocity the new spring actually started with; 0 when it was dropped by the gate. */
+    val keptVelocity: Float,
+    /** True when this push corrected a row that was already travelling. */
+    val moving: Boolean,
+    /** True when the row was still inside its stagger slot and kept it. */
+    val waiting: Boolean,
+) {
+    /** How far the row's layout moved under this push; the visual position does not move. */
+    val layoutDeltaPx: Float get() = previousLagPx - lagPx
+
+    /** True when a travelling row had its velocity dropped because it no longer aimed home. */
+    val velocityDropped: Boolean get() = moving && offeredVelocity != 0f && keptVelocity == 0f
 }

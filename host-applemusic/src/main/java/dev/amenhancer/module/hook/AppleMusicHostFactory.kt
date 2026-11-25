@@ -235,6 +235,7 @@ object AppleMusicHostFactory {
             bidirectionalLyricBlur = AppleMusicBidirectionalLyricBlurTarget(profile, classLoader),
             cjkKaraokeAnimation = karaokeAnimation,
             lyricWrapSweep = AppleMusicLyricWrapSweepTarget(profile, classLoader),
+            lyricLineMotion = AppleMusicLyricLineMotionTarget(profile, classLoader) { config.settings() },
             lyricBackgroundHighlight = AppleMusicLyricBackgroundHighlightTarget(profile, classLoader,
                 onFailure = { message -> config.reportHealth(dev.amenhancer.module.model.FeatureHealth(
                     dev.amenhancer.module.ModuleConstants.FEATURE_LYRIC_BACKGROUND_HIGHLIGHT,

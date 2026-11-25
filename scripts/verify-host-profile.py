@@ -326,6 +326,76 @@ def verify_fragment_contracts(document, classes, failures):
     return checks
 
 
+def class_lineage(classes, class_descriptor):
+    """The class itself plus every ancestor this APK actually declares."""
+    chain = []
+    current = class_descriptor
+    while current in classes and current not in chain:
+        chain.append(current)
+        current = classes[current]["super"]
+    return chain
+
+
+def verify_lyric_line_motion_contract(document, classes, failures):
+    """The line-change timing seam: the callback, the lyrics animator, and its duration field."""
+    data = document.get('lyricLineMotion')
+    if data is None:
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricLineMotion: missing versioned contract')
+        return 0
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+    required = {
+        'methods': {'lineCallback', 'lineOffset'},
+        'fields': {'callbackFragment', 'animator', 'duration'},
+    }
+    checks = 0
+    for group, roles in required.items():
+        entries = data.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            checks += 1
+            try:
+                native = classes.get(descriptor(contract['owner']), {})
+                if group == 'fields':
+                    valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                             and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+                else:
+                    signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
+                                 + ')' + descriptor(contract['returns']))
+                    flags = native.get('method_access', {}).get(signature)
+                    valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                             and bool(flags & 8) == contract.get('static', False))
+                if not valid:
+                    failures.append('lyricLineMotion.%s.%s: invalid exact descriptor' % (group, role))
+            except (KeyError, TypeError, AttributeError) as error:
+                failures.append('lyricLineMotion.%s.%s: incomplete descriptor (%s)' % (group, role, error))
+    # The duration is only the move duration while it is declared on an ancestor of the lyrics
+    # animator, and that animator has to be the host's DefaultItemAnimator variant.
+    try:
+        animator_type = descriptor(data['fields']['animator']['type'])
+        lineage = class_lineage(classes, animator_type)
+        if not lineage:
+            failures.append('lyricLineMotion: animator class %s is missing' % animator_type)
+        else:
+            if descriptor(data['fields']['duration']['owner']) not in lineage:
+                failures.append('lyricLineMotion: duration field is not declared on the animator lineage')
+            if descriptor(data['classes']['animator']) not in lineage:
+                failures.append('lyricLineMotion: the lyrics animator is not the pinned animator type')
+            if descriptor(data['fields']['callbackFragment']['type']) != descriptor(data['methods']['lineOffset']['owner']):
+                failures.append('lyricLineMotion: offset bridge and captured fragment disagree')
+    except (KeyError, TypeError, AttributeError) as error:
+        failures.append('lyricLineMotion: incomplete semantic keys (%s)' % error)
+    return checks
+
+
 def verify_artist_compose_contract(document, classes, failures):
     """Optional artist surface; a partial declaration cannot suppress required invocation checks."""
     surface = document.get('hookTargets', {}).get('ARTIST_SURFACE_CLASSES', [])
@@ -586,6 +656,7 @@ def main():
             checks += verify_fragment_contracts(document, classes, failures)
             checks += verify_artist_compose_contract(document, classes, failures)
             checks += verify_lyric_blur_contract(document, classes, failures)
+            checks += verify_lyric_line_motion_contract(document, classes, failures)
             checks += verify_lyric_result_submission(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',

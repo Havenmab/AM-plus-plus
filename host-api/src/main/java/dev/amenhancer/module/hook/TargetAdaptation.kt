@@ -45,6 +45,9 @@ data class TargetAdaptation(
     val lyricWrapSweep: LyricWrapSweepTarget = LyricWrapSweepTarget {
         TargetCapabilityInstall.Unsupported("Wrapped lyric sweep has no exact host contract")
     },
+    val lyricLineMotion: LyricLineMotionTarget = LyricLineMotionTarget {
+        TargetCapabilityInstall.Unsupported("Lyric line-change rhythm has no exact host contract")
+    },
     val lyricBackgroundHighlight: LyricBackgroundHighlightTarget = LyricBackgroundHighlightTarget {
         TargetCapabilityInstall.Unsupported("Native lyric background highlighting has no exact host contract")
     },
@@ -78,6 +81,10 @@ fun interface LyricWrapSweepTarget {
 }
 
 fun interface LyricBackgroundHighlightTarget {
+    fun install(): TargetCapabilityInstall
+}
+
+fun interface LyricLineMotionTarget {
     fun install(): TargetCapabilityInstall
 }
 

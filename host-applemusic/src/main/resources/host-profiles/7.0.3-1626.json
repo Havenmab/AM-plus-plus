@@ -6176,6 +6176,61 @@
       }
     }
   },
+  "lyricLineMotion": {
+    "contractVersion": 1,
+    "classes": {
+      "animator": "mc.y"
+    },
+    "methods": {
+      "lineCallback": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f",
+        "name": "invoke",
+        "parameters": [
+          "java.lang.Object",
+          "java.lang.Object",
+          "java.lang.Object"
+        ],
+        "returns": "java.lang.Object",
+        "static": false
+      },
+      "lineOffset": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "d2",
+        "parameters": [
+          "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+          "int"
+        ],
+        "returns": "void",
+        "static": true
+      }
+    },
+    "fields": {
+      "callbackFragment": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f",
+        "name": "a",
+        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
+      },
+      "animator": {
+        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
+        "name": "r0",
+        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u"
+      },
+      "duration": {
+        "owner": "androidx.recyclerview.widget.RecyclerView$k",
+        "name": "e",
+        "type": "long"
+      }
+    },
+    "evidence": {
+      "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
+      "memberSource": "1626 PlayerLyricsViewFragment$f.invoke(Object,Object,Object) computes round(lerp(480,800,clamp(gap,200,750))) from the line gap and, only when that differs from abs(getSuggestedLineOffset()), calls PlayerLyricsViewFragment.d2(fragment,-duration) and then iput-wide $k.e on the fragment's r0 animator. RecyclerView$k declares c/d/e/f as private longs; mc.y$a.run reads $k.e at offset 145 into ViewPropertyAnimator.setDuration for the move batch, and mc.y.j reads it as the change-batch delay while $k.d stays the remove duration. PlayerLyricsViewFragment$u extends mc.y and is the only construction site of that animator.",
+      "runtimeVerified": false,
+      "timing": "scale only the value the line callback has just recomputed, inside that same call; the field holds the scaled value until the host recomputes, and the host skips its own store when the line offset it would suggest has not changed, so the hook must never multiply what it already wrote",
+      "ownership": "single writer for $k.e (the after-hook of the line callback) and none for every other animator field; no view property, no layout manager state, no scroll call is touched",
+      "dispatch": "native timing unchanged: the animator keeps its zero-delta move branch, the fragment's V0 queue and U0 flag, and s2() flushing",
+      "release": "no state is retained; turning the switch off leaves the host's last written duration in place until the host recomputes it"
+    }
+  },
   "lyricPronunciation": {
     "methods": {
       "requestLyrics": {

@@ -204,6 +204,16 @@ enum class ModuleText(internal val english: String, internal val chinese: String
     ),
     LYRIC_EFFECTS_OPTIMIZATION("Lyric effects optimization", "歌词效果优化"),
     LYRIC_EFFECTS_OPTIMIZATION_SUMMARY("Optimize Apple Music lyric effects", "对Applemusic歌词效果优化"),
+    LYRIC_LINE_MOTION("Lyric line-change rhythm", "歌词换行节奏"),
+    LYRIC_LINE_MOTION_SUMMARY(
+        "Scales how long Apple Music's own lyric line change takes · Requires lyric effects optimization · Restart Apple Music to apply",
+        "调整 Apple Music 歌词换行位移的时长 · 需同时开启「歌词效果优化」· 重开 Apple Music 后生效",
+    ),
+    LYRIC_LINE_MOTION_SCALE("Line-change duration", "换行时长"),
+    LYRIC_LINE_MOTION_SCALE_SUMMARY(
+        "50%% is twice as fast, 100%% is Apple Music's own timing, 200%% twice as slow · Read live",
+        "50%% 快一倍，100%% 为 Apple Music 原始时长，200%% 慢一倍 · 实时生效",
+    ),
     TITLE_CORRECTION("Song title correction", "歌曲名显示修正"),
     VALUE_RESTART_REQUIRED("%1\$s · Restart Apple Music to apply", "%1\$s · 重开 Apple Music 后生效"),
     TITLE_CORRECTION_SUMMARY("Off follows your Apple Music account · On uses the selected region", "关闭时跟随 Apple Music 账号 · 开启后选择修正地区"),

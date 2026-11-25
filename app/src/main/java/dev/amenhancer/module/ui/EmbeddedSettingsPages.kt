@@ -57,6 +57,7 @@ import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.TitleCorrectionMode
 import dev.amenhancer.module.i18n.ModuleText
+import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.ref.WeakReference
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -487,6 +488,14 @@ private fun EmbeddedSettingsScaffold(
 
 private const val EMBEDDED_SETTINGS_RAIL_MIN_WIDTH_DP = 600
 
+/**
+ * The 「换行时长」 slider works in whole percent (the model keeps a 0.5..2.0 multiplier), which is
+ * the same unit the stored setting uses.
+ */
+private val LYRIC_LINE_MOTION_PERCENT_RANGE =
+    LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.MIN_SCALE)..
+        LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.MAX_SCALE)
+
 private val EmbeddedSettingsNavigationPages = listOf(
     EmbeddedSettingsPage.CUSTOM_LYRICS,
     EmbeddedSettingsPage.LYRICS_EFFECTS,
@@ -546,6 +555,7 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         settings.futureBlurEnabled,
         settings.cjkKaraokeAnimationEnabled,
         settings.lyricEffectsOptimizationEnabled,
+        settings.lyricLineMotionEnabled,
         settings.lyricsPronunciationEnabled && nativeBridge.supportsLyricsPronunciation(activity),
     ).count { it }
     val dpi = if (settings.appleMusicDpiOverrideDpi == ModuleSettings.FOLLOW_SYSTEM_APPLE_MUSIC_DPI) {
@@ -615,6 +625,20 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     settings.cjkKaraokeAnimationEnabled, EmbeddedSvgIcon.Karaoke) { value -> onEdit { it.copy(cjkKaraokeAnimationEnabled = value) } }
                 Setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
                     settings.lyricEffectsOptimizationEnabled, EmbeddedSvgIcon.LyricEffects) { value -> onEdit { it.copy(lyricEffectsOptimizationEnabled = value) } }
+                Setting(ModuleText.LYRIC_LINE_MOTION, ModuleText.LYRIC_LINE_MOTION_SUMMARY,
+                    settings.lyricLineMotionEnabled, EmbeddedSvgIcon.LyricEffects) { value ->
+                    onEdit { it.copy(lyricLineMotionEnabled = value) }
+                }
+                if (settings.lyricLineMotionEnabled) EmbeddedSettingRange(
+                    title = localizedText(ModuleText.LYRIC_LINE_MOTION_SCALE),
+                    value = LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
+                    range = LYRIC_LINE_MOTION_PERCENT_RANGE,
+                    unit = "%",
+                    summary = localizedText(ModuleText.LYRIC_LINE_MOTION_SCALE_SUMMARY),
+                    defaultValue = LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.NEUTRAL_SCALE),
+                ) { percent ->
+                    onEdit { it.copy(lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(percent)) }
+                }
                 EmbeddedSettingRange(
                     title = localizedText(ModuleText.LYRIC_BLUR_OFFSET),
                     value = settings.lyricBlurRadiusOffsetPx,
@@ -914,6 +938,7 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.BIDIRECTIONAL_LYRIC_BLUR to ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
             ModuleText.CJK_KARAOKE_ANIMATION to ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY,
             ModuleText.LYRIC_EFFECTS_OPTIMIZATION to ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
+            ModuleText.LYRIC_LINE_MOTION to ModuleText.LYRIC_LINE_MOTION_SUMMARY,
             ModuleText.LYRICS_FONT to ModuleText.LYRICS_FONT_IMPORT_SUMMARY,
         )
         EmbeddedSettingsPage.INTERFACE -> listOf(

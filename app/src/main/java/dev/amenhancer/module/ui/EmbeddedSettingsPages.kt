@@ -58,6 +58,7 @@ import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.TitleCorrectionMode
 import dev.amenhancer.module.i18n.ModuleText
 import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
+import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.ref.WeakReference
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -647,6 +648,25 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     settings.lyricLineSpringEnabled, EmbeddedSvgIcon.LyricEffects) { value ->
                     onEdit { it.copy(lyricLineSpringEnabled = value) }
                 }
+                // 「换行手感」 sits with the switch it belongs to: the two modes are two products —
+                // AMLL's fixed 0.45 s wave, or Apple Music's own tempo through the rhythm slider.
+                if (settings.lyricLineSpringEnabled) OverlayDropdownPreference(
+                    entry = DropdownEntry(
+                        items = LyricLineSpringFeel.entries.map { feel ->
+                            DropdownItem(
+                                text = localizedText(feel.label()),
+                                selected = feel == settings.lyricLineSpringFeel,
+                                onClick = { onEdit { it.copy(lyricLineSpringFeel = feel) } },
+                            )
+                        },
+                    ),
+                    title = localizedText(ModuleText.LYRIC_LINE_SPRING_FEEL),
+                    summary = localizedText(ModuleText.LYRIC_LINE_SPRING_FEEL_SUMMARY),
+                    startAction = {
+                        EmbeddedSettingsIcon(EmbeddedSvgIcon.LyricEffects, modifier = Modifier.size(22.dp))
+                    },
+                    insideMargin = EmbeddedPreferencePadding,
+                )
                 // Temporary diagnostic switch: it installs read-only probe hooks that only write
                 // AMPP-LineProbe log lines, and nothing at all while it is off. Remove it together
                 // with the probe once the line-transition work no longer needs measurements.
@@ -844,6 +864,12 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
         }
         else -> Unit
     }
+}
+
+/** The two feels' names, kept next to the dropdown that uses them. */
+private fun LyricLineSpringFeel.label(): ModuleText = when (this) {
+    LyricLineSpringFeel.AMLL -> ModuleText.LYRIC_LINE_SPRING_FEEL_AMLL
+    LyricLineSpringFeel.HOST -> ModuleText.LYRIC_LINE_SPRING_FEEL_HOST
 }
 
 @Composable

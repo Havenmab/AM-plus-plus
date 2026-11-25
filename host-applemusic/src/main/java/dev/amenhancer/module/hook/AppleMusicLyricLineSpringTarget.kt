@@ -6,10 +6,13 @@ import android.view.Choreographer
 import android.view.View
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
+import dev.amenhancer.module.lyrics.LyricLineSpringTempo
+import dev.amenhancer.module.lyrics.LyricLineSpringWave
+import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 
 /**
- * 「换行弹簧」: take the lyric block's line-change displacement over with one shared spring.
+ * 「换行弹簧」: take the lyric block's line-change displacement over with one spring per row.
  *
  * **What the host does (1626, measured).** One line change is 4–8 `animateMove` calls that all
  * carry the *same* `dy`; for a non-zero `dy`, `mc.y#m` writes `translationY = -dy`, queues the row
@@ -17,24 +20,32 @@ import dev.amenhancer.module.model.ModuleSettings
  * For `dy == 0` it instead finishes the row and defers the row transition through `V0`/`s2()`.
  *
  * **What this takes.** Only the non-zero branch: the hook answers `false` (so the host's animator
- * never runs), writes the same `translationY = -dy`, and advances one scalar spring per batch from
- * the shared Choreographer clock. The zero branch, the deferred queue, the re-anchor and the
- * duration field are all left exactly as Apple Music wrote them.
+ * never runs), writes the same `translationY = -dy`, and advances a *wave* of per-row springs from
+ * the shared Choreographer clock ([LyricLineSpringWave]). Rows start 50 ms apart in AMLL's
+ * staggered order — the one below the top leaves next, and past the focus line the spacing tightens
+ * by 5 % per row — so a line change reads as rows chasing each other rather than one rectangle
+ * sliding. A row already travelling when the next line change lands keeps its velocity. The zero
+ * branch, the deferred queue, the re-anchor and the duration field are all left exactly as Apple
+ * Music wrote them.
  *
  * **What it therefore owes.** Skipping the host's animation also skips the two notifications that
  * animation's listener emits — `dispatchMoveStarting(holder)` when it starts and
  * `dispatchAnimationFinished(holder)` when it ends. RecyclerView's pending-move ledger accepts
  * exactly one finish per start, so the finish is emitted from a per-row flag shared by every end
- * path (spring at rest, `endAnimation`, `endAnimations`), and `isRunning()` is answered `true`
- * while any batch of that animator is live so the list is not considered idle mid-flight.
+ * path (spring at rest, `endAnimation`, `endAnimations`, a re-target retiring the previous move),
+ * and `isRunning()` is answered `true` while any wave of that animator is live so the list is not
+ * considered idle mid-flight.
  *
- * **Tempo, and how 「歌词换行节奏」 survives.** `T` is `$k.e` read at the moment `animateMove` is
- * called. The host's line callback writes that field and the rhythm slider rewrites it in place, so
- * with both switches on the spring already inherits the user's multiplier — applying it again here
- * would square it (the probe run that this work is based on was captured at 200%, which is exactly
- * how a doubled field looks). Priority is therefore: the spring owns the displacement, the slider
- * only supplies the tempo; with the spring off, the slider goes back to changing the host's own
- * duration, exactly as before.
+ * **Two feels** (`lyricLineSpringFeel`, read live):
+ *
+ *  * `AMLL` (the default) is AMLL's own spring: a fixed 0.45 s settle with k≈197, c≈31, m=0.9 and
+ *    AMLL's ζ≥1 curve. It ignores `$k.e` for tempo, so 「歌词换行节奏」 has no effect in this mode —
+ *    that is the point of the mode.
+ *  * `HOST` is 乙-1 verbatim: `T = $k.e` at the moment `animateMove` is called, so the rhythm
+ *    slider's multiplier flows through unchanged (it rewrites that very field; applying it again
+ *    here would square it) and the block moves in Apple Music's tempo, t99 = 1.31·T.
+ *
+ * With the spring off the slider goes back to changing the host's own duration, exactly as before.
  *
  * **Every refusal is a hand-back.** A missing role, a move with a horizontal component, a
  * displacement beyond ±1200 px (seek, track change), an unusable duration, or a thread without a
@@ -143,7 +154,7 @@ internal class AppleMusicLyricLineSpringTarget(
 
         private fun takeOver(param: ModernMethodHook.MethodHookParam) {
             val animator = param.thisObject ?: return
-            if (!switchesAllow()) return
+            val feel = feelOrNull() ?: return
             if (!isLyricsAnimator(animator)) return
             val holder = param.args.getOrNull(0) ?: return
             val view = itemViewOf(holder) ?: return
@@ -166,14 +177,8 @@ internal class AppleMusicLyricLineSpringTarget(
                 return
             }
             val duration = durationOf(animator)
-            if (!LyricLineSpringPolicy.isPlausibleDuration(duration)) {
+            val tempo = LyricLineSpringPolicy.tempoFor(feel, duration) ?: run {
                 diagnostics.refused(LyricLineSpringPolicy.durationVerdict(duration))
-                return
-            }
-            // A re-anchor mid-flight: the row keeps its velocity, so the motion has no kink.
-            val carried = tracks.velocityOf(holder)
-            val spring = LyricLineSpringPolicy.springFor(duration, -dy.toFloat(), carried) ?: run {
-                diagnostics.refused("spring parameters rejected (dy=" + dy + " T=" + duration + "ms)")
                 return
             }
             if (!ensureClock()) {
@@ -183,16 +188,19 @@ internal class AppleMusicLyricLineSpringTarget(
             // Past this point the host's own animation is skipped, so this row owes exactly one
             // started and exactly one finished notification.
             param.result = false
-            val row = LyricLineSpringRow(animator, holder, view)
+            // The host's dy already folds in this row's current translation, so -dy *is* the new
+            // lag: writing it here keeps the displayed position continuous, and a row that is still
+            // travelling keeps its velocity through the wave's own re-target.
+            val row = LyricLineSpringRow(animator, holder, view, toY)
             try {
-                tracks.join(row, dy, spring)
+                tracks.push(row, -dy.toFloat(), tempo)
             } catch (error: Throwable) {
                 // Nothing was dispatched for this row yet: give it back at rest, exactly once.
                 recover(row)
                 throw error
             }
             notifyStarted(row)
-            diagnostics.takeOver(dy, duration, spring.stiffness, spring.damping, tracks.activeBatches())
+            diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves())
         }
 
         /** mc.y#g, after: keep RecyclerView from concluding the list is idle mid-spring. */
@@ -263,11 +271,15 @@ internal class AppleMusicLyricLineSpringTarget(
 
         // ---- host reads and calls ------------------------------------------------------------
 
-        /** Both switches are read live, exactly as 「歌词换行节奏」 reads its own. */
-        private fun switchesAllow(): Boolean = runCatching {
-            val current = settings()
-            current.lyricLineSpringEnabled && current.lyricEffectsOptimizationEnabled
-        }.getOrDefault(false)
+        /**
+         * The feel to use right now, or null when this feature must do nothing.
+         *
+         * Read live, exactly as 「歌词换行节奏」 reads its own switches: both the two switches and the
+         * mode take effect on the next line change, not on the ones already in flight.
+         */
+        private fun feelOrNull(): LyricLineSpringFeel? = runCatching {
+            LyricLineSpringPolicy.appliedFeel(settings())
+        }.getOrNull()
 
         /** Only the lyric list's animator; every other RecyclerView keeps its own animations. */
         private fun isLyricsAnimator(animator: Any): Boolean {
@@ -323,16 +335,22 @@ internal class LyricLineSpringDiagnostics(
     private var lastCleanupAt = Long.MIN_VALUE
     private var emitted = 0
 
-    /** A move was taken over: the tempo, the stiffness it produced, and the batch count. */
-    fun takeOver(dy: Int, durationMs: Long, stiffness: Float, damping: Float, batches: Int) {
-        val key = dy.toString() + "/" + durationMs
+    /**
+     * A row was taken over: the feel, the spring it produced, and how many waves are live.
+     *
+     * `T` is the host's own `$k.e` — the tempo in `HOST` mode, and in `AMLL` mode only the proof
+     * that this really is the lyric animator's field (the spring then ignores it).
+     */
+    fun takeOver(dy: Int, durationMs: Long, tempo: LyricLineSpringTempo, waves: Int) {
+        val key = dy.toString() + "/" + durationMs + "/" + tempo.feel.storageValue
         val now = now()
         if (key == lastTakeOverKey && now - lastTakeOverAt < REPEAT_WINDOW_MS) return
         lastTakeOverKey = key
         lastTakeOverAt = now
         emit(
-            "takeover dy=" + dy + " T=" + durationMs + "ms k=" + fixed(stiffness) +
-                " c=" + fixed(damping) + " batches=" + batches,
+            "takeover dy=" + dy + " T=" + durationMs + "ms feel=" + tempo.feel.storageValue +
+                " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
+                " c=" + fixed(tempo.damping) + " waves=" + waves,
         )
     }
 

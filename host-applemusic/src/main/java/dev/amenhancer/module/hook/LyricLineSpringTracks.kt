@@ -1,29 +1,44 @@
 package dev.amenhancer.module.hook
 
 import android.view.View
-import dev.amenhancer.module.lyrics.LyricLineSpring
-import dev.amenhancer.module.lyrics.LyricLineSpringBatch
+import dev.amenhancer.module.lyrics.LyricLineSpringTempo
+import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import java.util.IdentityHashMap
 
-/** One row taken over by 「换行弹簧」: the animator it belongs to, its holder, and its itemView. */
+/**
+ * One row taken over by 「换行弹簧」: the animator it belongs to, its holder, its itemView, and the
+ * post-layout top the wave ranks it by.
+ */
 internal class LyricLineSpringRow(
     val animator: Any,
     val holder: Any,
     val view: View,
-)
+    /** The row's new layout top (`toY`) in the list's coordinates; the wave's stagger order. */
+    val layoutTop: Int,
+) {
+    /**
+     * The list's own height, for the wave's focus line.
+     *
+     * Read from the row's parent at push time rather than cached per animator: the pane can be
+     * re-measured (rotation, tablet split) between line changes, and a stale height would move the
+     * focus line. 0 means "unknown", which the stagger policy treats as "no narrowing".
+     */
+    val paneHeight: Int
+        get() = runCatching { (view.parent as? View)?.height ?: 0 }.getOrDefault(0)
+}
 
 /**
- * The live spring batches of one host process, keyed by animator *instance* and displacement.
+ * The live line-change waves of one host process, keyed by animator *instance*.
  *
  * Two separate RecyclerViews (the tablet dual pane) each own an animator and must never share a
- * clock or a displacement, so nothing here is keyed by class: the animator object itself is the
- * first key, exactly as `line-transition-notes/08` §4 requires.
+ * clock, a row or a displacement, so nothing here is keyed by class: the animator object itself is
+ * the first key, exactly as `line-transition-notes/08` §4 requires.
  *
- * A batch is the unit of "one `dy`, one spring". Apple Music issues 4–8 `animateMove` calls for one
- * line change, all with the same `dy`; they must land in the same batch so the block stays rigid.
- * Rows that arrive after that batch has already been advanced by a frame are a *later* line change
- * (the same distance twice in a row), so they get a fresh batch instead of jumping into the middle
- * of the previous curve.
+ * A wave is one animator's per-row springs ([LyricLineSpringWave]). Apple Music issues 4-8
+ * `animateMove` calls for one line change inside one layout pass; those pushes land in the same
+ * wave and are ranked into AMLL's stagger on the next frame. A push that arrives after the wave has
+ * already advanced is a later line change: its rows are ranked as a new batch, while any row still
+ * travelling keeps its velocity instead of being reset.
  *
  * Every mutation happens on the thread that owns the RecyclerView (the main thread); the lock is
  * only there because the hook bodies are not statically provable to be on it.
@@ -32,90 +47,79 @@ internal class LyricLineSpringTracks(
     private val writeOffset: (LyricLineSpringRow, Float) -> Unit,
     private val dispatchFinished: (LyricLineSpringRow) -> Unit,
 ) {
-    private class Live(
-        val animator: Any,
-        val dy: Int,
-        val batch: LyricLineSpringBatch<LyricLineSpringRow>,
-    )
-
     private val lock = Any()
-    private val live = ArrayList<Live>()
+    private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
     private val rows = IdentityHashMap<Any, LyricLineSpringRow>()
-    private val batchOf = IdentityHashMap<Any, LyricLineSpringBatch<LyricLineSpringRow>>()
+    private val waveOf = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
 
-    /** How fast [holder] is currently moving, in pixels per second (0 when it is not springing). */
-    fun velocityOf(holder: Any): Float = synchronized(lock) {
-        batchOf[holder]?.currentVelocity() ?: 0f
+    /**
+     * Take [row]'s move over at [lagPx] (the host's `-dy`) and write it.
+     *
+     * A row that used to belong to another animator's wave (a recycled holder moving to the other
+     * pane) ends that move first, **without** zeroing: its layout already jumped and the new lag is
+     * written in this same host call, so zeroing would flash the old position.
+     */
+    fun push(row: LyricLineSpringRow, lagPx: Float, tempo: LyricLineSpringTempo): Float =
+        synchronized(lock) {
+            val wave = waves[row.animator] ?: newWave().also { waves[row.animator] = it }
+            val previous = waveOf[row.holder]
+            if (previous != null && previous !== wave) {
+                previous.finishHolder(row.holder, resetOffset = false)
+                previous.prune()
+            }
+            // The row must be current before the push: every callback resolves the holder's row
+            // through it, and a recycled holder's itemView may have changed since the last push.
+            rows[row.holder] = row
+            waveOf[row.holder] = wave
+            wave.paneHeightPx = row.paneHeight
+            wave.push(row.holder, lagPx, row.layoutTop, tempo)
+        }
+
+    /**
+     * Advance every live wave by [dtMs]; returns true while something is still moving.
+     *
+     * A wave that arrives everywhere is dropped here, together with its rows, so a later
+     * `endAnimation` for an already-finished row is a no-op instead of a second finish.
+     */
+    fun advance(dtMs: Float): Boolean = synchronized(lock) {
+        val iterator = waves.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (!entry.value.advance(dtMs)) {
+                forgetWave(entry.value)
+                iterator.remove()
+            }
+        }
+        waves.isNotEmpty()
     }
 
     /** True while [animator] still owns a displacement RecyclerView has to wait for. */
     fun hasActive(animator: Any?): Boolean = synchronized(lock) {
-        animator != null && live.any { it.animator === animator && it.batch.isRunning }
-    }
-
-    /**
-     * Register [row] in the batch for ([row].animator, [dy]) and write its starting offset.
-     *
-     * A row that was already springing is finished first, **without** zeroing: its layout position
-     * already jumped, and the new offset is written by [LyricLineSpringBatch.join] in this same host
-     * call, so zeroing would flash the old position for one frame.
-     */
-    fun join(row: LyricLineSpringRow, dy: Int, spring: LyricLineSpring) = synchronized(lock) {
-        val batch = live.lastOrNull {
-            it.animator === row.animator && it.dy == dy && it.batch.elapsed == 0f
-        }?.batch ?: newBatch(row.animator, dy, spring)
-        val previous = rows[row.holder]
-        val previousBatch = batchOf[row.holder]
-        // A row from the *same* batch keeps its membership (a second take-over inside one move
-        // burst); one from another batch ends that move first, without zeroing, because its layout
-        // already jumped and [LyricLineSpringBatch.join] writes the new offset right here.
-        if (previous != null && previousBatch !== batch) {
-            previousBatch?.finishHolder(previous, resetOffset = false)
-        }
-        batch.join(row)
-        rows[row.holder] = row
-        batchOf[row.holder] = batch
-    }
-
-    /**
-     * Advance every live batch by [dtMs]; returns true while something is still moving.
-     *
-     * Batches that reach rest are dropped here, together with their rows, so a later
-     * `endAnimation` for an already-finished row is a no-op instead of a second finish.
-     */
-    fun advance(dtMs: Float): Boolean = synchronized(lock) {
-        val iterator = live.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (!entry.batch.advance(dtMs)) {
-                drop(entry)
-                iterator.remove()
-            }
-        }
-        live.isNotEmpty()
+        animator != null && waves[animator]?.isRunning == true
     }
 
     /** `endAnimation(holder)`: end that row now, exactly once. */
     fun finish(animator: Any?, holder: Any): Boolean = synchronized(lock) {
         val row = rows[holder] ?: return@synchronized false
         if (animator != null && row.animator !== animator) return@synchronized false
-        val batch = batchOf[holder] ?: return@synchronized false
-        val finished = batch.finishHolder(row, resetOffset = true)
+        val wave = waveOf[holder] ?: return@synchronized false
+        val finished = wave.finishHolder(holder, resetOffset = true)
         rows.remove(holder)
-        batchOf.remove(holder)
+        waveOf.remove(holder)
+        retire(wave)
         finished
     }
 
-    /** `endAnimations()`: end every batch that belongs to [animator]. */
+    /** `endAnimations()`: end every wave that belongs to [animator]. */
     fun finishAll(animator: Any?): Int = synchronized(lock) {
         var ended = 0
-        val iterator = live.iterator()
+        val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (animator == null || entry.animator === animator) {
-                ended += entry.batch.holders().size
-                entry.batch.finishAll()
-                drop(entry)
+            if (animator == null || entry.key === animator) {
+                ended += entry.value.size
+                entry.value.finishAll()
+                forgetWave(entry.value)
                 iterator.remove()
             }
         }
@@ -125,26 +129,42 @@ internal class LyricLineSpringTracks(
     /** Recovery for a takeover that failed after the host's animation was already skipped. */
     fun forget(holder: Any) = synchronized(lock) {
         rows.remove(holder)
-        batchOf.remove(holder)
+        waveOf.remove(holder)
     }
 
-    /** The row count of the most recently created batch, for the diagnostic line. */
-    fun activeBatches(): Int = synchronized(lock) { live.size }
+    /** The number of live waves, for the diagnostic line. */
+    fun activeWaves(): Int = synchronized(lock) { waves.size }
 
-    private fun newBatch(animator: Any, dy: Int, spring: LyricLineSpring): LyricLineSpringBatch<LyricLineSpringRow> {
-        val batch = LyricLineSpringBatch<LyricLineSpringRow>(spring, writeOffset, dispatchFinished)
-        live += Live(animator, dy, batch)
-        return batch
+    private fun newWave(): LyricLineSpringWave<Any> = LyricLineSpringWave(
+        write = { holder, offset -> rows[holder]?.let { writeOffset(it, offset) } },
+        finish = { holder -> rows[holder]?.let { dispatchFinished(it) } },
+    )
+
+    /** Drop a wave that has nothing left to move, unless a row of it has moved on to another. */
+    private fun retire(wave: LyricLineSpringWave<Any>) {
+        if (wave.isRunning) return
+        forgetWave(wave)
+        val iterator = waves.entries.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().value === wave) iterator.remove()
+        }
     }
 
-    private fun drop(entry: Live) {
-        entry.batch.holders().forEach { row ->
-            // A row that has already moved on to a newer batch keeps its (new) mapping: forgetting
-            // it here would leave that batch's move without a finish.
-            if (batchOf[row.holder] === entry.batch) {
-                rows.remove(row.holder)
-                batchOf.remove(row.holder)
+    /**
+     * Forget every row of [wave], then drop the finished ones.
+     *
+     * The mappings go first: `prune()` removes finished rows, and a row dropped from the map still
+     * in the wave would leave the holder pointing at a wave that no longer knows it.
+     */
+    private fun forgetWave(wave: LyricLineSpringWave<Any>) {
+        wave.holders().forEach { holder ->
+            // A row that has already moved on to a newer wave keeps its (new) mapping: forgetting
+            // it here would leave that wave's move without a finish.
+            if (waveOf[holder] === wave) {
+                rows.remove(holder)
+                waveOf.remove(holder)
             }
         }
+        wave.prune()
     }
 }

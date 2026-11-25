@@ -78,6 +78,23 @@ data class ModuleSettings(
      */
     val lyricLineMotionDurationScale: Float = LyricLineMotionPolicy.NEUTRAL_SCALE,
     /**
+     * 「换行弹簧」: take over the lyric block's line-change displacement with a spring.
+     *
+     * Apple Music moves the whole lyric block by 4–8 `animateMove` calls that share one `dy` and
+     * one `ViewPropertyAnimator` run; this feature answers those moves itself and drives the rows
+     * from one shared scalar spring instead (see [dev.amenhancer.module.lyrics.LyricLineSpringPolicy]).
+     *
+     * Off by default, and additionally gated by [lyricEffectsOptimizationEnabled] — it is a lyric
+     * *effect*, and that switch owns all of them. The switch decides installation (restart), while
+     * the value is read live inside the hook, so turning either switch off returns the next line
+     * change to Apple Music without restarting.
+     *
+     * When both this and [lyricLineMotionEnabled] are on, this one wins the displacement; the
+     * rhythm slider still supplies the tempo, because it rewrites the very duration the spring's
+     * stiffness is derived from.
+     */
+    val lyricLineSpringEnabled: Boolean = false,
+    /**
      * 「换行诊断」(the line-change probe): read-only observation of Apple Music's own line change.
      *
      * Never part of the product. While it is on, the host installs extra read-only hooks that only

@@ -4,6 +4,7 @@ import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LlmLyricsThinkingFormat
+import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -118,6 +119,7 @@ class ModuleSettingsSchemaTest {
                 "lyric_line_motion_duration_percent" to 100,
                 "lyric_line_motion_probe_enabled" to false,
                 "lyric_line_spring_enabled" to false,
+                "lyric_line_spring_feel" to "amll",
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
@@ -200,6 +202,7 @@ class ModuleSettingsSchemaTest {
                 "lyric_line_motion_duration_percent" to 100,
                 "lyric_line_motion_probe_enabled" to false,
                 "lyric_line_spring_enabled" to false,
+                "lyric_line_spring_feel" to "amll",
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
@@ -1465,6 +1468,34 @@ class ModuleSettingsSchemaTest {
             ModuleSettingsSchema.decode(
                 mapOf("phone_liquid_glass_mini_sink_bounce_dp" to "deep"),
             ).phoneLiquidGlassMiniSinkBounceDp,
+        )
+    }
+
+    /** 「换行手感」: AMLL is the shipped default, so an absent or unknown value must decode to it. */
+    @Test
+    fun `the line-change feel defaults to AMLL and round trips HOST`() {
+        assertEquals(
+            LyricLineSpringFeel.AMLL,
+            ModuleSettingsSchema.decode(emptyMap<String, Any>()).lyricLineSpringFeel,
+        )
+        assertEquals(
+            LyricLineSpringFeel.AMLL,
+            ModuleSettingsSchema.decode(
+                mapOf("lyric_line_spring_feel" to "nonsense"),
+            ).lyricLineSpringFeel,
+        )
+        assertEquals(
+            LyricLineSpringFeel.HOST,
+            ModuleSettingsSchema.decode(
+                mapOf("lyric_line_spring_feel" to LyricLineSpringFeel.HOST.storageValue),
+            ).lyricLineSpringFeel,
+        )
+        val encoded = ModuleSettingsSchema.encode(
+            ModuleSettings(lyricLineSpringFeel = LyricLineSpringFeel.HOST),
+        )
+        assertEquals(
+            LyricLineSpringFeel.HOST,
+            ModuleSettingsSchema.decode(encoded).lyricLineSpringFeel,
         )
     }
 }

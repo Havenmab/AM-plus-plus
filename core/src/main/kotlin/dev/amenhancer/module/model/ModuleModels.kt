@@ -95,6 +95,14 @@ data class ModuleSettings(
      */
     val lyricLineSpringEnabled: Boolean = false,
     /**
+     * 「换行弹簧手感」: AMLL's fixed 0.45 s settle (the default) or Apple Music's own tempo.
+     *
+     * [LyricLineSpringFeel.AMLL] ignores both `$k.e` and 「歌词换行节奏」: the spring is AMLL's, so
+     * the tempo is AMLL's too. [LyricLineSpringFeel.HOST] reproduces 乙-1 exactly — stiffness from
+     * the animator's move duration, i.e. the rhythm slider's multiplier included. Read live.
+     */
+    val lyricLineSpringFeel: LyricLineSpringFeel = LyricLineSpringFeel.DEFAULT,
+    /**
      * 「换行诊断」(the line-change probe): read-only observation of Apple Music's own line change.
      *
      * Never part of the product. While it is on, the host installs extra read-only hooks that only
@@ -430,6 +438,31 @@ data class ModuleSettings(
                 MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
                 MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
             )
+    }
+}
+
+/**
+ * 「换行弹簧手感」: which tempo Apple Music's line-change displacement is replayed at.
+ *
+ * The two values are two *products*, not two tuning knobs on one curve — see
+ * [dev.amenhancer.module.lyrics.LyricLineSpringPolicy] for the parameters behind each:
+ *
+ *  * [AMLL] — AMLL's own spring and curve: a fixed ≈0.45 s settle, whatever Apple Music computed
+ *    for the line. This is the shipped default, because it is the feel the feature exists for.
+ *  * [HOST] — 乙-1's mapping: the animator's own move duration `$k.e` drives the stiffness, so
+ *    「歌词换行节奏」's multiplier keeps working and the block moves in Apple Music's tempo.
+ *
+ * Read live in the hook: switching modes changes the next line change, not the ones in flight.
+ */
+enum class LyricLineSpringFeel(val storageValue: String) {
+    AMLL("amll"),
+    HOST("host");
+
+    companion object {
+        val DEFAULT: LyricLineSpringFeel = AMLL
+
+        fun decode(value: String?): LyricLineSpringFeel =
+            values().firstOrNull { it.storageValue == value } ?: DEFAULT
     }
 }
 

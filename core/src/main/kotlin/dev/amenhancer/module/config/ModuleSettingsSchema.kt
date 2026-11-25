@@ -7,6 +7,7 @@ import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LlmLyricsThinkingFormat
+import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
 import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
@@ -127,6 +128,9 @@ object ModuleSettingsSchema {
             lyricLineSpringEnabled = values.boolean(
                 KEY_LYRIC_LINE_SPRING_ENABLED,
                 default = false,
+            ),
+            lyricLineSpringFeel = LyricLineSpringFeel.decode(
+                values.string(KEY_LYRIC_LINE_SPRING_FEEL),
             ),
             navigationCompensationEnabled = values.boolean(
                 KEY_NAVIGATION_COMPENSATION,
@@ -305,6 +309,7 @@ object ModuleSettingsSchema {
                 LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
             KEY_LYRIC_LINE_MOTION_PROBE_ENABLED to settings.lyricLineMotionProbeEnabled,
             KEY_LYRIC_LINE_SPRING_ENABLED to settings.lyricLineSpringEnabled,
+            KEY_LYRIC_LINE_SPRING_FEEL to settings.lyricLineSpringFeel.storageValue,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
             KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
@@ -744,6 +749,7 @@ object ModuleSettingsSchema {
         KEY_LYRIC_LINE_MOTION_DURATION_PERCENT,
         KEY_LYRIC_LINE_MOTION_PROBE_ENABLED,
         KEY_LYRIC_LINE_SPRING_ENABLED,
+        KEY_LYRIC_LINE_SPRING_FEEL,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_STARTUP_PAGE_PREWARM,
@@ -851,6 +857,12 @@ object ModuleSettingsSchema {
      * migration. Installation is decided by the switch (restart), the value is read live.
      */
     private const val KEY_LYRIC_LINE_SPRING_ENABLED = "lyric_line_spring_enabled"
+    /**
+     * 「换行弹簧手感」: stored as the enum's stable string ("amll" / "host"), the same form
+     * [dev.amenhancer.module.model.LlmLyricsThinkingEffort] uses. An absent or unknown value decodes
+     * to AMLL, the shipped default, so an upgrading store needs no migration step.
+     */
+    private const val KEY_LYRIC_LINE_SPRING_FEEL = "lyric_line_spring_feel"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"

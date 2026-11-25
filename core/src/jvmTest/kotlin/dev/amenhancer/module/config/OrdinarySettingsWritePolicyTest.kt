@@ -123,7 +123,7 @@ class OrdinarySettingsWritePolicyTest {
                 "lyric_line_motion_duration_percent" to 100,
                 "lyric_line_motion_probe_enabled" to false,
                 "lyric_line_spring_enabled" to false,
-                "lyric_line_spring_enabled" to false,
+                "lyric_line_spring_feel" to "amll",
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,

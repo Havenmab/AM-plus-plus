@@ -219,6 +219,13 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "Drives the whole lyric block's line-change displacement with one spring instead of Apple Music's own slide · Requires lyric effects optimization · Wins over the line-change rhythm when both are on · Restart Apple Music to apply",
         "把歌词整块的换行位移改成一条弹簧推进，替换 Apple Music 自带的滑动 · 需同时开启「歌词效果优化」· 与「歌词换行节奏」同开时以本项为准 · 重开 Apple Music 后生效",
     ),
+    LYRIC_LINE_SPRING_FEEL("Line-change feel", "换行手感"),
+    LYRIC_LINE_SPRING_FEEL_SUMMARY(
+        "AMLL: a fixed 0.45 s wave, the line-change rhythm has no effect · Apple Music's tempo: follows Apple Music's own line-change duration, so the rhythm slider applies · Read live",
+        "AMLL：固定 0.45 秒的换行波浪，「换行节奏」滑杆此时不生效 · 跟随宿主：沿用 Apple Music 自己的换行时长，「换行节奏」滑杆生效 · 实时生效",
+    ),
+    LYRIC_LINE_SPRING_FEEL_AMLL("AMLL · 0.45 s", "AMLL · 0.45 秒"),
+    LYRIC_LINE_SPRING_FEEL_HOST("Follow Apple Music's tempo", "跟随宿主时长"),
     LYRIC_LINE_MOTION_PROBE("Line-change probe (diagnostic)", "换行诊断（临时）"),
     LYRIC_LINE_MOTION_PROBE_SUMMARY(
         "Read-only diagnostics in logcat (AMPP-LineProbe): what Apple Music's own line change does · Changes nothing on screen · Restart Apple Music to apply",

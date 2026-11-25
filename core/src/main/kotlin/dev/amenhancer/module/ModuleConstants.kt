@@ -73,6 +73,8 @@ object ModuleConstants {
     const val FEATURE_LYRIC_WRAP_SWEEP = "lyric_wrap_sweep"
     const val FEATURE_LYRIC_BACKGROUND_HIGHLIGHT = "lyric_background_highlight"
     const val FEATURE_LYRIC_LINE_MOTION = "lyric_line_motion"
+    /** 「换行诊断」: the read-only line-change probe. Installs nothing while it is off. */
+    const val FEATURE_LYRIC_LINE_MOTION_PROBE = "lyric_line_motion_probe"
     const val FEATURE_LYRICS_TYPEFACE = "lyrics_typeface"
     const val FEATURE_LYRICS_PARSER = "lyrics_parser"
     const val FEATURE_CUSTOM_LYRICS = "custom_lyrics"

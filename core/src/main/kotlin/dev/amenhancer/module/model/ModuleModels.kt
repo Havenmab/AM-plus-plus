@@ -77,6 +77,15 @@ data class ModuleSettings(
      * [LyricLineMotionPolicy]. 1.0 is Apple Music's own timing and an exact no-op.
      */
     val lyricLineMotionDurationScale: Float = LyricLineMotionPolicy.NEUTRAL_SCALE,
+    /**
+     * 「换行诊断」(the line-change probe): read-only observation of Apple Music's own line change.
+     *
+     * Never part of the product. While it is on, the host installs extra read-only hooks that only
+     * write `AMPP-LineProbe` lines to logcat; they change no view, no duration and no queue, and
+     * turning it off installs nothing at all. Independent of [lyricLineMotionEnabled], because the
+     * probe has to be able to measure the host's own timing — scaled or not.
+     */
+    val lyricLineMotionProbeEnabled: Boolean = false,
     val navigationCompensationEnabled: Boolean = false,
     /** Restores native Data settings and the app's cellular availability predicate. */
     val forceCellularDataEntryEnabled: Boolean = false,

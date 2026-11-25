@@ -120,6 +120,10 @@ object ModuleSettingsSchema {
             lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(
                 values.number(KEY_LYRIC_LINE_MOTION_DURATION_PERCENT),
             ),
+            lyricLineMotionProbeEnabled = values.boolean(
+                KEY_LYRIC_LINE_MOTION_PROBE_ENABLED,
+                default = false,
+            ),
             navigationCompensationEnabled = values.boolean(
                 KEY_NAVIGATION_COMPENSATION,
                 default = false,
@@ -295,6 +299,7 @@ object ModuleSettingsSchema {
             KEY_LYRIC_LINE_MOTION_ENABLED to settings.lyricLineMotionEnabled,
             KEY_LYRIC_LINE_MOTION_DURATION_PERCENT to
                 LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
+            KEY_LYRIC_LINE_MOTION_PROBE_ENABLED to settings.lyricLineMotionProbeEnabled,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
             KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
@@ -732,6 +737,7 @@ object ModuleSettingsSchema {
         KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
         KEY_LYRIC_LINE_MOTION_ENABLED,
         KEY_LYRIC_LINE_MOTION_DURATION_PERCENT,
+        KEY_LYRIC_LINE_MOTION_PROBE_ENABLED,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_STARTUP_PAGE_PREWARM,
@@ -828,6 +834,11 @@ object ModuleSettingsSchema {
      * [LyricLineMotionPolicy.encodePercent].
      */
     private const val KEY_LYRIC_LINE_MOTION_DURATION_PERCENT = "lyric_line_motion_duration_percent"
+    /**
+     * 「换行诊断」: the diagnostic line-change probe. Off by default; an upgrading store gains a
+     * defaulted key, so it keeps installing nothing without a migration step.
+     */
+    private const val KEY_LYRIC_LINE_MOTION_PROBE_ENABLED = "lyric_line_motion_probe_enabled"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"

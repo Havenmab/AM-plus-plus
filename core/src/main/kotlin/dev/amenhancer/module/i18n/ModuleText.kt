@@ -214,6 +214,11 @@ enum class ModuleText(internal val english: String, internal val chinese: String
         "50%% is twice as fast, 100%% is Apple Music's own timing, 200%% twice as slow · Read live",
         "50%% 快一倍，100%% 为 Apple Music 原始时长，200%% 慢一倍 · 实时生效",
     ),
+    LYRIC_LINE_MOTION_PROBE("Line-change probe (diagnostic)", "换行诊断（临时）"),
+    LYRIC_LINE_MOTION_PROBE_SUMMARY(
+        "Read-only diagnostics in logcat (AMPP-LineProbe): what Apple Music's own line change does · Changes nothing on screen · Restart Apple Music to apply",
+        "只往日志（AMPP-LineProbe）记录 Apple Music 自身换行过程的诊断信息 · 不改变任何显示 · 重开 Apple Music 后生效",
+    ),
     TITLE_CORRECTION("Song title correction", "歌曲名显示修正"),
     VALUE_RESTART_REQUIRED("%1\$s · Restart Apple Music to apply", "%1\$s · 重开 Apple Music 后生效"),
     TITLE_CORRECTION_SUMMARY("Off follows your Apple Music account · On uses the selected region", "关闭时跟随 Apple Music 账号 · 开启后选择修正地区"),

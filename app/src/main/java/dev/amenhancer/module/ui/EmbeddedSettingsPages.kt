@@ -639,6 +639,13 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                 ) { percent ->
                     onEdit { it.copy(lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(percent)) }
                 }
+                // Temporary diagnostic switch: it installs read-only probe hooks that only write
+                // AMPP-LineProbe log lines, and nothing at all while it is off. Remove it together
+                // with the probe once the line-transition work no longer needs measurements.
+                Setting(ModuleText.LYRIC_LINE_MOTION_PROBE, ModuleText.LYRIC_LINE_MOTION_PROBE_SUMMARY,
+                    settings.lyricLineMotionProbeEnabled, EmbeddedSvgIcon.Settings) { value ->
+                    onEdit { it.copy(lyricLineMotionProbeEnabled = value) }
+                }
                 EmbeddedSettingRange(
                     title = localizedText(ModuleText.LYRIC_BLUR_OFFSET),
                     value = settings.lyricBlurRadiusOffsetPx,

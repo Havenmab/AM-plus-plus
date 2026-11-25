@@ -337,7 +337,7 @@ def class_lineage(classes, class_descriptor):
 
 
 def verify_lyric_line_motion_contract(document, classes, failures):
-    """The line-change timing seam: the callback, the lyrics animator, and its duration field."""
+    """The line-change timing seam, plus its read-only probe inventory."""
     data = document.get('lyricLineMotion')
     if data is None:
         return 0
@@ -348,6 +348,26 @@ def verify_lyric_line_motion_contract(document, classes, failures):
     def descriptor(name):
         return primitive.get(name, name.replace('.', '/') if name.startswith('[')
                              else 'L' + name.replace('.', '/') + ';')
+
+    def check_member(section, group, role, contract):
+        """One exact descriptor claim; returns 1 so callers can count what was verified."""
+        try:
+            native = classes.get(descriptor(contract['owner']), {})
+            if group == 'fields':
+                valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                         and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+            else:
+                signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
+                             + ')' + descriptor(contract['returns']))
+                flags = native.get('method_access', {}).get(signature)
+                valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                         and bool(flags & 8) == contract.get('static', False))
+            if not valid:
+                failures.append('%s.%s.%s: invalid exact descriptor' % (section, group, role))
+        except (KeyError, TypeError, AttributeError) as error:
+            failures.append('%s.%s.%s: incomplete descriptor (%s)' % (section, group, role, error))
+        return 1
+
     required = {
         'methods': {'lineCallback', 'lineOffset'},
         'fields': {'callbackFragment', 'animator', 'duration'},
@@ -361,22 +381,7 @@ def verify_lyric_line_motion_contract(document, classes, failures):
         for role in sorted(roles - entries.keys()):
             failures.append('lyricLineMotion.%s.%s: missing required role' % (group, role))
         for role, contract in entries.items():
-            checks += 1
-            try:
-                native = classes.get(descriptor(contract['owner']), {})
-                if group == 'fields':
-                    valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
-                             and not native.get('field_access', {}).get(contract['name'], 8) & 8)
-                else:
-                    signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
-                                 + ')' + descriptor(contract['returns']))
-                    flags = native.get('method_access', {}).get(signature)
-                    valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
-                             and bool(flags & 8) == contract.get('static', False))
-                if not valid:
-                    failures.append('lyricLineMotion.%s.%s: invalid exact descriptor' % (group, role))
-            except (KeyError, TypeError, AttributeError) as error:
-                failures.append('lyricLineMotion.%s.%s: incomplete descriptor (%s)' % (group, role, error))
+            checks += check_member('lyricLineMotion', group, role, contract)
     # The duration is only the move duration while it is declared on an ancestor of the lyrics
     # animator, and that animator has to be the host's DefaultItemAnimator variant.
     try:
@@ -393,6 +398,38 @@ def verify_lyric_line_motion_contract(document, classes, failures):
                 failures.append('lyricLineMotion: offset bridge and captured fragment disagree')
     except (KeyError, TypeError, AttributeError) as error:
         failures.append('lyricLineMotion: incomplete semantic keys (%s)' % error)
+    # The read-only probe: its own roles, each of which the runtime resolves separately, so the
+    # profile has to pin every one of them exactly. A probe role that drifted is a wrong log line,
+    # not a wrong duration, and the verifier cannot tell those apart from the JSON alone.
+    probe = data.get('probe')
+    if probe is None:
+        failures.append('lyricLineMotion.probe: missing read-only probe inventory')
+        return checks
+    if not isinstance(probe, dict) or probe.get('contractVersion') != 1:
+        failures.append('lyricLineMotion.probe: missing versioned contract')
+        return checks
+    required_probe = {
+        'classes': {'layoutManager', 'instrumentalBinding'},
+        'methods': {'lineChange', 'scrollToOffset', 'animateMove', 'flushDeferred',
+                    'lineTransition', 'lineTransitionLineAdapter', 'firstVisible', 'lastVisible',
+                    'holderPosition'},
+        'fields': {'lineChangeFragment', 'layoutManager', 'deferredQueue', 'scrollOwner',
+                   'deferredDrain', 'anchored', 'animatorFragment', 'holderBinding', 'holderItemView'},
+    }
+    for group, roles in required_probe.items():
+        entries = probe.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.probe.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.probe.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            if group == 'classes':
+                checks += 1
+                if descriptor(str(contract)) not in classes:
+                    failures.append('lyricLineMotion.probe.classes.%s: %s is missing' % (role, contract))
+            else:
+                checks += check_member('lyricLineMotion.probe', group, role, contract)
     return checks
 
 

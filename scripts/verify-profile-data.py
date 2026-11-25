@@ -49,6 +49,20 @@ def main():
             for group, roles in required_motion.items():
                 assert roles <= motion.get(group, {}).keys(), f'missing line motion {group}: {filename}'
             assert profile['productionEnabled'], f'line motion must use an enabled exact profile: {filename}'
+            # The read-only probe pins its own roles; the runtime degrades role by role, so the
+            # profile is the only place that can promise they all exist.
+            probe = motion.get('probe') or {}
+            assert probe.get('contractVersion') == 1, f'missing line motion probe contract: {filename}'
+            required_probe = {
+                'classes': {'layoutManager', 'instrumentalBinding'},
+                'methods': {'lineChange', 'scrollToOffset', 'animateMove', 'flushDeferred',
+                            'lineTransition', 'lineTransitionLineAdapter', 'firstVisible', 'lastVisible',
+                            'holderPosition'},
+                'fields': {'lineChangeFragment', 'layoutManager', 'deferredQueue', 'scrollOwner',
+                           'deferredDrain', 'anchored', 'animatorFragment', 'holderBinding', 'holderItemView'},
+            }
+            for group, roles in required_probe.items():
+                assert roles <= probe.get(group, {}).keys(), f'missing line motion probe {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])
         artist_roles = [target['runtimeMemberNames'].get('ARTIST_RUNTIME_ROLE') for target in artist_targets]
         compose_roles = {'compose_profile_view_model', 'compose_profile_success_state'}

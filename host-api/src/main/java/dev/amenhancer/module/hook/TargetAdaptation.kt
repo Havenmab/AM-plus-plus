@@ -48,6 +48,10 @@ data class TargetAdaptation(
     val lyricLineMotion: LyricLineMotionTarget = LyricLineMotionTarget {
         TargetCapabilityInstall.Unsupported("Lyric line-change rhythm has no exact host contract")
     },
+    /** 「换行诊断」: read-only observation of the host's own line change; installs no hook when off. */
+    val lyricLineMotionProbe: LyricLineMotionProbeTarget = LyricLineMotionProbeTarget {
+        TargetCapabilityInstall.Unsupported("Line-change probe has no exact host contract")
+    },
     val lyricBackgroundHighlight: LyricBackgroundHighlightTarget = LyricBackgroundHighlightTarget {
         TargetCapabilityInstall.Unsupported("Native lyric background highlighting has no exact host contract")
     },
@@ -85,6 +89,10 @@ fun interface LyricBackgroundHighlightTarget {
 }
 
 fun interface LyricLineMotionTarget {
+    fun install(): TargetCapabilityInstall
+}
+
+fun interface LyricLineMotionProbeTarget {
     fun install(): TargetCapabilityInstall
 }
 

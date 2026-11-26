@@ -39,42 +39,21 @@ def main():
                 assert roles <= wrap.get(group, {}).keys(), f'missing wrap sweep {group}: {filename}'
             assert profile['productionEnabled'], f'wrap sweep must use an enabled exact profile: {filename}'
         if 'lyricLineMotion' in profile:
+            # 「换行弹簧位移」 is the only line-change feature left: the rhythm scaling, its probe
+            # and the animator's move-duration role were removed, so the section is a container
+            # holding the spring takeover and the interlude exit it waits for.
             motion = profile['lyricLineMotion']
-            assert motion.get('contractVersion') == 1, f'missing line motion contract: {filename}'
-            assert motion.get('classes', {}).get('animator'), f'missing line motion animator class: {filename}'
-            required_motion = {
-                'methods': {'lineCallback', 'lineOffset'},
-                'fields': {'callbackFragment', 'animator', 'duration'},
-            }
-            for group, roles in required_motion.items():
-                assert roles <= motion.get(group, {}).keys(), f'missing line motion {group}: {filename}'
-            assert profile['productionEnabled'], f'line motion must use an enabled exact profile: {filename}'
-            # The read-only probe pins its own roles; the runtime degrades role by role, so the
-            # profile is the only place that can promise they all exist.
-            probe = motion.get('probe') or {}
-            assert probe.get('contractVersion') == 1, f'missing line motion probe contract: {filename}'
-            required_probe = {
-                'classes': {'layoutManager', 'instrumentalBinding'},
-                'methods': {'lineChange', 'scrollToOffset', 'animateMove', 'flushDeferred',
-                            'lineTransition', 'lineTransitionLineAdapter', 'firstVisible', 'lastVisible',
-                            'holderPosition'},
-                'fields': {'lineChangeFragment', 'layoutManager', 'deferredQueue', 'scrollOwner',
-                           'deferredDrain', 'anchored', 'animatorFragment', 'holderBinding', 'holderItemView'},
-            }
-            for group, roles in required_probe.items():
-                assert roles <= probe.get(group, {}).keys(), f'missing line motion probe {group}: {filename}'
-            # The spring takeover installs all-or-nothing: a role this build does not have must
-            # stop the install, so the profile is where every role has to be pinned.
             spring = motion.get('spring') or {}
             assert spring.get('contractVersion') == 1, f'missing line motion spring contract: {filename}'
             required_spring = {
                 'classes': {'animator', 'holder'},
                 'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
                             'dispatchMoveStarting', 'dispatchAnimationFinished'},
-                'fields': {'holderItemView', 'duration', 'animatorFragment'},
+                'fields': {'holderItemView', 'animatorFragment'},
             }
             for group, roles in required_spring.items():
                 assert roles <= spring.get(group, {}).keys(), f'missing line motion spring {group}: {filename}'
+            assert profile['productionEnabled'], f'line motion must use an enabled exact profile: {filename}'
             # The interlude's three-dot exit animation: read-only alignment, so the runtime degrades
             # one missing role at a time (no end callback means "wait the book duration", no start
             # role means "never wait at all"). The profile is where every role it may use is named.

@@ -1,6 +1,5 @@
 package dev.amenhancer.module.lyrics
 
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import kotlin.math.abs
 import kotlin.math.cos
@@ -19,27 +18,25 @@ import kotlin.math.sqrt
  *
  * ```
  * m  = 0.9
- * k  = 170 * (0.484 / t)^2      // t = the settle time this feel aims at, in seconds
- * c  = 2.2 * sqrt(k)            // = 2 zeta sqrt(k m), zeta = 1.1595 (just past critical)
+ * t  = 0.450 s                   // AMLL's settle time; fixed, no host input
+ * k  = 170 * (0.484 / t)^2       // = 196.7
+ * c  = 2.2 * sqrt(k)             // = 2 zeta sqrt(k m), zeta = 1.1595 (just past critical) = 30.9
  * ```
  *
  * Those numbers are AMLL's (`line-transition-notes/03-amll-spec-v1.md` §2.1): 170 is AMLL's
- * "normal" stiffness and 0.484 s is the t99 AMLL pairs with it. Only `t` differs per feel mode:
+ * "normal" stiffness and 0.484 s is the t99 AMLL pairs with it; 0.450 s is the fast end of AMLL's
+ * own k = 170..220 normal mode. Apple Music's own move duration (`$k.e`) is deliberately **not**
+ * read: a line change takes AMLL's time here, which is the whole point of the feature.
  *
- *  * [LyricLineSpringFeel.AMLL] pins `t` to [AMLL_SETTLE_MS] (450 ms), giving `k = 196.8` and
- *    `c = 30.9` — AMLL's own spring, whatever Apple Music computed for this line;
- *  * [LyricLineSpringFeel.HOST] takes `t` from the animator's `$k.e`, which is 乙-1's mapping:
- *    「歌词换行节奏」's multiplier flows through unchanged, because it writes that very field
- *    (multiplying again here would square it).
- *
- * **The AMLL feel also changes the curve, not only `k`.** For `zeta > 1` the exact solution is a
- * pair of exponentials whose slow root decays at `omega0 (zeta - sqrt(zeta^2 - 1))`; a critically
- * damped spring instead follows `(x0 + t(v0 + omega0 x0)) e^(-omega0 t)`. AMLL's `spring.ts` uses
- * the second form for *every* `zeta >= 1` (`soft || 1 <= damping / (2 sqrt(k m))`), so at the same
- * stiffness its block arrives 1.31x sooner at the 1 % gate. That 1.31 is exactly the "t99 = 1.31 T"
- * 乙-1 measured: the old curve was right for the ODE and wrong for AMLL. [LyricLineSpringDecay]
- * therefore carries the choice — AMLL's shape for the AMLL feel, the exact solution (乙-1, and the
- * only thing an RK4 cross-check can validate) for the HOST feel.
+ * **The curve is AMLL's, not the ODE's.** For `zeta > 1` the exact solution of
+ * `x'' = (-k x - c x') / m` is a pair of exponentials whose slow root decays at
+ * `omega0 (zeta - sqrt(zeta^2 - 1))`; a critically damped spring instead follows
+ * `(x0 + t(v0 + omega0 x0)) e^(-omega0 t)`. AMLL's `spring.ts` uses the second form for *every*
+ * `zeta >= 1` (`soft || 1 <= damping / (2 sqrt(k m))`), so at the same stiffness its block arrives
+ * 1.31x sooner at the 1 % gate — the "t99 = 1.31 T" 乙-1 measured against the host's own field.
+ * [LyricLineSpringDecay] carries that choice: production always uses [LyricLineSpringDecay.AMLL],
+ * and the exact solution stays available as the reference curve the unit tests validate against an
+ * independent RK4 integration.
  *
  * Deliberately pure: no Android, no reflection, no clock. [LyricLineSpringWave] owns the frame
  * stepping and the exactly-once "finished" bookkeeping, so both are testable on the JVM.
@@ -61,11 +58,11 @@ object LyricLineSpringPolicy {
     const val DAMPING_COEFFICIENT: Float = 2.2f
 
     /**
-     * The [LyricLineSpringFeel.AMLL] feel's fixed settle time, in milliseconds.
+     * The settle time every line change is replayed at, in milliseconds.
      *
-     * `k = 170 (0.484 / 0.45)^2 = 196.8`, the fast end of AMLL's own k=170..220 normal mode.
-     * Deliberately not tied to `$k.e`: the point of this feel is that a line change takes AMLL's
-     * time, not the host's.
+     * `k = 170 (0.484 / 0.45)^2 = 196.7`, the fast end of AMLL's own k = 170..220 normal mode.
+     * Fixed on purpose: the feature exists to give line changes AMLL's time rather than the time
+     * Apple Music computed for the line, so no host value feeds it.
      */
     const val AMLL_SETTLE_MS: Float = 450f
 
@@ -96,18 +93,6 @@ object LyricLineSpringPolicy {
     const val SETTLE_EPSILON_VELOCITY: Float = SETTLE_EPSILON_PX / REFERENCE_FRAME_SECONDS
 
     /**
-     * A duration this module is willing to read out of the animator's move-duration field.
-     *
-     * The host itself writes 480..792 ms there and 「歌词换行节奏」 rewrites it in place, clamped to
-     * 100..1600 ms; anything outside that window is a stale field, a different animator, or a
-     * release with another formula — not a tempo — so that move stays with the host. The check
-     * guards the [LyricLineSpringFeel.AMLL] feel too, where the value selects no parameter: it is
-     * the one signal that this really is the lyric animator's own field.
-     */
-    const val MIN_DURATION_MS: Long = 100L
-    const val MAX_DURATION_MS: Long = 1_600L
-
-    /**
      * The largest layout shift one frame may absorb before it is treated as a re-anchor.
      *
      * A background line growing from nothing moves the rows below it by its own height — tens of
@@ -117,15 +102,19 @@ object LyricLineSpringPolicy {
      */
     const val MAX_LAYOUT_SHIFT_PX: Int = 240
 
+    /** The one spring every line change is replayed at; see [AMLL_SETTLE_MS]. */
+    val tempo: LyricLineSpringTempo = LyricLineSpringTempo(
+        tempoMs = AMLL_SETTLE_MS,
+        stiffness = stiffnessFor(AMLL_SETTLE_MS),
+        damping = dampingFor(stiffnessFor(AMLL_SETTLE_MS)),
+        decay = LyricLineSpringDecay.AMLL,
+    )
+
     /** True when a per-frame layout shift of [deltaPx] is a background line growing, not a jump. */
     fun acceptsLayoutShift(deltaPx: Int): Boolean = abs(deltaPx) <= MAX_LAYOUT_SHIFT_PX
 
     /** True when [dy] is a displacement this feature is willing to own. */
     fun acceptsDisplacement(dy: Int): Boolean = dy != 0 && abs(dy) <= MAX_DISPLACEMENT_PX
-
-    /** True when [durationMs] is a value this module's own writers could have produced. */
-    fun isPlausibleDuration(durationMs: Long): Boolean =
-        durationMs in MIN_DURATION_MS..MAX_DURATION_MS
 
     /** `k = 170 * (0.484 / t)^2`, with the settle time `t` in milliseconds. */
     fun stiffnessFor(tempoMs: Float): Float {
@@ -138,48 +127,20 @@ object LyricLineSpringPolicy {
     fun dampingFor(stiffness: Float): Float = DAMPING_COEFFICIENT * sqrt(stiffness)
 
     /**
-     * The spring one feel mode picks for one line change, or null when the move is not ours.
-     *
-     * [hostDurationMs] is `$k.e` read at `animateMove` time: the HOST feel's tempo, and for the
-     * AMLL feel a plausibility check only.
-     *
-     * Null means "hand it back to the host": an unusable duration, a non-finite value, or a
-     * parameter pair that cannot produce a decaying solution. The hook treats every null as a
-     * refusal, never as "animate with defaults".
-     */
-    fun tempoFor(feel: LyricLineSpringFeel, hostDurationMs: Long): LyricLineSpringTempo? {
-        if (!isPlausibleDuration(hostDurationMs)) return null
-        val tempoMs = when (feel) {
-            LyricLineSpringFeel.AMLL -> AMLL_SETTLE_MS
-            LyricLineSpringFeel.HOST -> hostDurationMs.toFloat()
-        }
-        val stiffness = stiffnessFor(tempoMs)
-        if (!stiffness.isFinite() || stiffness <= 0f) return null
-        val damping = dampingFor(stiffness)
-        if (!damping.isFinite() || damping <= 0f) return null
-        val decay = when (feel) {
-            LyricLineSpringFeel.AMLL -> LyricLineSpringDecay.AMLL
-            LyricLineSpringFeel.HOST -> LyricLineSpringDecay.SOLUTION
-        }
-        return LyricLineSpringTempo(feel, tempoMs, stiffness, damping, decay)
-    }
-
-    /**
      * The spring for one move, or null when the move is not ours to animate.
      *
-     * The hook uses [tempoFor] instead, because a per-row spring needs the parameters and the
-     * displacement separately; this overload is the single-row arithmetic and its tests.
+     * Null means "hand it back to the host": a zero or oversized displacement, or a non-finite
+     * value. The hook treats every null as a refusal, never as "animate with defaults". The
+     * parameters themselves are constants, so they never refuse.
      */
     fun springFor(
-        feel: LyricLineSpringFeel,
-        hostDurationMs: Long,
         displacementPx: Float,
         velocityPxPerSecond: Float = 0f,
     ): LyricLineSpring? {
         if (!displacementPx.isFinite() || displacementPx == 0f) return null
         if (abs(displacementPx) > MAX_DISPLACEMENT_PX) return null
         if (!velocityPxPerSecond.isFinite()) return null
-        return tempoFor(feel, hostDurationMs)?.at(displacementPx, velocityPxPerSecond)
+        return tempo.at(displacementPx, velocityPxPerSecond)
     }
 
     /**
@@ -198,25 +159,15 @@ object LyricLineSpringPolicy {
     fun isAtRest(offsetPx: Float, velocityPxPerSecond: Float): Boolean =
         abs(offsetPx) <= SETTLE_EPSILON_PX && abs(velocityPxPerSecond) <= SETTLE_EPSILON_VELOCITY
 
-    /** Why a duration was refused, for the one diagnostic line a refusal is allowed to print. */
-    fun durationVerdict(durationMs: Long): String = if (isPlausibleDuration(durationMs)) {
-        "ok"
-    } else {
-        "duration=" + durationMs + "ms outside " + MIN_DURATION_MS + ".." + MAX_DURATION_MS + "ms"
-    }
-
     /**
-     * The feel the hook must use right now, or null when this feature must do nothing.
+     * True when the hook must take the next line change over.
      *
      * Off when its own switch is off, and off when 「歌词效果优化」 is off: that switch owns every
      * lyric *effect* in the module, so the line-change spring follows it rather than running
      * beside it.
      */
-    fun appliedFeel(settings: ModuleSettings): LyricLineSpringFeel? {
-        if (!settings.lyricLineSpringEnabled) return null
-        if (!settings.lyricEffectsOptimizationEnabled) return null
-        return settings.lyricLineSpringFeel
-    }
+    fun isEnabled(settings: ModuleSettings): Boolean =
+        settings.lyricLineSpringEnabled && settings.lyricEffectsOptimizationEnabled
 }
 
 /**
@@ -226,7 +177,12 @@ object LyricLineSpringPolicy {
  * both fall back to the same under-damped solution.
  */
 enum class LyricLineSpringDecay {
-    /** The exact solution of `x'' = (-k x - c x') / m`: 乙-1's curve. */
+    /**
+     * The exact solution of `x'' = (-k x - c x') / m`.
+     *
+     * Kept as the reference curve — the RK4 cross-check in `LyricLineSpringPolicyTest` validates
+     * the closed form against an independent integrator through it. Production never selects it.
+     */
     SOLUTION,
 
     /**
@@ -240,14 +196,13 @@ enum class LyricLineSpringDecay {
 }
 
 /**
- * One feel mode's spring, before a displacement is known: stiffness, damping and curve.
+ * One spring's parameters, before a displacement is known: stiffness, damping and curve.
  *
- * A line change re-aims the same [tempo] at a new displacement as often as Apple Music re-anchors,
- * always through [at] with the row's current position and velocity — that is what keeps the
- * motion continuous across a re-target.
+ * A line change re-aims the same tempo at a new displacement as often as Apple Music re-anchors,
+ * always through [at] with the row's current position and velocity — that is what keeps the motion
+ * continuous across a re-target.
  */
 class LyricLineSpringTempo internal constructor(
-    val feel: LyricLineSpringFeel,
     val tempoMs: Float,
     val stiffness: Float,
     val damping: Float,

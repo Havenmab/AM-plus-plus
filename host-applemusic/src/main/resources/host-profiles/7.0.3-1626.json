@@ -6176,195 +6176,7 @@
       }
     }
   },
-  "lyricLineMotion": {
-    "contractVersion": 1,
-    "classes": {
-      "animator": "mc.y"
-    },
-    "methods": {
-      "lineCallback": {
-        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f",
-        "name": "invoke",
-        "parameters": [
-          "java.lang.Object",
-          "java.lang.Object",
-          "java.lang.Object"
-        ],
-        "returns": "java.lang.Object",
-        "static": false
-      },
-      "lineOffset": {
-        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "d2",
-        "parameters": [
-          "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "int"
-        ],
-        "returns": "void",
-        "static": true
-      }
-    },
-    "fields": {
-      "callbackFragment": {
-        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$f",
-        "name": "a",
-        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
-      },
-      "animator": {
-        "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-        "name": "r0",
-        "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u"
-      },
-      "duration": {
-        "owner": "androidx.recyclerview.widget.RecyclerView$k",
-        "name": "e",
-        "type": "long"
-      }
-    },
-    "probe": {
-      "contractVersion": 1,
-      "classes": {
-        "layoutManager": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$w",
-        "instrumentalBinding": "q8.m9"
-      },
-      "methods": {
-        "lineChange": {
-          "owner": "com.apple.android.music.player.fragment.K",
-          "name": "b",
-          "parameters": [
-            "int",
-            "int"
-          ],
-          "returns": "void",
-          "static": false
-        },
-        "scrollToOffset": {
-          "owner": "androidx.recyclerview.widget.LinearLayoutManager",
-          "name": "u1",
-          "parameters": [
-            "int",
-            "int"
-          ],
-          "returns": "void",
-          "static": false
-        },
-        "animateMove": {
-          "owner": "mc.y",
-          "name": "m",
-          "parameters": [
-            "androidx.recyclerview.widget.RecyclerView$D",
-            "int",
-            "int",
-            "int",
-            "int"
-          ],
-          "returns": "boolean",
-          "static": false
-        },
-        "flushDeferred": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "s2",
-          "parameters": [],
-          "returns": "void",
-          "static": false
-        },
-        "lineTransition": {
-          "owner": "com.apple.android.music.player.A",
-          "name": "N",
-          "parameters": [
-            "androidx.recyclerview.widget.RecyclerView$D"
-          ],
-          "returns": "void",
-          "static": false
-        },
-        "lineTransitionLineAdapter": {
-          "owner": "com.apple.android.music.player.V0",
-          "name": "N",
-          "parameters": [
-            "androidx.recyclerview.widget.RecyclerView$D"
-          ],
-          "returns": "void",
-          "static": false
-        },
-        "firstVisible": {
-          "owner": "androidx.recyclerview.widget.LinearLayoutManager",
-          "name": "e1",
-          "parameters": [],
-          "returns": "int",
-          "static": false
-        },
-        "lastVisible": {
-          "owner": "androidx.recyclerview.widget.LinearLayoutManager",
-          "name": "f1",
-          "parameters": [],
-          "returns": "int",
-          "static": false
-        },
-        "holderPosition": {
-          "owner": "androidx.recyclerview.widget.RecyclerView$D",
-          "name": "d",
-          "parameters": [],
-          "returns": "int",
-          "static": false
-        }
-      },
-      "fields": {
-        "lineChangeFragment": {
-          "owner": "com.apple.android.music.player.fragment.K",
-          "name": "a",
-          "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
-        },
-        "layoutManager": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "q0",
-          "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$w"
-        },
-        "deferredQueue": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "V0",
-          "type": "java.util.LinkedList"
-        },
-        "scrollOwner": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "T0",
-          "type": "boolean"
-        },
-        "deferredDrain": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "U0",
-          "type": "boolean"
-        },
-        "anchored": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "M0",
-          "type": "boolean"
-        },
-        "animatorFragment": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u",
-          "name": "z",
-          "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
-        },
-        "holderBinding": {
-          "owner": "com.apple.android.music.player.i1$b",
-          "name": "u",
-          "type": "androidx.databinding.ViewDataBinding"
-        },
-        "holderItemView": {
-          "owner": "androidx.recyclerview.widget.RecyclerView$D",
-          "name": "a",
-          "type": "android.view.View"
-        }
-      },
-      "evidence": {
-        "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
-        "memberSource": "1626 instruction-level decode: PlayerLyricsViewFragment.K#b(I,I) reads fragment.q0 and, only when start != const/4 #0xf (i.e. -1, the host's NO_POSITION), calls LinearLayoutManager.u1(start, off) at offset 113. LinearLayoutManager.u1(I,I)V stores Z=position and a0=offset, invalidates the anchor cache (LinearLayoutManager$d.a = -1) and calls requestLayout, i.e. it is scrollToPositionWithOffset and an instant re-anchor. mc.y.m(ViewHolder,int,int,int,int)Z recomputes dx/dy from the holder's translation, takes the zero-displacement branch when both are 0, offers a J4.t2 runnable to PlayerLyricsViewFragment.V0 (or runs it when U0) and then calls RecyclerView$k.c(holder) and returns false; the non-zero branch rewrites the translation and returns true. PlayerLyricsViewFragment.s2()V removes message 2131363703, clears U0 and drains V0. A.N(ViewHolder) and V0.N(ViewHolder) both return immediately unless the holder is A$a (word adapter) or V0$j (line adapter) and the binding is q8.m9 (the instrumental row), which is why the probe records the binding class on every entry instead of assuming one.",
-        "runtimeVerified": false,
-        "timing": "observation only: before-hooks read arguments and holder/fragment state, after-hooks read the return value and the queue; no argument, field, view property or return value is ever written",
-        "ownership": "none: the probe owns no host state and installs no hook while the switch is off",
-        "dispatch": "the host keeps its zero-delta move branch, its V0 queue, its U0 flag and its s2() flush; every probe hook is wrapped so a diagnostic failure is swallowed",
-        "release": "no state is retained; the probe stops on its own budget (4000 lines) and reinstalls only on the next process start"
-      }
-    },
+  "lyricLineMotion":   {
     "spring": {
       "contractVersion": 1,
       "classes": {
@@ -6433,11 +6245,6 @@
           "name": "a",
           "type": "android.view.View"
         },
-        "duration": {
-          "owner": "androidx.recyclerview.widget.RecyclerView$k",
-          "name": "e",
-          "type": "long"
-        },
         "animatorFragment": {
           "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u",
           "name": "z",
@@ -6448,8 +6255,8 @@
         "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
         "memberSource": "1626 instruction-level decode: mc.y extends androidx.recyclerview.widget.F (SimpleItemAnimator) which extends RecyclerView$k (ItemAnimator). mc.y declares m(ViewHolder,int,int,int,int)Z (animateMove), g()Z (isRunning), e(ViewHolder)V (endAnimation) and f()V (endAnimations); RecyclerView$k declares c(ViewHolder)V (dispatchAnimationFinished: holder.setIsRecyclable(true), shadowed-holder clear, removeAnimatingView/removeDetachedView) and the abstract endAnimation/endAnimations/isRunning/runPendingAnimations that mc.y implements, so a role declared on RecyclerView$k would be abstract and would never fire. dispatchAnimationStarted does not exist in this build: ItemAnimator's empty final started notification was removed by R8, and the notification a real move does emit is SimpleItemAnimator.dispatchMoveStarting, F.q(ViewHolder)V, called from the move animator's listener androidx.recyclerview.widget.j#onAnimationStart; it and RecyclerView$k#c are the two calls the host's own move path makes (j#onAnimationEnd calls RecyclerView$k#c directly, i.e. dispatchMoveFinished inlined). mc.y#m's non-zero branch sets translationY = -dy, queues an mc.y$e MoveInfo and returns true without dispatching anything, which is why a takeover owes exactly one started and exactly one finished.",
         "runtimeVerified": false,
-        "timing": "the displacement is owned from the animateMove entry (the keyboard-visible translation is written here and then advanced once per Choreographer frame); the started/finished notifications are replayed at the same points the host's own ViewPropertyAnimator would have emitted them",
-        "ownership": "single writer for translationY of the rows in a taken-over batch; no host field, no adapter notification, no duration is written, and dy == 0 / dx != 0 / |dy| > 1200 / unusable duration are all handed back to the host untouched",
+        "timing": "the displacement is owned from the animateMove entry (the visible translation is written here and then advanced once per Choreographer frame at AMLL's fixed 0.45 s settle: k = 170 * (0.484/0.45)^2 = 196.7, c = 2.2 sqrt(k) = 30.9, m = 0.9, zeta = 1.1595, AMLL zeta>=1 shape); the started/finished notifications are replayed at the same points the host's own ViewPropertyAnimator would have emitted them",
+        "ownership": "single writer for translationY of the rows in a taken-over batch; no host field, no adapter notification and no animator duration is written, and dy == 0 / dx != 0 / |dy| > 1200 are all handed back to the host untouched. The move-duration field (k.e) is deliberately not among this contract's roles: the tempo is AMLL's fixed 0.45 s spring, never the host's",
         "dispatch": "exactly one RecyclerView$k#c per taken-over move, from a per-row finished flag that is shared by the spring reaching rest, endAnimation(holder) and endAnimations(); isRunning() answers true for that animator while any batch is live, so RecyclerView does not conclude the list is idle early",
         "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no state outlives the animator instance"
       }
@@ -6513,15 +6320,6 @@
         "dispatch": "on exit start the spring parks every pushed row at its start position (translationY already written, so the layout jump stays invisible) and holds the AMLL stagger; on the exit's own onAnimationEnd, or after the 750+250 ms book duration when that callback is not resolvable, the stagger is released",
         "release": "no state outlives the animator: the hold is a deadline on the session, and turning the spring off (read live) makes every park a no-op"
       }
-    },
-    "evidence": {
-      "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
-      "memberSource": "1626 PlayerLyricsViewFragment$f.invoke(Object,Object,Object) computes round(lerp(480,800,clamp(gap,200,750))) from the line gap and, only when that differs from abs(getSuggestedLineOffset()), calls PlayerLyricsViewFragment.d2(fragment,-duration) and then iput-wide $k.e on the fragment's r0 animator. RecyclerView$k declares c/d/e/f as private longs; mc.y$a.run reads $k.e at offset 145 into ViewPropertyAnimator.setDuration for the move batch, and mc.y.j reads it as the change-batch delay while $k.d stays the remove duration. PlayerLyricsViewFragment$u extends mc.y and is the only construction site of that animator.",
-      "runtimeVerified": false,
-      "timing": "scale only the value the line callback has just recomputed, inside that same call; the field holds the scaled value until the host recomputes, and the host skips its own store when the line offset it would suggest has not changed, so the hook must never multiply what it already wrote",
-      "ownership": "single writer for $k.e (the after-hook of the line callback) and none for every other animator field; no view property, no layout manager state, no scroll call is touched",
-      "dispatch": "native timing unchanged: the animator keeps its zero-delta move branch, the fragment's V0 queue and U0 flag, and s2() flushing",
-      "release": "no state is retained; turning the switch off leaves the host's last written duration in place until the host recomputes it"
     }
   },
   "lyricPronunciation": {

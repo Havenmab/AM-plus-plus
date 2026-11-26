@@ -2,7 +2,6 @@ package dev.amenhancer.module.model
 
 import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.config.RegionSelection
-import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
 
 data class ModuleSettings(
     val dualPaneEnabled: Boolean = true,
@@ -65,52 +64,20 @@ data class ModuleSettings(
     /** Opt-in corrections for wrapped sweeps and main lyric highlighting; applied at host startup. */
     val lyricEffectsOptimizationEnabled: Boolean = false,
     /**
-     * 「歌词换行节奏」: scale the duration Apple Music itself computes for a lyric line change.
-     *
-     * Off by default, and additionally gated by [lyricEffectsOptimizationEnabled] — this is a
-     * lyric *effect*, and that switch owns all of them. Read live, so switching it off (or
-     * moving its slider) takes effect on the next line change without restarting Apple Music.
-     */
-    val lyricLineMotionEnabled: Boolean = false,
-    /**
-     * Multiplier for that duration: 0.5 (twice as fast) .. 2.0 (twice as slow), coerced by
-     * [LyricLineMotionPolicy]. 1.0 is Apple Music's own timing and an exact no-op.
-     */
-    val lyricLineMotionDurationScale: Float = LyricLineMotionPolicy.NEUTRAL_SCALE,
-    /**
-     * 「换行弹簧」: take over the lyric block's line-change displacement with a spring.
+     * 「换行弹簧位移」: take over the lyric block's line-change displacement with AMLL's spring.
      *
      * Apple Music moves the whole lyric block by 4–8 `animateMove` calls that share one `dy` and
-     * one `ViewPropertyAnimator` run; this feature answers those moves itself and drives the rows
-     * from one shared scalar spring instead (see [dev.amenhancer.module.lyrics.LyricLineSpringPolicy]).
+     * one `ViewPropertyAnimator` run; this feature answers those moves itself and drives one
+     * spring per row instead (see [dev.amenhancer.module.lyrics.LyricLineSpringPolicy]). It is the
+     * module's only line-change setting: the tempo is AMLL's, not Apple Music's, so nothing else
+     * has to be configured.
      *
      * Off by default, and additionally gated by [lyricEffectsOptimizationEnabled] — it is a lyric
      * *effect*, and that switch owns all of them. The switch decides installation (restart), while
      * the value is read live inside the hook, so turning either switch off returns the next line
      * change to Apple Music without restarting.
-     *
-     * When both this and [lyricLineMotionEnabled] are on, this one wins the displacement; the
-     * rhythm slider still supplies the tempo, because it rewrites the very duration the spring's
-     * stiffness is derived from.
      */
     val lyricLineSpringEnabled: Boolean = false,
-    /**
-     * 「换行弹簧手感」: AMLL's fixed 0.45 s settle (the default) or Apple Music's own tempo.
-     *
-     * [LyricLineSpringFeel.AMLL] ignores both `$k.e` and 「歌词换行节奏」: the spring is AMLL's, so
-     * the tempo is AMLL's too. [LyricLineSpringFeel.HOST] reproduces 乙-1 exactly — stiffness from
-     * the animator's move duration, i.e. the rhythm slider's multiplier included. Read live.
-     */
-    val lyricLineSpringFeel: LyricLineSpringFeel = LyricLineSpringFeel.DEFAULT,
-    /**
-     * 「换行诊断」(the line-change probe): read-only observation of Apple Music's own line change.
-     *
-     * Never part of the product. While it is on, the host installs extra read-only hooks that only
-     * write `AMPP-LineProbe` lines to logcat; they change no view, no duration and no queue, and
-     * turning it off installs nothing at all. Independent of [lyricLineMotionEnabled], because the
-     * probe has to be able to measure the host's own timing — scaled or not.
-     */
-    val lyricLineMotionProbeEnabled: Boolean = false,
     val navigationCompensationEnabled: Boolean = false,
     /** Restores native Data settings and the app's cellular availability predicate. */
     val forceCellularDataEntryEnabled: Boolean = false,
@@ -438,31 +405,6 @@ data class ModuleSettings(
                 MIN_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
                 MAX_PHONE_LIQUID_GLASS_MINI_SINK_BOUNCE_DP,
             )
-    }
-}
-
-/**
- * 「换行弹簧手感」: which tempo Apple Music's line-change displacement is replayed at.
- *
- * The two values are two *products*, not two tuning knobs on one curve — see
- * [dev.amenhancer.module.lyrics.LyricLineSpringPolicy] for the parameters behind each:
- *
- *  * [AMLL] — AMLL's own spring and curve: a fixed ≈0.45 s settle, whatever Apple Music computed
- *    for the line. This is the shipped default, because it is the feel the feature exists for.
- *  * [HOST] — 乙-1's mapping: the animator's own move duration `$k.e` drives the stiffness, so
- *    「歌词换行节奏」's multiplier keeps working and the block moves in Apple Music's tempo.
- *
- * Read live in the hook: switching modes changes the next line change, not the ones in flight.
- */
-enum class LyricLineSpringFeel(val storageValue: String) {
-    AMLL("amll"),
-    HOST("host");
-
-    companion object {
-        val DEFAULT: LyricLineSpringFeel = AMLL
-
-        fun decode(value: String?): LyricLineSpringFeel =
-            values().firstOrNull { it.storageValue == value } ?: DEFAULT
     }
 }
 

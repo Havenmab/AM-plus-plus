@@ -20,7 +20,7 @@ import java.lang.reflect.Modifier
  *    `isRunning`/`endAnimation`/`endAnimations` on `mc.y` and leaves the same names abstract on
  *    `RecyclerView$k`; a role pinned to the abstract declaration resolves through
  *    `getDeclaredMethod` and then never fires;
- *  * the **called** members and the move duration must be reachable from the animator instance
+ *  * the **called** members must be reachable from the animator instance
  *    (`declaringClass.isAssignableFrom(animator)`), which is how the hook gets to them at all.
  */
 internal class LyricLineSpringRoles(
@@ -86,9 +86,6 @@ internal class LyricLineSpringRoles(
         }
     }
 
-    /** `RecyclerView$k.e`: the host's own move duration in ms — this spring's tempo. */
-    val duration: Field? = field("duration") { member -> reachable(member.declaringClass, member) }
-
     /** `PlayerLyricsViewFragment$u.z`: identifies *the lyrics* animator, not any `mc.y` instance. */
     val animatorFragment: Field? = field("animatorFragment")
 
@@ -105,7 +102,7 @@ internal class LyricLineSpringRoles(
             animateMove, isRunning, endAnimation, endAnimations,
             dispatchMoveStarting, dispatchAnimationFinished,
         ).size == 6 &&
-        listOfNotNull(holderItemView, duration, animatorFragment).size == 3
+        listOfNotNull(holderItemView, animatorFragment).size == 2
 
     // ---- resolution ------------------------------------------------------------------------
 

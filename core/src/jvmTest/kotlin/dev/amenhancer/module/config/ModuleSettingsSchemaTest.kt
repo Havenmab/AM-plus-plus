@@ -4,7 +4,6 @@ import dev.amenhancer.module.ModuleConstants
 import dev.amenhancer.module.model.CustomLyricsManifest
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LlmLyricsThinkingFormat
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -115,11 +114,7 @@ class ModuleSettingsSchemaTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "lyrics_pronunciation_enabled" to true,
                 "lyric_effects_optimization_enabled" to false,
-                "lyric_line_motion_enabled" to false,
-                "lyric_line_motion_duration_percent" to 100,
-                "lyric_line_motion_probe_enabled" to false,
                 "lyric_line_spring_enabled" to false,
-                "lyric_line_spring_feel" to "amll",
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
@@ -198,11 +193,7 @@ class ModuleSettingsSchemaTest {
                 "cjk_karaoke_animation_enabled" to true,
                 "lyrics_pronunciation_enabled" to true,
                 "lyric_effects_optimization_enabled" to false,
-                "lyric_line_motion_enabled" to false,
-                "lyric_line_motion_duration_percent" to 100,
-                "lyric_line_motion_probe_enabled" to false,
                 "lyric_line_spring_enabled" to false,
-                "lyric_line_spring_feel" to "amll",
                 "navigation_compensation_enabled" to false,
                 "force_cellular_data_entry_enabled" to false,
                 "startup_page_prewarm_enabled" to true,
@@ -1471,31 +1462,13 @@ class ModuleSettingsSchemaTest {
         )
     }
 
-    /** 「换行手感」: AMLL is the shipped default, so an absent or unknown value must decode to it. */
+    /** 「换行弹簧位移」: off by default, and the only line-change key the store still carries. */
     @Test
-    fun `the line-change feel defaults to AMLL and round trips HOST`() {
-        assertEquals(
-            LyricLineSpringFeel.AMLL,
-            ModuleSettingsSchema.decode(emptyMap<String, Any>()).lyricLineSpringFeel,
-        )
-        assertEquals(
-            LyricLineSpringFeel.AMLL,
-            ModuleSettingsSchema.decode(
-                mapOf("lyric_line_spring_feel" to "nonsense"),
-            ).lyricLineSpringFeel,
-        )
-        assertEquals(
-            LyricLineSpringFeel.HOST,
-            ModuleSettingsSchema.decode(
-                mapOf("lyric_line_spring_feel" to LyricLineSpringFeel.HOST.storageValue),
-            ).lyricLineSpringFeel,
-        )
-        val encoded = ModuleSettingsSchema.encode(
-            ModuleSettings(lyricLineSpringFeel = LyricLineSpringFeel.HOST),
-        )
-        assertEquals(
-            LyricLineSpringFeel.HOST,
-            ModuleSettingsSchema.decode(encoded).lyricLineSpringFeel,
-        )
+    fun `the line-change spring defaults off and round trips`() {
+        assertFalse(ModuleSettings().lyricLineSpringEnabled)
+        assertFalse(ModuleSettingsSchema.decode(emptyMap<String, Any>()).lyricLineSpringEnabled)
+        val encoded = ModuleSettingsSchema.encode(ModuleSettings(lyricLineSpringEnabled = true))
+        assertEquals(true, encoded["lyric_line_spring_enabled"])
+        assertEquals(true, ModuleSettingsSchema.decode(encoded).lyricLineSpringEnabled)
     }
 }

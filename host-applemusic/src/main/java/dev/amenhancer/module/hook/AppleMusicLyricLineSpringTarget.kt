@@ -10,7 +10,6 @@ import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 
 /**
@@ -38,21 +37,15 @@ import dev.amenhancer.module.model.ModuleSettings
  * and `isRunning()` is answered `true` while any wave of that animator is live so the list is not
  * considered idle mid-flight.
  *
- * **Two feels** (`lyricLineSpringFeel`, read live):
- *
- *  * `AMLL` (the default) is AMLL's own spring: a fixed 0.45 s settle with k≈197, c≈31, m=0.9 and
- *    AMLL's ζ≥1 curve. It ignores `$k.e` for tempo, so 「歌词换行节奏」 has no effect in this mode —
- *    that is the point of the mode.
- *  * `HOST` is 乙-1 verbatim: `T = $k.e` at the moment `animateMove` is called, so the rhythm
- *    slider's multiplier flows through unchanged (it rewrites that very field; applying it again
- *    here would square it) and the block moves in Apple Music's tempo, t99 = 1.31·T.
- *
- * With the spring off the slider goes back to changing the host's own duration, exactly as before.
+ * **One tempo: AMLL's.** The spring is AMLL's own — a fixed 0.45 s settle with k≈197, c≈31, m=0.9
+ * and AMLL's ζ≥1 curve — and it never reads the animator's move-duration field (`$k.e`): a line
+ * change takes AMLL's time, not the time Apple Music computed for that line. That is the whole
+ * point of the feature, and it is why there is no second switch and no slider beside it.
  *
  * **Every refusal is a hand-back.** A missing role, a move with a horizontal component, a
- * displacement beyond ±1200 px (seek, track change), an unusable duration, or a thread without a
- * Choreographer all leave the host's own animation untouched; the hook only sets `false` after
- * every one of those checks has passed.
+ * displacement beyond ±1200 px (seek, track change), or a thread without a Choreographer all leave
+ * the host's own animation untouched; the hook only sets `false` after every one of those checks
+ * has passed.
  *
  * **The interlude's three-dot exit comes first.** When an interlude ends, Apple Music plays one more
  * animation on the dots — they grow, shrink and fade out — and only then is the interlude over
@@ -210,7 +203,7 @@ internal class AppleMusicLyricLineSpringTarget(
 
         private fun takeOver(param: ModernMethodHook.MethodHookParam) {
             val animator = param.thisObject ?: return
-            val feel = feelOrNull() ?: return
+            if (!isEnabled()) return
             if (!isLyricsAnimator(animator)) return
             val holder = param.args.getOrNull(0) ?: return
             val view = itemViewOf(holder) ?: return
@@ -232,11 +225,6 @@ internal class AppleMusicLyricLineSpringTarget(
                 diagnostics.refused("dy=" + dy + " beyond ±" + LyricLineSpringPolicy.MAX_DISPLACEMENT_PX + "px")
                 return
             }
-            val duration = durationOf(animator)
-            val tempo = LyricLineSpringPolicy.tempoFor(feel, duration) ?: run {
-                diagnostics.refused(LyricLineSpringPolicy.durationVerdict(duration))
-                return
-            }
             if (!ensureClock()) {
                 diagnostics.refused("no Choreographer on this thread")
                 return
@@ -253,7 +241,7 @@ internal class AppleMusicLyricLineSpringTarget(
                 // A row pushed during an interlude exit is written at its new translation (so the
                 // layout jump is invisible) and then parked there until the dots have finished
                 // growing, shrinking and fading — the stagger only starts after that.
-                tracks.push(row, -dy.toFloat(), tempo, pendingHoldMs())
+                tracks.push(row, -dy.toFloat(), LyricLineSpringPolicy.tempo, pendingHoldMs())
             } catch (error: Throwable) {
                 // Nothing was dispatched for this row yet: give it back at rest, exactly once.
                 recover(row)
@@ -267,7 +255,7 @@ internal class AppleMusicLyricLineSpringTarget(
             if (applied.moving) {
                 diagnostics.retargeted(applied)
             } else {
-                diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves(), applied.heldMs.toInt())
+                diagnostics.takeOver(dy, LyricLineSpringPolicy.tempo, tracks.activeWaves(), applied.heldMs.toInt())
             }
         }
 
@@ -340,14 +328,14 @@ internal class AppleMusicLyricLineSpringTarget(
         // ---- host reads and calls ------------------------------------------------------------
 
         /**
-         * The feel to use right now, or null when this feature must do nothing.
+         * True when this feature must take the next line change over.
          *
-         * Read live, exactly as 「歌词换行节奏」 reads its own switches: both the two switches and the
-         * mode take effect on the next line change, not on the ones already in flight.
+         * Read live: both switches take effect on the next line change, not on the ones already in
+         * flight. A throwing settings read is a refusal, never a crash in the lyric list.
          */
-        private fun feelOrNull(): LyricLineSpringFeel? = runCatching {
-            LyricLineSpringPolicy.appliedFeel(settings())
-        }.getOrNull()
+        private fun isEnabled(): Boolean = runCatching {
+            LyricLineSpringPolicy.isEnabled(settings())
+        }.getOrDefault(false)
 
         /** Only the lyric list's animator; every other RecyclerView keeps its own animations. */
         private fun isLyricsAnimator(animator: Any): Boolean {
@@ -357,9 +345,6 @@ internal class AppleMusicLyricLineSpringTarget(
 
         private fun itemViewOf(holder: Any): View? =
             runCatching { roles.holderItemView?.get(holder) as? View }.getOrNull()
-
-        private fun durationOf(animator: Any): Long =
-            runCatching { roles.duration?.getLong(animator) }.getOrNull() ?: -1L
 
         /** What the host's own move animation does in its listener's onAnimationStart. */
         private fun notifyStarted(row: LyricLineSpringRow) {
@@ -406,20 +391,19 @@ internal class LyricLineSpringDiagnostics(
     private var shifts = 0
 
     /**
-     * A row was taken over: the feel, the spring it produced, and how many waves are live.
+     * A row was taken over: the spring it resolved to, and how many waves are live.
      *
-     * `T` is the host's own `$k.e` — the tempo in `HOST` mode, and in `AMLL` mode only the proof
-     * that this really is the lyric animator's field (the spring then ignores it).
+     * The tempo is the constant AMLL one, so it is printed once per distinct displacement rather
+     * than per line: `t` is the settle time the spring aims at, `k`/`c` its constants.
      */
-    fun takeOver(dy: Int, durationMs: Long, tempo: LyricLineSpringTempo, waves: Int, heldMs: Int = 0) {
-        val key = dy.toString() + "/" + durationMs + "/" + tempo.feel.storageValue + "/" + heldMs
+    fun takeOver(dy: Int, tempo: LyricLineSpringTempo, waves: Int, heldMs: Int = 0) {
+        val key = dy.toString() + "/" + heldMs
         val now = now()
         if (key == lastTakeOverKey && now - lastTakeOverAt < REPEAT_WINDOW_MS) return
         lastTakeOverKey = key
         lastTakeOverAt = now
         emit(
-            "takeover dy=" + dy + " T=" + durationMs + "ms feel=" + tempo.feel.storageValue +
-                " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
+            "takeover dy=" + dy + " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
                 " c=" + fixed(tempo.damping) + " waves=" + waves +
                 (if (heldMs > 0) " held=" + heldMs + "ms" else ""),
         )

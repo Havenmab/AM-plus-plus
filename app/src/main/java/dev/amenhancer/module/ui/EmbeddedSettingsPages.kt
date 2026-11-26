@@ -57,8 +57,6 @@ import dev.amenhancer.glass.GlassPolicy
 import dev.amenhancer.module.config.RegionSelection
 import dev.amenhancer.module.config.TitleCorrectionMode
 import dev.amenhancer.module.i18n.ModuleText
-import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import java.lang.ref.WeakReference
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -489,14 +487,6 @@ private fun EmbeddedSettingsScaffold(
 
 private const val EMBEDDED_SETTINGS_RAIL_MIN_WIDTH_DP = 600
 
-/**
- * The 「换行时长」 slider works in whole percent (the model keeps a 0.5..2.0 multiplier), which is
- * the same unit the stored setting uses.
- */
-private val LYRIC_LINE_MOTION_PERCENT_RANGE =
-    LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.MIN_SCALE)..
-        LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.MAX_SCALE)
-
 private val EmbeddedSettingsNavigationPages = listOf(
     EmbeddedSettingsPage.CUSTOM_LYRICS,
     EmbeddedSettingsPage.LYRICS_EFFECTS,
@@ -556,7 +546,6 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsHome(
         settings.futureBlurEnabled,
         settings.cjkKaraokeAnimationEnabled,
         settings.lyricEffectsOptimizationEnabled,
-        settings.lyricLineMotionEnabled,
         settings.lyricLineSpringEnabled,
         settings.lyricsPronunciationEnabled && nativeBridge.supportsLyricsPronunciation(activity),
     ).count { it }
@@ -627,52 +616,11 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
                     settings.cjkKaraokeAnimationEnabled, EmbeddedSvgIcon.Karaoke) { value -> onEdit { it.copy(cjkKaraokeAnimationEnabled = value) } }
                 Setting(ModuleText.LYRIC_EFFECTS_OPTIMIZATION, ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
                     settings.lyricEffectsOptimizationEnabled, EmbeddedSvgIcon.LyricEffects) { value -> onEdit { it.copy(lyricEffectsOptimizationEnabled = value) } }
-                Setting(ModuleText.LYRIC_LINE_MOTION, ModuleText.LYRIC_LINE_MOTION_SUMMARY,
-                    settings.lyricLineMotionEnabled, EmbeddedSvgIcon.LyricEffects) { value ->
-                    onEdit { it.copy(lyricLineMotionEnabled = value) }
-                }
-                if (settings.lyricLineMotionEnabled) EmbeddedSettingRange(
-                    title = localizedText(ModuleText.LYRIC_LINE_MOTION_SCALE),
-                    value = LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
-                    range = LYRIC_LINE_MOTION_PERCENT_RANGE,
-                    unit = "%",
-                    summary = localizedText(ModuleText.LYRIC_LINE_MOTION_SCALE_SUMMARY),
-                    defaultValue = LyricLineMotionPolicy.encodePercent(LyricLineMotionPolicy.NEUTRAL_SCALE),
-                ) { percent ->
-                    onEdit { it.copy(lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(percent)) }
-                }
-                // 「换行弹簧」: takes the line-change displacement over. It sits right after the rhythm
-                // control because the two compete for the same motion: when both switches are on the
-                // spring owns the displacement and the slider only supplies its tempo.
+                // 「换行弹簧位移」 is the only line-change switch: the tempo is AMLL's, so there is
+                // nothing else to configure beside it.
                 Setting(ModuleText.LYRIC_LINE_SPRING, ModuleText.LYRIC_LINE_SPRING_SUMMARY,
                     settings.lyricLineSpringEnabled, EmbeddedSvgIcon.LyricEffects) { value ->
                     onEdit { it.copy(lyricLineSpringEnabled = value) }
-                }
-                // 「换行手感」 sits with the switch it belongs to: the two modes are two products —
-                // AMLL's fixed 0.45 s wave, or Apple Music's own tempo through the rhythm slider.
-                if (settings.lyricLineSpringEnabled) OverlayDropdownPreference(
-                    entry = DropdownEntry(
-                        items = LyricLineSpringFeel.entries.map { feel ->
-                            DropdownItem(
-                                text = localizedText(feel.label()),
-                                selected = feel == settings.lyricLineSpringFeel,
-                                onClick = { onEdit { it.copy(lyricLineSpringFeel = feel) } },
-                            )
-                        },
-                    ),
-                    title = localizedText(ModuleText.LYRIC_LINE_SPRING_FEEL),
-                    summary = localizedText(ModuleText.LYRIC_LINE_SPRING_FEEL_SUMMARY),
-                    startAction = {
-                        EmbeddedSettingsIcon(EmbeddedSvgIcon.LyricEffects, modifier = Modifier.size(22.dp))
-                    },
-                    insideMargin = EmbeddedPreferencePadding,
-                )
-                // Temporary diagnostic switch: it installs read-only probe hooks that only write
-                // AMPP-LineProbe log lines, and nothing at all while it is off. Remove it together
-                // with the probe once the line-transition work no longer needs measurements.
-                Setting(ModuleText.LYRIC_LINE_MOTION_PROBE, ModuleText.LYRIC_LINE_MOTION_PROBE_SUMMARY,
-                    settings.lyricLineMotionProbeEnabled, EmbeddedSvgIcon.Settings) { value ->
-                    onEdit { it.copy(lyricLineMotionProbeEnabled = value) }
                 }
                 EmbeddedSettingRange(
                     title = localizedText(ModuleText.LYRIC_BLUR_OFFSET),
@@ -866,12 +814,6 @@ private fun EmbeddedSettingsHost.EmbeddedSettingsCategory(
     }
 }
 
-/** The two feels' names, kept next to the dropdown that uses them. */
-private fun LyricLineSpringFeel.label(): ModuleText = when (this) {
-    LyricLineSpringFeel.AMLL -> ModuleText.LYRIC_LINE_SPRING_FEEL_AMLL
-    LyricLineSpringFeel.HOST -> ModuleText.LYRIC_LINE_SPRING_FEEL_HOST
-}
-
 @Composable
 private fun EmbeddedSettingsHost.Setting(
     title: ModuleText,
@@ -979,7 +921,7 @@ private fun EmbeddedSettingsHost.showEmbeddedPageDetails(activity: Activity, pag
             ModuleText.BIDIRECTIONAL_LYRIC_BLUR to ModuleText.BIDIRECTIONAL_LYRIC_BLUR_SUMMARY,
             ModuleText.CJK_KARAOKE_ANIMATION to ModuleText.CJK_KARAOKE_ANIMATION_SUMMARY,
             ModuleText.LYRIC_EFFECTS_OPTIMIZATION to ModuleText.LYRIC_EFFECTS_OPTIMIZATION_SUMMARY,
-            ModuleText.LYRIC_LINE_MOTION to ModuleText.LYRIC_LINE_MOTION_SUMMARY,
+            ModuleText.LYRIC_LINE_SPRING to ModuleText.LYRIC_LINE_SPRING_SUMMARY,
             ModuleText.LYRICS_FONT to ModuleText.LYRICS_FONT_IMPORT_SUMMARY,
         )
         EmbeddedSettingsPage.INTERFACE -> listOf(

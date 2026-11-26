@@ -17,9 +17,6 @@ import org.junit.Test
  */
 class LyricLineSpringRolesTest {
     open class ItemAnimatorBase {
-        @JvmField
-        var moveDuration: Long = 500L
-
         open fun isRunning(): Boolean = false
 
         open fun endAnimation(holder: Holder) = Unit
@@ -71,7 +68,6 @@ class LyricLineSpringRolesTest {
         runningOwner: String = animator,
         endOwner: String = animator,
         endAllOwner: String = animator,
-        durationOwner: String = base,
         itemViewOwner: String = holder,
         moveParameters: String = "\"" + holder + "\",\"int\",\"int\",\"int\",\"int\"",
     ): String = "{" +
@@ -87,7 +83,6 @@ class LyricLineSpringRolesTest {
         "}," +
         "\"fields\":{" +
         "\"holderItemView\":" + field(itemViewOwner, "itemView", "java.lang.Object") + "," +
-        "\"duration\":" + field(durationOwner, "moveDuration", "long") + "," +
         "\"animatorFragment\":" + field(animator, "fragment", "java.lang.Object") +
         "}}"
 
@@ -105,9 +100,10 @@ class LyricLineSpringRolesTest {
         assertNotNull(roles.dispatchMoveStarting)
         assertNotNull(roles.dispatchAnimationFinished)
         assertNotNull(roles.holderItemView)
-        assertNotNull(roles.duration)
         assertNotNull(roles.animatorFragment)
-        assertEquals(11, roles.resolved().size)
+        // Two classes, six methods, two fields. The animator's move duration is deliberately absent:
+        // the tempo is AMLL's fixed spring, so nothing reads that field.
+        assertEquals(10, roles.resolved().size)
         assertEquals(Boolean::class.javaPrimitiveType, roles.animateMove?.returnType)
     }
 
@@ -139,11 +135,7 @@ class LyricLineSpringRolesTest {
     }
 
     @Test
-    fun `a duration or itemView declared on the wrong class is refused`() {
-        val wrongDuration = roles(section(durationOwner = holder))
-        assertFalse(wrongDuration.isComplete())
-        assertTrue(wrongDuration.missing().any { it.startsWith("fields.duration:") })
-
+    fun `an itemView declared on the wrong class is refused`() {
         val wrongView = roles(section(itemViewOwner = animator))
         assertFalse(wrongView.isComplete())
         assertTrue(wrongView.missing().any { it.startsWith("fields.holderItemView:") })
@@ -161,18 +153,18 @@ class LyricLineSpringRolesTest {
             "\"animateMove\":" + method(animator, "animateMove", "\"" + holder + "\",\"int\",\"int\",\"int\",\"int\"", "int") + "," +
             "\"isRunning\":" + method(animator, "isRunning", "", "boolean") +
             "}," +
-            "\"fields\":{\"duration\":" + field(base, "moveDuration", "int") + "}}"
+            "\"fields\":{\"holderItemView\":" + field(holder, "itemView", "int") + "}}"
         val roles = roles(json)
 
         // Wrong return type, wrong field type, absent roles.
         assertNull(roles.animateMove)
         assertNotNull(roles.isRunning)
-        assertNull(roles.duration)
+        assertNull(roles.holderItemView)
         assertNull(roles.dispatchAnimationFinished)
         assertFalse(roles.isComplete())
         assertTrue(roles.missing().any { it.startsWith("methods.animateMove:") })
         assertTrue(roles.missing().any { it.startsWith("methods.dispatchAnimationFinished:") })
-        assertTrue(roles.missing().any { it.startsWith("fields.duration:") })
+        assertTrue(roles.missing().any { it.startsWith("fields.holderItemView:") })
     }
 
     @Test
@@ -180,7 +172,7 @@ class LyricLineSpringRolesTest {
         val roles = roles("{}")
 
         assertNull(roles.animateMove)
-        assertNull(roles.duration)
+        assertNull(roles.holderItemView)
         assertFalse(roles.isComplete())
         assertTrue(roles.resolved().isEmpty())
         assertTrue(roles.missing().isNotEmpty())

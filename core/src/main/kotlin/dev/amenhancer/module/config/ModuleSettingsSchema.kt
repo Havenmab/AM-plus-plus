@@ -7,10 +7,8 @@ import dev.amenhancer.module.model.CustomLyricsSources
 import dev.amenhancer.module.model.LyricsFontManifest
 import dev.amenhancer.module.model.LlmLyricsThinkingEffort
 import dev.amenhancer.module.model.LlmLyricsThinkingFormat
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import dev.amenhancer.module.model.ModuleSettings
 import dev.amenhancer.module.model.OnlineLyricSources
-import dev.amenhancer.module.lyrics.LyricLineMotionPolicy
 
 object ModuleSettingsSchema {
     /** Keys removed by the profile migrations. */
@@ -114,23 +112,9 @@ object ModuleSettingsSchema {
                 KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
                 default = false,
             ),
-            lyricLineMotionEnabled = values.boolean(
-                KEY_LYRIC_LINE_MOTION_ENABLED,
-                default = false,
-            ),
-            lyricLineMotionDurationScale = LyricLineMotionPolicy.decodePercent(
-                values.number(KEY_LYRIC_LINE_MOTION_DURATION_PERCENT),
-            ),
-            lyricLineMotionProbeEnabled = values.boolean(
-                KEY_LYRIC_LINE_MOTION_PROBE_ENABLED,
-                default = false,
-            ),
             lyricLineSpringEnabled = values.boolean(
                 KEY_LYRIC_LINE_SPRING_ENABLED,
                 default = false,
-            ),
-            lyricLineSpringFeel = LyricLineSpringFeel.decode(
-                values.string(KEY_LYRIC_LINE_SPRING_FEEL),
             ),
             navigationCompensationEnabled = values.boolean(
                 KEY_NAVIGATION_COMPENSATION,
@@ -304,12 +288,7 @@ object ModuleSettingsSchema {
             KEY_CJK_KARAOKE_ANIMATION_ENABLED to settings.cjkKaraokeAnimationEnabled,
             KEY_LYRICS_PRONUNCIATION_ENABLED to settings.lyricsPronunciationEnabled,
             KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED to settings.lyricEffectsOptimizationEnabled,
-            KEY_LYRIC_LINE_MOTION_ENABLED to settings.lyricLineMotionEnabled,
-            KEY_LYRIC_LINE_MOTION_DURATION_PERCENT to
-                LyricLineMotionPolicy.encodePercent(settings.lyricLineMotionDurationScale),
-            KEY_LYRIC_LINE_MOTION_PROBE_ENABLED to settings.lyricLineMotionProbeEnabled,
             KEY_LYRIC_LINE_SPRING_ENABLED to settings.lyricLineSpringEnabled,
-            KEY_LYRIC_LINE_SPRING_FEEL to settings.lyricLineSpringFeel.storageValue,
             KEY_NAVIGATION_COMPENSATION to settings.navigationCompensationEnabled,
             KEY_FORCE_CELLULAR_DATA_ENTRY to settings.forceCellularDataEntryEnabled,
             KEY_STARTUP_PAGE_PREWARM to settings.startupPagePrewarmEnabled,
@@ -745,11 +724,7 @@ object ModuleSettingsSchema {
         KEY_CJK_KARAOKE_ANIMATION_ENABLED,
         KEY_LYRICS_PRONUNCIATION_ENABLED,
         KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED,
-        KEY_LYRIC_LINE_MOTION_ENABLED,
-        KEY_LYRIC_LINE_MOTION_DURATION_PERCENT,
-        KEY_LYRIC_LINE_MOTION_PROBE_ENABLED,
         KEY_LYRIC_LINE_SPRING_ENABLED,
-        KEY_LYRIC_LINE_SPRING_FEEL,
         KEY_NAVIGATION_COMPENSATION,
         KEY_FORCE_CELLULAR_DATA_ENTRY,
         KEY_STARTUP_PAGE_PREWARM,
@@ -839,30 +814,12 @@ object ModuleSettingsSchema {
     private const val KEY_CJK_KARAOKE_ANIMATION_ENABLED = "cjk_karaoke_animation_enabled"
     private const val KEY_LYRICS_PRONUNCIATION_ENABLED = "lyrics_pronunciation_enabled"
     private const val KEY_LYRIC_EFFECTS_OPTIMIZATION_ENABLED = "lyric_effects_optimization_enabled"
-    private const val KEY_LYRIC_LINE_MOTION_ENABLED = "lyric_line_motion_enabled"
     /**
-     * The line-change multiplier is stored as an int percentage (50..200), because the embedded
-     * settings store persists booleans, ints, longs and strings only. See
-     * [LyricLineMotionPolicy.encodePercent].
-     */
-    private const val KEY_LYRIC_LINE_MOTION_DURATION_PERCENT = "lyric_line_motion_duration_percent"
-    /**
-     * 「换行诊断」: the diagnostic line-change probe. Off by default; an upgrading store gains a
-     * defaulted key, so it keeps installing nothing without a migration step.
-     */
-    private const val KEY_LYRIC_LINE_MOTION_PROBE_ENABLED = "lyric_line_motion_probe_enabled"
-    /**
-     * 「换行弹簧」: take the lyric line-change displacement over with a spring. Off by default; a
-     * new defaulted key, so an upgrading store keeps Apple Music's own motion and needs no
+     * 「换行弹簧位移」: take the lyric line-change displacement over with AMLL's spring. Off by
+     * default; a defaulted key, so an upgrading store keeps Apple Music's own motion and needs no
      * migration. Installation is decided by the switch (restart), the value is read live.
      */
     private const val KEY_LYRIC_LINE_SPRING_ENABLED = "lyric_line_spring_enabled"
-    /**
-     * 「换行弹簧手感」: stored as the enum's stable string ("amll" / "host"), the same form
-     * [dev.amenhancer.module.model.LlmLyricsThinkingEffort] uses. An absent or unknown value decodes
-     * to AMLL, the shipped default, so an upgrading store needs no migration step.
-     */
-    private const val KEY_LYRIC_LINE_SPRING_FEEL = "lyric_line_spring_feel"
     private const val KEY_NAVIGATION_COMPENSATION = "navigation_compensation_enabled"
     private const val KEY_FORCE_CELLULAR_DATA_ENTRY = "force_cellular_data_entry_enabled"
     private const val KEY_LYRIC_BLUR_RADIUS_OFFSET = "lyric_blur_radius_offset_px"

@@ -337,14 +337,21 @@ def class_lineage(classes, class_descriptor):
 
 
 def verify_lyric_line_motion_contract(document, classes, failures):
-    """The line-change timing seam, plus its read-only probe inventory."""
+    """The spring takeover of the line change, and the interlude exit it waits for.
+
+    The section is a container now: 「歌词换行节奏」 (which pinned the line callback, the offset
+    bridge and the animator's move-duration field) and its read-only probe were removed when the
+    line-change work converged on the one 「换行弹簧位移」 switch, so only what that switch installs
+    is pinned here.
+    """
     data = document.get('lyricLineMotion')
     if data is None:
         return 0
-    if not isinstance(data, dict) or data.get('contractVersion') != 1:
-        failures.append('lyricLineMotion: missing versioned contract')
+    if not isinstance(data, dict):
+        failures.append('lyricLineMotion: not an object')
         return 0
     primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+
     def descriptor(name):
         return primitive.get(name, name.replace('.', '/') if name.startswith('[')
                              else 'L' + name.replace('.', '/') + ';')
@@ -368,91 +375,31 @@ def verify_lyric_line_motion_contract(document, classes, failures):
             failures.append('%s.%s.%s: incomplete descriptor (%s)' % (section, group, role, error))
         return 1
 
-    required = {
-        'methods': {'lineCallback', 'lineOffset'},
-        'fields': {'callbackFragment', 'animator', 'duration'},
-    }
-    checks = 0
-    for group, roles in required.items():
-        entries = data.get(group)
-        if not isinstance(entries, dict):
-            failures.append('lyricLineMotion.%s: missing inventory' % group)
-            continue
-        for role in sorted(roles - entries.keys()):
-            failures.append('lyricLineMotion.%s.%s: missing required role' % (group, role))
-        for role, contract in entries.items():
-            checks += check_member('lyricLineMotion', group, role, contract)
-    # The duration is only the move duration while it is declared on an ancestor of the lyrics
-    # animator, and that animator has to be the host's DefaultItemAnimator variant.
-    try:
-        animator_type = descriptor(data['fields']['animator']['type'])
-        lineage = class_lineage(classes, animator_type)
-        if not lineage:
-            failures.append('lyricLineMotion: animator class %s is missing' % animator_type)
-        else:
-            if descriptor(data['fields']['duration']['owner']) not in lineage:
-                failures.append('lyricLineMotion: duration field is not declared on the animator lineage')
-            if descriptor(data['classes']['animator']) not in lineage:
-                failures.append('lyricLineMotion: the lyrics animator is not the pinned animator type')
-            if descriptor(data['fields']['callbackFragment']['type']) != descriptor(data['methods']['lineOffset']['owner']):
-                failures.append('lyricLineMotion: offset bridge and captured fragment disagree')
-    except (KeyError, TypeError, AttributeError) as error:
-        failures.append('lyricLineMotion: incomplete semantic keys (%s)' % error)
-    # The read-only probe: its own roles, each of which the runtime resolves separately, so the
-    # profile has to pin every one of them exactly. A probe role that drifted is a wrong log line,
-    # not a wrong duration, and the verifier cannot tell those apart from the JSON alone.
-    probe = data.get('probe')
-    if probe is None:
-        failures.append('lyricLineMotion.probe: missing read-only probe inventory')
-        return checks
-    if not isinstance(probe, dict) or probe.get('contractVersion') != 1:
-        failures.append('lyricLineMotion.probe: missing versioned contract')
-        return checks
-    required_probe = {
-        'classes': {'layoutManager', 'instrumentalBinding'},
-        'methods': {'lineChange', 'scrollToOffset', 'animateMove', 'flushDeferred',
-                    'lineTransition', 'lineTransitionLineAdapter', 'firstVisible', 'lastVisible',
-                    'holderPosition'},
-        'fields': {'lineChangeFragment', 'layoutManager', 'deferredQueue', 'scrollOwner',
-                   'deferredDrain', 'anchored', 'animatorFragment', 'holderBinding', 'holderItemView'},
-    }
-    for group, roles in required_probe.items():
-        entries = probe.get(group)
-        if not isinstance(entries, dict):
-            failures.append('lyricLineMotion.probe.%s: missing inventory' % group)
-            continue
-        for role in sorted(roles - entries.keys()):
-            failures.append('lyricLineMotion.probe.%s.%s: missing required role' % (group, role))
-        for role, contract in entries.items():
-            if group == 'classes':
-                checks += 1
-                if descriptor(str(contract)) not in classes:
-                    failures.append('lyricLineMotion.probe.classes.%s: %s is missing' % (role, contract))
-            else:
-                checks += check_member('lyricLineMotion.probe', group, role, contract)
-    # The spring takeover of the line-change displacement. All-or-nothing at runtime -- answering a
-    # move and then being unable to finish it leaves RecyclerView's pending-move ledger open, which
-    # is a hang rather than a wrong look -- so every role is required, and the two shapes that fail
-    # *silently* are pinned semantically:
+    # The spring takeover installs all-or-nothing at runtime -- answering a move and then being
+    # unable to finish it leaves RecyclerView's pending-move ledger open, which is a hang rather
+    # than a wrong look -- so every role is required, and the two shapes that fail *silently* are
+    # pinned semantically:
     #   * the four hooked members must be declared on the animator class itself. 1626 implements
     #     isRunning/endAnimation/endAnimations on mc.y while RecyclerView$k declares them abstract;
     #     a role on the abstract declaration would resolve and then never fire;
-    #   * the move duration must live on an ancestor of the animator, i.e. be readable off the
-    #     instance the hook holds, and the notification roles must do the same (they are inherited
+    #   * the notification roles must be reachable from the animator instance (they are inherited
     #     from SimpleItemAnimator / ItemAnimator and are called through the concrete instance).
+    # The animator's move-duration field is deliberately absent: the tempo is AMLL's fixed spring,
+    # so nothing reads it.
     spring = data.get('spring')
     if spring is None:
         failures.append('lyricLineMotion.spring: missing spring takeover inventory')
-        return checks
+        return 0
     if not isinstance(spring, dict) or spring.get('contractVersion') != 1:
         failures.append('lyricLineMotion.spring: missing versioned contract')
-        return checks
+        return 0
     required_spring = {
         'classes': {'animator', 'holder'},
         'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
                     'dispatchMoveStarting', 'dispatchAnimationFinished'},
-        'fields': {'holderItemView', 'duration', 'animatorFragment'},
+        'fields': {'holderItemView', 'animatorFragment'},
     }
+    checks = 0
     for group, roles in required_spring.items():
         entries = spring.get(group)
         if not isinstance(entries, dict):
@@ -479,8 +426,6 @@ def verify_lyric_line_motion_contract(document, classes, failures):
                     failures.append(
                         'lyricLineMotion.spring.methods.%s: hooked on %s but the animator is %s'
                         % (role, descriptor(spring['methods'][role]['owner']), spring_animator))
-            if descriptor(spring['fields']['duration']['owner']) not in spring_lineage:
-                failures.append('lyricLineMotion.spring: duration is not declared on the animator lineage')
             for role in ('dispatchMoveStarting', 'dispatchAnimationFinished'):
                 if descriptor(spring['methods'][role]['owner']) not in spring_lineage:
                     failures.append('lyricLineMotion.spring.methods.%s: not reached from the animator'
@@ -493,7 +438,6 @@ def verify_lyric_line_motion_contract(document, classes, failures):
         failures.append('lyricLineMotion.spring: incomplete semantic keys (%s)' % error)
     checks += verify_lyric_interlude_contract(data, classes, failures)
     return checks
-
 
 def verify_lyric_interlude_contract(motion, classes, failures):
     """The three-dot interlude exit: read-only alignment for the line-change wave.

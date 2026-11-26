@@ -1,6 +1,5 @@
 package dev.amenhancer.module.lyrics
 
-import dev.amenhancer.module.model.LyricLineSpringFeel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,9 +20,7 @@ class LyricLineSpringHoldTest {
         override fun toString(): String = name + "@" + top
     }
 
-    private fun tempo(): LyricLineSpringTempo = requireNotNull(
-        LyricLineSpringPolicy.tempoFor(LyricLineSpringFeel.AMLL, 600L),
-    )
+    private fun tempo(): LyricLineSpringTempo = LyricLineSpringPolicy.tempo
 
     private fun wave(paneHeightPx: Int = 0): LyricLineSpringWave<Row> =
         LyricLineSpringWave<Row>(

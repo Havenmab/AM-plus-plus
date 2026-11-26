@@ -52,14 +52,6 @@ import dev.amenhancer.module.model.ModuleSettings
  * displacement beyond ±1200 px (seek, track change), an unusable duration, or a thread without a
  * Choreographer all leave the host's own animation untouched; the hook only sets `false` after
  * every one of those checks has passed.
- *
- * **The interlude dots ride along.** A wave that lands the next line on the anchor while the
- * previous row's three-dot interlude indicator is still on screen is a visible overlap, and 1626
- * never ends that indicator by itself (see [AppleMusicLyricInterludeDotsHook]). The same `animateMove`
- * hook therefore also retires the dots of any interlude row that is now behind the current line, and
- * arms the one that is the current line. It has its own profile section, its own `AMPP-Interlude`
- * log tag, and its own optional install: if any of that is missing, the spring keeps working and the
- * dots keep behaving exactly as the host wrote them.
  */
 internal class AppleMusicLyricLineSpringTarget(
     private val profile: AppleMusicHostProfile,
@@ -94,19 +86,14 @@ internal class AppleMusicLyricLineSpringTarget(
                 "Lyric line-change spring not installed; " + profile.id + ": " + reason,
             )
         }
-        // Optional and independent of the spring's own all-or-nothing contract: a build without the
-        // interlude roles still gets the wave, just with the host's own dot behaviour.
-        val interludeEnabled: () -> Boolean = { LyricLineSpringPolicy.appliedFeel(settings()) != null }
-        val interlude = AppleMusicLyricInterludeDotsHook.open(profile, loader, interludeEnabled)
-        val session = SpringSession(roles, settings, diagnostics, interlude)
+        val session = SpringSession(roles, settings, diagnostics)
         val scope = HookRegistrationScope()
         return try {
             session.install(scope)
             scope.activate()
             registration = scope
             TargetCapabilityInstall.Active(
-                "Lyric line-change spring installed; " + roles.resolved().size + " roles" +
-                    (if (interlude != null) ", interlude dots on" else "") + "; " + profile.id,
+                "Lyric line-change spring installed; " + roles.resolved().size + " roles; " + profile.id,
             )
         } catch (error: Throwable) {
             scope.close()
@@ -124,7 +111,6 @@ internal class AppleMusicLyricLineSpringTarget(
         private val roles: LyricLineSpringRoles,
         private val settings: () -> ModuleSettings,
         private val diagnostics: LyricLineSpringDiagnostics,
-        private val interlude: AppleMusicLyricInterludeDotsHook?,
     ) {
         private val tracks = LyricLineSpringTracks(
             writeOffset = { row, offset -> row.view.translationY = offset },
@@ -141,10 +127,6 @@ internal class AppleMusicLyricLineSpringTarget(
             register(requireNotNull(roles.isRunning) { "isRunning" }, runningHook(), scope)
             register(requireNotNull(roles.endAnimation) { "endAnimation" }, endAnimationHook(), scope)
             register(requireNotNull(roles.endAnimations) { "endAnimations" }, endAnimationsHook(), scope)
-            // The dots are a nicety: their hooks failing to register must not cost the wave.
-            interlude?.let { hook ->
-                runCatching { hook.install(scope) }.onFailure { diagnostics.failed("interlude", it) }
-            }
         }
 
         private fun register(
@@ -168,14 +150,6 @@ internal class AppleMusicLyricLineSpringTarget(
          */
         private fun moveHook() = object : ModernMethodHook() {
             override fun beforeHookedMethod(param: ModernMethodHook.MethodHookParam) {
-                val animator = param.thisObject
-                if (animator != null && interlude != null && isLyricsAnimator(animator)) {
-                    // Every visible row of a line change passes through here, so this is the
-                    // earliest complete view of "which interlude row is now behind the current
-                    // line". It runs before the takeover below so the dots are on their way out
-                    // before any row starts moving.
-                    interlude.onMove(param.args.getOrNull(0))
-                }
                 guarded("animateMove") { takeOver(param) }
             }
         }

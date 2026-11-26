@@ -1,5 +1,11 @@
 # 07 · 换行诊断（probe）使用与判读手册
 
+> **已删除（2026-11-26，功能收敛）**：probe 整套已被移除——设置项「换行诊断（临时）」、
+> `lyricLineMotionProbeEnabled` / `lyric_line_motion_probe_enabled`、`LyricLineMotionProbeFeature`、
+> `AppleMusicLyricLineProbeTarget`、`LyricLineProbe` / `LyricLineProbeRoles` / `LyricLineProbeSummary`、
+> profile 的 `lyricLineMotion.probe` 小节与 `AMPP-LineProbe` 日志，连同其单测。
+> 本文只作为**当时怎么测、数字怎么读**的历史记录保留；现在的设置页只剩「换行弹簧位移」一个开关。
+
 > 本文只讲**方案乙 P0 的只读打点**：怎么打开、每行日志什么意思、真机上该做什么、数字到什么范围算“假设成立”。
 > 宿主事实见 `01-lyrics-line-transition-1626.md`；目标形态见 `03-amll-spec-v1.md`。
 > 版本线：Apple Music **7.0.3 / versionCode 1626**（其它版本没有这些角色，probe 会直接报 Unsupported）。

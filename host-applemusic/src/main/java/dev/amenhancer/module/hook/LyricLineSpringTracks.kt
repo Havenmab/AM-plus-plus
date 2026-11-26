@@ -77,7 +77,13 @@ internal class LyricLineSpringTracks(
      * the diagnostics care about: a repeated move must move the *end point*, never add a second
      * impulse (see [dev.amenhancer.module.lyrics.LyricLineSpringPush]).
      */
-    fun push(row: LyricLineSpringRow, lagPx: Float, tempo: LyricLineSpringTempo): LyricLineSpringPush =
+    fun push(
+        row: LyricLineSpringRow,
+        lagPx: Float,
+        tempo: LyricLineSpringTempo,
+        /** Remaining interlude exit to park this batch for; see [hold]. */
+        holdMs: Float = 0f,
+    ): LyricLineSpringPush =
         synchronized(lock) {
             val wave = waves[row.animator] ?: newWave().also { waves[row.animator] = it }
             val previous = waveOf[row.holder]
@@ -90,8 +96,26 @@ internal class LyricLineSpringTracks(
             rows[row.holder] = row
             waveOf[row.holder] = wave
             wave.paneHeightPx = row.paneHeight
+            if (holdMs > 0f) wave.hold(holdMs)
             wave.push(row.holder, lagPx, row.layoutTop, tempo)
         }
+
+    /**
+     * Park every live wave for [holdMs] more: an interlude's three-dot exit is playing.
+     *
+     * The rows keep the position the layout jump left them at (visual still) and the AMLL stagger
+     * does not start ticking until the hold is over, so the line change begins after the dots have
+     * finished growing, shrinking and fading — the order the host's own look has.
+     */
+    fun hold(holdMs: Float) = synchronized(lock) {
+        if (holdMs <= 0f) return@synchronized
+        waves.values.forEach { it.hold(holdMs) }
+    }
+
+    /** The exit's own end callback fired: stop waiting and let the stagger run. */
+    fun release() = synchronized(lock) {
+        waves.values.forEach { it.release() }
+    }
 
     /**
      * Advance every live wave by [dtMs]; returns true while something is still moving.

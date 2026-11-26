@@ -75,6 +75,18 @@ def main():
             }
             for group, roles in required_spring.items():
                 assert roles <= spring.get(group, {}).keys(), f'missing line motion spring {group}: {filename}'
+            # The interlude's three-dot exit animation: read-only alignment, so the runtime degrades
+            # one missing role at a time (no end callback means "wait the book duration", no start
+            # role means "never wait at all"). The profile is where every role it may use is named.
+            interlude = motion.get('interlude') or {}
+            assert interlude.get('contractVersion') == 1, f'missing line motion interlude contract: {filename}'
+            required_interlude = {
+                'classes': {'instrumentalBinding'},
+                'methods': {'wordExit', 'lineExit', 'wordExitEnd', 'lineExitEnd'},
+                'fields': {'holderBinding'},
+            }
+            for group, roles in required_interlude.items():
+                assert roles <= interlude.get(group, {}).keys(), f'missing line motion interlude {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])
         artist_roles = [target['runtimeMemberNames'].get('ARTIST_RUNTIME_ROLE') for target in artist_targets]
         compose_roles = {'compose_profile_view_model', 'compose_profile_success_state'}

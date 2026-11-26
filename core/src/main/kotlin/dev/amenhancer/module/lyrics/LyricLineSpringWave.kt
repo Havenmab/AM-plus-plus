@@ -79,6 +79,15 @@ class LyricLineSpringWave<H : Any>(
      */
     var paneHeightPx: Int = 0
 
+    /**
+     * The hold a row pushed right now would join, in ms.
+     *
+     * Set by the session for the duration of an interlude exit ([hold] does the same for rows that
+     * are already in the wave); every push during that window inherits it, so a row that only shows
+     * up in a later layout pass still waits.
+     */
+    var pendingHoldMs: Float = 0f
+
     private class Member<H : Any>(
         val holder: H,
         var layoutTop: Int,
@@ -87,6 +96,15 @@ class LyricLineSpringWave<H : Any>(
         var elapsedMs: Float,
         var delayMs: Float,
         var finished: Boolean,
+        /**
+         * Extra wait *before* the stagger starts counting, in ms.
+         *
+         * This is the interlude's exit animation (see `LyricInterludeHold`): while it is running the
+         * row must not move at all, and the AMLL stair must not start ticking either — the line
+         * change begins *after* the dots have finished shrinking away, which is what the host's own
+         * look does.
+         */
+        var holdMs: Float = 0f,
     )
 
     private val members = ArrayList<Member<H>>()
@@ -119,8 +137,33 @@ class LyricLineSpringWave<H : Any>(
         if (it.finished) 0f else it.spring.velocityAt(it.elapsedMs)
     } ?: 0f
 
-    /** The start delay still left for [holder], in milliseconds (0 once it is moving). */
-    fun delayOf(holder: H): Float = members.firstOrNull { it.holder === holder }?.delayMs ?: 0f
+    /** The total wait still left for [holder], in milliseconds (0 once it is moving). */
+    fun delayOf(holder: H): Float = members.firstOrNull { it.holder === holder }?.let {
+        if (it.finished) 0f else it.holdMs + it.delayMs
+    } ?: 0f
+
+    /**
+     * Park every unfinished row for [holdMs] more: no writes, no motion, and no stagger either.
+     *
+     * A row that is already travelling freezes where it is (its offset is not touched, so nothing
+     * jumps) and resumes with the same spring once the hold is over. Rows pushed later join the
+     * same window through [pendingHoldMs].
+     */
+    fun hold(holdMs: Float) {
+        if (holdMs <= 0f) return
+        pendingHoldMs = maxOf(pendingHoldMs, holdMs)
+        members.forEach { member ->
+            if (!member.finished) member.holdMs = maxOf(member.holdMs, holdMs)
+        }
+    }
+
+    /** The exit finished (or the feature was turned off): let the stagger run now. */
+    fun release() {
+        pendingHoldMs = 0f
+        members.forEach { member ->
+            if (!member.finished) member.holdMs = 0f
+        }
+    }
 
     /**
      * Take [holder]'s move over at [lagPx] (the host's `-dy`) and write it immediately.
@@ -161,11 +204,14 @@ class LyricLineSpringWave<H : Any>(
         member.deadlineMs = spring.deadlineMs()
         member.elapsedMs = 0f
         if (!waiting) member.delayMs = 0f
+        // An interlude exit that is still running owns the start of this batch: the row waits for it
+        // before its stagger even begins (LyricInterludeHold -> LyricLineSpringWave.hold).
+        if (pendingHoldMs > 0f) member.holdMs = maxOf(member.holdMs, pendingHoldMs)
         // A fresh (or re-launched from rest) row joins this frame's line change; a row that was
         // already travelling keeps going from where it is and is not staggered again.
         if (!moving && unranked.none { it === member }) unranked += member
         write(holder, lagPx)
-        return LyricLineSpringPush(lagPx, previousLag, offered, kept, moving, waiting)
+        return LyricLineSpringPush(lagPx, previousLag, offered, kept, moving, waiting, member.holdMs)
     }
 
     /**
@@ -182,6 +228,13 @@ class LyricLineSpringWave<H : Any>(
         var running = false
         members.forEach { member ->
             if (member.finished) return@forEach
+            if (member.holdMs > 0f) {
+                // The interlude is still coming to rest: the row keeps the position the layout jump
+                // left it at, and the stagger does not start ticking until this reaches 0.
+                member.holdMs = (member.holdMs - step).coerceAtLeast(0f)
+                running = true
+                return@forEach
+            }
             if (member.delayMs > 0f) {
                 // AMLL's queue: the row has not started yet, so it keeps the position the layout
                 // jump left it at. Nothing is written — [push] already wrote it.
@@ -354,6 +407,8 @@ class LyricLineSpringPush(
     val moving: Boolean,
     /** True when the row was still inside its stagger slot and kept it. */
     val waiting: Boolean,
+    /** How long the row has to wait for an interlude exit before its stagger starts, in ms. */
+    val heldMs: Float = 0f,
 ) {
     /** How far the row's layout moved under this push; the visual position does not move. */
     val layoutDeltaPx: Float get() = previousLagPx - lagPx

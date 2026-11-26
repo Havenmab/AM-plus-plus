@@ -5,6 +5,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.View
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
+import dev.amenhancer.module.lyrics.LyricInterludeHold
 import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
@@ -52,6 +53,16 @@ import dev.amenhancer.module.model.ModuleSettings
  * displacement beyond ±1200 px (seek, track change), an unusable duration, or a thread without a
  * Choreographer all leave the host's own animation untouched; the hook only sets `false` after
  * every one of those checks has passed.
+ *
+ * **The interlude's three-dot exit comes first.** When an interlude ends, Apple Music plays one more
+ * animation on the dots — they grow, shrink and fade out — and only then is the interlude over
+ * (`V0#N`/`A#N`, 750 ms + 250 ms). That animation is started from RecyclerView's *change* pass, one
+ * frame after this hook was asked to move the rows, so a wave that starts immediately is a third of
+ * the way home while the dots are still growing. [AppleMusicLyricInterludeExitHook] reports that
+ * moment, and this session parks every row of the batch at its start position until the exit's own
+ * `onAnimationEnd` (or, when that callback is unavailable, its 750 + 250 ms book duration) — the
+ * AMLL stagger only starts ticking after that. The dots are never touched: their scale, alpha and
+ * tint stay the host's property, and a build without the interlude roles simply never waits.
  */
 internal class AppleMusicLyricLineSpringTarget(
     private val profile: AppleMusicHostProfile,
@@ -86,14 +97,15 @@ internal class AppleMusicLyricLineSpringTarget(
                 "Lyric line-change spring not installed; " + profile.id + ": " + reason,
             )
         }
-        val session = SpringSession(roles, settings, diagnostics)
+        val session = SpringSession(roles, settings, diagnostics, profile, loader)
         val scope = HookRegistrationScope()
         return try {
             session.install(scope)
             scope.activate()
             registration = scope
             TargetCapabilityInstall.Active(
-                "Lyric line-change spring installed; " + roles.resolved().size + " roles; " + profile.id,
+                "Lyric line-change spring installed; " + roles.resolved().size + " roles" +
+                    (if (session.holdsForInterlude()) ", interlude exit aligned" else "") + "; " + profile.id,
             )
         } catch (error: Throwable) {
             scope.close()
@@ -111,6 +123,8 @@ internal class AppleMusicLyricLineSpringTarget(
         private val roles: LyricLineSpringRoles,
         private val settings: () -> ModuleSettings,
         private val diagnostics: LyricLineSpringDiagnostics,
+        private val profile: AppleMusicHostProfile,
+        private val loader: ClassLoader,
     ) {
         private val tracks = LyricLineSpringTracks(
             writeOffset = { row, offset -> row.view.translationY = offset },
@@ -120,14 +134,54 @@ internal class AppleMusicLyricLineSpringTarget(
         private var lastFrameNanos = 0L
         private var frameScheduled = false
 
+        /**
+         * How long the interlude's exit animation still owns the start of a line change.
+         *
+         * Armed by [AppleMusicLyricInterludeExitHook]; while it is armed every pushed row waits at
+         * its start position and the AMLL stagger does not tick (see `LyricInterludeHold`).
+         */
+        private val exitHold = LyricInterludeHold()
+        private var interludeHook: AppleMusicLyricInterludeExitHook? = null
+
+        private val interludeListener = object : AppleMusicLyricInterludeExitHook.Listener {
+            override fun onInterludeExitStarted() {
+                // The book duration is the cap; the exit's own end callback (when it resolves)
+                // releases the rows sooner.
+                exitHold.start(now())
+                tracks.hold(exitHold.remainingMs(now()).toFloat())
+            }
+
+            override fun onInterludeExitFinished() {
+                exitHold.finish(now())
+                tracks.release()
+            }
+        }
+
         private val frameCallback = Choreographer.FrameCallback { frameTimeNanos -> onFrame(frameTimeNanos) }
+
+        /** True when the interlude exit is being aligned on this build. */
+        fun holdsForInterlude(): Boolean = interludeHook != null
 
         fun install(scope: HookRegistrationScope) {
             register(requireNotNull(roles.animateMove) { "animateMove" }, moveHook(), scope)
             register(requireNotNull(roles.isRunning) { "isRunning" }, runningHook(), scope)
             register(requireNotNull(roles.endAnimation) { "endAnimation" }, endAnimationHook(), scope)
             register(requireNotNull(roles.endAnimations) { "endAnimations" }, endAnimationsHook(), scope)
+            // Optional: the interlude exit only shifts *when* rows start, so a build without its
+            // roles keeps the wave and simply does not wait.
+            interludeHook = runCatching {
+                AppleMusicLyricInterludeExitHook.open(profile, loader, interludeListener, ::now)
+            }.getOrNull()
+            interludeHook?.let { hook ->
+                runCatching { hook.install(scope) }.onFailure { diagnostics.failed("interlude", it) }
+            }
         }
+
+        private fun now(): Long = runCatching { SystemClock.uptimeMillis() }.getOrDefault(0L)
+
+        /** The wait a row pushed right now owes the interlude's exit animation, in ms. */
+        private fun pendingHoldMs(): Float =
+            runCatching { exitHold.remainingMs(now()).toFloat() }.getOrDefault(0f)
 
         private fun register(
             member: java.lang.reflect.Method,
@@ -196,7 +250,10 @@ internal class AppleMusicLyricLineSpringTarget(
             // velocity still points at the new end point (see LyricLineSpringPush).
             val row = LyricLineSpringRow(animator, holder, view, toY)
             val applied = try {
-                tracks.push(row, -dy.toFloat(), tempo)
+                // A row pushed during an interlude exit is written at its new translation (so the
+                // layout jump is invisible) and then parked there until the dots have finished
+                // growing, shrinking and fading — the stagger only starts after that.
+                tracks.push(row, -dy.toFloat(), tempo, pendingHoldMs())
             } catch (error: Throwable) {
                 // Nothing was dispatched for this row yet: give it back at rest, exactly once.
                 recover(row)
@@ -210,7 +267,7 @@ internal class AppleMusicLyricLineSpringTarget(
             if (applied.moving) {
                 diagnostics.retargeted(applied)
             } else {
-                diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves())
+                diagnostics.takeOver(dy, duration, tempo, tracks.activeWaves(), applied.heldMs.toInt())
             }
         }
 
@@ -354,8 +411,8 @@ internal class LyricLineSpringDiagnostics(
      * `T` is the host's own `$k.e` — the tempo in `HOST` mode, and in `AMLL` mode only the proof
      * that this really is the lyric animator's field (the spring then ignores it).
      */
-    fun takeOver(dy: Int, durationMs: Long, tempo: LyricLineSpringTempo, waves: Int) {
-        val key = dy.toString() + "/" + durationMs + "/" + tempo.feel.storageValue
+    fun takeOver(dy: Int, durationMs: Long, tempo: LyricLineSpringTempo, waves: Int, heldMs: Int = 0) {
+        val key = dy.toString() + "/" + durationMs + "/" + tempo.feel.storageValue + "/" + heldMs
         val now = now()
         if (key == lastTakeOverKey && now - lastTakeOverAt < REPEAT_WINDOW_MS) return
         lastTakeOverKey = key
@@ -363,7 +420,8 @@ internal class LyricLineSpringDiagnostics(
         emit(
             "takeover dy=" + dy + " T=" + durationMs + "ms feel=" + tempo.feel.storageValue +
                 " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
-                " c=" + fixed(tempo.damping) + " waves=" + waves,
+                " c=" + fixed(tempo.damping) + " waves=" + waves +
+                (if (heldMs > 0) " held=" + heldMs + "ms" else ""),
         )
     }
 

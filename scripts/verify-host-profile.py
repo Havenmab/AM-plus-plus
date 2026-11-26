@@ -491,8 +491,93 @@ def verify_lyric_line_motion_contract(document, classes, failures):
             failures.append('lyricLineMotion.spring: animateMove does not take the holder class')
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         failures.append('lyricLineMotion.spring: incomplete semantic keys (%s)' % error)
+    checks += verify_lyric_interlude_contract(data, classes, failures)
     return checks
 
+
+def verify_lyric_interlude_contract(motion, classes, failures):
+    """The three-dot interlude exit: read-only alignment for the line-change wave.
+
+    Optional at runtime -- a missing role means "never wait for the dots", never a failed spring --
+    so this only runs when the section is declared, and then it pins the three shapes that would
+    fail *silently*: the exit builders have to be the adapter implementations (the base i1#N is
+    empty and never fires), the end callbacks have to be the listener methods of the exit's own
+    AnimatorSet, and the binding field has to hold a ViewDataBinding (that is what the interlude
+    test walks from a holder).
+    """
+    data = motion.get('interlude') if isinstance(motion, dict) else None
+    if data is None:
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricLineMotion.interlude: missing versioned contract')
+        return 0
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+
+    def check_member(section, group, role, contract):
+        try:
+            native = classes.get(descriptor(contract['owner']), {})
+            if group == 'fields':
+                valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                         and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+            else:
+                signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
+                             + ')' + descriptor(contract['returns']))
+                flags = native.get('method_access', {}).get(signature)
+                valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                         and bool(flags & 8) == contract.get('static', False))
+            if not valid:
+                failures.append('%s.%s.%s: invalid exact descriptor' % (section, group, role))
+        except (KeyError, TypeError, AttributeError) as error:
+            failures.append('%s.%s.%s: incomplete descriptor (%s)' % (section, group, role, error))
+        return 1
+
+    required_interlude = {
+        'classes': {'instrumentalBinding'},
+        'methods': {'wordExit', 'lineExit', 'wordExitEnd', 'lineExitEnd'},
+        'fields': {'holderBinding'},
+    }
+    checks = 0
+    for group, roles in required_interlude.items():
+        entries = data.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.interlude.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.interlude.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            if group == 'classes':
+                checks += 1
+                if descriptor(str(contract)) not in classes:
+                    failures.append('lyricLineMotion.interlude.classes.%s: %s is missing'
+                                    % (role, contract))
+            else:
+                checks += check_member('lyricLineMotion.interlude', group, role, contract)
+    try:
+        binding = descriptor(data['classes']['instrumentalBinding'])
+        lineage = class_lineage(classes, binding)
+        if not lineage:
+            failures.append('lyricLineMotion.interlude: binding class %s is missing' % binding)
+        elif 'Landroidx/databinding/ViewDataBinding;' not in lineage:
+            failures.append('lyricLineMotion.interlude: %s is not a ViewDataBinding' % binding)
+        if descriptor(data['fields']['holderBinding']['type']) != 'Landroidx/databinding/ViewDataBinding;':
+            failures.append('lyricLineMotion.interlude: holderBinding is not a ViewDataBinding')
+        holder = descriptor(data['methods']['wordExit']['parameters'][0])
+        if descriptor(data['methods']['lineExit']['parameters'][0]) != holder:
+            failures.append('lyricLineMotion.interlude: the two exit builders take different holders')
+        for role in ('wordExitEnd', 'lineExitEnd'):
+            if descriptor(data['methods'][role]['parameters'][0]) != 'Landroid/animation/Animator;':
+                failures.append('lyricLineMotion.interlude.methods.%s: not an Animator listener' % role)
+        # The exit builders must be the adapter overrides; the base i1#N is empty and never fires.
+        for role in ('wordExit', 'lineExit'):
+            if descriptor(data['methods'][role]['owner']) == 'Lcom/apple/android/music/player/i1;':
+                failures.append('lyricLineMotion.interlude.methods.%s: declared on the empty base' % role)
+    except (KeyError, TypeError, AttributeError, IndexError) as error:
+        failures.append('lyricLineMotion.interlude: incomplete semantic keys (%s)' % error)
+    return checks
 
 def verify_artist_compose_contract(document, classes, failures):
     """Optional artist surface; a partial declaration cannot suppress required invocation checks."""

@@ -6454,6 +6454,66 @@
         "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no state outlives the animator instance"
       }
     },
+    "interlude": {
+      "contractVersion": 1,
+      "classes": {
+        "instrumentalBinding": "q8.m9"
+      },
+      "methods": {
+        "wordExit": {
+          "owner": "com.apple.android.music.player.A",
+          "name": "N",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "lineExit": {
+          "owner": "com.apple.android.music.player.V0",
+          "name": "N",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "wordExitEnd": {
+          "owner": "com.apple.android.music.player.A$s",
+          "name": "onAnimationEnd",
+          "parameters": [
+            "android.animation.Animator"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "lineExitEnd": {
+          "owner": "com.apple.android.music.player.V0$b",
+          "name": "onAnimationEnd",
+          "parameters": [
+            "android.animation.Animator"
+          ],
+          "returns": "void",
+          "static": false
+        }
+      },
+      "fields": {
+        "holderBinding": {
+          "owner": "com.apple.android.music.player.i1$b",
+          "name": "u",
+          "type": "androidx.databinding.ViewDataBinding"
+        }
+      },
+      "evidence": {
+        "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
+        "memberSource": "1626 instruction-level decode plus device observation. The three dots of res/layout/lyrics_line_instrumental.xml (binding q8.m9, fields X/Y/Z) leave with one more animation, the one a device shows: the row root grows to 1.2x over 750 ms and then shrinks to 0.5x while its alpha goes to 0 over 250 ms. V0#N(ViewHolder) builds exactly that: setPivotX/pivotY at the row centre (offsets 108/124), ObjectAnimator.ofPropertyValuesHolder(SCALE_X/SCALE_Y [current, 1.2]) with PathInterpolator(.25,.1,.25,1) and setDuration(750) (offsets 170-187), a second holder for SCALE_X/Y -> 0.5 with PathInterpolator(.25,0,1,.1) and 250 ms (offsets 216-230), an ALPHA -> 0 ObjectAnimator with the same 250 ms (offsets 233-251), AnimatorSet.play(shrink).with(fade).after(grow) plus .after(V0.B) when the last dot's loop animator is still live (offsets 254-278), and listener V0$b (offsets 278-283) which restores scale 1, alpha 1 and the dot tint. A#N is the word adapter's copy ending in A$s. The exit is reached from the change pass, not from the move pass: mc.y#l(old,new,fromX,fromY,toX,toY) queues an mc.y$d ChangeInfo and mc.y#v/w start a ViewPropertyAnimator whose listener is mc.z; mc.z#onAnimationStart calls androidx.recyclerview.widget.F#s(holder), an empty hook on the base class that PlayerLyricsViewFragment$u overrides as $u#s(holder) -> i1#N(holder), which is why a search for callers of $u#s finds none (the call site names F#s) and why the earlier note in this repository wrongly called the exit dead. h#onAnimationStart is the androidx DefaultItemAnimator twin of mc.z. F#s fires for both sides of a change; only the interlude side passes V0#N's q8.m9 guard. The dot performance itself (V0#U / A#Y, tint sweep + 4 s scale pulse) is untouched by this node.",
+        "runtimeVerified": false,
+        "timing": "read-only alignment: the exit's own start and end callbacks are observed so the line-change wave can start after them; no argument, field, view property or return value is ever written",
+        "ownership": "none: this node owns no host state, writes no alpha, scale, visibility or tag, and never cancels a host animator; it only decides when this module's own translation is allowed to begin",
+        "dispatch": "on exit start the spring parks every pushed row at its start position (translationY already written, so the layout jump stays invisible) and holds the AMLL stagger; on the exit's own onAnimationEnd, or after the 750+250 ms book duration when that callback is not resolvable, the stagger is released",
+        "release": "no state outlives the animator: the hold is a deadline on the session, and turning the spring off (read live) makes every park a no-op"
+      }
+    },
     "evidence": {
       "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
       "memberSource": "1626 PlayerLyricsViewFragment$f.invoke(Object,Object,Object) computes round(lerp(480,800,clamp(gap,200,750))) from the line gap and, only when that differs from abs(getSuggestedLineOffset()), calls PlayerLyricsViewFragment.d2(fragment,-duration) and then iput-wide $k.e on the fragment's r0 animator. RecyclerView$k declares c/d/e/f as private longs; mc.y$a.run reads $k.e at offset 145 into ViewPropertyAnimator.setDuration for the move batch, and mc.y.j reads it as the change-batch delay while $k.d stays the remove duration. PlayerLyricsViewFragment$u extends mc.y and is the only construction site of that animator.",

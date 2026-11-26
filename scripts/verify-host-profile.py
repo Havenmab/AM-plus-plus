@@ -494,6 +494,94 @@ def verify_lyric_line_motion_contract(document, classes, failures):
     return checks
 
 
+def verify_lyric_interlude_contract(document, classes, failures):
+    """The three-dot interlude indicator: read-only retirement at a line change.
+
+    Optional at runtime — a missing role means "leave the host's own dots alone" — so this only
+    runs when the section is declared, and then it pins the shapes that fail *silently*: the dots
+    have to hang off the binding class the holder is checked against, the binding field has to hold
+    a ViewDataBinding (that is what the `isInstance` test walks), and every per-row hook has to take
+    the same ViewHolder type whose position method is pinned.
+    """
+    motion = document.get('lyricLineMotion')
+    data = motion.get('interlude') if isinstance(motion, dict) else None
+    if data is None:
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricLineMotion.interlude: missing versioned contract')
+        return 0
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+
+    def check_member(section, group, role, contract):
+        try:
+            native = classes.get(descriptor(contract['owner']), {})
+            if group == 'fields':
+                valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                         and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+            else:
+                signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
+                             + ')' + descriptor(contract['returns']))
+                flags = native.get('method_access', {}).get(signature)
+                valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                         and bool(flags & 8) == contract.get('static', False))
+            if not valid:
+                failures.append('%s.%s.%s: invalid exact descriptor' % (section, group, role))
+        except (KeyError, TypeError, AttributeError) as error:
+            failures.append('%s.%s.%s: incomplete descriptor (%s)' % (section, group, role, error))
+        return 1
+
+    required_interlude = {
+        'classes': {'instrumentalBinding'},
+        'methods': {'lineChange', 'wordBind', 'lineBind', 'wordSettled', 'lineSettled',
+                    'holderPosition'},
+        'fields': {'holderBinding', 'dot1', 'dot2', 'dot3'},
+    }
+    checks = 0
+    for group, roles in required_interlude.items():
+        entries = data.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.interlude.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.interlude.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            if group == 'classes':
+                checks += 1
+                if descriptor(str(contract)) not in classes:
+                    failures.append('lyricLineMotion.interlude.classes.%s: %s is missing'
+                                    % (role, contract))
+            else:
+                checks += check_member('lyricLineMotion.interlude', group, role, contract)
+    try:
+        binding = descriptor(data['classes']['instrumentalBinding'])
+        lineage = class_lineage(classes, binding)
+        if not lineage:
+            failures.append('lyricLineMotion.interlude: binding class %s is missing' % binding)
+        elif 'Landroidx/databinding/ViewDataBinding;' not in lineage:
+            failures.append('lyricLineMotion.interlude: %s is not a ViewDataBinding' % binding)
+        for role in ('dot1', 'dot2', 'dot3'):
+            if descriptor(data['fields'][role]['owner']) != binding:
+                failures.append('lyricLineMotion.interlude.fields.%s: not declared on %s'
+                                % (role, binding))
+        if descriptor(data['fields']['holderBinding']['type']) != 'Landroidx/databinding/ViewDataBinding;':
+            failures.append('lyricLineMotion.interlude: holderBinding is not a ViewDataBinding')
+        holder = descriptor(data['methods']['holderPosition']['owner'])
+        for role in ('wordBind', 'lineBind', 'wordSettled', 'lineSettled'):
+            parameters = data['methods'][role]['parameters']
+            if not parameters or descriptor(parameters[0]) != holder:
+                failures.append('lyricLineMotion.interlude.methods.%s: does not take %s'
+                                % (role, holder))
+        if descriptor(data['methods']['lineChange']['parameters'][0]) != 'I':
+            failures.append('lyricLineMotion.interlude.methods.lineChange: first parameter is not the line index')
+    except (KeyError, TypeError, AttributeError, IndexError) as error:
+        failures.append('lyricLineMotion.interlude: incomplete semantic keys (%s)' % error)
+    return checks
+
+
 def verify_artist_compose_contract(document, classes, failures):
     """Optional artist surface; a partial declaration cannot suppress required invocation checks."""
     surface = document.get('hookTargets', {}).get('ARTIST_SURFACE_CLASSES', [])
@@ -755,6 +843,7 @@ def main():
             checks += verify_artist_compose_contract(document, classes, failures)
             checks += verify_lyric_blur_contract(document, classes, failures)
             checks += verify_lyric_line_motion_contract(document, classes, failures)
+            checks += verify_lyric_interlude_contract(document, classes, failures)
             checks += verify_lyric_result_submission(document, classes, failures)
             def descriptor(name):
                 primitive = {'void':'V','int':'I','long':'J','float':'F','boolean':'Z',

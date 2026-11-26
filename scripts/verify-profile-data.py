@@ -75,6 +75,20 @@ def main():
             }
             for group, roles in required_spring.items():
                 assert roles <= spring.get(group, {}).keys(), f'missing line motion spring {group}: {filename}'
+            # The interlude dots are optional at runtime — a role this build does not have means
+            # "leave the host's own three dots alone", never a failed spring — but the section has
+            # to name every role it may use, so the runtime can degrade on one missing member
+            # instead of discovering the shape at hook time.
+            interlude = motion.get('interlude') or {}
+            assert interlude.get('contractVersion') == 1, f'missing line motion interlude contract: {filename}'
+            required_interlude = {
+                'classes': {'instrumentalBinding'},
+                'methods': {'lineChange', 'wordBind', 'lineBind', 'wordSettled', 'lineSettled',
+                            'holderPosition'},
+                'fields': {'holderBinding', 'dot1', 'dot2', 'dot3'},
+            }
+            for group, roles in required_interlude.items():
+                assert roles <= interlude.get(group, {}).keys(), f'missing line motion interlude {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])
         artist_roles = [target['runtimeMemberNames'].get('ARTIST_RUNTIME_ROLE') for target in artist_targets]
         compose_roles = {'compose_profile_view_model', 'compose_profile_success_state'}

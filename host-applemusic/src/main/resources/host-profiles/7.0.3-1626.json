@@ -6454,6 +6454,100 @@
         "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no state outlives the animator instance"
       }
     },
+    "interlude": {
+      "contractVersion": 1,
+      "classes": {
+        "instrumentalBinding": "q8.m9"
+      },
+      "methods": {
+        "lineChange": {
+          "owner": "com.apple.android.music.player.fragment.K",
+          "name": "b",
+          "parameters": [
+            "int",
+            "int"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "wordBind": {
+          "owner": "com.apple.android.music.player.A",
+          "name": "l",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D",
+            "int"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "lineBind": {
+          "owner": "com.apple.android.music.player.V0",
+          "name": "l",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D",
+            "int"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "wordSettled": {
+          "owner": "com.apple.android.music.player.A",
+          "name": "H",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "lineSettled": {
+          "owner": "com.apple.android.music.player.V0",
+          "name": "H",
+          "parameters": [
+            "androidx.recyclerview.widget.RecyclerView$D"
+          ],
+          "returns": "void",
+          "static": false
+        },
+        "holderPosition": {
+          "owner": "androidx.recyclerview.widget.RecyclerView$D",
+          "name": "d",
+          "parameters": [],
+          "returns": "int",
+          "static": false
+        }
+      },
+      "fields": {
+        "holderBinding": {
+          "owner": "com.apple.android.music.player.i1$b",
+          "name": "u",
+          "type": "androidx.databinding.ViewDataBinding"
+        },
+        "dot1": {
+          "owner": "q8.m9",
+          "name": "X",
+          "type": "android.widget.ImageView"
+        },
+        "dot2": {
+          "owner": "q8.m9",
+          "name": "Y",
+          "type": "android.widget.ImageView"
+        },
+        "dot3": {
+          "owner": "q8.m9",
+          "name": "Z",
+          "type": "android.widget.ImageView"
+        }
+      },
+      "evidence": {
+        "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
+        "memberSource": "1626 instruction-level decode. The three dots are the whole content of res/layout/lyrics_line_instrumental.xml (ConstraintLayout id/lyrics_instrumental_root, three ImageViews id/dot1..dot3, src=drawable/lyrics_instrumental_dot); DataBinderMapperImpl#f maps that layout to q8.m9, whose constructor stores its four arguments at offsets 4/6/8/10 into q8.m9.X/Y/Z (ImageView) and q8.m9.a0 (ConstraintLayout). The only live path is the interlude performance: V0#U(Lq8/m9;Z)V reads the elapsed time from V0.C (a linear 0..1 ValueAnimator whose duration V0.w is the interlude length, created only while null, offsets 345-379), returns immediately when V0.w - elapsed < 0 (offsets 30-35), cancels the previous set through V0#w() (offset 37), tints all three dots with V0#W() and builds one ValueAnimator per dot over a (V0.w + 750)/3 ms window (offsets 111-250, update listener V0$e, PathInterpolator 0/0.25/1/0.6), plus a 4 s repeating scale pulse 1.0 -> 1.2 -> 1.0 on the root (offsets 392-467, listener V0$i) whose duration is rescaled to fit the remaining interlude (offsets 475-502, repeatCount n-1), started as AnimatorSet V0.A with listener V0$a (offsets 505-527: d2(fragment,-1300) on start, d2(fragment,-500) on cancel, pause when Y0.d == 2). A#Y(Lq8/m9;ZZ)V is the word adapter's copy over A.N/A.E/A.I with the same shape (guard at offsets 30-37, clock at 335-370, pivot via A$i when the root is not laid out at 372-603, pulse at 606-736, AnimatorSet A.L at 720-739). It is armed from onBindViewHolder (V0#l offsets 438-477; A#l offsets 90-156, after setting LayoutParams.E of dot1/dot3 to 0 or 1 for RTL) and re-synced from the zero-displacement move path (RecyclerView calls i1#H for a ret=0 move: V0#H offset 59, A#H offset 99). Nothing hides the dots: A#s and V0#s (onViewRecycled) only call w(), which cancels A/L and nulls B/M, and the two methods that would have faded them are dead in this build - A#N/V0#N (pivot at the row centre, grow to 1.2 over 750 ms, then scale to 0.5 and alpha to 0 over 250 ms, AnimatorSet ending in listener A$s/V0$b which restores scale 1 and tints the dots) and A#G/V0#G (setAlpha 0, then ALPHA 0->1 over 750 ms with 50 ms per dot) have as only callers PlayerLyricsViewFragment$u#s and #r, and no code item in the APK references either one (a 199,965-method reference index over all four DEX files contains no such call; mc.y#m's only lambda, J4.t2#run, dispatches ordinal 2 to i1#H), which is also why the device probe's rowAnim event never fired.",
+        "runtimeVerified": false,
+        "timing": "the retire is driven from the line-change hooks, not from a clock of its own: K#b(int,int) records the new current line before the layout pass, and the three-dot fade starts in the same frame that the item animator is asked to move the rows, so the dots are already leaving when the wave writes its first translation",
+        "ownership": "single writer for the alpha of q8.m9.X/Y/Z, and none for anything else: no adapter field, no animator, no scale, no visibility, no view.tag, no adapter notification. The host's own performance (tints on those same views) is left running; an interlude row contains nothing but the dots, so an empty row that is still breathing is invisible",
+        "dispatch": "the 120 ms fade is shorter than the wave's 450 ms settle, so the outgoing row is empty before the incoming line reaches the anchor; arming a row cancels the fade and restores alpha 1 in the same frame, which is what keeps the next interlude's appearance exactly as the host wrote it",
+        "release": "no state outlives a holder: the per-row track is bounded (32 rows) and keyed by holder identity, so recycling and the next bind restart it; turning the feature off (the spring's switch, read live) stops every write immediately"
+      }
+    },
     "evidence": {
       "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
       "memberSource": "1626 PlayerLyricsViewFragment$f.invoke(Object,Object,Object) computes round(lerp(480,800,clamp(gap,200,750))) from the line gap and, only when that differs from abs(getSuggestedLineOffset()), calls PlayerLyricsViewFragment.d2(fragment,-duration) and then iput-wide $k.e on the fragment's r0 animator. RecyclerView$k declares c/d/e/f as private longs; mc.y$a.run reads $k.e at offset 145 into ViewPropertyAnimator.setDuration for the move batch, and mc.y.j reads it as the change-batch delay while $k.d stays the remove duration. PlayerLyricsViewFragment$u extends mc.y and is the only construction site of that animator.",

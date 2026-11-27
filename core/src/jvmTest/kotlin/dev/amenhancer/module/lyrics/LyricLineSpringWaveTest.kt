@@ -19,6 +19,11 @@ class LyricLineSpringWaveTest {
     private class Row(val name: String, var top: Int) {
         var translationY = 0f
         var finished = 0
+        /** How many moves the wave started on this row (dispatchMoveStarting). */
+        var started = 0
+
+        /** Where the eye sees the row: its layout position plus its translation. */
+        fun visual(): Float = top + translationY
         override fun toString(): String = name + "@" + top
     }
 
@@ -987,5 +992,141 @@ class LyricLineSpringWaveTest {
         }
         assertEquals(LyricLineSpringPolicy.MAX_COMPENSATION_PX.toFloat(), wave.compensatedOf(rows[0]), 8f)
         assertTrue("the cap never fired: " + refusals, refusals.any { it.startsWith("CAPPED") })
+    }
+
+    // ---- the layout-driven line change: no animateMove at all --------------------------------
+
+    /** A wave that reports what it did with a bare layout jump, and the reasons it refused one. */
+    private class Watched {
+        val jumps = ArrayList<String>()
+        val shifts = ArrayList<String>()
+        val skips = ArrayList<String>()
+        var listScrolling = false
+        val wave = LyricLineSpringWave<Row>(
+            write = { row, offset -> row.translationY = offset },
+            finish = { row -> row.finished += 1 },
+            layoutTop = { row -> row.top },
+            onLayoutShift = { _, delta, lag -> shifts += delta.toString() + "/" + lag },
+            onShiftSkipped = { _, delta, reason -> skips += reason.name + ":" + delta },
+            onLayoutLineChange = { row, delta, applied ->
+                row.started += 1
+                jumps += row.name + " " + delta + " moving=" + applied.moving + " lag=" + applied.lagPx
+            },
+            canAbsorbJump = { !listScrolling },
+        ).also { it.paneHeightPx = 1_000 }
+    }
+
+    @Test
+    fun `a line change the host never announces still moves every row`() {
+        // 1626 during playback: scrollToPositionWithOffset + requestLayout, no animateMove. The block
+        // simply appears one line higher, so the only trace of it is each row's own top. Before this
+        // the wave read that as "the block moved, follow it" and no row moved at all.
+        val watched = Watched()
+        val rows = (0 until 8).map { Row("r" + it, top = 300 + it * 120) }
+        rows.forEach { watched.wave.track(it, it.top) }
+        assertFalse("a seeded roster owes RecyclerView nothing", watched.wave.isRunning)
+        assertTrue(watched.wave.isWatching)
+
+        repeat(4) { change ->
+            val before = rows.associateWith { it.visual() }
+            val previous = before.toMutableMap()
+            rows.forEach { it.top -= 300 }
+            var frames = 0
+            while (true) {
+                watched.wave.advance(16.6f)
+                frames += 1
+                rows.forEach { row ->
+                    val visual = row.visual()
+                    assertTrue(
+                        "change=" + change + " " + row.name + " went back down: " +
+                            previous.getValue(row) + " -> " + visual,
+                        visual <= previous.getValue(row) + 1e-2f,
+                    )
+                    previous[row] = visual
+                }
+                assertTrue("change=" + change + ": never settles", frames < 2_000)
+                if (!watched.wave.isRunning) break
+            }
+            // Every row travelled the whole 300 px the layout jumped, and came to rest at home.
+            rows.forEach { row ->
+                assertEquals("change=" + change + ": left displaced", 0f, row.translationY, 1e-3f)
+                val moved = before.getValue(row) - row.visual()
+                assertTrue(
+                    "change=" + change + " " + row.name + " moved " + moved + "px of 300",
+                    moved >= 299f,
+                )
+            }
+            // AMLL's settle time, not the host's: twenty to sixty frames at 60 Hz.
+            assertTrue("change=" + change + " took " + frames + " frames", frames in 20..60)
+        }
+        assertEquals(32, watched.jumps.size)
+        assertEquals(4, rows.sumOf { it.started })
+        assertEquals(4, rows.sumOf { it.finished })
+        assertTrue(
+            "a resting row reported a background-line shift: " + watched.shifts,
+            watched.shifts.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `a seek is handed back instead of being replayed as a line change`() {
+        val watched = Watched()
+        val rows = (0 until 6).map { Row("r" + it, top = 300 + it * 120) }
+        rows.forEach { watched.wave.track(it, it.top) }
+        rows.forEach { it.top -= 2_460 } // the device log's own seek: -2460 px
+        watched.wave.advance(16.6f)
+        rows.forEach { assertEquals("a seek was absorbed", 0f, it.translationY, 0f) }
+        assertFalse("a seek started a spring", watched.wave.isRunning)
+        assertTrue("the seek was not reported: " + watched.skips, watched.skips.any { it == "SEEK:-2460" })
+    }
+
+    @Test
+    fun `a one line jump under the user's finger is not taken over`() {
+        // A drag moves the block exactly like a line change does. Only the host can tell them apart,
+        // and it answers "the list is being scrolled".
+        val watched = Watched()
+        val rows = (0 until 6).map { Row("r" + it, top = 300 + it * 120) }
+        rows.forEach { watched.wave.track(it, it.top) }
+        watched.listScrolling = true
+        rows.forEach { it.top -= 60 }
+        watched.wave.advance(16.6f)
+        rows.forEach { assertEquals("a scroll was absorbed", 0f, it.translationY, 0f) }
+        assertTrue("the scroll was not reported: " + watched.skips, watched.skips.any { it == "SCROLL:-60" })
+    }
+
+    @Test
+    fun `a tracked row that was never pushed still rides what the layout does`() {
+        val watched = Watched()
+        val row = Row("only", top = 400)
+        watched.wave.track(row, row.top)
+        row.top += 4 // the background line growing: no animateMove either
+        watched.wave.advance(16.6f)
+        assertEquals(-4f, row.translationY, 0.2f)
+        var frames = 0
+        while (watched.wave.advance(16.6f)) {
+            frames += 1
+            assertTrue("never settles", frames < 500)
+        }
+        assertEquals(0f, row.translationY, 0f)
+        assertEquals("one shift, one finish", 1, row.finished)
+        // A tracked row owes no start of its own: this one got none, and the shift is not a move.
+        assertEquals(0, row.started)
+    }
+
+    @Test
+    fun `a row whose view goes away stops being read`() {
+        val row = Row("only", top = 400)
+        var top: Int? = row.top
+        val wave = LyricLineSpringWave<Row>(
+            write = { holder, offset -> holder.translationY = offset },
+            finish = { holder -> holder.finished += 1 },
+            layoutTop = { top },
+        )
+        wave.track(row, row.top)
+        assertTrue(wave.isWatching)
+        top = null // recycled out of the list
+        wave.advance(16.6f)
+        assertFalse("a detached row was kept", wave.isWatching)
+        assertEquals("a detached row was written", 0f, row.translationY, 0f)
     }
 }

@@ -39,21 +39,31 @@ import kotlin.math.abs
  *  * a row still inside its stagger delay keeps its remaining delay: its layout moved, its visual did
  *    not, and it has no velocity to preserve either way.
  *
- * **Layout changes that announce nothing are read back, once per frame.** The background line's
- * growth is not a notify-driven layout, so it never reaches `animateMove` at all; [advance]
- * therefore compares each tracked row's own `top` against the expectation the last move (or the
- * previous frame) left, and folds any difference into the residual — see [absorbLayoutShifts]. This
- * is the only place the wave reads layout instead of being told about it, and it never writes it.
+ * **Layout changes that announce nothing are read back, once per frame.** 1626's normal line
+ * change produces no `animateMove` at all: `scrollToPositionWithOffset` + `requestLayout` simply
+ * put the block one line higher, so the only trace of it is each row's own `top` moving between
+ * two frames. [advance] therefore compares every tracked row's own `top` against the
+ * expectation the last move (or the previous frame) left — see [absorbLayoutShifts]. This is the
+ * only place the wave reads layout instead of being told about it, and it never writes it.
  *
- * **Only a background line may be folded in.** The host also moves the block's layout itself — its
- * own animation of the line change, a scroll, a re-anchor — and a row that follows that movement is
- * doing exactly what it should. Folding it into the residual instead *cancels* it: the row stays
- * where the eye left it while the layout runs away underneath, so the line change does not happen at
- * all, the residual grows by every frame the host animates, and past the takeover's own bound
- * everything is handed back and snaps at once. [absorbLayoutShifts] therefore refuses any shift that
- * every tracked row took part in (the block moved), any shift faster than a line can grow
+ * **A layout jump is a line change.** A row that owes nothing (at rest) whose layout moved by more
+ * than a background line can grow is taken as a whole line change: the wave writes the movement back
+ * (lag = -delta, so the visual position does not jump) and starts one spring — the animation the
+ * host never offered. That is the feature's second half, and it is why a row that has arrived stays
+ * in the wave ([isWatching]) instead of being dropped: nothing else would see the next jump.
+ *
+ * **...but only a resting row's jump.** The host also moves the block's layout itself — its own
+ * animation of the line change, a scroll, a re-anchor — and a *travelling* row that follows that
+ * movement is doing exactly what it should. Folding it into the residual instead *cancels* it: the
+ * row stays where the eye left it while the layout runs away underneath, the residual grows by every
+ * frame the host animates, and past the takeover's own bound everything is handed back and snaps at
+ * once. [absorbLayoutShifts] therefore refuses, for a travelling row, any shift of the block
+ * (`why=block`), any shift faster than a line can grow
  * ([LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX]) and any row that already took one line change's
- * worth ([LyricLineSpringPolicy.MAX_COMPENSATION_PX]); the host's own movement is followed instead.
+ * worth ([LyricLineSpringPolicy.MAX_COMPENSATION_PX]); and for a resting row it refuses a jump
+ * beyond ±[LyricLineSpringPolicy.MAX_DISPLACEMENT_PX] (a seek) and a jump the host says is under the
+ * user's finger ([canAbsorbJump], `why=scroll`). A resting row can only be re-opened once per jump:
+ * the spring it starts makes it travelling again, so a run of block movement can never accumulate.
  *
  * **A row already in flight is never re-delayed and never re-started.** AMLL queues the *new target*
  * behind the delay and lets the row finish travelling to the old one meanwhile; our host has already
@@ -108,6 +118,30 @@ class LyricLineSpringWave<H : Any>(
      * questions ("this row never moved" vs "this line change never moved") and are logged apart.
      */
     private val onStuck: ((Int, Float, Float) -> Unit)? = null,
+    /**
+     * Called when a **bare layout jump** was taken as a line change and started a spring.
+     *
+     * `(holder, layoutDeltaPx, applied)`. This is the line the device log needs to tell the two
+     * halves of this feature apart: a `push` is a move the host *offered* (`animateMove`), a
+     * `layout-change` is a jump the host never announced at all — 1626's real line change.
+     */
+    private val onLayoutLineChange: ((H, Int, LyricLineSpringPush) -> Unit)? = null,
+    /**
+     * Whether a bare layout jump for [holder] may be taken as a line change *right now*.
+     *
+     * A drag or a fling moves the block exactly the way a line change does, so the wave asks the
+     * host before it animates one: the caller answers "the list is not being scrolled". A host that
+     * cannot answer says `true` — the refusal is then only the wave's own bounds.
+     */
+    private val canAbsorbJump: (H) -> Boolean = { true },
+    /**
+     * The spring a bare layout jump is replayed at.
+     *
+     * `push` is handed its tempo by the host (one call, one answer); a jump arrives without a
+     * caller, so the wave carries the one tempo every line change uses
+     * ([LyricLineSpringPolicy.tempo]).
+     */
+    private val layoutTempo: LyricLineSpringTempo = LyricLineSpringPolicy.tempo,
 ) {
     /**
      * The height of the list the pending line change belongs to, as reported by [push].
@@ -182,6 +216,22 @@ class LyricLineSpringWave<H : Any>(
     val isRunning: Boolean get() = members.any { !it.finished }
 
     /**
+     * True while this wave still holds rows to read layout for, moving or not.
+     *
+     * This is the *watcher's* predicate, not the animator's: a row that has arrived stays in the
+     * wave (it owes nothing — [isRunning] is false and nothing is written or dispatched) because the
+     * line change it has to catch next is a **bare layout jump** that only a per-frame read of the
+     * row's own `top` can see (see [absorbLayoutShifts]). RecyclerView's ledger is untouched by
+     * them, so `isRunning()` must never answer for a tracked-but-resting row: the host would then
+     * keep the list "busy" forever.
+     *
+     * A row leaves the roster when its view goes away ([forget]), when the host ends the animation
+     * (`endAnimations`) or when [prune] runs.
+     */
+    val isWatching: Boolean get() = members.isNotEmpty()
+
+
+    /**
      * True when the next [advance] will rank a batch that has been pushed since the last frame.
      *
      * That frame *is* the wave's start — it is the one that assigns the AMLL stagger — so the host
@@ -198,6 +248,44 @@ class LyricLineSpringWave<H : Any>(
 
     /** True when [holder] belongs to this wave and has not been finished yet. */
     fun isPending(holder: H): Boolean = members.any { it.holder === holder && !it.finished }
+
+    /**
+     * Start reading [holder]'s layout, without starting a move.
+     *
+     * This is how a row the host never offered an `animateMove` for enters the wave. On 1626 a
+     * line change is `scrollToPositionWithOffset` + `requestLayout` — the block simply appears one
+     * line higher, and the only trace of it is each row's own `top` moving between two frames. A
+     * tracked row is marked finished, so it owes neither a start nor a finish (RecyclerView's
+     * ledger is not involved), nothing is written, and it costs one `top` read per frame.
+     *
+     * Returns false when the row was already known, so seeding twice cannot disturb a row in
+     * flight.
+     */
+    fun track(holder: H, layoutTop: Int): Boolean {
+        if (members.any { it.holder === holder }) return false
+        members += Member(
+            holder = holder,
+            layoutTop = layoutTop,
+            spring = layoutTempo.at(0f),
+            deadlineMs = 0f,
+            elapsedMs = 0f,
+            delayMs = 0f,
+            finished = true,
+        )
+        return true
+    }
+
+    /**
+     * Stop reading [holder]'s layout and forget it entirely.
+     *
+     * Used when the row's view goes away (recycled out of the list) and when the host ends its
+     * animation: nothing is written and nothing is dispatched — [finishHolder] is the *animator's*
+     * end path and stays exactly-once; this one only drops the bookkeeping.
+     */
+    fun forget(holder: H) {
+        members.removeAll { it.holder === holder }
+        unranked.removeAll { it.holder === holder }
+    }
 
     /** The lag [holder] is displaying right now, in pixels (0 when it is not in this wave). */
     fun lagOf(holder: H): Float = members.firstOrNull { it.holder === holder }?.let {
@@ -361,17 +449,43 @@ class LyricLineSpringWave<H : Any>(
         layoutTop: Int,
         tempo: LyricLineSpringTempo,
     ): LyricLineSpringPush {
-        val spring = tempo.at(lagPx, 0f)
         val member = existing ?: Member(
             holder = holder,
             layoutTop = layoutTop,
-            spring = spring,
-            deadlineMs = spring.deadlineMs(),
+            spring = tempo.at(lagPx, 0f),
+            deadlineMs = 0f,
             elapsedMs = 0f,
             delayMs = 0f,
-            finished = false,
+            finished = true,
         ).also { members += it }
         member.layoutTop = layoutTop
+        // A fresh (or re-launched from rest) row joins this frame's line change; a row that was
+        // already travelling keeps going from where it is and is not staggered again.
+        val applied = begin(member, lagPx, tempo)
+        member.compensatedPx = 0f
+        if (unranked.none { it === member }) unranked += member
+        return applied
+    }
+
+    /**
+     * Start [member]'s spring at [lagPx]: a new move when the row is at rest, a re-aim when it is
+     * still travelling.
+     *
+     * Shared by the host's own move ([launch]) and by a bare layout jump ([absorbLayoutShifts]).
+     * Both write the lag in the same frame the layout moved, so the displayed position does not
+     * jump, and both owe exactly one started notification — [LyricLineSpringPush.moving] is false
+     * only for a row that was not already travelling.
+     */
+    private fun begin(
+        member: Member<H>,
+        lagPx: Float,
+        tempo: LyricLineSpringTempo = layoutTempo,
+    ): LyricLineSpringPush {
+        val wasPending = !member.finished
+        val previousLag = if (wasPending) member.spring.offsetAt(member.elapsedMs) else 0f
+        val offered = if (wasPending) member.spring.velocityAt(member.elapsedMs) else 0f
+        val kept = if (wasPending) towardTarget(offered, lagPx) else 0f
+        val spring = tempo.at(lagPx, kept)
         member.finished = false
         member.spring = spring
         member.deadlineMs = spring.deadlineMs()
@@ -381,22 +495,49 @@ class LyricLineSpringWave<H : Any>(
         // before its stagger even begins (LyricInterludeHold -> LyricLineSpringWave.hold). A rest
         // between two line changes must not carry an older wait over, so this assigns, not maxes.
         member.holdMs = pendingHoldMs
-        // A fresh (or re-launched from rest) row joins this frame's line change; a row that was
-        // already travelling keeps going from where it is and is not staggered again.
-        if (unranked.none { it === member }) unranked += member
-        member.compensatedPx = 0f
-        write(holder, lagPx)
+        write(member.holder, lagPx)
         armWatch(member, lagPx)
         armBatch(member, lagPx)
-        return LyricLineSpringPush(lagPx, 0f, 0f, 0f, moving = false, waiting = false, heldMs = member.holdMs)
+        return LyricLineSpringPush(
+            lagPx = lagPx,
+            previousLagPx = previousLag,
+            offeredVelocity = offered,
+            keptVelocity = kept,
+            moving = wasPending,
+            waiting = false,
+            heldMs = member.holdMs,
+        )
+    }
+
+    /**
+     * True when [member] owes nothing: it has nothing left to travel, nothing queued and no hold.
+     *
+     * The distinction the layout reading turns on. A row at rest that the layout moves under its
+     * feet is a **line change** (its visual position would jump); a row still travelling that the
+     * layout moves is the host animating the block, and cancelling that is what used to glue the
+     * rows to the screen.
+     */
+    private fun isAtRest(member: Member<H>): Boolean {
+        if (member.finished) return true
+        if (member.holdMs > 0f || member.delayMs > 0f) return false
+        if (abs(member.spring.offsetAt(member.elapsedMs)) > LyricLineSpringPolicy.SETTLE_EPSILON_PX) {
+            return false
+        }
+        return abs(member.spring.velocityAt(member.elapsedMs)) <=
+            LyricLineSpringPolicy.SETTLE_EPSILON_VELOCITY
     }
 
     /**
      * Advance every row by [frameStepMs] and write its new lag.
      *
      * Rows still inside their start delay hold their position; the rest step their own spring.
-     * Returns true while any row still owes something. A row that has arrived is snapped to 0 and
-     * finished exactly once, and never written again.
+     * Returns true while any row still owes something ([isRunning]), **not** while the wave is only
+     * watching: a caller that also keeps a clock alive must ask [isWatching] separately, or the host
+     * would be told the list is busy forever.
+     *
+     * A row that has arrived is snapped to 0 and finished exactly once. It stays in the wave
+     * afterwards — [isWatching] — so the next bare layout jump can be read off it; re-opening it
+     * (see [absorbLayoutShifts]) starts a *new* move and therefore a new start/finish pair.
      */
     fun advance(frameStepMs: Float): Boolean {
         if (unranked.isNotEmpty()) rank()
@@ -478,28 +619,37 @@ class LyricLineSpringWave<H : Any>(
     /**
      * Take in every layout change that no `animateMove` announced.
      *
-     * Apple Music grows a row's background-vocal line from a `ValueAnimator` that rewrites
-     * `layoutParams.height` once per frame. Those layouts carry no adapter notification, so
-     * RecyclerView never asks the item animator about them: there is no `dy` and [push] is never
-     * called. Reading each tracked row's own `top` once per frame is the only way to see it.
+     * **The line change.** On 1626 a line change is `scrollToPositionWithOffset` + `requestLayout`:
+     * the block simply appears one line higher, with no item animator involved at all. A row that was
+     * standing still when that happens is given the jump back — `lag = -delta`, so its visual
+     * position does not move — and one spring carries it to its new home. That is the animation the
+     * host never offered, and it is the half this feature was missing on the device: without it the
+     * rows stood still and the next line arrived as a jump.
      *
-     * For a row whose layout moved by `delta` its visual position is `top + translationY`, so
-     * keeping the visual where it is means `lag -= delta`; the spring then carries the row to its
-     * new home, which *is* the background line's extra height. The whole line change stays one
-     * monotone up move whose end point already contains the grow.
+     * **The background line.** Apple Music also grows a row's background-vocal line from a
+     * `ValueAnimator` that rewrites `layoutParams.height` once per frame (4-6 px on 1626). That
+     * is the same reading at a smaller size, and it rides inside
+     * [LyricLineSpringPolicy.MAX_COMPENSATION_PX] so a long grow cannot pin a row.
      *
-     * Three refusals keep this from cancelling the host instead of helping it — each of them is a
+     * Four refusals keep this from cancelling the host instead of helping it — each of them is a
      * "follow the layout, do not fight it", never a "hold the row where it is":
      *
-     *  * a shift **every** tracked row takes part in is the *block* moving (a scroll, a re-anchor,
-     *    the host's own animation of the line change). Compensating it glues the rows to the screen
-     *    while the layout runs away underneath — the line change then does not happen at all, and
-     *    the residual grows by every frame the host animates;
-     *  * a shift faster than [LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX] is not a line growing
-     *    (1626: a growing line is 4-6 px per frame, the host's own animation 33-102 px), so it is
-     *    followed;
+     *  * a shift **every** reading row takes part in, while a row is **travelling**, is the *block*
+     *    moving (a re-anchor, the host's own animation of the line change). Compensating it glues the
+     *    rows to the screen while the layout runs away underneath — the line change then does not
+     *    happen at all, and the residual grows by every frame the host animates. A *resting* row is
+     *    the opposite case: nothing of ours is moving, so the block moving is the line change;
+     *  * a shift faster than [LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX] on a *travelling* row
+     *    is not a line growing (1626: a growing line is 4-6 px per frame, the host's own animation
+     *    33-102 px), so it is followed;
      *  * a row that already took [LyricLineSpringPolicy.MAX_COMPENSATION_PX] worth in this line
-     *    change has had its background line; anything more is the host moving the block.
+     *    change has had its background line; anything more is the host moving the block;
+     *  * a jump beyond ±[LyricLineSpringPolicy.MAX_DISPLACEMENT_PX] is a seek, and a whole line's
+     *    jump on a list the host says is scrolling ([canAbsorbJump]) is the finger, not the lyric.
+     *
+     * The self-limiting property matters more than any of them: re-opening a row makes it
+     * travelling, and a travelling row is never re-opened, so a run of block movement can take at
+     * most one jump out of one row.
      *
      * A `move` synchronises the same expectation ([Member.layoutTop] is the move's `toY`), so a
      * layout that announced itself is never counted twice.
@@ -508,40 +658,87 @@ class LyricLineSpringWave<H : Any>(
         if (members.isEmpty()) return
         val live = ArrayList<Member<H>>()
         val deltas = ArrayList<Int>()
+        val detached = ArrayList<Member<H>>()
         members.forEach { member ->
-            if (member.finished) return@forEach
-            val top = layoutTop(member.holder) ?: return@forEach
+            val top = layoutTop(member.holder)
+            if (top == null) {
+                // The view is gone (recycled out of the list). A resting row is simply dropped; a
+                // pending one keeps its place, because the host is the one that ends it
+                // (endAnimation) and dropping it here would swallow the finish RecyclerView waits
+                // for.
+                if (member.finished) detached += member
+                return@forEach
+            }
             live += member
             deltas += top - member.layoutTop
             // The baseline moves whether or not this frame is folded in: the layout really is there,
             // and a row we refuse to compensate must not see the same delta again next frame.
             member.layoutTop = top
         }
+        if (detached.isNotEmpty()) {
+            members.removeAll(detached)
+            unranked.removeAll(detached)
+        }
         var shifted = 0
         deltas.forEach { delta -> if (delta != 0) shifted += 1 }
         if (shifted == 0) return
-        // Every tracked row moved: the *block* moved (a scroll, a re-anchor, the host's own animation
+        // Every reading row moved: the *block* moved (a scroll, a re-anchor, the host's own animation
         // of the line change). A background line growing moves only the rows below it, so at least
-        // one tracked row — the one above it — stays put. A single tracked row cannot tell the two
+        // one reading row — the one above it — stays put. A single reading row cannot tell the two
         // apart and keeps the growth reading.
         val blockMoved = live.size >= 2 && shifted == live.size
         // One line per frame, not one per row: ten rows refusing the same shift are one fact about
         // the frame, and the device log's line budget is needed for the takeovers.
         var announced = false
+        fun announce(member: Member<H>, delta: Int, reason: LyricLineShiftSkip) {
+            if (announced) return
+            announced = true
+            onShiftSkipped?.invoke(member.holder, delta, reason)
+        }
+        // Rows a bare layout jump re-opened, and the lag each one was written at.
+        val jumped = ArrayList<Member<H>>()
+        val jumps = ArrayList<Int>()
+        val starts = ArrayList<LyricLineSpringPush>()
         live.forEachIndexed { index, member ->
             val delta = deltas[index]
             if (delta == 0) return@forEachIndexed
-            val skip = when {
-                blockMoved -> LyricLineShiftSkip.BLOCK
-                !LyricLineSpringPolicy.acceptsLayoutShift(delta) -> LyricLineShiftSkip.TOO_FAST
-                !LyricLineSpringPolicy.acceptsCompensation(member.compensatedPx, delta) ->
+            val rest = isAtRest(member)
+            val step = abs(delta) > LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX
+            val skipped = when {
+                // A seek, a track change, a list replacement: the host's instant re-anchor is right.
+                !LyricLineSpringPolicy.acceptsDisplacement(delta) -> LyricLineShiftSkip.SEEK
+                // A travelling row the layout moved: the host is animating the block itself. Follow
+                // it, never cancel it — cancelling is what "this line does not move" was.
+                !rest && blockMoved -> LyricLineShiftSkip.BLOCK
+                !rest && step -> LyricLineShiftSkip.TOO_FAST
+                !rest && !LyricLineSpringPolicy.acceptsCompensation(member.compensatedPx, delta) ->
+                    LyricLineShiftSkip.CAPPED
+                // A resting row, moved further than a background line can grow, on a list the user
+                // is scrolling: that is the finger, not the lyric.
+                rest && step && !canAbsorbJump(member.holder) -> LyricLineShiftSkip.SCROLL
+                rest && !step && !LyricLineSpringPolicy.acceptsCompensation(member.compensatedPx, delta) ->
                     LyricLineShiftSkip.CAPPED
                 else -> null
             }
-            if (skip != null) {
-                if (!announced) {
-                    onShiftSkipped?.invoke(member.holder, delta, skip)
-                    announced = true
+            if (skipped != null) {
+                announce(member, delta, skipped)
+                return@forEachIndexed
+            }
+            if (rest) {
+                // Nothing was travelling, so the layout moved under a row that was standing still:
+                // its visual position would jump by the whole delta. Write the movement back
+                // (`lag = -delta`), and let one spring carry the row to its new home — the line
+                // change the host never announced with an `animateMove`. A shift small enough to be
+                // a background line growing rides the same way, inside the same budget.
+                member.compensatedPx =
+                    if (step) 0f else member.compensatedPx + abs(delta).toFloat()
+                val applied = begin(member, -delta.toFloat())
+                if (step) {
+                    jumped += member
+                    jumps += delta
+                    starts += applied
+                } else {
+                    onLayoutShift?.invoke(member.holder, delta, applied.lagPx)
                 }
                 return@forEachIndexed
             }
@@ -553,6 +750,13 @@ class LyricLineSpringWave<H : Any>(
             member.elapsedMs = 0f
             write(member.holder, lag)
             onLayoutShift?.invoke(member.holder, delta, lag)
+        }
+        if (jumped.isEmpty()) return
+        // Ranked before it is reported: the stagger slots only exist after the batch was ranked, and
+        // the one line per jump is where a device reads them.
+        rankBatch(jumped)
+        jumped.forEachIndexed { index, member ->
+            onLayoutLineChange?.invoke(member.holder, jumps[index], starts[index])
         }
     }
 
@@ -651,14 +855,30 @@ class LyricLineSpringWave<H : Any>(
      * exactly as 乙-1's rows did.
      */
     private fun rank() {
-        val tops = unranked.map { it.layoutTop }.sorted()
+        if (unranked.isEmpty()) return
+        val batch = ArrayList(unranked)
+        unranked.clear()
+        rankBatch(batch)
+    }
+
+    /**
+     * Give one line change its AMLL delays, ranked by post-layout top.
+     *
+     * Both ways a line change arrives end here: the host's own moves (collected in [unranked]
+     * during a layout pass) and the bare layout jump [absorbLayoutShifts] re-opened. Ranking by the
+     * post-layout top keeps the wave starting at the visual top of the batch and tightening from the
+     * focus line down; a row whose delay is 0 starts on the next frame's step, exactly as 乙-1's
+     * rows did.
+     */
+    private fun rankBatch(batch: List<Member<H>>) {
+        if (batch.isEmpty()) return
+        val tops = batch.map { it.layoutTop }.sorted()
         val focus = LyricLineStaggerPolicy.focusRank(tops, paneHeightPx)
-        unranked.forEach { member ->
+        batch.forEach { member ->
             val rank = tops.indexOf(member.layoutTop).coerceAtLeast(0)
             member.delayMs = LyricLineStaggerPolicy.delayMs(rank, focus)
             member.elapsedMs = 0f
         }
-        unranked.clear()
     }
 
     private companion object {
@@ -730,14 +950,31 @@ class LyricLineSpringStatus(
  * must be folded in) from the host's own movement (which must not).
  */
 enum class LyricLineShiftSkip {
-    /** Every tracked row moved: a scroll, a re-anchor, or the host animating the line change. */
+    /**
+     * Every reading row moved while a row was travelling: a re-anchor, or the host animating the
+     * line change itself. Following it is what playback looks like; cancelling it glues the rows to
+     * the screen.
+     */
     BLOCK,
 
-    /** Faster than a background line can grow — the host's own movement of the block. */
+    /** Faster than a background line can grow — the host's own movement of a travelling block. */
     TOO_FAST,
 
     /** This row already had one line change's worth of compensation. */
     CAPPED,
+
+    /**
+     * Beyond [LyricLineSpringPolicy.MAX_DISPLACEMENT_PX]: a seek, a track change, a list
+     * replacement. The host's instant re-anchor is the right look and the jump stays with it.
+     */
+    SEEK,
+
+    /**
+     * A whole line's jump on a list the user is scrolling: the finger moved the block, not the
+     * lyric. Only the host can tell the two apart, which is what [LyricLineSpringWave]'s
+     * `canAbsorbJump` asks.
+     */
+    SCROLL,
 }
 
 /**

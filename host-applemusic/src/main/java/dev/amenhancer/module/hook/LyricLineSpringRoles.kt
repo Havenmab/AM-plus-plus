@@ -89,6 +89,21 @@ internal class LyricLineSpringRoles(
     /** `PlayerLyricsViewFragment$u.z`: identifies *the lyrics* animator, not any `mc.y` instance. */
     val animatorFragment: Field? = field("animatorFragment")
 
+    // ---- the roster (optional, read-only) ---------------------------------------------------
+    //
+    // The line change this feature replays is a *bare layout jump*: 1626 settles it with
+    // `scrollToPositionWithOffset` + `requestLayout`, and nothing announces it with an
+    // `animateMove`. Seeing it needs the rows themselves, and the rows are the list's children, so
+    // these two fields lead from the lyrics fragment to the RecyclerView. They are **optional**: a
+    // build without them keeps the spring that `animateMove` alone can drive, and loses only the
+    // jumps the host never offered.
+
+    /** `PlayerLyricsViewFragment.l0: q8.X4` — the DataBinding root holding the list. */
+    val binding: Field? = optionalField("binding")
+
+    /** `q8.X4.d0: androidx.recyclerview.widget.RecyclerView` — the lyric list itself. */
+    val recycler: Field? = optionalField("recycler")
+
     /** Roles that resolved, for the install message. */
     fun resolved(): List<String> = resolvedRoles.toList()
 
@@ -156,6 +171,24 @@ internal class LyricLineSpringRoles(
         resolvedRoles += "methods." + role
         return member
     }
+
+    /**
+     * A role this contract may use but does not need.
+     *
+     * Resolved exactly like [field], except that a missing or misshapen member is *not* recorded as
+     * a failure: [isComplete] keeps passing and the spring keeps installing. Only what the role adds
+     * is lost, and the platform degrades one role at a time (see the section's evidence).
+     */
+    private fun optionalField(role: String): Field? = runCatching {
+        val contract = section.getJSONObject("fields").getJSONObject(role)
+        val owner = classNamed(contract.getString("owner"))
+        val member = owner.getDeclaredField(contract.getString("name"))
+        check(member.type == classNamed(contract.getString("type"))) { "descriptor mismatch: " + member }
+        check(!Modifier.isStatic(member.modifiers)) { "descriptor mismatch: " + member }
+        member.isAccessible = true
+        resolvedRoles += "fields." + role
+        member
+    }.getOrElse { null }
 
     private fun field(role: String, verify: (Field) -> String? = { null }): Field? = runCatching {
         val contract = section.getJSONObject("fields").getJSONObject(role)

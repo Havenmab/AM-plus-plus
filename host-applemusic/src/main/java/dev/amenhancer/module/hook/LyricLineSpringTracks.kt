@@ -42,12 +42,21 @@ internal class LyricLineSpringRow(
      * The row's current layout top, read back every frame by the wave.
      *
      * This is how a layout change that announced nothing — the background line's own height
-     * animation, the host's `height = 0`/`14` end states — becomes visible to the spring: the
-     * host's `top` moved, the row's `translationY` has to lose the same amount to keep the row
-     * where the eye left it. Null when the view cannot be read at all.
+     * animation, the host's `height = 0`/`14` end states, and above all the line change itself
+     * (`scrollToPositionWithOffset` + `requestLayout`, which offers no `animateMove` at all) —
+     * becomes visible to the spring: the host's `top` moved, the row's `translationY` has to lose
+     * the same amount to keep the row where the eye left it.
+     *
+     * Null means "this row is not on screen any more": the view was recycled out of the list, so the
+     * wave drops it instead of watching a stale `top` and mistaking the next bind for a line
+     * change.
      */
     val top: Int?
-        get() = runCatching { view.top }.getOrNull()
+        get() = if (!isAttached) null else runCatching { view.top }.getOrNull()
+
+    /** True while the row's itemView is still part of a window. */
+    val isAttached: Boolean
+        get() = runCatching { view.isAttachedToWindow }.getOrDefault(false)
 }
 
 /**
@@ -78,6 +87,14 @@ internal class LyricLineSpringTracks(
     private val skipped: (LyricLineSpringRow, Float, Float, Float) -> Unit = { _, _, _, _ -> },
     /** One line per pushed *batch* that had not moved after 400 ms of spring time. */
     private val stuck: (rows: Int, maxLagPx: Float, sinceMs: Float) -> Unit = { _, _, _ -> },
+    /** One line per **bare layout jump** the wave took as a line change (no `animateMove`). */
+    private val layoutLineChange: (LyricLineSpringRow, Int, LyricLineSpringPush) -> Unit =
+        { _, _, _ -> },
+    /**
+     * Whether a bare layout jump for this row may be replayed now — the host answers "the lyric list
+     * is not being scrolled" (see `AppleMusicLyricLineSpringTarget#listIdle`).
+     */
+    private val canAbsorbJump: (LyricLineSpringRow) -> Boolean = { true },
 ) {
     private val lock = Any()
     private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
@@ -136,17 +153,21 @@ internal class LyricLineSpringTracks(
     }
 
     /**
-     * Advance every live wave by [dtMs]; returns true while something is still moving.
+     * Advance every live wave by [dtMs]; returns true while the clock is still wanted.
      *
-     * A wave that arrives everywhere is dropped here, together with its rows, so a later
-     * `endAnimation` for an already-finished row is a no-op instead of a second finish.
+     * A wave is kept while it **watches** as well as while it moves: the line change this feature
+     * exists for arrives as a bare layout jump, and only the next frame can see it
+     * (`LyricLineSpringWave.isWatching`). A wave whose rows have all left the list is dropped here,
+     * together with its mapping, so a later `endAnimation` for an already-finished row is a no-op
+     * instead of a second finish — and the clock stops with it.
      */
     fun advance(dtMs: Float): Boolean = synchronized(lock) {
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (!entry.value.advance(dtMs)) {
-                forgetWave(entry.value)
+            val wave = entry.value
+            if (!wave.advance(dtMs) && !wave.isWatching) {
+                forgetWave(wave)
                 iterator.remove()
             }
         }
@@ -171,9 +192,16 @@ internal class LyricLineSpringTracks(
         if (animator != null && row.animator !== animator) return@synchronized null
         val wave = waveOf[holder] ?: return@synchronized null
         val lag = wave.lagOf(holder)
-        if (!wave.finishHolder(holder, resetOffset = true)) return@synchronized null
-        rows.remove(holder)
-        waveOf.remove(holder)
+        val ended = wave.finishHolder(holder, resetOffset = true)
+        // A rebind is not the end of the row: RecyclerView calls this whenever a holder is reused,
+        // and the line change it will have to follow arrives *after* the rebind. The row therefore
+        // stays on the roster — with nothing owing — for as long as its view is still on screen.
+        if (!row.isAttached) {
+            rows.remove(holder)
+            waveOf.remove(holder)
+            wave.forget(holder)
+        }
+        if (!ended) return@synchronized null
         retire(wave)
         LyricLineSpringReset(1, lag)
     }
@@ -205,6 +233,34 @@ internal class LyricLineSpringTracks(
 
     /** The number of live waves, for the diagnostic line. */
     fun activeWaves(): Int = synchronized(lock) { waves.size }
+
+    /** How many rows this list is reading layout for, moving or not. */
+    fun rosterSize(): Int = synchronized(lock) { rows.size }
+
+    /**
+     * Start watching the rows the host's lyric list is currently showing.
+     *
+     * The whole point of the layout reading is that 1626's line change announces nothing, so the
+     * wave has to know the rows *before* the jump arrives. A row seeded here owes nothing: it is
+     * written only when the layout moves under it (see `LyricLineSpringWave.track`), so seeding
+     * costs one `top` read per frame per row and cannot disturb a row already travelling.
+     *
+     * A holder that already belongs to another animator's wave is left alone — the tablet's two
+     * panes must never share a row.
+     */
+    fun seed(rows: List<LyricLineSpringRow>): Int = synchronized(lock) {
+        var added = 0
+        rows.forEach { row ->
+            val owner = waveOf[row.holder]
+            if (owner != null && owner !== waves[row.animator]) return@forEach
+            val wave = waves[row.animator] ?: newWave().also { waves[row.animator] = it }
+            wave.paneHeightPx = row.paneHeight
+            waveOf[row.holder] = wave
+            this.rows[row.holder] = row
+            if (wave.track(row.holder, row.layoutTop)) added += 1
+        }
+        added
+    }
 
     /**
      * True when some wave is about to rank a batch pushed since the last frame.
@@ -268,11 +324,21 @@ internal class LyricLineSpringTracks(
             rows[holder]?.let { skipped(it, moved, lag, window) }
         },
         onStuck = { count, maxLag, since -> stuck(count, maxLag, since) },
+        onLayoutLineChange = { holder, delta, applied ->
+            rows[holder]?.let { layoutLineChange(it, delta, applied) }
+        },
+        canAbsorbJump = { holder -> rows[holder]?.let(canAbsorbJump) ?: true },
     )
 
-    /** Drop a wave that has nothing left to move, unless a row of it has moved on to another. */
+    /**
+     * Drop a wave that has nothing left to move or to watch, unless a row of it has moved on.
+     *
+     * A wave that still holds rows is *kept* even when nothing is travelling: those rows are the
+     * only way the next bare layout jump is seen at all (`LyricLineSpringWave.isWatching`), and the
+     * clock that reads them is the same one.
+     */
     private fun retire(wave: LyricLineSpringWave<Any>) {
-        if (wave.isRunning) return
+        if (wave.isRunning || wave.isWatching) return
         forgetWave(wave)
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {

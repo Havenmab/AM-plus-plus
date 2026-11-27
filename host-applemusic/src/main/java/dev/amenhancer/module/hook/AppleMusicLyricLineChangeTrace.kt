@@ -35,8 +35,19 @@ import dev.amenhancer.host.applemusic.AppleMusicHostProfile
  */
 internal class AppleMusicLyricLineChangeTrace private constructor(
     private val member: java.lang.reflect.Method,
-    /** `(start, end)` of the highlighted line interval, as the host passed them. */
-    private val onLineChange: (Int, Int) -> Unit,
+    /**
+     * `fragment.K.a`: the lyrics fragment the callback belongs to, or null.
+     *
+     * Read only to reach the lyric list, so the rows a bare layout jump is measured on can be read
+     * back in *before* the re-anchor that follows (see `LyricLineSpringTracks#seed`). No field is
+     * written; a build without the field still prints the `line-change` line.
+     */
+    private val fragment: java.lang.reflect.Field?,
+    /**
+     * `(fragment, start, end)` of the highlighted line interval, as the host passed them; the
+     * fragment is null when this build does not pin the field.
+     */
+    private val onLineChange: (Any?, Int, Int) -> Unit,
 ) {
     fun install(scope: HookRegistrationScope) {
         check(ModernXposedRuntime.hookMethod(member, hook(), scope)) {
@@ -46,12 +57,16 @@ internal class AppleMusicLyricLineChangeTrace private constructor(
 
     private fun hook() = object : ModernMethodHook() {
         override fun beforeHookedMethod(param: ModernMethodHook.MethodHookParam) {
-            // Before, not after: the point of the line is its *position* in the log relative to the
-            // pushes the layout pass is about to produce.
+            // Before, not after: the point of the line is its *position* relative to the layout pass
+            // it is about to trigger — and the rows have to be read back in *before* that pass, or
+            // the jump it produces would move rows nobody was watching.
             runCatching {
                 val start = param.args.getOrNull(0) as? Int ?: return@runCatching
                 val end = param.args.getOrNull(1) as? Int ?: return@runCatching
-                onLineChange(start, end)
+                val owner = fragment?.let { field ->
+                    param.thisObject?.let { holder -> runCatching { field.get(holder) }.getOrNull() }
+                }
+                onLineChange(owner, start, end)
             }
         }
     }
@@ -67,7 +82,7 @@ internal class AppleMusicLyricLineChangeTrace private constructor(
         fun open(
             profile: AppleMusicHostProfile,
             loader: ClassLoader,
-            onLineChange: (Int, Int) -> Unit,
+            onLineChange: (Any?, Int, Int) -> Unit,
             onUnavailable: (String) -> Unit,
         ): AppleMusicLyricLineChangeTrace? {
             val motion = runCatching { profile.document.getJSONObject("lyricLineMotion") }.getOrNull()
@@ -79,7 +94,7 @@ internal class AppleMusicLyricLineChangeTrace private constructor(
                 runCatching { onUnavailable(roles.missing().joinToString("; ")) }
                 return null
             }
-            return runCatching { AppleMusicLyricLineChangeTrace(member, onLineChange) }
+            return runCatching { AppleMusicLyricLineChangeTrace(member, roles.fragment, onLineChange) }
                 .onFailure { error ->
                     runCatching {
                         onUnavailable("construction failed: " + (error.message ?: error.javaClass.simpleName))

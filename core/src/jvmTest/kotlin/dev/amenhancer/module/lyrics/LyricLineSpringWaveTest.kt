@@ -533,7 +533,7 @@ class LyricLineSpringWaveTest {
     @Test
     fun `a fast song keeps its moves and never hands a row back or finishes it mid travel`() {
         val dys = listOf(357, 261, 453, 400, 318)
-        listOf(60f, 80f, 120f).forEach { interval ->
+        listOf(60f, 80f, 120f, 300f, 500f, 800f).forEach { interval ->
             fastSong(interval, dys).forEachIndexed { index, batch ->
                 val where = "interval=" + interval + "ms batch=" + index + " dy=" + batch.dy + ": "
                 assertFalse(
@@ -556,7 +556,7 @@ class LyricLineSpringWaveTest {
     @Test
     fun `every line change of a fast song still moves the rows it touched`() {
         val dys = listOf(357, 261, 453, 400, 318)
-        listOf(60f, 80f, 120f).forEach { interval ->
+        listOf(60f, 80f, 120f, 300f, 500f, 800f).forEach { interval ->
             fastSong(interval, dys).forEachIndexed { index, batch ->
                 batch.movedPx.forEach { (row, moved) ->
                     // A row that is still inside its stagger slot has not been given its turn yet.
@@ -725,5 +725,267 @@ class LyricLineSpringWaveTest {
             "absorbed a jump: " + before + " -> " + row.translationY,
             kotlin.math.abs(row.translationY - before) < 20f,
         )
+    }
+
+    // ---- the device's own timeline, replayed ------------------------------------------------
+
+    /**
+     * The host replayed with 1626's arithmetic.
+     *
+     * One line change is a layout move of [lineHeight] for every row, offered as one `animateMove`
+     * per row whose `dy` already folds that row's current translation in
+     * (`dy = toY - (fromY + translationY)`, `mc.y#m`), so `-dy` is the row's new lag. A *host-driven*
+     * layout move ([layOut]) is the other half: Apple Music walking the block up by itself (a scroll,
+     * a re-anchor, the animation the item animator's own move would have played), with no
+     * `animateMove` to announce it.
+     *
+     * Every frame is checked the way the eye checks it: [snaps] collects "translationY was zeroed
+     * while the layout had already moved on" (the visible jump) and [backwards] collects frames that
+     * move a row back down.
+     */
+    private inner class Host(
+        rowCount: Int = 6,
+        private val lineHeight: Int = 120,
+        paneHeightPx: Int = 1_000,
+    ) {
+        val rows: List<Row> = (0 until rowCount).map { Row("r" + it, 300 + it * lineHeight) }
+        val wave: LyricLineSpringWave<Row> = wave(paneHeightPx)
+        var nowMs = 0f
+        var refused = 0
+        val snaps = ArrayList<String>()
+        val backwards = ArrayList<String>()
+        private val lastVisual = HashMap<Row, Float>()
+        private val lastTranslation = HashMap<Row, Float>()
+
+        fun visual(row: Row): Float = row.top + row.translationY
+
+        /** One line change: the block's layout moves up by [shift] and every row is offered its move. */
+        fun change(shift: Int = lineHeight, touched: List<Row> = rows) {
+            touched.forEach { row ->
+                val fromY = row.top
+                row.top -= shift
+                val toY = row.top
+                val dy = toY - (fromY + row.translationY.toInt())
+                if (dy == 0) return@forEach
+                if (!LyricLineSpringPolicy.acceptsMove(toY - fromY, -dy.toFloat())) {
+                    refused += 1
+                    wave.finishHolder(row, resetOffset = true)
+                    return@forEach
+                }
+                wave.push(row, -dy.toFloat(), toY, tempo())
+            }
+        }
+
+        /** The host moving the block's own layout, with no `animateMove` to announce it. */
+        fun layOut(shift: Int, touched: List<Row> = rows) {
+            touched.forEach { it.top += shift }
+        }
+
+        fun frame(dtMs: Float = 16.6f) {
+            wave.advance(dtMs)
+            nowMs += dtMs
+            rows.forEach { row ->
+                val now = visual(row)
+                val previous = lastVisual[row]
+                if (previous != null) {
+                    if (now > previous + 1f) backwards += row.name + " +" + (now - previous)
+                    val was = lastTranslation[row] ?: 0f
+                    if (was != 0f && row.translationY == 0f && abs(now - previous) > 2f) {
+                        snaps += row.name + " " + previous + "->" + now
+                    }
+                }
+                lastVisual[row] = now
+                lastTranslation[row] = row.translationY
+            }
+        }
+
+        /** Frames until [untilMs] of song time, then every row must have moved since [since]. */
+        fun segment(untilMs: Float, since: Map<Row, Float>, label: String) {
+            var guard = 0
+            while (nowMs < untilMs - 0.001f) {
+                frame()
+                guard += 1
+                assertTrue(label + ": runaway", guard < 1_000)
+            }
+            assertMoved(since, label)
+        }
+
+        fun settle(label: String = "settle"): Int {
+            var frames = 0
+            while (wave.isRunning) {
+                frame()
+                frames += 1
+                assertTrue(label + ": never settles", frames < 1_000)
+            }
+            return frames
+        }
+
+        /** Every row must have moved at least one pixel since [since] — a line change that reads. */
+        fun assertMoved(since: Map<Row, Float>, label: String) {
+            rows.forEach { row ->
+                val moved = abs(visual(row) - since.getValue(row))
+                assertTrue(
+                    label + " " + row.name + " moved only " + moved + "px: the line change was swallowed",
+                    moved >= 1f,
+                )
+            }
+        }
+
+        fun assertNoJump(label: String) {
+            assertTrue(label + ": zeroed mid-travel: " + snaps, snaps.isEmpty())
+            assertTrue(label + ": moved back down: " + backwards, backwards.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a line change every three to eight hundred ms moves the block every time`() {
+        listOf(300f, 500f, 800f).forEach { interval ->
+            val host = Host()
+            val label = "interval=" + interval + "ms"
+            repeat(3) { index ->
+                val before = host.rows.associateWith { host.visual(it) }
+                host.change()
+                host.segment(host.nowMs + interval, before, label + " change=" + index)
+                host.assertNoJump(label + " change=" + index)
+            }
+            host.settle(label)
+            host.rows.forEach {
+                assertEquals(label + ": row left displaced", 0f, it.translationY, 0f)
+            }
+            assertEquals(label + ": handed a move back", 0, host.refused)
+        }
+    }
+
+    @Test
+    fun `change at zero, change at half a second, change at 1 point 2 s, then settle`() {
+        // The device's own timeline for the reported bug: two line changes close enough together
+        // that the second lands while the first spring is still travelling, then one more, then rest.
+        val host = Host()
+        val first = host.rows.associateWith { host.visual(it) }
+        host.change() // t = 0
+        host.segment(500f, first, "N")
+
+        val second = host.rows.associateWith { host.visual(it) }
+        host.change() // t = 0.5 s
+        host.segment(1_200f, second, "N+1")
+
+        val third = host.rows.associateWith { host.visual(it) }
+        host.change() // t = 1.2 s
+        host.settle("N+2")
+        host.assertMoved(third, "N+2")
+        host.assertNoJump("timeline")
+
+        host.rows.forEach {
+            assertEquals(0f, it.translationY, 0f)
+            assertTrue("no finish was dispatched", it.finished >= 1)
+        }
+        assertEquals(0, host.refused)
+        assertFalse(host.wave.isRunning)
+    }
+
+    @Test
+    fun `the host walking the block up itself is followed, not cancelled`() {
+        // 1626, 16:52:22: one takeover dy=-217, then ~290 px of layout movement over ~0.4 s with no
+        // animateMove — the host's own animation of the line change. Folding those frames into the
+        // residual pins the rows where the eye left them ("this line does not move"), and the
+        // residual then runs to ±3600 where the takeover is handed back and the block snaps
+        // ("and then it jumps to the line after next").
+        val host = Host(rowCount = 12)
+        host.change(shift = 217) // the log's takeover dy=-217
+        val afterPush = host.rows.associateWith { it.translationY }
+        val start = host.rows.associateWith { host.visual(it) }
+        // Two of the twelve are off screen, so the layout leaves their tops alone; the ten that are
+        // still visible all move by the same amount, which is exactly the case that used to leak.
+        val visible = host.rows.take(10)
+        listOf(-33, -102, -81, -64, -10).forEach { step ->
+            host.layOut(step, visible)
+            host.frame()
+            host.rows.forEach { row ->
+                assertTrue(
+                    "residual grew to " + row.translationY + " (push wrote " + afterPush.getValue(row) + ")",
+                    abs(row.translationY) <= abs(afterPush.getValue(row)) + 1f,
+                )
+            }
+        }
+        // Nothing was folded into a residual: the ten frames of host movement all happened on
+
+        // screen, at the host's own rate.
+        host.rows.forEach { row ->
+            assertEquals("compensated the host's own movement", 0f, host.wave.compensatedOf(row), 0f)
+        }
+        // The block followed the layout instead of being held against it.
+        visible.forEach { row ->
+            assertTrue(
+                "did not follow the host: " + row.name + " moved " + (start.getValue(row) - host.visual(row)),
+                start.getValue(row) - host.visual(row) >= 250f,
+            )
+        }
+        host.assertNoJump("host layout")
+        assertEquals(0, host.refused)
+    }
+
+    @Test
+    fun `a background line growing still rides under the rows it pushes down`() {
+        // The case the compensation exists for: 4 px per frame, 12 frames, one row's line growing.
+        val host = Host(rowCount = 4)
+        host.change()
+        val below = host.rows.drop(1)
+        val top = host.rows.first()
+        var previous = host.visual(below.first())
+        repeat(12) {
+            host.layOut(4, below)
+            host.frame()
+            val now = host.visual(below.first())
+            // An upward line change: the row may keep travelling up while its layout grows down, but
+            // it must never be pushed back down by the layout it is riding.
+            assertTrue("moved back down with the background line: " + previous + " -> " + now, now <= previous + 1e-3f)
+            previous = now
+        }
+        // Absorbed: the rows below stay put while their layout grows, and only the row above moves.
+        assertTrue("absorbed nothing", host.wave.compensatedOf(below.first()) >= 40f)
+        assertEquals(0f, host.wave.compensatedOf(top), 0f)
+        host.settle()
+        assertTrue(below.first().translationY <= 1f)
+    }
+
+    @Test
+    fun `a line change that really moves is never reported as a skip`() {
+        // The other half of the skip? diagnostic: a row that is travelling, staggered, or parked by
+        // the interlude must not be reported as "this line change did nothing".
+        val reported = ArrayList<String>()
+        val rows = (0 until 4).map { Row("r" + it, top = 300 + it * 120) }
+        val wave = LyricLineSpringWave<Row>(
+            write = { row, offset -> row.translationY = offset },
+            finish = { row -> row.finished += 1 },
+            layoutTop = { row -> row.top },
+            onSkipped = { holder, moved, lag, window ->
+                reported += holder.toString() + " moved=" + moved + " lag=" + lag + " in " + window
+            },
+        ).also { it.paneHeightPx = 1_000 }
+        wave.hold(400f) // the interlude's dots: parked, and not a swallowed move
+        rows.forEach { wave.push(it, 240f, it.top, tempo()) }
+        repeat(100) { wave.advance(16.6f) }
+        assertTrue("a real line change was reported as a skip: " + reported, reported.isEmpty())
+    }
+
+    @Test
+    fun `compensation stops at the cap so the residual cannot run away`() {
+        // 6 px per frame for 30 frames = 180 px: one background line's worth is compensated, the rest
+        // is followed (and logged as shift-cap), never folded into an unbounded residual.
+        val refusals = ArrayList<String>()
+        val rows = listOf(Row("only", top = 400))
+        val wave = LyricLineSpringWave<Row>(
+            write = { row, offset -> row.translationY = offset },
+            finish = { row -> row.finished += 1 },
+            layoutTop = { row -> row.top },
+            onShiftSkipped = { _, delta, reason -> refusals += reason.name + ":" + delta },
+        )
+        wave.push(rows[0], 240f, rows[0].top, tempo())
+        repeat(30) {
+            rows[0].top += 6
+            wave.advance(16.6f)
+        }
+        assertEquals(LyricLineSpringPolicy.MAX_COMPENSATION_PX.toFloat(), wave.compensatedOf(rows[0]), 8f)
+        assertTrue("the cap never fired: " + refusals, refusals.any { it.startsWith("CAPPED") })
     }
 }

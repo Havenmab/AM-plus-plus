@@ -116,14 +116,33 @@ object LyricLineSpringPolicy {
     const val SETTLE_EPSILON_VELOCITY: Float = SETTLE_EPSILON_PX / REFERENCE_FRAME_SECONDS
 
     /**
-     * The largest layout shift one frame may absorb before it is treated as a re-anchor.
+     * The largest per-frame layout shift that is still "a background line grew".
      *
-     * A background line growing from nothing moves the rows below it by its own height — tens of
-     * pixels over a few hundred milliseconds, i.e. a few pixels per frame. Anything this large
-     * inside one frame is a recycled row, a seek or a jump, where the layout moved for a reason we
-     * must not absorb.
+     * A background line growing from nothing moves the rows below it by its own height over a few
+     * hundred milliseconds, i.e. **4-6 px per frame** measured on 1626. Anything faster is not a
+     * line growing but the host moving the block itself — its own line-change animation, a scroll,
+     * a re-anchor, a recycled row — and folding that into the residual does not make it invisible,
+     * it *pins the row to the screen* while the layout runs away underneath: the residual grows by
+     * every frame the host animates, the block stops moving ("this line change does nothing"), and
+     * past [MAX_RESIDUAL_PX] the takeover is handed back and everything snaps at once ("and then it
+     * jumps straight to the line after next").
+     *
+     * 1626 measured 33/102/81/64 px on four consecutive frames of a 290 px host animation, i.e. an
+     * order of magnitude above a growing line; 8 px sits between the two and leaves the measured
+     * 4-6 px case a 60 % margin.
      */
-    const val MAX_LAYOUT_SHIFT_PX: Int = 240
+    const val MAX_COMPENSABLE_SHIFT_PX: Int = 8
+
+    /**
+     * How much one line change may take out of a row's travel in total, in pixels.
+     *
+     * The per-frame bound alone still lets a *slow* host movement (6-8 px per frame, e.g. a smooth
+     * scroll to the new anchor) be compensated frame after frame, which is the same "glued to the
+     * screen" failure at a lower rate. One background line is tens of pixels and a whole line change
+     * is ~120 px, so 96 px is "a background line grew, with room to spare" and can never hold a row
+     * still for longer than that.
+     */
+    const val MAX_COMPENSATION_PX: Int = 96
 
     /** The one spring every line change is replayed at; see [AMLL_SETTLE_MS]. */
     val tempo: LyricLineSpringTempo = LyricLineSpringTempo(
@@ -133,8 +152,19 @@ object LyricLineSpringPolicy {
         decay = LyricLineSpringDecay.AMLL,
     )
 
-    /** True when a per-frame layout shift of [deltaPx] is a background line growing, not a jump. */
-    fun acceptsLayoutShift(deltaPx: Int): Boolean = abs(deltaPx) <= MAX_LAYOUT_SHIFT_PX
+    /**
+     * True when a per-frame layout shift of [deltaPx] is a background line growing.
+     *
+     * Anything larger is the host moving the block itself (see [MAX_COMPENSABLE_SHIFT_PX]) and must
+     * be *followed*, not cancelled: the row stays where the layout puts it and its spring simply
+     * keeps aiming at 0.
+     */
+    fun acceptsLayoutShift(deltaPx: Int): Boolean =
+        deltaPx != 0 && abs(deltaPx) <= MAX_COMPENSABLE_SHIFT_PX
+
+    /** True when [deltaPx] still fits under [MAX_COMPENSATION_PX] after [compensatedPx] was taken. */
+    fun acceptsCompensation(compensatedPx: Float, deltaPx: Int): Boolean =
+        abs(compensatedPx) + abs(deltaPx) <= MAX_COMPENSATION_PX
 
     /** True when [dy] is a displacement this feature is willing to own. */
     fun acceptsDisplacement(dy: Int): Boolean = dy != 0 && abs(dy) <= MAX_DISPLACEMENT_PX

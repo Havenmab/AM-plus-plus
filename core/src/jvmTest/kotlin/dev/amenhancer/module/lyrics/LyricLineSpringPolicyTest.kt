@@ -225,6 +225,37 @@ class LyricLineSpringPolicyTest {
         assertTrue("settled", second.settleMs() <= second.deadlineMs())
     }
 
+    /**
+     * The compensation gates: what one per-frame layout shift must look like to be a growing line.
+     *
+     * 1626 measured a growing background line at 4-6 px per frame and the host's *own* movement of
+     * the block at 33/102/81/64 px on four consecutive frames. The bound sits between the two, and
+     * one line change may not take more than a background line's worth out of a row's travel — past
+     * that the row is being held still while the layout runs away, which is the reported "this line
+     * does not move, and then it jumps straight to the one after next".
+     */
+    @Test
+    fun `only a background line's per frame growth is compensable`() {
+        assertTrue(LyricLineSpringPolicy.acceptsLayoutShift(4))
+        assertTrue(LyricLineSpringPolicy.acceptsLayoutShift(-6))
+        assertTrue(LyricLineSpringPolicy.acceptsLayoutShift(LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX))
+        assertFalse(LyricLineSpringPolicy.acceptsLayoutShift(0))
+        listOf(-33, -102, -81, -64, -10).forEach {
+            assertFalse(
+                "compensated the host's own " + it + "px frame",
+                LyricLineSpringPolicy.acceptsLayoutShift(it),
+            )
+        }
+        assertEquals(8, LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX)
+
+        assertTrue(LyricLineSpringPolicy.acceptsCompensation(0f, 8))
+        assertTrue(LyricLineSpringPolicy.acceptsCompensation(88f, 8))
+        assertFalse(LyricLineSpringPolicy.acceptsCompensation(92f, 8))
+        assertEquals(96, LyricLineSpringPolicy.MAX_COMPENSATION_PX)
+        // One background line is tens of pixels and one line change is about 120.
+        assertTrue(LyricLineSpringPolicy.MAX_COMPENSATION_PX < 120)
+    }
+
     /** Plain RK4 on x'' = (-k x - c x') / m, sampled at 0.1 ms, for the cross-check above. */
     private fun integrate(spring: LyricLineSpring, untilMs: Float): (Float) -> Float {
         val stepSeconds = 0.0001

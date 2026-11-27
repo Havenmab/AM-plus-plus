@@ -1,5 +1,6 @@
 package dev.amenhancer.module.hook
 
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
@@ -64,9 +65,39 @@ import dev.amenhancer.module.model.ModuleSettings
 internal class AppleMusicLyricLineSpringTarget(
     private val profile: AppleMusicHostProfile,
     private val loader: ClassLoader,
+    /**
+     * The host's application context, for the on-device trace file (`/sdcard/Download/AMPP/…`).
+     *
+     * Null — a target built without one — means the diagnostics stay on logcat, nothing else
+     * changes and no file is ever created.
+     */
+    private val context: Context? = null,
     private val settings: () -> ModuleSettings,
 ) : LyricLineSpringTarget {
-    private val diagnostics = LyricLineSpringDiagnostics()
+    /**
+     * The feature's switches, read live.
+     *
+     * One answer for both readers: the hooks decide whether a move may be taken over, and the trace
+     * file decides whether it may be created or appended. A throwing settings read is "off", never a
+     * crash in the lyric list.
+     */
+    private fun featureEnabled(): Boolean = runCatching {
+        LyricLineSpringPolicy.isEnabled(settings())
+    }.getOrDefault(false)
+
+    private val diagnostics = LyricLineSpringDiagnostics(sink = context?.let { host -> traceFileSink(host) })
+
+    /** The on-device trace file, opened lazily by the first line that is actually printed. */
+    private fun traceFileSink(host: Context): (String) -> Unit {
+        val file = LineSpringLogFile(
+            context = host,
+            packageName = profile.packageName,
+            version = profile.versionName + " (" + profile.versionCode + ")",
+            enabled = { featureEnabled() },
+        )
+        return { line -> file.write(line) }
+    }
+
     private var registration: HookRegistrationScope? = null
 
     @Synchronized
@@ -94,7 +125,7 @@ internal class AppleMusicLyricLineSpringTarget(
                 "Lyric line-change spring not installed; " + profile.id + ": " + reason,
             )
         }
-        val session = SpringSession(roles, settings, diagnostics, profile, loader)
+        val session = SpringSession(roles, ::featureEnabled, diagnostics, profile, loader)
         val scope = HookRegistrationScope()
         return try {
             session.install(scope)
@@ -118,7 +149,11 @@ internal class AppleMusicLyricLineSpringTarget(
     /** One installed spring takeover: the hooks, the batches, and the one shared frame clock. */
     private class SpringSession(
         private val roles: LyricLineSpringRoles,
-        private val settings: () -> ModuleSettings,
+        /**
+         * The feature's live switch, shared with the trace file: the same answer decides whether a
+         * move may be taken over and whether the diagnosis may be written at all.
+         */
+        private val enabled: () -> Boolean,
         private val diagnostics: LyricLineSpringDiagnostics,
         private val profile: AppleMusicHostProfile,
         private val loader: ClassLoader,
@@ -405,11 +440,10 @@ internal class AppleMusicLyricLineSpringTarget(
          * True when this feature must take the next line change over.
          *
          * Read live: both switches take effect on the next line change, not on the ones already in
-         * flight. A throwing settings read is a refusal, never a crash in the lyric list.
+         * flight. A throwing settings read is a refusal, never a crash in the lyric list. This is the
+         * same answer the trace file uses to decide whether it may be created or appended at all.
          */
-        private fun isEnabled(): Boolean = runCatching {
-            LyricLineSpringPolicy.isEnabled(settings())
-        }.getOrDefault(false)
+        private fun isEnabled(): Boolean = enabled()
 
         /** Only the lyric list's animator; every other RecyclerView keeps its own animations. */
         private fun isLyricsAnimator(animator: Any): Boolean {
@@ -467,9 +501,18 @@ internal class AppleMusicLyricLineSpringTarget(
  * host's count of line changes against ours, plus `tick` to prove the clock ran between them.
  * Repeats are rate limited per class (≤2 lines a second, except the 250 ms heartbeat) and the whole
  * session stops after [MAX_LINES], so a long song cannot flood logcat.
+ *
+ * The same lines also go to `/sdcard/Download/AMPP/line-spring.log` through [sink]
+ * ([LineSpringLogFile]), timestamped, so a device report needs no computer: that file is where the
+ * whole sequence survives. Both destinations are the same funnel, so neither can drift.
  */
 internal class LyricLineSpringDiagnostics(
     private val clock: () -> Long = { SystemClock.uptimeMillis() },
+    /**
+     * Where each line also goes when the feature writes a file — `(line) -> Unit`, already
+     * timestamped by the sink. Null (a test, a target without a context) means logcat only.
+     */
+    private val sink: ((String) -> Unit)? = null,
 ) {
     private val reported = HashMap<String, Long>()
     private var lastCleanupAt = Long.MIN_VALUE
@@ -801,6 +844,9 @@ internal class LyricLineSpringDiagnostics(
         }
         runCatching { Log.i(TAG, line) }
         runCatching { ModernXposedRuntime.log(TAG + " " + line) }
+        // The file is the third destination, and the only one a user can open without a computer.
+        // It gets the same line; the sink adds its own timestamp and refuses while the switch is off.
+        sink?.let { write -> runCatching { write(line) } }
     }
 
     private fun fixed(value: Float): String = String.format(java.util.Locale.US, "%.1f", value)

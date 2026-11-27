@@ -1059,9 +1059,10 @@ class LyricLineSpringWaveTest {
             // AMLL's settle time, not the host's: twenty to sixty frames at 60 Hz.
             assertTrue("change=" + change + " took " + frames + " frames", frames in 20..60)
         }
+        // Eight rows, four line changes: every row starts and finishes once per change.
         assertEquals(32, watched.jumps.size)
-        assertEquals(4, rows.sumOf { it.started })
-        assertEquals(4, rows.sumOf { it.finished })
+        assertEquals(32, rows.sumOf { it.started })
+        assertEquals(32, rows.sumOf { it.finished })
         assertTrue(
             "a resting row reported a background-line shift: " + watched.shifts,
             watched.shifts.isEmpty(),

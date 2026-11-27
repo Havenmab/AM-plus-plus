@@ -9,6 +9,7 @@ import dev.amenhancer.module.lyrics.LyricInterludeHold
 import dev.amenhancer.module.lyrics.LyricLineShiftSkip
 import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
+import dev.amenhancer.module.lyrics.LyricLineSpringStatus
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import dev.amenhancer.module.model.ModuleSettings
@@ -130,9 +131,13 @@ internal class AppleMusicLyricLineSpringTarget(
                 diagnostics.shiftIgnored(delta, reason)
             },
             skipped = { row, moved, lag, window -> diagnostics.skipped(row.holder, moved, lag, window) },
+            stuck = { rows, maxLag, since -> diagnostics.stuck(rows, maxLag, since) },
         )
         private var lastFrameNanos = 0L
         private var frameScheduled = false
+
+        /** Choreographer callbacks since the install: the heartbeat's `frame=` counter. */
+        private var frames = 0L
 
         /**
          * How long the interlude's exit animation still owns the start of a line change.
@@ -142,6 +147,14 @@ internal class AppleMusicLyricLineSpringTarget(
          */
         private val exitHold = LyricInterludeHold()
         private var interludeHook: AppleMusicLyricInterludeExitHook? = null
+
+        /**
+         * 「换行打点」: the host's own "this line is current now" callback.
+         *
+         * Optional and independent: a build without its role leaves the spring exactly as it was and
+         * only costs the `line-change` line of the log.
+         */
+        private var lineChangeTrace: AppleMusicLyricLineChangeTrace? = null
 
         private val interludeListener = object : AppleMusicLyricInterludeExitHook.Listener {
             override fun onInterludeExitStarted() {
@@ -174,6 +187,26 @@ internal class AppleMusicLyricLineSpringTarget(
             }.getOrNull()
             interludeHook?.let { hook ->
                 runCatching { hook.install(scope) }.onFailure { diagnostics.failed("interlude", it) }
+            }
+            // Optional, read-only and independent of everything above: the host's own line-change
+            // callback, so the log can count the host's line changes against our pushes. It answers
+            // nothing, writes nothing and never installs anything else — a build without its role
+            // simply logs one reason and keeps the spring.
+            lineChangeTrace = runCatching {
+                AppleMusicLyricLineChangeTrace.open(
+                    profile = profile,
+                    loader = loader,
+                    onLineChange = { start, end ->
+                        // Same switch as the takeovers: with the spring off there is nothing to
+                        // pair the line with, so the line is not printed either.
+                        if (isEnabled()) diagnostics.lineChange(start, end)
+                    },
+                    onUnavailable = { reason -> diagnostics.traceUnavailable(reason) },
+                )
+            }.getOrNull()
+            lineChangeTrace?.let { trace ->
+                runCatching { trace.install(scope) }
+                    .onFailure { diagnostics.failed("lineChange", it) }
             }
         }
 
@@ -234,9 +267,10 @@ internal class AppleMusicLyricLineSpringTarget(
             // row's total lag, not this line's displacement). Judging the residual alone would hand
             // a fast song's rows back to the host mid-song, where `mc.y#m` -> `mc.y#x` -> `mc.y#e`
             // zeroes the translation and the move reads as an instant jump.
-            if (!LyricLineSpringPolicy.acceptsMove(toY - fromY, -dy.toFloat())) {
+            val layoutJump = toY - fromY
+            if (!LyricLineSpringPolicy.acceptsMove(layoutJump, -dy.toFloat())) {
                 diagnostics.refused(
-                    "layoutJump=" + (toY - fromY) + " residual=" + dy + " beyond jump ±" +
+                    "layoutJump=" + layoutJump + " residual=" + dy + " beyond jump ±" +
                         LyricLineSpringPolicy.MAX_DISPLACEMENT_PX + "px / residual ±" +
                         LyricLineSpringPolicy.MAX_RESIDUAL_PX.toInt() + "px",
                 )
@@ -267,17 +301,19 @@ internal class AppleMusicLyricLineSpringTarget(
             // One move per row, not one per animateMove: a correction re-aims the move RecyclerView
             // already has, so it dispatches neither a start nor a finish (see LyricLineSpringPush).
             if (!applied.moving) notifyStarted(row)
-            // A repeat move for a row that is already travelling is a *target correction*: the
-            // layout moved by applied.layoutDeltaPx under an unchanged visual position, and the
-            // row's velocity is kept only while it still aims home. Printing both lets the device
-            // log answer "correction or impulse" without pasting a whole per-frame trajectory.
-            when {
-                applied.merged -> diagnostics.merged(applied)
-                applied.moving -> diagnostics.retargeted(applied)
-                else -> diagnostics.takeOver(
-                    dy, LyricLineSpringPolicy.tempo, tracks.activeWaves(), applied.heldMs.toInt(),
-                )
-            }
+            // One line per taken-over move, whatever the wave did with it: `kind=new` a row joining
+            // this line change, `kind=retarget` a travelling row whose end point moved under an
+            // unchanged visual position, `kind=merge` a correction below a pixel. The distinction is
+            // the whole diagnostic: only `new` owes a started notification, and only `retarget` can
+            // carry the "pushed down, then bounced" velocity drop.
+            diagnostics.push(
+                dy = dy,
+                layoutJumpPx = layoutJump,
+                applied = applied,
+                tempo = LyricLineSpringPolicy.tempo,
+                waves = tracks.activeWaves(),
+                describe = { tracks.status(animator) },
+            )
         }
 
         /** mc.y#g, after: keep RecyclerView from concluding the list is idle mid-spring. */
@@ -333,6 +369,7 @@ internal class AppleMusicLyricLineSpringTarget(
 
         private fun onFrame(frameTimeNanos: Long) {
             frameScheduled = false
+            frames += 1
             val stillRunning = runCatching { advance(frameTimeNanos) }.getOrElse { error ->
                 diagnostics.failed("frame", error)
                 runCatching { tracks.finishAll(null) }
@@ -345,7 +382,16 @@ internal class AppleMusicLyricLineSpringTarget(
             val previous = lastFrameNanos
             lastFrameNanos = frameTimeNanos
             val step = if (previous == 0L) 0f else (frameTimeNanos - previous) / 1_000_000f
-            if (!tracks.advance(step)) return false
+            // A batch pushed since the last frame is ranked by *this* frame, i.e. the wave starts
+            // here; `previous == 0` is the clock having been (re)posted for rows already in flight.
+            // Either way this is the only frame at which a batch's stagger exists to be printed.
+            val starting = tracks.awaitingRank() || previous == 0L
+            val stillRunning = tracks.advance(step)
+            if (starting) diagnostics.waveStarted { tracks.status() }
+            // The heartbeat is emitted *from* the frame callback, so a gap in `tick` lines while
+            // rows were still owed is the frame clock stopping — something no push-side line shows.
+            diagnostics.tick(frames) { tracks.status() }
+            if (!stillRunning) return false
             if (ensureClock()) return true
             // The clock died under a live batch; put the rows back at rest rather than leave them
             // hanging half a line away from their layout position.
@@ -402,99 +448,183 @@ internal class AppleMusicLyricLineSpringTarget(
 /**
  * Bounded, text-only observability for 「换行弹簧」.
  *
- * `adb logcat -s AMPP-LineSpring` answers the three questions a device run asks: did a move get
- * taken over (and with what tempo), did something get handed back and why, and did a reset path
- * clean up. Repeats are rate-limited and the session stops after [MAX_LINES], so a long song cannot
- * flood logcat.
+ * `adb logcat -s AMPP-LineSpring` answers what a device run asks, one line per event, with a fixed
+ * vocabulary so a log can be read without guessing:
+ *
+ *  * `line-change start=… end=…` — the host committed a new current line (the upstream fact);
+ *  * `push kind=new|retarget|merge …` — a move was offered and taken over, and what the wave did;
+ *  * `start rows=… delays=[…]` — a batch started stepping (or the clock was re-posted): its stagger;
+ *  * `tick … frame=…` — 250 ms of real Choreographer frames: the heartbeat, printed from the
+ *    callback itself, so its absence while rows are owed is the clock stopping;
+ *  * `stuck rows=… maxLag=… sinceMs=…` — a pushed batch was still where it was written 400 ms on;
+ *  * `skip?` — one row of that batch, 200 ms on;
+ *  * `handed back: …` — a move the spring refused, with the bound it failed;
+ *  * `layout-shift` / `ignore-shift` / `shift-cap` — what the per-frame layout reading did;
+ *  * `reset endAnimation|endAnimations …` — the host zeroed rows, and how far they were from home;
+ *  * `idle host=0 override=1 …` — the host said "list is idle" while the wave was still travelling.
+ *
+ * The pairing that answers "the middle line did not move" is `line-change` against `push`: the
+ * host's count of line changes against ours, plus `tick` to prove the clock ran between them.
+ * Repeats are rate limited per class (≤2 lines a second, except the 250 ms heartbeat) and the whole
+ * session stops after [MAX_LINES], so a long song cannot flood logcat.
  */
 internal class LyricLineSpringDiagnostics(
     private val clock: () -> Long = { SystemClock.uptimeMillis() },
 ) {
     private val reported = HashMap<String, Long>()
-    private var lastTakeOverAt = Long.MIN_VALUE
-    private var lastTakeOverKey = ""
     private var lastCleanupAt = Long.MIN_VALUE
     private var emitted = 0
-    private var retargets = 0
     private var shifts = 0
-    private var merges = 0
     private var ignores = 0
     private var skips = 0
     private var idles = 0
     private var lastIdleAt = Long.MIN_VALUE
 
-    /**
-     * A row was taken over: the spring it resolved to, and how many waves are live.
-     *
-     * The tempo is the constant AMLL one, so it is printed once per distinct displacement rather
-     * than per line: `t` is the settle time the spring aims at, `k`/`c` its constants.
-     */
-    fun takeOver(dy: Int, tempo: LyricLineSpringTempo, waves: Int, heldMs: Int = 0) {
-        val key = dy.toString() + "/" + heldMs
-        val now = now()
-        if (key == lastTakeOverKey && now - lastTakeOverAt < REPEAT_WINDOW_MS) return
-        lastTakeOverKey = key
-        lastTakeOverAt = now
-        emit(
-            "takeover dy=" + dy + " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
-                " c=" + fixed(tempo.damping) + " waves=" + waves +
-                (if (heldMs > 0) " held=" + heldMs + "ms" else ""),
-        )
-    }
+    /** Per-class rate gates: when each class last printed, and how much of its own budget it spent. */
+    private val gateAt = HashMap<String, Long>()
+    private val gateCount = HashMap<String, Int>()
+
+    /** True once the heartbeat's budget is spent and its one closing line has been printed. */
+    private var tickCapped = false
 
     /**
-     * A row that was already travelling got its end point corrected instead of a second impulse.
+     * One taken-over `animateMove`, whatever the wave then did with it.
      *
-     * `layoutDelta` is how far that row's layout moved under it — the background line's own height
-     * animation, a second re-anchor, a decoration pass. The host's `dy` already folded the row's
-     * translation in, so the visual position does not move: the *end point* does, by this amount.
-     * `v` is the velocity offered to the new spring and `kept` the one it started with; `kept=0`
-     * on a drop means the correction put the end point on the other side of the row and the old
-     * velocity would have overshot it, which is exactly the "pushed down, then bounced" look.
+     * This replaces the three lines the diagnostic used to print (`takeover`, `retarget`,
+     * `merge`) because a device log asks one question per move — which of the three happened, and
+     * how big was it — and three separate lines could not be read as one batch:
+     *
+     *  * `kind=new` — the row was not travelling; it joins this line change, owes one started
+     *    notification, and gets its stagger slot on the next frame (see [waveStarted]);
+     *  * `kind=retarget` — the row was already travelling; the layout moved under an unchanged
+     *    visual position, so only the end point moved. `kept=0` on a `v` that was not 0 is the
+     *    correction having flipped the target, i.e. the "pushed down, then bounced" shape;
+     *  * `kind=merge` — the correction was below a pixel and was folded into the running spring:
+     *    nothing the eye could resolve, which is why `accepted=0` there.
+     *
+     * `dy` is the host's own displacement, `lag` the residual that was written (`-dy`),
+     * `layoutJump` the layout movement behind it (`toY - fromY`), `rows` how many rows that
+     * animator's wave now holds, `delayMs` every one of those rows' remaining wait in join order
+     * (a just-pushed row reads 0 here — its slot is assigned on the next frame) and `accepted`
+     * whether the wave took this displacement as the row's new end point.
      */
-    fun retargeted(applied: LyricLineSpringPush) {
-        val key = fixed(applied.lagPx) + "/" + fixed(applied.layoutDeltaPx) + "/" + fixed(applied.keptVelocity)
-        val now = now()
-        synchronized(reported) {
-            val last = reported[key]
-            if (last != null && now - last < RETARGET_WINDOW_MS) return
-            if (retargets >= MAX_RETARGET_LINES) return
-            reported[key] = now
-            retargets += 1
+    fun push(
+        dy: Int,
+        layoutJumpPx: Int,
+        applied: LyricLineSpringPush,
+        tempo: LyricLineSpringTempo,
+        waves: Int,
+        describe: () -> LyricLineSpringStatus?,
+    ) {
+        if (!gate(PUSH, PUSH_WINDOW_MS, MAX_PUSH_LINES)) return
+        val status = runCatching(describe).getOrNull()
+        val kind = when {
+            applied.merged -> "merge"
+            applied.moving -> "retarget"
+            else -> "new"
         }
         emit(
-            "retarget lag=" + fixed(applied.lagPx) + " layoutDelta=" + fixed(applied.layoutDeltaPx) +
-                " v=" + fixed(applied.offeredVelocity) + " kept=" + fixed(applied.keptVelocity) +
-                (if (applied.velocityDropped) " dropped=1" else "") +
+            "push kind=" + kind +
+                " dy=" + dy +
+                " lag=" + fixed(applied.lagPx) +
+                " layoutJump=" + layoutJumpPx +
+                " rows=" + (status?.rows ?: 0) +
+                " delayMs=" + delays(status) +
+                " accepted=" + (if (applied.merged) 0 else 1) +
+                (if (kind == "new") {
+                    " t=" + fixed(tempo.tempoMs) + "ms k=" + fixed(tempo.stiffness) +
+                        " c=" + fixed(tempo.damping)
+                } else {
+                    ""
+                }) +
+                (if (kind == "retarget") {
+                    " v=" + fixed(applied.offeredVelocity) + " kept=" + fixed(applied.keptVelocity) +
+                        (if (applied.velocityDropped) " dropped=1" else "")
+                } else {
+                    ""
+                }) +
                 (if (applied.waiting) " waiting=1" else "") +
-                (if (applied.delayDropped) " unstaggered=1" else ""),
+                (if (applied.delayDropped) " unstaggered=1" else "") +
+                (if (applied.heldMs > 0f) " held=" + applied.heldMs.toInt() + "ms" else "") +
+                " waves=" + waves,
         )
     }
 
     /**
-     * A correction too small to see was merged into the running spring instead of re-aiming it.
+     * A batch started stepping: the AMLL stagger it will run.
      *
-     * `lag` is the sub-pixel end point the move offered and `layoutDelta` how far the layout moved
-     * under the row (both below [LyricLineSpringPolicy.MIN_VISIBLE_DELTA_PX]). A run of these is the
-     * expected answer to two `dy` that cancel inside one batch — the background line growing and
-     * collapsing, a re-anchor that lands where the row already is — and it is logged rather than
-     * silently dropped so a device run can tell "merged" from "never arrived".
+     * Printed from the frame [LyricLineSpringWave.advance] ranks the pending pushes in — the first
+     * frame at which the delays exist at all — and also from the frame after the clock had to be
+     * re-posted for rows that were already in flight. A `push` line's `delayMs=[…]` therefore
+     * describes the *previous* stagger for a row that has just joined; this line is the answer for
+     * the batch that push belongs to.
      */
-    fun merged(applied: LyricLineSpringPush) {
-        val key = "merge:" + fixed(applied.lagPx) + "/" + fixed(applied.layoutDeltaPx)
-        val now = now()
-        synchronized(reported) {
-            val last = reported[key]
-            if (last != null && now - last < RETARGET_WINDOW_MS) return
-            if (merges >= MAX_MERGE_LINES) return
-            reported[key] = now
-            merges += 1
+    fun waveStarted(describe: () -> LyricLineSpringStatus?) {
+        if (!gate(START, START_WINDOW_MS, MAX_START_LINES)) return
+        val status = runCatching(describe).getOrNull() ?: return
+        if (status.rows == 0) return
+        emit("start rows=" + status.rows + " delays=" + delays(status))
+    }
+
+    /**
+     * The heartbeat: 250 ms of real frames, and what the wave was doing in them.
+     *
+     * Emitted *from* the Choreographer callback, which is the only place that can prove the callback
+     * is running: a gap between two `tick` lines while rows were still owed is the frame clock
+     * stopping, and nothing on the push side can show that. `frame` counts callbacks since the
+     * install, so the delta across two ticks is the real frame rate — two ticks one frame apart after
+     * a second of wall time are a starved clock, not an idle one.
+     *
+     * It is the one class with a sub-second window (the cadence the heartbeat needs); every other
+     * class is held to ≤2 lines a second. Its own budget is bounded and its last line says so, which
+     * is what keeps "tick stopped" from being confusable with "the budget ran out".
+     */
+    fun tick(frame: Long, describe: () -> LyricLineSpringStatus?) {
+        if (tickCapped) return
+        if (!gate(TICK, TICK_WINDOW_MS, MAX_TICK_LINES)) {
+            if (spent(TICK, MAX_TICK_LINES)) {
+                tickCapped = true
+                emit("tick-capped frame=" + frame + " n=" + MAX_TICK_LINES)
+            }
+            return
         }
+        val status = runCatching(describe).getOrNull() ?: return
         emit(
-            "merge lag=" + fixed(applied.lagPx) + " layoutDelta=" + fixed(applied.layoutDeltaPx) +
-                " waiting=" + (if (applied.waiting) 1 else 0),
+            "tick rows=" + status.rows + " moving=" + status.moving + " waiting=" + status.waiting +
+                " maxLag=" + fixed(status.maxLagPx) + " frame=" + frame,
         )
     }
+
+    /**
+     * The host's own line-change callback: "this line is current now".
+     *
+     * The upstream half of the pairing the log has to be read with. Every `line-change` should be
+     * followed by the pushes of the layout pass it triggers; a `line-change` with no `push` means
+     * the host changed the line and no move was offered to the spring, and a `push` with no
+     * `line-change` means something else moved the rows. Neither is visible in a log of the spring
+     * alone — which is exactly the gap this line closes.
+     */
+    fun lineChange(start: Int, end: Int) {
+        if (!gate(LINE_CHANGE, LINE_CHANGE_WINDOW_MS, MAX_LINE_CHANGE_LINES)) return
+        emit("line-change start=" + start + " end=" + end)
+    }
+
+    /**
+     * A pushed batch was still where it was written 400 ms of real spring time later.
+     *
+     * The batch-level answer, next to the per-row [skipped]: `rows` how many rows of that batch had
+     * not moved a pixel, `maxLag` the largest residual among them (what the eye is still owed) and
+     * `sinceMs` the spring time since the batch's last push. Rows parked by their own stagger slot
+     * or by an interlude hold are not counted, so a hit here is not a slow start — it is a row being
+     * held against its own spring.
+     */
+    fun stuck(rows: Int, maxLagPx: Float, sinceMs: Float) {
+        if (!gate(STUCK, STUCK_WINDOW_MS, MAX_STUCK_LINES)) return
+        emit("stuck rows=" + rows + " maxLag=" + fixed(maxLagPx) + " sinceMs=" + sinceMs.toInt())
+    }
+
+    /** The line-change hook did not install; one line, ever. The spring itself is unaffected. */
+    fun traceUnavailable(reason: String) = once("trace", "line-change trace unavailable: " + reason)
 
     /**
      * One frame of a layout change that announced nothing — the background line growing or
@@ -619,6 +749,41 @@ internal class LyricLineSpringDiagnostics(
     fun failed(where: String, error: Throwable) =
         once("failed:" + where, "line spring " + where + " failed: " + (error.message ?: error.javaClass.simpleName))
 
+    /**
+     * `[0,50,100]` — a wave's stagger in join order, bounded so one line stays readable.
+     *
+     * Only built when the line it belongs to is actually going to be printed; a lyric pane never
+     * holds more rows than [MAX_DELAYS], and the bound is there so a broken rank cannot.
+     */
+    private fun delays(status: LyricLineSpringStatus?): String {
+        val list = status?.delays ?: return "[]"
+        if (list.isEmpty()) return "[]"
+        return list.take(MAX_DELAYS).joinToString(",", "[", "]") { it.toInt().toString() }
+    }
+
+    /**
+     * One line per class per window, plus a hard budget per class on top of [MAX_LINES].
+     *
+     * The 500 ms windows are what "at most two lines a second" means for every event line; [tick] is
+     * the exception (a heartbeat needs its 250 ms cadence) and is bounded by its own budget plus its
+     * one closing `tick-capped` line. [MAX_LINES] remains the wall underneath all of them.
+     */
+    private fun gate(name: String, windowMs: Long, budget: Int): Boolean {
+        val now = now()
+        synchronized(reported) {
+            val last = gateAt[name] ?: Long.MIN_VALUE
+            if (now - last < windowMs) return false
+            val printed = gateCount[name] ?: 0
+            if (printed >= budget) return false
+            gateAt[name] = now
+            gateCount[name] = printed + 1
+        }
+        return true
+    }
+
+    /** True when [name]'s own budget is spent. Unlocked read: a diagnostic, not a decision. */
+    private fun spent(name: String, budget: Int): Boolean = (gateCount[name] ?: 0) >= budget
+
     private fun once(key: String, line: String) {
         synchronized(reported) {
             if (reported.containsKey(key)) return
@@ -643,25 +808,19 @@ internal class LyricLineSpringDiagnostics(
     private companion object {
         const val TAG = "AMPP-LineSpring"
 
-        /** Every line is bounded; retarget lines get their own budget on top of this one. */
-        const val MAX_LINES = 240
-
-        /** How many "the end point moved" lines one session may print, so a song cannot flood. */
-        const val MAX_RETARGET_LINES = 160
+        /**
+         * The wall: one whole session (one song, or one cold start's worth of songs) prints at most
+         * this many lines, whatever the per-class budgets still allow.
+         */
+        const val MAX_LINES = 200
 
         const val REPEAT_WINDOW_MS = 500L
-
-        /** A corrected row prints once per distinct key inside this window. */
-        const val RETARGET_WINDOW_MS = 300L
 
         /** One absorbed layout-shift line per holder inside this window. */
         const val SHIFT_WINDOW_MS = 100L
 
         /** Budget for the layout-shift lines, on top of [MAX_LINES]. */
         const val MAX_SHIFT_LINES = 160
-
-        /** Budget for the merged sub-pixel corrections, so a long song cannot flood logcat. */
-        const val MAX_MERGE_LINES = 60
 
         /** One refused layout shift per reason inside this window, and a bounded budget. */
         const val IGNORE_WINDOW_MS = 500L
@@ -674,5 +833,40 @@ internal class LyricLineSpringDiagnostics(
         /** One `idle` line a second: it repeats for as long as a wave is travelling. */
         const val IDLE_WINDOW_MS = 1_000L
         const val MAX_IDLE_LINES = 12
+
+        /** Gate keys: one rate limit and one budget per line class, so no class can starve another. */
+        const val PUSH = "push"
+        const val START = "start"
+        const val TICK = "tick"
+        const val LINE_CHANGE = "line-change"
+        const val STUCK = "stuck"
+
+        /**
+         * ≤2 lines a second for every event class.
+         *
+         * `push` is the busiest (a fast song offers 4-8 moves per line change), so its budget is the
+         * largest; `line-change` is the one line per host line change the pushes are counted against.
+         */
+        const val PUSH_WINDOW_MS = 500L
+        const val MAX_PUSH_LINES = 60
+        const val START_WINDOW_MS = 500L
+        const val MAX_START_LINES = 20
+        const val LINE_CHANGE_WINDOW_MS = 500L
+        const val MAX_LINE_CHANGE_LINES = 40
+        const val STUCK_WINDOW_MS = 2_000L
+        const val MAX_STUCK_LINES = 20
+
+        /**
+         * The heartbeat: 250 ms, the cadence that makes a gap meaningful.
+         *
+         * It only ever prints while the frame clock is running (the clock is posted only while a
+         * wave is live), so over a song it averages well under two lines a second; the burst is
+         * bounded by [MAX_TICK_LINES] and closed by one `tick-capped` line.
+         */
+        const val TICK_WINDOW_MS = 250L
+        const val MAX_TICK_LINES = 80
+
+        /** Longest `delayMs=[…]` printed; a lyric pane shows fewer rows than this. */
+        const val MAX_DELAYS = 12
     }
 }

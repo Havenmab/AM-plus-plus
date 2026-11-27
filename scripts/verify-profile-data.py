@@ -66,6 +66,15 @@ def main():
             }
             for group, roles in required_interlude.items():
                 assert roles <= interlude.get(group, {}).keys(), f'missing line motion interlude {group}: {filename}'
+            # The host's own line-change callback (K#b in 1626): the upstream count the spring's
+            # log is read against. Optional per role at runtime -- no role means no line-change
+            # line, never a failed spring -- but a profile that declares the section must pin it.
+            trace = motion.get('trace') or {}
+            if trace:
+                assert trace.get('contractVersion') == 1, f'missing line motion trace contract: {filename}'
+                required_trace = {'methods': {'lineChange'}}
+                for group, roles in required_trace.items():
+                    assert roles <= trace.get(group, {}).keys(), f'missing line motion trace {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])
         artist_roles = [target['runtimeMemberNames'].get('ARTIST_RUNTIME_ROLE') for target in artist_targets]
         compose_roles = {'compose_profile_view_model', 'compose_profile_success_state'}

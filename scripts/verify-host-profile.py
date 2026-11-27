@@ -437,6 +437,7 @@ def verify_lyric_line_motion_contract(document, classes, failures):
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         failures.append('lyricLineMotion.spring: incomplete semantic keys (%s)' % error)
     checks += verify_lyric_interlude_contract(data, classes, failures)
+    checks += verify_lyric_line_trace_contract(data, classes, failures)
     return checks
 
 def verify_lyric_interlude_contract(motion, classes, failures):
@@ -521,6 +522,68 @@ def verify_lyric_interlude_contract(motion, classes, failures):
                 failures.append('lyricLineMotion.interlude.methods.%s: declared on the empty base' % role)
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         failures.append('lyricLineMotion.interlude: incomplete semantic keys (%s)' % error)
+    return checks
+
+def verify_lyric_line_trace_contract(motion, classes, failures):
+    """The host's own line-change callback: the upstream count the spring's log is read against.
+
+    Optional at runtime -- a missing role costs the one `line-change` log line and never a failed
+    spring -- so this only runs when the section is declared, and then it pins the shapes that would
+    fail *silently*: the member has to be the concrete instance method on the helper the host calls
+    (a declaration inherited or renamed away would resolve and then never fire) and its two
+    parameters have to be the line indices, because that is exactly what the logged line prints.
+    """
+    data = motion.get('trace') if isinstance(motion, dict) else None
+    if data is None:
+        return 0
+    if not isinstance(data, dict) or data.get('contractVersion') != 1:
+        failures.append('lyricLineMotion.trace: missing versioned contract')
+        return 0
+    primitive = {'void': 'V', 'int': 'I', 'long': 'J', 'float': 'F', 'boolean': 'Z'}
+
+    def descriptor(name):
+        return primitive.get(name, name.replace('.', '/') if name.startswith('[')
+                             else 'L' + name.replace('.', '/') + ';')
+
+    def check_member(section, group, role, contract):
+        try:
+            native = classes.get(descriptor(contract['owner']), {})
+            if group == 'fields':
+                valid = (native.get('fields', {}).get(contract['name']) == descriptor(contract['type'])
+                         and not native.get('field_access', {}).get(contract['name'], 8) & 8)
+            else:
+                signature = (contract['name'] + '(' + ''.join(map(descriptor, contract['parameters']))
+                             + ')' + descriptor(contract['returns']))
+                flags = native.get('method_access', {}).get(signature)
+                valid = (flags is not None and not flags & (0x40 | 0x400 | 0x1000)
+                         and bool(flags & 8) == contract.get('static', False))
+            if not valid:
+                failures.append('%s.%s.%s: invalid exact descriptor' % (section, group, role))
+        except (KeyError, TypeError, AttributeError) as error:
+            failures.append('%s.%s.%s: incomplete descriptor (%s)' % (section, group, role, error))
+        return 1
+
+    required_trace = {'methods': {'lineChange'}}
+    checks = 0
+    for group, roles in required_trace.items():
+        entries = data.get(group)
+        if not isinstance(entries, dict):
+            failures.append('lyricLineMotion.trace.%s: missing inventory' % group)
+            continue
+        for role in sorted(roles - entries.keys()):
+            failures.append('lyricLineMotion.trace.%s.%s: missing required role' % (group, role))
+        for role, contract in entries.items():
+            checks += check_member('lyricLineMotion.trace', group, role, contract)
+    try:
+        contract = data['methods']['lineChange']
+        if [descriptor(parameter) for parameter in contract['parameters']] != ['I', 'I']:
+            failures.append('lyricLineMotion.trace.methods.lineChange: not the (start, end) line pair')
+        if descriptor(contract['returns']) != 'V':
+            failures.append('lyricLineMotion.trace.methods.lineChange: not a void callback')
+        if contract.get('static', False):
+            failures.append('lyricLineMotion.trace.methods.lineChange: must be an instance method')
+    except (KeyError, TypeError, AttributeError, IndexError) as error:
+        failures.append('lyricLineMotion.trace: incomplete semantic keys (%s)' % error)
     return checks
 
 def verify_artist_compose_contract(document, classes, failures):

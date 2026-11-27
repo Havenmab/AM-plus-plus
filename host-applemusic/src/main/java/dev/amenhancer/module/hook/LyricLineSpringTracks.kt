@@ -4,6 +4,7 @@ import android.view.View
 import dev.amenhancer.module.lyrics.LyricLineShiftSkip
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
+import dev.amenhancer.module.lyrics.LyricLineSpringStatus
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import java.util.IdentityHashMap
 import kotlin.math.abs
@@ -75,6 +76,8 @@ internal class LyricLineSpringTracks(
         { _, _, _ -> },
     /** One line per pushed row that never moved: the swallowed line change, on the device. */
     private val skipped: (LyricLineSpringRow, Float, Float, Float) -> Unit = { _, _, _, _ -> },
+    /** One line per pushed *batch* that had not moved after 400 ms of spring time. */
+    private val stuck: (rows: Int, maxLagPx: Float, sinceMs: Float) -> Unit = { _, _, _ -> },
 ) {
     private val lock = Any()
     private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
@@ -204,6 +207,37 @@ internal class LyricLineSpringTracks(
     fun activeWaves(): Int = synchronized(lock) { waves.size }
 
     /**
+     * True when some wave is about to rank a batch pushed since the last frame.
+     *
+     * The frame that does it is the wave's start (see [LyricLineSpringWave.awaitingRank]), which is
+     * the only frame at which the batch's stagger exists to be logged.
+     */
+    fun awaitingRank(): Boolean = synchronized(lock) { waves.values.any { it.awaitingRank() } }
+
+    /**
+     * What every live wave holds right now, for the host's frame heartbeat.
+     *
+     * Folds the tablet's two panes into one snapshot (see [LyricLineSpringStatus.plus]); never
+     * mutates a wave and never reads a view it does not already track.
+     */
+    fun status(): LyricLineSpringStatus = synchronized(lock) {
+        var folded = LyricLineSpringStatus.EMPTY
+        waves.values.forEach { folded += it.status() }
+        folded
+    }
+
+    /**
+     * What one animator's wave holds right now, or null when it holds nothing.
+     *
+     * This is the pushed row's own batch — the "how many rows did this line change move" number a
+     * `push` line prints, so a fast song's per-row corrections can be read against one batch.
+     */
+    fun status(animator: Any?): LyricLineSpringStatus? = synchronized(lock) {
+        val wave = animator?.let { waves[it] } ?: return@synchronized null
+        wave.status().takeIf { it.rows > 0 }
+    }
+
+    /**
      * What isRunning() would have ended if the hook had not answered it:
      * waves=1 rows=3 maxLag=217.4.
      *
@@ -233,6 +267,7 @@ internal class LyricLineSpringTracks(
         onSkipped = { holder, moved, lag, window ->
             rows[holder]?.let { skipped(it, moved, lag, window) }
         },
+        onStuck = { count, maxLag, since -> stuck(count, maxLag, since) },
     )
 
     /** Drop a wave that has nothing left to move, unless a row of it has moved on to another. */

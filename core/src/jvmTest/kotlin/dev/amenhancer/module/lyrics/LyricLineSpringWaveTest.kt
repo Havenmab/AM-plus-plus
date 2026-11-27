@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 /**
  * The bookkeeping half of 「换行弹簧」: what a row is told to do, when, and how many times.
@@ -126,30 +127,32 @@ class LyricLineSpringWaveTest {
         wave.advance(16.6f)
         assertTrue(row.translationY > -420f)
 
-        // Two moves taken over: the retired one was finished, the current one is owed.
-        assertEquals(1, row.finished)
+        // One move: the correction re-aimed it, so nothing was retired and nothing is owed yet.
+        assertEquals(0, row.finished)
         wave.settle()
         assertEquals(0f, row.translationY, 0f)
-        assertEquals(2, row.finished)
+        assertEquals(1, row.finished)
     }
 
     @Test
-    fun `three line changes of six rows dispatch exactly eighteen finishes`() {
+    fun `three line changes of six rows dispatch one move per row, not one per change`() {
         val rows = (0 until 6).map { Row("r" + it, top = 200 + it * 120) }
         val wave = wave()
         repeat(3) {
             rows.forEach { row -> wave.push(row, -240f, row.top, tempo()) }
             repeat(4) { wave.advance(16.6f) }
         }
-        // Each line change retired the previous move of all six rows: 2 * 6 so far.
-        assertEquals(12, rows.sumOf { it.finished })
+        // The second and third line changes re-aimed the move the first one started; retiring it
+        // would tell RecyclerView the row is idle while it is still travelling (a fast song does
+        // that every 60-120 ms, which is what swallows the animation on the device).
+        assertEquals(0, rows.sumOf { it.finished })
 
         wave.settle()
         rows.forEach {
             assertEquals(0f, it.translationY, 0f)
-            assertEquals(3, it.finished)
+            assertEquals(1, it.finished)
         }
-        assertEquals(18, rows.sumOf { it.finished })
+        assertEquals(6, rows.sumOf { it.finished })
         assertFalse(wave.isRunning)
     }
 
@@ -263,15 +266,15 @@ class LyricLineSpringWaveTest {
         wave.push(row, -240f, row.top, tempo())
         wave.push(row, -240f, row.top, tempo())
         assertEquals(1, wave.size)
-        // The first push was followed by a second one before the row ever started moving, so the
-        // host started two moves: the first one is finished here.
-        assertEquals(1, row.finished)
+        // The second push landed before the row ever moved, so it corrected the first one instead
+        // of starting a second move: one row, one move, one finish at the end.
+        assertEquals(0, row.finished)
 
         wave.advance(16.6f)
         wave.settle()
         assertEquals(1, wave.size)
         assertEquals(0f, row.translationY, 0f)
-        assertEquals(2, row.finished)
+        assertEquals(1, row.finished)
     }
 
     // ---- target correction: a later move moves the end point, never adds an impulse ------------
@@ -314,7 +317,8 @@ class LyricLineSpringWaveTest {
         // 357 px of travel, shortened by the 40 px the row was moved instead, so the whole line
         // change is one up move of 317 px whose end point already contains the grow.
         assertEquals(317f, initialVisual - (row.top + row.translationY), 0.5f)
-        assertEquals(2, row.finished)
+        // One continuous move: the correction re-aimed it instead of ending it.
+        assertEquals(1, row.finished)
     }
 
     @Test
@@ -405,8 +409,8 @@ class LyricLineSpringWaveTest {
         }
         wave.settle()
         assertEquals(0f, row.translationY, 0f)
-        // One finish per move the host started: the first and each of the four corrections.
-        assertEquals(5, row.finished)
+        // One move the whole way: the four corrections re-aimed it, so one finish is owed.
+        assertEquals(1, row.finished)
     }
 
     @Test
@@ -420,6 +424,210 @@ class LyricLineSpringWaveTest {
         assertEquals(0f, applied.previousLagPx, 0f)
         assertEquals(-120f, applied.lagPx, 0f)
         assertEquals(120f, applied.layoutDeltaPx, 0f) // 0 - (-120): the layout moved up 120
+    }
+
+    // ---- a fast song: rapid line changes must not swallow the wave -------------------------------
+
+    /** What one line change of [fastSong] did, for the assertions below. */
+    private class Batch(
+        val dy: Int,
+        /** True when the hook's takeover gate handed the whole batch back to the host. */
+        val refused: Boolean,
+        /** How far each row's visual position (top + translationY) travelled over the interval. */
+        val movedPx: Map<Row, Float>,
+        /** Rows still inside a stagger slot when the batch was ranked; they may legitimately wait. */
+        val waiting: Set<Row>,
+        /** Rows whose remaining wait grew across the push: the stagger was reset. */
+        val resetWait: Set<Row>,
+        /** Rows finished while still visibly displaced: RecyclerView was told the move was over. */
+        val finishedWhileDisplaced: Set<Row>,
+        /** The largest single-frame move *away* from where the row was heading, in px. */
+        val backPx: Float,
+    )
+
+    /**
+     * Replays a fast lyric song — one line change every [intervalMs], [batches] of them, each with a
+     * different `dy` — through the wave *and* through the hook's takeover gate.
+     *
+     * The harness reproduces the host, not just the wave:
+     *
+     *  * the block's layout moves up by `dy` per line change, and the move the host offers folds
+     *    the row's current translation in (`dy = toY - (fromY + translationY)`, 1626 `mc.y#m`), so
+     *    the lag handed to the wave is `translationY + dy`: a row's residual therefore grows with
+     *    the line rate even though every layout jump is still one line;
+     *  * the gate the hook runs before it answers `false`
+     *    ([LyricLineSpringPolicy.acceptsMove]) is applied exactly as the device applies it, and a
+     *    refused move is *not* neutral: `mc.y#m` begins with `mc.y#x` -> `mc.y#e` on that row —
+     *    "cancel this row's animation" — which the hook answers by zeroing the translation and
+     *    finishing the row. That is the reported "the row jumps straight to its place".
+     *
+     * The window is short on purpose: 60/80/120 ms is 8-16 lines a second, i.e. the regime where
+     * the 0.45 s spring never finishes a line before the next one lands.
+     */
+    private fun fastSong(
+        intervalMs: Float,
+        dys: List<Int>,
+        batches: Int = 8,
+        rowCount: Int = 6,
+    ): List<Batch> {
+        val rows = (0 until rowCount).map { Row("r" + it, top = 300 + it * 120) }
+        val wave = wave(paneHeightPx = 1_000)
+        val framesPerBatch = maxOf(1, Math.round(intervalMs / 16.6f))
+        val out = ArrayList<Batch>()
+        repeat(batches) { index ->
+            val dy = dys[index % dys.size]
+            val waitBefore = rows.associateWith { wave.delayOf(it) }
+            val inWaveBefore = rows.associateWith { wave.contains(it) }
+            val finishedBeforePush = rows.associateWith { it.finished }
+            var refused = false
+            rows.forEach { row ->
+                val lag = row.translationY + dy
+                row.top -= dy
+                if (LyricLineSpringPolicy.acceptsMove(-dy, lag)) {
+                    wave.push(row, lag, row.top, tempo())
+                } else {
+                    refused = true
+                    wave.finishHolder(row, resetOffset = true)
+                }
+            }
+            val moved = rows.associateWith { 0f }.toMutableMap()
+            val finishedWhileDisplaced = HashSet<Row>()
+            // The push itself must not end the move either: a "this animation is over" for a row
+            // that is still displaced is what RecyclerView turns into a recycled, idle row.
+            rows.forEach { row ->
+                if (row.finished > finishedBeforePush.getValue(row) && abs(row.translationY) > 0.5f) {
+                    finishedWhileDisplaced += row
+                }
+            }
+            var waiting: Set<Row> = emptySet()
+            var back = 0f
+            var previous = rows.associateWith { it.top + it.translationY }
+            repeat(framesPerBatch) { frame ->
+                val finishedBefore = rows.associateWith { it.finished }
+                wave.advance(16.6f)
+                rows.forEach { row ->
+                    val visual = row.top + row.translationY
+                    moved[row] = moved.getValue(row) + abs(visual - previous.getValue(row))
+                    // An upward line change only ever moves a row up: any frame that moves it back
+                    // down is the "bounced back" look, or a stale spring fighting the new aim.
+                    back = maxOf(back, visual - previous.getValue(row))
+                    if (row.finished > finishedBefore.getValue(row) && abs(row.translationY) > 0.5f) {
+                        finishedWhileDisplaced += row
+                    }
+                }
+                previous = rows.associateWith { it.top + it.translationY }
+                // The stagger is assigned by the first advance of the batch.
+                if (frame == 0) waiting = rows.filter { wave.delayOf(it) > 0f }.toSet()
+            }
+            // A *reset*: a row that already existed in the wave was pushed back into a longer wait.
+            // A brand new row receiving its first slot is not a reset, it is the stagger itself.
+            val resetWait = rows.filter { row ->
+                val grew = wave.delayOf(row) > waitBefore.getValue(row) + 1e-3f
+                grew && (waitBefore.getValue(row) > 0f || inWaveBefore.getValue(row))
+            }.toSet()
+            out += Batch(dy, refused, moved, waiting, resetWait, finishedWhileDisplaced, back)
+        }
+        return out
+    }
+
+    @Test
+    fun `a fast song keeps its moves and never hands a row back or finishes it mid travel`() {
+        val dys = listOf(357, 261, 453, 400, 318)
+        listOf(60f, 80f, 120f).forEach { interval ->
+            fastSong(interval, dys).forEachIndexed { index, batch ->
+                val where = "interval=" + interval + "ms batch=" + index + " dy=" + batch.dy + ": "
+                assertFalse(
+                    where + "the move was handed back to the host, i.e. the animation is swallowed",
+                    batch.refused,
+                )
+                assertTrue(
+                    where + "finished mid-travel: " + batch.finishedWhileDisplaced,
+                    batch.finishedWhileDisplaced.isEmpty(),
+                )
+                assertTrue(
+                    where + "the stagger was reset: " + batch.resetWait,
+                    batch.resetWait.isEmpty(),
+                )
+                assertTrue(where + "went back down by " + batch.backPx + "px", batch.backPx <= 1e-2f)
+            }
+        }
+    }
+
+    @Test
+    fun `every line change of a fast song still moves the rows it touched`() {
+        val dys = listOf(357, 261, 453, 400, 318)
+        listOf(60f, 80f, 120f).forEach { interval ->
+            fastSong(interval, dys).forEachIndexed { index, batch ->
+                batch.movedPx.forEach { (row, moved) ->
+                    // A row that is still inside its stagger slot has not been given its turn yet.
+                    if (row in batch.waiting) return@forEach
+                    assertTrue(
+                        "interval=" + interval + "ms batch=" + index + " " + row.name +
+                            " moved only " + moved + "px: the line change was swallowed",
+                        moved >= 1f,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `a correction smaller than a pixel is merged instead of re-aiming the spring`() {
+        // Two moves whose dy cancels — the background line growing and collapsing inside one batch,
+        // a re-anchor that lands where the row already is — leave a sub-pixel correction. Re-aiming
+        // for that would cost the row its clock and its velocity for nothing, so it is merged and
+        // only logged (LyricLineSpringDiagnostics.merged).
+        val row = Row("a", top = 1_000)
+        val wave = wave()
+        wave.push(row, 240f, row.top, tempo())
+        repeat(3) { wave.advance(16.6f) }
+        val lag = wave.lagOf(row)
+        val velocity = wave.velocityOf(row)
+        val elapsed = wave.delayOf(row)
+        assertTrue("expected an upward velocity, got " + velocity, velocity < 0f)
+
+        val applied = wave.push(row, lag - 0.4f, row.top, tempo())
+        assertTrue(applied.moving)
+        assertTrue("the sub-pixel correction should have been merged", applied.merged)
+        assertFalse(applied.velocityDropped)
+        assertEquals(velocity, applied.keptVelocity, 1e-3f)
+        // The running spring was not touched: same clock, same velocity, still one move.
+        assertEquals(velocity, wave.velocityOf(row), 1e-3f)
+        assertEquals(elapsed, wave.delayOf(row), 1e-3f)
+        assertEquals(lag - 0.4f, row.translationY, 1e-3f)
+        assertEquals(0, row.finished)
+
+        // A correction above the floor is a real re-target and keeps its own contract.
+        val retarget = wave.push(row, lag - 40f, row.top, tempo())
+        assertFalse(retarget.merged)
+        assertEquals(40f, retarget.layoutDeltaPx, 0.01f)
+    }
+
+    @Test
+    fun `a correction that reverses a waiting row drops its stagger slot`() {
+        // A row inside its slot has not moved yet. If the next layout puts the end point on the
+        // other side of it, the queued slot belongs to a move that no longer exists: keeping it
+        // would pin the row while the block visibly travels the other way.
+        val first = Row("a", top = 200)
+        val second = Row("b", top = 320)
+        val wave = wave()
+        wave.push(first, 300f, first.top, tempo())
+        wave.push(second, 300f, second.top, tempo())
+        wave.advance(16.6f)
+        assertTrue("second should still be waiting", wave.delayOf(second) > 0f)
+
+        val applied = wave.push(second, -120f, second.top, tempo())
+        assertTrue(applied.moving)
+        assertTrue(applied.waiting)
+        assertTrue("the slot described a move that no longer exists", applied.delayDropped)
+        assertEquals(0f, wave.delayOf(second), 0f)
+        assertEquals(-120f, second.translationY, 1e-3f)
+
+        wave.advance(16.6f)
+        assertTrue("the row must leave now: " + second.translationY, second.translationY > -120f)
+        wave.settle()
+        assertEquals(0f, second.translationY, 0f)
+        assertEquals(1, second.finished)
     }
 
     // ---- per-frame layout tracking: a growth that never announces itself ------------------------

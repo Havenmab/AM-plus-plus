@@ -67,10 +67,33 @@ object LyricLineSpringPolicy {
     const val AMLL_SETTLE_MS: Float = 450f
 
     /**
-     * Beyond this the spring would visibly fly across the screen: a seek or a track change, where
-     * Apple Music's instant re-anchor is the correct look. Such moves stay with the host.
+     * Beyond this the layout jump is a seek, not a line change: the spring would visibly fly across
+     * the screen, so Apple Music's instant re-anchor is the correct look and the move stays with the
+     * host.
+     *
+     * This bounds the *layout jump* of one move (`toY - fromY`), not the residual the row carries.
+     * The two are the same number only in a slow song: the host folds the row's current translation
+     * into `dy`, so a fast song accumulates a whole line change per lyric line into the residual
+     * while every individual layout jump is still one line — see [acceptsMove].
      */
     const val MAX_DISPLACEMENT_PX: Int = 1_200
+
+    /**
+     * Beyond this one row is chasing so much accumulated residual that it is no longer a line
+     * change. Three takeover widths is several screens: a jump, a list replacement or a re-anchor
+     * storm, where chasing is worse than the host's own re-anchor.
+     */
+    const val MAX_RESIDUAL_PX: Float = 3f * MAX_DISPLACEMENT_PX
+
+    /**
+     * The smallest net displacement worth re-aiming a spring at, in pixels.
+     *
+     * Two line changes whose `dy` cancels out (the background line growing and then collapsing
+     * inside one batch, a re-anchor that lands where the row already is) leave a sub-pixel
+     * correction. Re-launching the spring for that would cost the row its velocity and its clock
+     * for nothing, so such a push is merged into the running spring instead and only logged.
+     */
+    const val MIN_VISIBLE_DELTA_PX: Float = 1f
 
     /**
      * The frame step is clamped so that a stalled main thread (GC, a disk read, a fling) cannot
@@ -115,6 +138,23 @@ object LyricLineSpringPolicy {
 
     /** True when [dy] is a displacement this feature is willing to own. */
     fun acceptsDisplacement(dy: Int): Boolean = dy != 0 && abs(dy) <= MAX_DISPLACEMENT_PX
+
+    /**
+     * True when one `animateMove` may be taken over: [layoutDeltaPx] is how far that row's layout
+     * moved (`toY - fromY`) and [residualPx] the lag the row would then carry (`-dy`).
+     *
+     * The two are separate on purpose. A seek moves the layout by thousands of pixels, so its jump
+     * is refused and the host re-anchors instantly. A *fast* lyric song moves the layout by one line
+     * per line change — the jump stays small — while the residual a row carries grows with the line
+     * rate, because the 0.45 s spring never gets to finish before the next line lands. Judging the
+     * residual against [MAX_DISPLACEMENT_PX] refuses a fast song's moves and hands the rows back to
+     * the host mid-song, which reads on the device as the animation being swallowed.
+     */
+    fun acceptsMove(layoutDeltaPx: Int, residualPx: Float): Boolean {
+        if (!residualPx.isFinite()) return false
+        if (abs(layoutDeltaPx) > MAX_DISPLACEMENT_PX) return false
+        return abs(residualPx) <= MAX_RESIDUAL_PX
+    }
 
     /** `k = 170 * (0.484 / t)^2`, with the settle time `t` in milliseconds. */
     fun stiffnessFor(tempoMs: Float): Float {

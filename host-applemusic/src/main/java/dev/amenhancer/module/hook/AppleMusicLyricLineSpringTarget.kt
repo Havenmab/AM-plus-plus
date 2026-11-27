@@ -25,9 +25,10 @@ import dev.amenhancer.module.model.ModuleSettings
  * the shared Choreographer clock ([LyricLineSpringWave]). Rows start 50 ms apart in AMLL's
  * staggered order — the one below the top leaves next, and past the focus line the spacing tightens
  * by 5 % per row — so a line change reads as rows chasing each other rather than one rectangle
- * sliding. A row already travelling when the next line change lands keeps its velocity. The zero
- * branch, the deferred queue, the re-anchor and the duration field are all left exactly as Apple
- * Music wrote them.
+ * sliding. A row already travelling when the next line change lands keeps its velocity and its
+ * move: the correction re-aims the end point, so RecyclerView sees one continuous move per row even
+ * when a fast song re-offers `animateMove` every 60-120 ms. The zero branch, the deferred queue, the
+ * re-anchor and the duration field are all left exactly as Apple Music wrote them.
  *
  * **What it therefore owes.** Skipping the host's animation also skips the two notifications that
  * animation's listener emits — `dispatchMoveStarting(holder)` when it starts and
@@ -42,10 +43,11 @@ import dev.amenhancer.module.model.ModuleSettings
  * change takes AMLL's time, not the time Apple Music computed for that line. That is the whole
  * point of the feature, and it is why there is no second switch and no slider beside it.
  *
- * **Every refusal is a hand-back.** A missing role, a move with a horizontal component, a
- * displacement beyond ±1200 px (seek, track change), or a thread without a Choreographer all leave
- * the host's own animation untouched; the hook only sets `false` after every one of those checks
- * has passed.
+ * **Every refusal is a hand-back.** A missing role, a move with a horizontal component, a layout
+ * jump beyond ±1200 px (seek, track change) or a residual beyond three widths of it, or a thread
+ * without a Choreographer all leave the host's own animation untouched; the hook only sets `false`
+ * after every one of those checks has passed. The jump and the residual are judged separately —
+ * see [LyricLineSpringPolicy.acceptsMove] for why a fast song needs the distinction.
  *
  * **The interlude's three-dot exit comes first.** When an interlude ends, Apple Music plays one more
  * animation on the dots — they grow, shrink and fade out — and only then is the interlude over
@@ -221,8 +223,18 @@ internal class AppleMusicLyricLineSpringTarget(
                 diagnostics.refused("dx=" + dx + " has a horizontal component")
                 return
             }
-            if (!LyricLineSpringPolicy.acceptsDisplacement(dy)) {
-                diagnostics.refused("dy=" + dy + " beyond ±" + LyricLineSpringPolicy.MAX_DISPLACEMENT_PX + "px")
+            // Two different bounds, and the difference is the fast song: a seek moves the *layout*
+            // by thousands of pixels, while a fast lyric song moves it by one line and lets the
+            // residual accumulate (the host folds the row's translation into `dy`, so `-dy` is the
+            // row's total lag, not this line's displacement). Judging the residual alone would hand
+            // a fast song's rows back to the host mid-song, where `mc.y#m` -> `mc.y#x` -> `mc.y#e`
+            // zeroes the translation and the move reads as an instant jump.
+            if (!LyricLineSpringPolicy.acceptsMove(toY - fromY, -dy.toFloat())) {
+                diagnostics.refused(
+                    "layoutJump=" + (toY - fromY) + " residual=" + dy + " beyond jump ±" +
+                        LyricLineSpringPolicy.MAX_DISPLACEMENT_PX + "px / residual ±" +
+                        LyricLineSpringPolicy.MAX_RESIDUAL_PX.toInt() + "px",
+                )
                 return
             }
             if (!ensureClock()) {
@@ -247,15 +259,19 @@ internal class AppleMusicLyricLineSpringTarget(
                 recover(row)
                 throw error
             }
-            notifyStarted(row)
+            // One move per row, not one per animateMove: a correction re-aims the move RecyclerView
+            // already has, so it dispatches neither a start nor a finish (see LyricLineSpringPush).
+            if (!applied.moving) notifyStarted(row)
             // A repeat move for a row that is already travelling is a *target correction*: the
             // layout moved by applied.layoutDeltaPx under an unchanged visual position, and the
             // row's velocity is kept only while it still aims home. Printing both lets the device
             // log answer "correction or impulse" without pasting a whole per-frame trajectory.
-            if (applied.moving) {
-                diagnostics.retargeted(applied)
-            } else {
-                diagnostics.takeOver(dy, LyricLineSpringPolicy.tempo, tracks.activeWaves(), applied.heldMs.toInt())
+            when {
+                applied.merged -> diagnostics.merged(applied)
+                applied.moving -> diagnostics.retargeted(applied)
+                else -> diagnostics.takeOver(
+                    dy, LyricLineSpringPolicy.tempo, tracks.activeWaves(), applied.heldMs.toInt(),
+                )
             }
         }
 
@@ -389,6 +405,7 @@ internal class LyricLineSpringDiagnostics(
     private var emitted = 0
     private var retargets = 0
     private var shifts = 0
+    private var merges = 0
 
     /**
      * A row was taken over: the spring it resolved to, and how many waves are live.
@@ -433,7 +450,33 @@ internal class LyricLineSpringDiagnostics(
             "retarget lag=" + fixed(applied.lagPx) + " layoutDelta=" + fixed(applied.layoutDeltaPx) +
                 " v=" + fixed(applied.offeredVelocity) + " kept=" + fixed(applied.keptVelocity) +
                 (if (applied.velocityDropped) " dropped=1" else "") +
-                (if (applied.waiting) " waiting=1" else ""),
+                (if (applied.waiting) " waiting=1" else "") +
+                (if (applied.delayDropped) " unstaggered=1" else ""),
+        )
+    }
+
+    /**
+     * A correction too small to see was merged into the running spring instead of re-aiming it.
+     *
+     * `lag` is the sub-pixel end point the move offered and `layoutDelta` how far the layout moved
+     * under the row (both below [LyricLineSpringPolicy.MIN_VISIBLE_DELTA_PX]). A run of these is the
+     * expected answer to two `dy` that cancel inside one batch — the background line growing and
+     * collapsing, a re-anchor that lands where the row already is — and it is logged rather than
+     * silently dropped so a device run can tell "merged" from "never arrived".
+     */
+    fun merged(applied: LyricLineSpringPush) {
+        val key = "merge:" + fixed(applied.lagPx) + "/" + fixed(applied.layoutDeltaPx)
+        val now = now()
+        synchronized(reported) {
+            val last = reported[key]
+            if (last != null && now - last < RETARGET_WINDOW_MS) return
+            if (merges >= MAX_MERGE_LINES) return
+            reported[key] = now
+            merges += 1
+        }
+        emit(
+            "merge lag=" + fixed(applied.lagPx) + " layoutDelta=" + fixed(applied.layoutDeltaPx) +
+                " waiting=" + (if (applied.waiting) 1 else 0),
         )
     }
 
@@ -518,5 +561,8 @@ internal class LyricLineSpringDiagnostics(
 
         /** Budget for the layout-shift lines, on top of [MAX_LINES]. */
         const val MAX_SHIFT_LINES = 160
+
+        /** Budget for the merged sub-pixel corrections, so a long song cannot flood logcat. */
+        const val MAX_MERGE_LINES = 60
     }
 }

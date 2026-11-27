@@ -1,5 +1,7 @@
 package dev.amenhancer.module.lyrics
 
+import kotlin.math.abs
+
 /**
  * One animator's line-change wave: one spring per row, started in AMLL's staggered order.
  *
@@ -43,15 +45,21 @@ package dev.amenhancer.module.lyrics
  * previous frame) left, and folds any difference into the residual — see [absorbLayoutShifts]. This
  * is the only place the wave reads layout instead of being told about it, and it never writes it.
  *
- * **A row already in flight is never re-delayed.** AMLL queues the *new target* behind the delay and
- * lets the row finish travelling to the old one meanwhile; our host has already jumped the layout,
- * so the equivalent is to re-target the moving row immediately. Freezing it instead would stall a
- * row mid-travel and let its lag grow with every fast line change.
+ * **A row already in flight is never re-delayed and never re-started.** AMLL queues the *new target*
+ * behind the delay and lets the row finish travelling to the old one meanwhile; our host has already
+ * jumped the layout, so the equivalent is to re-target the moving row immediately. Freezing it
+ * instead would stall a row mid-travel and let its lag grow with every fast line change.
  *
- * **The finish contract is unchanged from 乙-1.** RecyclerView's pending-move ledger accepts exactly
- * one "this animation is over" per started move, so every path that can end a row's animation (the
- * spring arriving, `endAnimation(holder)`, `endAnimations()`, a re-target replacing the old move)
- * goes through the row's own `finished` flag and the [finish] callback.
+ * **A re-target re-aims one continuous move; it never ends it.** RecyclerView's pending-move ledger
+ * accepts exactly one "this animation is over" per started move, and the host's own move emits that
+ * pair once per taken-over `animateMove`. Because the host folds the row's translation into `dy`,
+ * every later line change offers a fresh `animateMove` for a row that is still travelling — in a
+ * fast song every 60-120 ms. Retiring the previous move on each of those hands RecyclerView a row it
+ * has already been told is idle, dozens of times per second, and on the device that is what makes a
+ * fast song's displacement disappear. The wave therefore keeps one move per row: the start is
+ * dispatched when the row joins ([LyricLineSpringPush.moving] is false) and the finish when the row
+ * genuinely ends — the spring arriving, `endAnimation(holder)`, `endAnimations()`, or the row moving
+ * to another wave.
  *
  * Pure: it never touches a View, a clock or the host. The caller supplies [write] (pixels) and
  * [finish] (the host's `dispatchAnimationFinished`), plus the pane height a line change was pushed
@@ -168,27 +176,85 @@ class LyricLineSpringWave<H : Any>(
     /**
      * Take [holder]'s move over at [lagPx] (the host's `-dy`) and write it immediately.
      *
-     * A row already in flight is retired first — its previous move gets its one [finish], without
-     * zeroing, because its layout already jumped and [lagPx] is written in this same host call —
-     * and then re-aimed at the new end point: the target is corrected, the motion is not re-impulsed
-     * (see the class doc and [LyricLineSpringPush]). A row at rest (or a new one) joins the pending
-     * line change and receives a stagger delay when the batch is ranked.
+     * A row at rest (or a new one) joins this frame's line change, gets its one move and receives a
+     * stagger delay when the batch is ranked. A row *already in flight* is re-aimed instead: the
+     * layout already jumped, [lagPx] is written in this same host call, and the existing move simply
+     * gets a new end point — the motion is not re-impulsed and the move is not retired (see the
+     * class doc and [LyricLineSpringPush]).
+     *
+     * Two corrections are special-cased:
+     *
+     *  * a correction smaller than [LyricLineSpringPolicy.MIN_VISIBLE_DELTA_PX] changes nothing the
+     *    eye could see, so it is *merged* — the running spring keeps its clock and its velocity and
+     *    the caller only logs it;
+     *  * a correction that puts the end point on the *other* side of a row that is still waiting for
+     *    its stagger slot is a reversal, not a correction: its slot no longer describes the move, so
+     *    the slot is dropped and the row leaves at once.
      */
     fun push(holder: H, lagPx: Float, layoutTop: Int, tempo: LyricLineSpringTempo): LyricLineSpringPush {
         val existing = members.firstOrNull { it.holder === holder }
         val moving = existing != null && !existing.finished
-        val previousLag = if (existing == null || existing.finished) 0f
-        else existing.spring.offsetAt(existing.elapsedMs)
-        val offered = if (moving) existing.spring.velocityAt(existing.elapsedMs) else 0f
+        if (!moving) return launch(existing, holder, lagPx, layoutTop, tempo)
+
+        val member = requireNotNull(existing)
+        val previousLag = member.spring.offsetAt(member.elapsedMs)
+        val offered = member.spring.velocityAt(member.elapsedMs)
         // A row that has not left its stagger slot keeps the slot: its layout moved, its visual did
         // not, and it has no velocity yet either way.
-        val waiting = moving && existing.delayMs > 0f
-        val kept = if (moving && !waiting) towardTarget(offered, lagPx) else 0f
-        if (moving) {
-            existing.finished = true
-            finish(holder)
+        val waiting = member.delayMs > 0f
+        // ... unless the new end point is on the other side of the row: then the queued slot belongs
+        // to a move that no longer exists, and keeping it would pin the row while it visibly travels
+        // the wrong way.
+        val reversed = waiting && previousLag * lagPx < 0f
+        member.layoutTop = layoutTop
+        if (pendingHoldMs > 0f) member.holdMs = maxOf(member.holdMs, pendingHoldMs)
+        if (abs(lagPx - previousLag) < LyricLineSpringPolicy.MIN_VISIBLE_DELTA_PX) {
+            // Sub-pixel: the layout moved by less than one pixel. Keep the spring, keep its clock,
+            // keep its velocity; only the displayed lag is synchronised (see [LyricLineSpringPush.merged]).
+            write(holder, lagPx)
+            return LyricLineSpringPush(
+                lagPx = lagPx,
+                previousLagPx = previousLag,
+                offeredVelocity = offered,
+                keptVelocity = offered,
+                moving = true,
+                waiting = waiting,
+                heldMs = member.holdMs,
+                merged = true,
+            )
         }
+        val kept = if (waiting && !reversed) 0f else towardTarget(offered, lagPx)
         val spring = tempo.at(lagPx, kept)
+        member.spring = spring
+        member.deadlineMs = spring.deadlineMs()
+        member.elapsedMs = 0f
+        if (reversed) member.delayMs = 0f
+        write(holder, lagPx)
+        return LyricLineSpringPush(
+            lagPx = lagPx,
+            previousLagPx = previousLag,
+            offeredVelocity = offered,
+            keptVelocity = kept,
+            moving = true,
+            waiting = waiting,
+            heldMs = member.holdMs,
+            merged = false,
+            delayDropped = reversed,
+        )
+    }
+
+    /**
+     * [holder]'s first move, or a new one after it came to rest: the row joins the pending line
+     * change and owes exactly one start ([LyricLineSpringPush.moving] false) and one finish.
+     */
+    private fun launch(
+        existing: Member<H>?,
+        holder: H,
+        lagPx: Float,
+        layoutTop: Int,
+        tempo: LyricLineSpringTempo,
+    ): LyricLineSpringPush {
+        val spring = tempo.at(lagPx, 0f)
         val member = existing ?: Member(
             holder = holder,
             layoutTop = layoutTop,
@@ -203,15 +269,16 @@ class LyricLineSpringWave<H : Any>(
         member.spring = spring
         member.deadlineMs = spring.deadlineMs()
         member.elapsedMs = 0f
-        if (!waiting) member.delayMs = 0f
+        member.delayMs = 0f
         // An interlude exit that is still running owns the start of this batch: the row waits for it
-        // before its stagger even begins (LyricInterludeHold -> LyricLineSpringWave.hold).
-        if (pendingHoldMs > 0f) member.holdMs = maxOf(member.holdMs, pendingHoldMs)
+        // before its stagger even begins (LyricInterludeHold -> LyricLineSpringWave.hold). A rest
+        // between two line changes must not carry an older wait over, so this assigns, not maxes.
+        member.holdMs = pendingHoldMs
         // A fresh (or re-launched from rest) row joins this frame's line change; a row that was
         // already travelling keeps going from where it is and is not staggered again.
-        if (!moving && unranked.none { it === member }) unranked += member
+        if (unranked.none { it === member }) unranked += member
         write(holder, lagPx)
-        return LyricLineSpringPush(lagPx, previousLag, offered, kept, moving, waiting, member.holdMs)
+        return LyricLineSpringPush(lagPx, 0f, 0f, 0f, moving = false, waiting = false, heldMs = member.holdMs)
     }
 
     /**
@@ -403,16 +470,31 @@ class LyricLineSpringPush(
     val offeredVelocity: Float,
     /** The velocity the new spring actually started with; 0 when it was dropped by the gate. */
     val keptVelocity: Float,
-    /** True when this push corrected a row that was already travelling. */
+    /**
+     * True when this push corrected a row that was already travelling.
+     *
+     * This is also the start/finish gate: a row is *started* (the host's `dispatchMoveStarting`,
+     * i.e. what RecyclerView's move listener counts) only when [moving] is false, and the single
+     * [finish] it then owes is dispatched when the row really comes to rest. A correction re-aims
+     * that one move, so it dispatches neither.
+     */
     val moving: Boolean,
     /** True when the row was still inside its stagger slot and kept it. */
     val waiting: Boolean,
     /** How long the row has to wait for an interlude exit before its stagger starts, in ms. */
     val heldMs: Float = 0f,
+    /**
+     * True when the correction was smaller than [LyricLineSpringPolicy.MIN_VISIBLE_DELTA_PX] and was
+     * merged into the running spring instead of re-aiming it: nothing the eye could resolve, so the
+     * row keeps its clock and its velocity and the caller only logs the merge.
+     */
+    val merged: Boolean = false,
+    /** True when a reversal dropped a stagger slot the row was still waiting in. */
+    val delayDropped: Boolean = false,
 ) {
     /** How far the row's layout moved under this push; the visual position does not move. */
     val layoutDeltaPx: Float get() = previousLagPx - lagPx
 
     /** True when a travelling row had its velocity dropped because it no longer aimed home. */
-    val velocityDropped: Boolean get() = moving && offeredVelocity != 0f && keptVelocity == 0f
+    val velocityDropped: Boolean get() = moving && !merged && offeredVelocity != 0f && keptVelocity == 0f
 }

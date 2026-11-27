@@ -34,6 +34,16 @@ class LyricLineSpringHoldTest {
         repeat(frames) { advance(16.6f) }
     }
 
+    /** Frames until every row has come to rest. */
+    private fun LyricLineSpringWave<Row>.settle(limit: Int = 4_000): Int {
+        var frames = 0
+        while (advance(16.6f)) {
+            frames += 1
+            assertTrue("never settles", frames < limit)
+        }
+        return frames
+    }
+
     @Test
     fun aHeldBatchWritesItsStartPositionAndThenDoesNotMoveAtAll() {
         val rows = (0 until 3).map { Row("r" + it, top = 400 + it * 120) }
@@ -138,8 +148,11 @@ class LyricLineSpringHoldTest {
         // Still parked: the corrected end point does not buy the row an earlier start.
         wave.run(30)
         assertEquals(-260f, row.translationY, 1e-3f)
-        // Exactly one finished callback was owed by the retired move (the correction always retires
-        // the previous move first); the new one is still parked, so nothing else has been finished.
+        // The correction re-aimed the move instead of retiring it: nothing is owed while the row is
+        // still parked, and exactly one finish is owed when it finally ends.
+        assertEquals(0, row.finished)
+        wave.release()
+        wave.settle()
         assertEquals(1, row.finished)
     }
 

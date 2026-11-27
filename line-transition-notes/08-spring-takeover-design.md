@@ -175,13 +175,17 @@ x(t) = (x0 + t (v0 + omega0 x0)) e^(-omega0 t)      // omega0 = sqrt(k/m)
 
 每个 holder 一份状态：`spring`（闭式解）、`elapsedMs`（自己的时钟）、`delayMs`（剩余起步延迟）、`finished`（欠一次 finished）、`layoutTop`（本批排序键）。
 
-1. **`push`（hook 准入通过后）**：`lag = -dy`。宿主 1626 的 `mc.y#m` 算的是 `dy = toY - (fromY + translationY)`，已经把当前 translation 折进去，因此 `-dy` **就是新的绝对 lag**，写入即刻保证视觉连续。已在飞行中的行：先补上一次的 `finished`（不归零），再带着当前速度重新瞄准。
+1. **`push`（hook 准入通过后）**：`lag = -dy`。宿主 1626 的 `mc.y#m` 算的是 `dy = toY - (fromY + translationY)`，已经把当前 translation 折进去，因此 `-dy` **就是新的绝对 lag**，写入即刻保证视觉连续。已在飞行中的行：**不补 `finished`、不重新起步**，带着当前速度重新瞄准（一次连续位移 = 一条 move，见 §8.6）。
 2. **阶梯**：一次换行的 push 都在同一个 layout pass 里，所以「本帧 push 的行」= 一次换行。下一帧 `advance` 按 `toY` 排序（AMLL 的行序），焦点线取 `0.35 × 列表高度`，逐行 `delay = 50 ms`、焦点行以下 `/1.05`。
 3. **延迟未到**：只写不动（`push` 已写过起点），不推进弹簧，也不消耗 deadline。
 4. **在飞行的行不给新延迟，只修正目标**：AMLL 是把「新目标」排队、行继续跑旧目标；我们的 layout 已经跳过，等价做法是立即重瞄。宿主算的是 `dy = toY - (fromY + translationY)`，所以新的 `-dy` 已经是**绝对** lag：视觉位置不动、只挪终点，这就是 iOS「一次单调上移、终点已含 bg 行高度」的语义。因此**不再把后续 move 当第二次冲量**：
    * 只有当携带的速度仍然指向新终点（`v · lag < 0`）时才保速；否则清零（否则会冲过终点再回落，观感就是"被推一下再弹回来"）；
    * 还在阶梯延迟里的行**保留剩余延迟**（它的 layout 动了、视觉没动，本来也没有速度）。
-   若给在飞行的行重新排 50–250 ms，它会中途定格、lag 逐行累积 —— 这是唯一一处与「延迟按新批次重算」字面不同的地方。
+      若给在飞行的行重新排 50–250 ms，它会中途定格、lag 逐行累积 —— 这是唯一一处与「延迟按新批次重算」字面不同的地方。
+   * **修正不结束上一条 move**（2026-11-27，见 §8.6）：`push` 不再对在飞行的行补 `finished`。一次连续位移只对应一次
+     `dispatchMoveStarting` 与一次 `dispatchAnimationFinished`，重复的 `animateMove` 只改终点。另两条：修正量 `< 1 px`
+     （两次 `dy` 抵消）时**合并**，不换弹簧也不重置时钟（打 `merge`）；还在阶梯里的行若终点翻到另一侧，丢掉槽位立刻起步
+     （打 `unstaggered=1`）。
 5. **逐帧读回 layout**：bg 行的高度动画是 `ValueAnimator` 逐帧改 `layoutParams.height`，**没有 adapter 通知 ⇒ 没有 `animateMove`**。所以 `advance` 每帧读一次被跟踪行的 `itemView.top`，与"上一次 move 的 `toY` / 上一帧读到的值"比较；不同就把差值折进 residual（`lag -= delta`，视觉不动）并重瞄弹簧（方向翻转则丢速度）。两条拒绝：**所有被跟踪行同幅度位移**（那是滚动/重锚）、**单帧超过 240 px**（回收行/跳转）都只重设基线。
 6. **到位**：`|lag| <= 0.5 px` **且** `|v| <= 30 px/s`（0.5 px / 一个 60 Hz 帧）；归零 + 逐个 `dispatchAnimationFinished`。deadline（`1.6 × t99`）是兜底，防止极端 re-target 让 `isRunning()` 无限为真。
 7. **契约**：`endAnimation(holder)` 归零 + 恰好一次 finished；`endAnimations()` 遍历该 animator 的 wave；收到 rest 时同样恰好一次。乙-1 的「每行一个 finished 标志」和回退路径原样保留。
@@ -196,11 +200,63 @@ x(t) = (x0 + t (v0 + omega0 x0)) e^(-omega0 t)      // omega0 = sqrt(k/m)
 
 `LyricLineSpringPolicyTest`（17 条）：两档 ζ、`k=170(0.484/t)^2`、AMLL 档 t99=450±5%、HOST 档 1.31T±5% 且比值恒定、AMLL 形状 = 临界阻尼（与同参数精确解差 1.31 倍）、HOST 闭式解与 RK4 一致、单调无过冲、到位门限、`appliedFeel` 双开关门控。
 
-`LyricLineSpringWaveTest`（21 条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 恰好 18 次 finished、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
+`LyricLineSpringWaveTest`（25 条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 每行恰好 1 次 finished（修正不 retire）、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
 
 逐帧布局跟踪四条：**没有任何 move 的** bg 展开（12 帧 × 4 px = 48 px）被逐帧吸收、视觉 y 单调不回退、终点 = 位移 − 48；每行同幅度的位移按"滚动/重锚"处理、不吸收；move 与逐帧 delta 不重复计数；超界位移只重设基线。
 
 > 修订（2026-11-25）：第 1 条的"保速"改成了**有条件保速**（见 §8.3 第 4 点）。
 > 宿主对同一个 holder 可能在一屏内发多次 `animateMove`（重锚、批量 notify、bg 行高度动画落在一次带动画的 layout 里），
 > 每次都当成第二次冲量就会多出一段"往回走"的目标。现在一律按**目标修正**处理：只挪终点，速度只在还指向终点时保留。
+
+### 8.6 快歌为什么会被吞（2026-11-27 修）
+
+真机现象：慢歌正常，**密集换行（60–120 ms 一行）时行直接跳到位、或只动一点就停**。两个独立原因，都在"修正"这条路上。
+
+#### 原因 A：每次换行都结束上一条 move
+
+`push` 原来对在飞行的行先补一次 `finished`（`finish(holder)`，不归零）再重新起步。宿主对自己那条 move 也是这么做的
+（`mc.y#m` 开头 `mc.y#x` → `mc.y#e`），但**我们是替它跑动画的一方**：远端 `finished` 走的是 `RecyclerView$k#c`
+（`setIsRecyclable(true)` + 清 shadowed + `removeAnimatingView`），也就是每次换行都告诉 RecyclerView"这一行的 move 结束了"，
+而那一行其实还在动。慢歌一行 0.45 s 之内只有一次 move；快歌 60 ms 一次，一行每秒被"结束"16 次。
+
+修法：**一次连续位移只发一对 start/finish**。`LyricLineSpringPush.moving` 现在同时是"要不要补 `dispatchMoveStarting`"
+的判据（`takeOver` 里 `if (!applied.moving) notifyStarted(row)`），`finished` 只在行真正结束时发一次（到位、
+`endAnimation`、`endAnimations`、换 wave）。note 08 §2.1 一直写的就是"首次接管时调用一次"，代码之前按每次 `animateMove` 发。
+
+#### 原因 B：准入用 residual 判，快歌必然越界
+
+`dy` 不是"这次换行挪了多少"，而是**这一行现在的总残差**：`dy = toY - (fromY + translationY)`，宿主把行的当前 translation
+折进去了，所以 `-dy` 是累计 lag。慢歌每次换行前 lag 已回 0，`|dy| ≈ 一行高`；快歌里 0.45 s 的弹簧还没跑完下一行就到了，
+lag 按行数累加。按 `MAX_DISPLACEMENT_PX = 1200` 判 residual，60 ms 的密集段落第 3–6 次换行就会越界 →
+**整批交回宿主**：`mc.y#m` 照常跑，但它的第一件事就是 `mc.y#x` → **`mc.y#e`（endAnimation）**，而我们的 `endAnimation` hook
+会把那一行 `translationY` 归零并补 `finished` —— 屏幕上就是"这一行直接跳到位"，而且之后每一次快歌换行都继续被拒。
+
+修法：`LyricLineSpringPolicy.acceptsMove(layoutDeltaPx, residualPx)` 把两件事分开判 ——
+
+| 量 | 含义 | 上限 |
+| --- | --- | --- |
+| `layoutDeltaPx = toY - fromY` | 这次换行布局真的挪了多少 | `MAX_DISPLACEMENT_PX` 1200（seek/切歌照旧交回宿主） |
+| `residualPx = -dy` | 这一行累计还欠多少 | `MAX_RESIDUAL_PX` 3600（三屏，只兜底防暴走） |
+
+#### 复现（`LyricLineSpringWaveTest`，同一套用例跑两遍）
+
+用例 `fastSong(intervalMs, dys)`：6 行、每 60/80/120 ms 一批、`dy` 各自不同（357/261/453/400/318），按宿主语义折 translation，
+并按 hook 的准入判据决定是否交回（交回 = 归零 + finished）。三条断言：不交回、不在飞行中补 `finished`、阶梯不被重置；
+另一条断言每批之后每行都动了 ≥ 1 px，还有一条断言轨迹单调不回退。把实现换回旧语义（只改这两处）复跑：
+
+| 变体 | 失败信息 |
+| --- | --- |
+| A：`push` 补 `finished` | `interval=60.0ms batch=1 dy=261: finished mid-travel: [r3, r4, r1, r0, r2, r5]` |
+| B：准入用 residual 判 | `interval=60.0ms batch=3 dy=400: the move was handed back to the host` + `r3 moved only 0.0px: the line change was swallowed` |
+
+#### 真机验法
+
+```bash
+adb logcat -c && adb logcat -s AMPP-LineSpring
+```
+
+密集歌词（每秒 1.5 行以上）播 30 s：每次换行都应有 `takeover`（新行）或 `retarget`（在飞行的行）并且屏幕连续运动；
+`retarget ... kept=` 非 0 表示保速、`dropped=1` 表示终点翻到行的另一侧（正常）、`unstaggered=1` 表示反向把行的阶梯槽位丢了。
+不该再出现 `handed back: layoutJump=... residual=... beyond ±1200px`（真正的 seek 才允许）。
+`merge lag=... layoutDelta=...` 成串出现是两次 `dy` 抵消（bg 行展开又收起），可接受。
 

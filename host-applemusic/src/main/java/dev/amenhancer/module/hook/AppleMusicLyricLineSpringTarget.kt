@@ -6,6 +6,7 @@ import android.view.Choreographer
 import android.view.View
 import dev.amenhancer.host.applemusic.AppleMusicHostProfile
 import dev.amenhancer.module.lyrics.LyricInterludeHold
+import dev.amenhancer.module.lyrics.LyricLineShiftSkip
 import dev.amenhancer.module.lyrics.LyricLineSpringPolicy
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
@@ -125,6 +126,10 @@ internal class AppleMusicLyricLineSpringTarget(
             writeOffset = { row, offset -> row.view.translationY = offset },
             dispatchFinished = { row -> notifyFinished(row) },
             layoutShift = { row, delta, lag -> diagnostics.layoutShift(row.holder, delta, lag) },
+            layoutShiftSkipped = { row, delta, reason ->
+                diagnostics.shiftIgnored(delta, reason)
+            },
+            skipped = { row, moved, lag, window -> diagnostics.skipped(row.holder, moved, lag, window) },
         )
         private var lastFrameNanos = 0L
         private var frameScheduled = false
@@ -281,7 +286,15 @@ internal class AppleMusicLyricLineSpringTarget(
                 guarded("isRunning") {
                     if (param.throwable != null) return@guarded
                     val animator = param.thisObject ?: return@guarded
-                    if (tracks.hasActive(animator)) param.result = true
+                    if (!tracks.hasActive(animator)) return@guarded
+                    // We never queue an animator in the host's move lists, so mc.y#g() answers
+                    // false for every frame of our spring. RecyclerView reads that as "idle" and
+                    // ends every pending move — the instant jump. The answer is overridden, and
+                    // the fact that it had to be is logged: no `idle` line at all on the device
+                    // means this hook is never asked (suspicion 2), and a `reset` line right after
+                    // one means RecyclerView ended the moves anyway.
+                    param.result = true
+                    diagnostics.idle { tracks.describe(animator) }
                 }
             }
         }
@@ -292,7 +305,7 @@ internal class AppleMusicLyricLineSpringTarget(
                 guarded("endAnimation") {
                     val animator = param.thisObject ?: return@guarded
                     val holder = param.args.getOrNull(0) ?: return@guarded
-                    if (tracks.finish(animator, holder)) diagnostics.cleaned("endAnimation")
+                    tracks.finish(animator, holder)?.let { diagnostics.cleaned("endAnimation", it) }
                 }
             }
         }
@@ -302,8 +315,7 @@ internal class AppleMusicLyricLineSpringTarget(
             override fun afterHookedMethod(param: ModernMethodHook.MethodHookParam) {
                 guarded("endAnimations") {
                     val animator = param.thisObject ?: return@guarded
-                    val rows = tracks.finishAll(animator)
-                    if (rows > 0) diagnostics.cleaned("endAnimations rows=" + rows)
+                    tracks.finishAll(animator)?.let { diagnostics.cleaned("endAnimations", it) }
                 }
             }
         }
@@ -406,6 +418,10 @@ internal class LyricLineSpringDiagnostics(
     private var retargets = 0
     private var shifts = 0
     private var merges = 0
+    private var ignores = 0
+    private var skips = 0
+    private var idles = 0
+    private var lastIdleAt = Long.MIN_VALUE
 
     /**
      * A row was taken over: the spring it resolved to, and how many waves are live.
@@ -506,12 +522,94 @@ internal class LyricLineSpringDiagnostics(
     /** Something was handed back to the host, with the reason; each reason is printed once. */
     fun refused(reason: String) = once("refused:" + reason, "handed back: " + reason)
 
-    /** A reset path zeroed rows. */
-    fun cleaned(where: String) {
+    /**
+     * A reset path zeroed rows: who triggered it, how many, and the largest lag it threw away.
+     *
+     * `reset endAnimation rows=1 lag=0.4->0` is a row that had arrived. `lag=180->0` on a row that
+     * is still on screen is an instant jump — which is what suspicion 1 looked like on the device,
+     * and why the number is printed rather than just the fact.
+     */
+    fun cleaned(where: String, reset: LyricLineSpringReset) {
         val now = now()
         if (now - lastCleanupAt < REPEAT_WINDOW_MS) return
         lastCleanupAt = now
-        emit("reset " + where)
+        emit("reset " + where + " rows=" + reset.rows + " lag=" + fixed(reset.maxLagPx) + "->0")
+    }
+
+    /**
+     * A per-frame layout shift the wave refused to fold into a row's residual.
+     *
+     * Every reason means the same thing on the device: the row *followed* the layout instead of
+     * being pinned to the screen. `why=block` every tracked row moved (a scroll, a re-anchor, the
+     * host's own animation of the line change); `why=fast` faster than a background line can grow
+     * (1626: a growing line is 4-6 px per frame, the host's own move 33-102 px); `shift-cap` this
+     * row already took one line change's worth of compensation. A burst of `why=fast` during a line
+     * change is the host animating the block itself — exactly the case that used to be swallowed.
+     */
+    fun shiftIgnored(deltaPx: Int, reason: LyricLineShiftSkip) {
+        // One key per reason: the wave already reports at most one line per frame, and 500 ms of
+        // silence between them keeps a fast song under the line budget.
+        val key = "ignore:" + reason.name
+        val now = now()
+        synchronized(reported) {
+            val last = reported[key]
+            if (last != null && now - last < IGNORE_WINDOW_MS) return
+            if (ignores >= MAX_IGNORE_LINES) return
+            reported[key] = now
+            ignores += 1
+        }
+        emit(
+            when (reason) {
+                LyricLineShiftSkip.BLOCK -> "ignore-shift why=block delta=" + deltaPx
+                LyricLineShiftSkip.TOO_FAST -> "ignore-shift why=fast delta=" + deltaPx
+                LyricLineShiftSkip.CAPPED ->
+                    "shift-cap delta=" + deltaPx + " cap=" + LyricLineSpringPolicy.MAX_COMPENSATION_PX
+            },
+        )
+    }
+
+    /**
+     * The swallowed line change, on the device: a row a takeover pushed has had 200 ms of real
+     * spring time and is still within a pixel of where the push put it.
+     *
+     * This is the one line that answers "the middle line did not move" without a screen recording:
+     * a run of them while the block is standing still means something is holding the row against
+     * its layout, and the accompanying `layout-shift` lines say what.
+     */
+    fun skipped(holder: Any, movedPx: Float, lagPx: Float, windowMs: Float) {
+        val key = "skip:" + System.identityHashCode(holder)
+        val now = now()
+        synchronized(reported) {
+            val last = reported[key]
+            if (last != null && now - last < SKIP_REPORT_WINDOW_MS) return
+            if (skips >= MAX_SKIP_LINES) return
+            reported[key] = now
+            skips += 1
+        }
+        emit(
+            "skip? moved=" + fixed(movedPx) + "px lag=" + fixed(lagPx) +
+                " window=" + fixed(windowMs) + "ms",
+        )
+    }
+
+    /**
+     * `isRunning()` answered false by the host while the wave still had rows.
+     *
+     * We override it (RecyclerView would otherwise end every pending move), so this line is the
+     * evidence that the override was necessary rather than the evidence of a bug: no `idle` line at
+     * all in a busy passage means the hook is not being asked, and a `reset` line right after one
+     * means RecyclerView ended the moves anyway.
+     */
+    fun idle(describe: () -> String?) {
+        // Built only when the line is actually going to be printed: isRunning() is asked once per
+        // frame, and a String per frame for a line that is rate limited away is waste on the main
+        // thread. The counter is a diagnostic, so the unlocked read is fine.
+        val now = now()
+        if (now - lastIdleAt < IDLE_WINDOW_MS || idles >= MAX_IDLE_LINES) return
+        val detail = runCatching(describe).getOrNull() ?: return
+        lastIdleAt = now
+        idles += 1
+        emit("idle host=0 override=1 " + detail)
     }
 
     /** The contract or the install is unusable; one line, ever. */
@@ -564,5 +662,17 @@ internal class LyricLineSpringDiagnostics(
 
         /** Budget for the merged sub-pixel corrections, so a long song cannot flood logcat. */
         const val MAX_MERGE_LINES = 60
+
+        /** One refused layout shift per reason inside this window, and a bounded budget. */
+        const val IGNORE_WINDOW_MS = 500L
+        const val MAX_IGNORE_LINES = 60
+
+        /** One `skip?` line per holder inside this window, and a bounded budget for the run. */
+        const val SKIP_REPORT_WINDOW_MS = 2_000L
+        const val MAX_SKIP_LINES = 40
+
+        /** One `idle` line a second: it repeats for as long as a wave is travelling. */
+        const val IDLE_WINDOW_MS = 1_000L
+        const val MAX_IDLE_LINES = 12
     }
 }

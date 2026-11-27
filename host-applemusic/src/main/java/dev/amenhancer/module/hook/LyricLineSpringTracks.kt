@@ -1,10 +1,20 @@
 package dev.amenhancer.module.hook
 
 import android.view.View
+import dev.amenhancer.module.lyrics.LyricLineShiftSkip
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringWave
 import java.util.IdentityHashMap
+import kotlin.math.abs
+
+/**
+ * What one reset path threw away: how many rows, and the largest lag among them.
+ *
+ * reset lag=0 is harmless (the row had arrived); reset lag=180 while the row is still on screen is
+ * a visible jump, which is exactly what a device log has to be able to tell apart.
+ */
+internal class LyricLineSpringReset(val rows: Int, val maxLagPx: Float)
 
 /**
  * One row taken over by 「换行弹簧」: the animator it belongs to, its holder, its itemView, and the
@@ -60,6 +70,11 @@ internal class LyricLineSpringTracks(
     private val dispatchFinished: (LyricLineSpringRow) -> Unit,
     /** One line per absorbed layout shift, i.e. per frame of a background line growing. */
     private val layoutShift: (LyricLineSpringRow, Int, Float) -> Unit = { _, _, _ -> },
+    /** One line per layout shift that was *not* absorbed, with the reason. */
+    private val layoutShiftSkipped: (LyricLineSpringRow, Int, LyricLineShiftSkip) -> Unit =
+        { _, _, _ -> },
+    /** One line per pushed row that never moved: the swallowed line change, on the device. */
+    private val skipped: (LyricLineSpringRow, Float, Float, Float) -> Unit = { _, _, _, _ -> },
 ) {
     private val lock = Any()
     private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
@@ -140,32 +155,43 @@ internal class LyricLineSpringTracks(
         animator != null && waves[animator]?.isRunning == true
     }
 
-    /** `endAnimation(holder)`: end that row now, exactly once. */
-    fun finish(animator: Any?, holder: Any): Boolean = synchronized(lock) {
-        val row = rows[holder] ?: return@synchronized false
-        if (animator != null && row.animator !== animator) return@synchronized false
-        val wave = waveOf[holder] ?: return@synchronized false
-        val finished = wave.finishHolder(holder, resetOffset = true)
+    /**
+     * endAnimation(holder): end that row now, exactly once.
+     *
+     * The row is zeroed here — RecyclerView calls this when a holder is rebound or recycled, and a
+     * leftover translationY would show up on the next lyric line — so the lag that is being thrown
+     * away is reported back: on the device, a run of these *while the row was still on screen* is
+     * what a line change that "does not move" looks like.
+     */
+    fun finish(animator: Any?, holder: Any): LyricLineSpringReset? = synchronized(lock) {
+        val row = rows[holder] ?: return@synchronized null
+        if (animator != null && row.animator !== animator) return@synchronized null
+        val wave = waveOf[holder] ?: return@synchronized null
+        val lag = wave.lagOf(holder)
+        if (!wave.finishHolder(holder, resetOffset = true)) return@synchronized null
         rows.remove(holder)
         waveOf.remove(holder)
         retire(wave)
-        finished
+        LyricLineSpringReset(1, lag)
     }
 
-    /** `endAnimations()`: end every wave that belongs to [animator]. */
-    fun finishAll(animator: Any?): Int = synchronized(lock) {
+    /** endAnimations(): end every wave that belongs to [animator]. */
+    fun finishAll(animator: Any?): LyricLineSpringReset? = synchronized(lock) {
         var ended = 0
+        var maxLag = 0f
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             if (animator == null || entry.key === animator) {
-                ended += entry.value.size
-                entry.value.finishAll()
-                forgetWave(entry.value)
+                val wave = entry.value
+                maxLag = maxOf(maxLag, wave.holders().maxOfOrNull { abs(wave.lagOf(it)) } ?: 0f)
+                ended += wave.size
+                wave.finishAll()
+                forgetWave(wave)
                 iterator.remove()
             }
         }
-        ended
+        if (ended == 0) null else LyricLineSpringReset(ended, maxLag)
     }
 
     /** Recovery for a takeover that failed after the host's animation was already skipped. */
@@ -177,12 +203,35 @@ internal class LyricLineSpringTracks(
     /** The number of live waves, for the diagnostic line. */
     fun activeWaves(): Int = synchronized(lock) { waves.size }
 
+    /**
+     * What isRunning() would have ended if the hook had not answered it:
+     * waves=1 rows=3 maxLag=217.4.
+     *
+     * Null when this animator has nothing left to wait for. Reported from the isRunning hook the
+     * moment the host says "idle" while a wave is still live — the one thing RecyclerView would turn
+     * into an early endAnimation (and therefore an instant jump) if the hook were missing.
+     */
+    fun describe(animator: Any?): String? = synchronized(lock) {
+        val wave = animator?.let { waves[it] } ?: return@synchronized null
+        val pending = wave.holders().filter { wave.isPending(it) }
+        if (pending.isEmpty()) return@synchronized null
+        val maxLag = pending.maxOf { abs(wave.lagOf(it)) }
+        val shown = String.format(java.util.Locale.US, "%.1f", maxLag)
+        "waves=" + waves.size + " rows=" + pending.size + " maxLag=" + shown
+    }
+
     private fun newWave(): LyricLineSpringWave<Any> = LyricLineSpringWave(
         write = { holder, offset -> rows[holder]?.let { writeOffset(it, offset) } },
         finish = { holder -> rows[holder]?.let { dispatchFinished(it) } },
         layoutTop = { holder -> rows[holder]?.top },
         onLayoutShift = { holder, delta, lag ->
             rows[holder]?.let { layoutShift(it, delta, lag) }
+        },
+        onShiftSkipped = { holder, delta, reason ->
+            rows[holder]?.let { layoutShiftSkipped(it, delta, reason) }
+        },
+        onSkipped = { holder, moved, lag, window ->
+            rows[holder]?.let { skipped(it, moved, lag, window) }
         },
     )
 

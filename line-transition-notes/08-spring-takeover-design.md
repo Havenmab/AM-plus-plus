@@ -198,11 +198,13 @@ x(t) = (x0 + t (v0 + omega0 x0)) e^(-omega0 t)      // omega0 = sqrt(k/m)
 
 ### 8.5 单测（`/tmp/ktool`，JVM）
 
-`LyricLineSpringPolicyTest`（17 条）：两档 ζ、`k=170(0.484/t)^2`、AMLL 档 t99=450±5%、HOST 档 1.31T±5% 且比值恒定、AMLL 形状 = 临界阻尼（与同参数精确解差 1.31 倍）、HOST 闭式解与 RK4 一致、单调无过冲、到位门限、`appliedFeel` 双开关门控。
+`LyricLineSpringPolicyTest`（12 条，2026-11-27 起含补偿闸门两条）：两档 ζ、`k=170(0.484/t)^2`、AMLL 档 t99=450±5%、HOST 档 1.31T±5% 且比值恒定、AMLL 形状 = 临界阻尼（与同参数精确解差 1.31 倍）、HOST 闭式解与 RK4 一致、单调无过冲、到位门限、`appliedFeel` 双开关门控。
 
-`LyricLineSpringWaveTest`（25 条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 每行恰好 1 次 finished（修正不 retire）、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
+`LyricLineSpringWaveTest`（31 条，2026-11-27 起含 §8.7 的宿主时间线四条）：同一次换行同起点 + 按视觉序起跑、50 ms 阶梯与 1/1.05 斜率、焦点线推导、延迟未到不动、re-target 保速（同向时）并累加 lag、连续 3 批×6 行 = 每行恰好 1 次 finished（修正不 retire）、`endAnimations` 中途打断恰好一次、`endAnimation` 单行、在飞行中加入的新行拿到自己的 lag、帧步钳制；目标修正五条：换行 + bg 展开 = 一次单调上移（317 px）且视觉不走回头路、延迟内修正保留槽位且起点不动、终点翻到另一侧时丢速度且无过冲、bg 反复展开/收起 residual 收敛（不超出行位移本身）、首次 move 报告为"新行"而不是"修正"。
 
-逐帧布局跟踪四条：**没有任何 move 的** bg 展开（12 帧 × 4 px = 48 px）被逐帧吸收、视觉 y 单调不回退、终点 = 位移 − 48；每行同幅度的位移按"滚动/重锚"处理、不吸收；move 与逐帧 delta 不重复计数；超界位移只重设基线。
+逐帧布局跟踪四条：**没有任何 move 的** bg 展开（12 帧 × 4 px = 48 px）被逐帧吸收、视觉 y 单调不回退、终点 = 位移 − 48；每行同幅度的位移按"滚动/重锚"处理、不吸收；move 与逐帧 delta 不重复计数；超界位移只重设基线（现在是 **> 8 px/帧** 与 **> 96 px/次换行** 两条，见 §8.7）。
+
+`LyricLineSpringHoldTest`（7 条）：间奏退场期间行完全不动、阶梯在退场结束后才开始、在飞行的行被冻在原地而不是回弹、结束回调提前放行、退场中推来的新行加入同一段等待、退场内的第二次换行只改终点。
 
 > 修订（2026-11-25）：第 1 条的"保速"改成了**有条件保速**（见 §8.3 第 4 点）。
 > 宿主对同一个 holder 可能在一屏内发多次 `animateMove`（重锚、批量 notify、bg 行高度动画落在一次带动画的 layout 里），
@@ -259,4 +261,100 @@ adb logcat -c && adb logcat -s AMPP-LineSpring
 `retarget ... kept=` 非 0 表示保速、`dropped=1` 表示终点翻到行的另一侧（正常）、`unstaggered=1` 表示反向把行的阶梯槽位丢了。
 不该再出现 `handed back: layoutJump=... residual=... beyond ±1200px`（真正的 seek 才允许）。
 `merge lag=... layoutDelta=...` 成串出现是两次 `dy` 抵消（bg 行展开又收起），可接受。
+
+### 8.7 快歌第二次修：逐帧补偿把**宿主自己的位移**抵消了（2026-11-27 晚）
+
+真机现象（用户原话）：「中间那一行**不跳转**，等到**下下行**的起始时间后，**直接跳到下下行**。」
+注意它与 §8.6 那两个原因不同：这一步**行完全不动**，而不是动得少或跳一下。
+
+#### 证据（1626，`AMPP-LineSpring`）
+
+```
+16:52:22.005 takeover dy=-217 waves=1
+16:52:22.142~144 layout-shift delta=-33  ×10 行 (residual≈250)
+16:52:22.247~248 layout-shift delta=-102 ×10 行 (residual≈1170)
+16:52:22.354~355 layout-shift delta=-81  ×7  行 (residual≈2335)
+16:52:22.457~458 layout-shift delta=-64  ×4  行 (residual≈3235)
+16:52:22.568    layout-shift delta=-10  ×2
+16:52:25.217    handed back: layoutJump=-1679 residual=-1679 beyond ±1200px
+```
+
+`layout-shift` 只在**补偿真的发生**时打印（`LyricLineSpringWave#absorbLayoutShifts`）。这一串 33/102/81/64/10 px
+（0.4 s 共 ≈290 px）是**宿主自己在把整块往上挪**，而每一帧都被折进 residual：
+
+* 补偿会 `elapsedMs = 0` 重新起跑弹簧，所以**被补偿的行一帧都不动** —— 「这一行不跳转」；
+* residual 只涨不落（每帧 +|delta|，弹簧没机会跑），涨到 ±3600 / 下次 `layoutJump` 超 1200 时**整批交回宿主**，
+  宿主瞬间对齐 → 「直接跳到下下行」，而且这一跳是 2000+ px 量级。
+
+#### 根因（file:line）
+
+`LyricLineSpringWave#absorbLayoutShifts` 原来的准入是**全局**的一条：
+
+```kotlin
+val absorb = live <= 1 || shifted < live || !uniform      // 旧
+if (!absorb || !acceptsLayoutShift(delta)) return
+```
+
+三个漏洞叠在一起：
+
+1. **`!uniform` 会泄漏给所有行**：只要同一帧里**有一行**的 delta 与其它行不同（回收/换行/刚进屏的行），
+   `absorb` 就整批为真，于是那些**同幅度上移**的行（宿主动画）也一起被补偿；
+2. **`shifted < live` 同理**：快歌里总有一两行已经滚出屏幕、`top` 不跟着动（`shifted=10 < live=12`），
+   于是剩下的 10 行被当成「bg 行在长」；
+3. **上限 240 px 太宽**：1626 实测 bg 行展开是 **4–6 px/帧**，而宿主自己的换行动画是 **33–102 px/帧**，
+   240 把两者都放行了，且没有「一次换行总共补多少」的上限。
+
+#### 修法（三条闸门，全部是「跟随布局」而不是「按住行」）
+
+| 闸门 | 判据 | 行为 | 日志 |
+| --- | --- | --- | --- |
+| 整块移动 | 所有被跟踪行都动了（`live ≥ 2 && shifted == live`） | 不补偿，只重设基线 | `ignore-shift why=block` |
+| 太快 | `|delta| > MAX_COMPENSABLE_SHIFT_PX = 8` | 不补偿，只重设基线（宿主自己的动画照常播） | `ignore-shift why=fast` |
+| 封顶 | 一次换行累计 `> MAX_COMPENSATION_PX = 96` | 停止补偿（`push` 重置预算） | `shift-cap delta=… cap=96` |
+
+单行被跟踪（`live == 1`）时分不清「滚动」与「bg 展开」，保持原来的「吸收」读法（`unit test` 里
+`compensation stops at the cap` 覆盖）。补偿量在每次 `push`（= 新的一次换行）重置，所以长歌不会把预算耗尽。
+
+#### 复现（`LyricLineSpringWaveTest`）
+
+新增一个把宿主**完整**重放一遍的 `Host`（`dy = toY - (fromY + translationY)`，逐帧 `top` 由宿主自己挪，
+并记录「translationY 归零而布局已走远」的帧 = `snaps`、「往回走」的帧 = `backwards`）：
+
+* `the host walking the block up itself is followed, not cancelled`：12 行、先 `dy=-217` 的 takeover，
+  再 10 行被宿主逐帧上移 33/102/81/64/10 px（另 2 行滚出屏幕、`top` 不动）。断言：
+  **compensated == 0**、residual 不超过 push 写入的值、整块跟着宿主走 ≥250 px、没有任何 snap。
+* `compensation stops at the cap so the residual cannot run away`：单行 6 px/帧 × 30 帧，断言补偿停在 96 px
+  并且 `CAPPED` 上报过一次。
+* `a line change every three to eight hundred ms moves the block every time` /
+  `change at zero, change at half a second, change at 1 point 2 s, then settle`：300/500/800 ms 与真机
+  时间线（0 / 0.5 / 1.2 s），每段都断言「每行至少动了 1 px」+ 无 snap + 不回退。
+
+**换回旧语义复跑**（只把这三条闸门恢复成上面的旧准入）会红：
+
+```
+the host walking the block up itself is followed, not cancelled
+  java.lang.AssertionError: residual grew to 243.59842 (push wrote 217.0)
+compensation stops at the cap so the residual cannot run away
+  java.lang.AssertionError: expected:<96.0> but was:<180.0>
+```
+
+#### 真机判据
+
+密集段落里：
+
+* **应出现**：`ignore-shift why=fast delta=-33/-102/…`（宿主自己那次换行动画被跟随，这是本次修复的正面证据），
+  偶发 `shift-cap`；每次换行仍有 `takeover`/`retarget`；
+* `layout-shift … residual=` **只应出现在 bg 行展开那一小段**（delta ≤ 8、总量 ≤ 96），
+  不应再出现成串的 `delta=-33/-102`；
+* **不应出现**：`skip? moved=… lag=… `（说明行还是被按住）、`handed back: layoutJump=… residual=… beyond`；
+* `reset endAnimation rows=1 lag=0.4->0` 是正常回收；`lag` 是几十上百仍成串出现，才是 §8.6 的原因 A 回潮。
+
+#### 其余三条怀疑的结论（本次逐条查证）
+
+| 怀疑 | 结论 |
+| --- | --- |
+| 1. `endAnimation(holder)` 归零 `translationY` | 路径存在（`AppleMusicLyricLineSpringTarget#endAnimationHook` → `LyricLineSpringTracks#finish` → `wave.finishHolder(resetOffset=true)`），但只在回收/换绑时触发，且会被下一次换行立刻覆盖；本次仍给它加了 `reset … lag=` 日志以便真机判定（本次日志里没有成串 `reset`） |
+| 2. `isRunning` 在「都在阶梯延迟里」时返回 false | **不是**：`isRunning = any { !finished }`，延迟中的行没有 finished，所以为真；新增 `idle host=0 override=1 waves=… rows=… maxLag=…` 作为真机反证（真机应能看到，说明 hook 确实在被调用） |
+| 3. `finishHolder` 提前 finished | `advance` 里只在 `isAtRest`（≤0.5 px 且 ≤30 px/s）或 deadline 时结束，逐帧 layout 跟踪不会再把它带回非零；`endAnimation` 的 zeroing 见第 1 条 |
+| 4. `hold`（间奏）与快歌 | 未被本次日志触发（`takeover` 行没有 `held=`）；`hold` 期间 `push` 只改终点、不改起点，视觉连续，且 `release` 后阶梯照常跑 |
 

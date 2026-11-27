@@ -113,10 +113,13 @@ if (delta != 0) { lag -= delta; expectedTop = actualTop; 方向翻转则清零�
 视觉位置是 `top + translationY`，所以 `lag -= delta` 让视觉一像素都不动；随后弹簧把 residual 带回 0，
 而那个 0 就在 bg 展开后的位置 —— **整段换行仍然只往上走，终点已经含 ΔH**（这正是 iOS 的语义）。
 
-两条拒绝，都是为了不把别的布局变化误当 bg 展开：
+三条拒绝（2026-11-27 补，见 08 §8.7），都是为了不把别的布局变化误当 bg 展开——更要紧的是不把**宿主自己**
+的换行位移抵消掉（那会让行一帧都不动、residual 无界增长，最后整批交回宿主跳过去）：
 
-* **所有被跟踪行同幅度位移** ⇒ 滚动/重锚（会把整块粘在屏幕上顶着手指），只重设基线；
-* **单帧 |delta| > 240 px**（`LyricLineSpringPolicy.MAX_LAYOUT_SHIFT_PX`）⇒ 回收行/seek/跳转，只重设基线。
+* **所有被跟踪行都位移** ⇒ 滚动/重锚/宿主自己把整块挪走（会把整块粘在屏幕上顶着手指），只重设基线；
+* **单帧 |delta| > 8 px**（`LyricLineSpringPolicy.MAX_COMPENSABLE_SHIFT_PX`；1626 实测 bg 展开 4–6 px/帧、
+  宿主自己的换行动画 33–102 px/帧）⇒ 宿主动画/回收行/seek，只重设基线；
+* **一次换行累计 > 96 px**（`MAX_COMPENSATION_PX`）⇒ 已经是一整行了，停止补偿并打 `shift-cap`。
 
 与 move 不重复计数：`push` 把 `expectedTop` 同步成该 move 的 `toY`，下一帧读到的 `top` 与它相等，delta = 0。
 

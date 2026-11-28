@@ -1,6 +1,7 @@
 package dev.amenhancer.module.hook
 
 import android.view.View
+import android.view.ViewGroup
 import dev.amenhancer.module.lyrics.LyricLineShiftSkip
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
@@ -48,6 +49,18 @@ internal class LyricLineSpringRow(
      */
     val top: Int?
         get() = runCatching { view.top }.getOrNull()
+
+    /**
+     * The row's slot among the lyric list's children — the `holder=` number of the `row-settle` line.
+     *
+     * Read from the view hierarchy rather than from the holder: 1626's `RecyclerView$D` is
+     * obfuscated (`getLayoutPosition` is one of `b()/c()/d()`, indistinguishable without a decode
+     * per build), while a child index is what the line is read against anyway — *which* row of the
+     * visible window announced its rest, and whether that is one per line change. -1 when the row
+     * has been detached (a settle always follows an attached write, so it is only a fallback).
+     */
+    val slot: Int
+        get() = runCatching { (view.parent as? ViewGroup)?.indexOfChild(view) ?: -1 }.getOrDefault(-1)
 }
 
 /**
@@ -69,6 +82,15 @@ internal class LyricLineSpringRow(
 internal class LyricLineSpringTracks(
     private val writeOffset: (LyricLineSpringRow, Float) -> Unit,
     private val dispatchFinished: (LyricLineSpringRow) -> Unit,
+    /**
+     * The host's own per-row "this move is over" notification, emitted when a spring comes to rest.
+     *
+     * Separate from [dispatchFinished] on purpose: that one is RecyclerView's ledger and every end
+     * path owes it, while this one is the host's reaction to a move that really finished, so a
+     * reset (`endAnimation`, `endAnimations`, a row moving to the other pane) must not emit it.
+     * See [dev.amenhancer.module.lyrics.LyricLineSpringWave.onSettled].
+     */
+    private val settled: (LyricLineSpringRow) -> Unit = { _ -> },
     /** One line per absorbed layout shift, i.e. per frame of a background line growing. */
     private val layoutShift: (LyricLineSpringRow, Int, Float) -> Unit = { _, _, _ -> },
     /** One line per layout shift that was *not* absorbed, with the reason. */
@@ -257,6 +279,7 @@ internal class LyricLineSpringTracks(
     private fun newWave(): LyricLineSpringWave<Any> = LyricLineSpringWave(
         write = { holder, offset -> rows[holder]?.let { writeOffset(it, offset) } },
         finish = { holder -> rows[holder]?.let { dispatchFinished(it) } },
+        onSettled = { holder -> rows[holder]?.let { settled(it) } },
         layoutTop = { holder -> rows[holder]?.top },
         onLayoutShift = { holder, delta, lag ->
             rows[holder]?.let { layoutShift(it, delta, lag) }

@@ -45,10 +45,14 @@ def main():
             motion = profile['lyricLineMotion']
             spring = motion.get('spring') or {}
             assert spring.get('contractVersion') == 1, f'missing line motion spring contract: {filename}'
+            # rowSettle is the host's own per-row "this row's move is over". It is optional *at
+            # runtime* (a build without it keeps the animation and loses one callback), but a
+            # profile that installs the spring must pin it: without it the host's own line update
+            # stops arriving, which is a regression rather than a missing extra.
             required_spring = {
                 'classes': {'animator', 'holder'},
                 'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
-                            'dispatchMoveStarting', 'dispatchAnimationFinished'},
+                            'dispatchMoveStarting', 'dispatchAnimationFinished', 'rowSettle'},
                 'fields': {'holderItemView', 'animatorFragment'},
             }
             for group, roles in required_spring.items():

@@ -358,3 +358,51 @@ compensation stops at the cap so the residual cannot run away
 | 3. `finishHolder` 提前 finished | `advance` 里只在 `isAtRest`（≤0.5 px 且 ≤30 px/s）或 deadline 时结束，逐帧 layout 跟踪不会再把它带回非零；`endAnimation` 的 zeroing 见第 1 条 |
 | 4. `hold`（间奏）与快歌 | 未被本次日志触发（`takeover` 行没有 `held=`）；`hold` 期间 `push` 只改终点、不改起点，视觉连续，且 `release` 后阶梯照常跑 |
 
+---
+
+## 9. 换行收尾通知（`rowSettle`，2026-11-28）
+
+**症状（用户确认）**：歌词行持续时间很短时，下一行不高亮，要等再下一行才恢复；官方歌词同样复现，关掉「换行弹簧位移」就正常。
+
+**这次的改动**（只做 1626）：
+
+1. profile 新增可选角色 `lyricLineMotion.spring.methods.rowSettle` =
+   `PlayerLyricsViewFragment$u#s(RecyclerView$D)V`（owner/name/params/returns/static 全精确）；
+2. 弹簧**自然结束**时反射调用它：每个 holder 每次位移恰好一次，时机在写完 `translationY = 0` 并
+   `dispatchAnimationFinished` **之后**；`endAnimation`/`endAnimations` 的强制结束不调（那时行已离开视野或即将复用）；
+3. 与 `finished` 标志共用 → 重瞄（`push` 到飞行中的行）不重复、reset 不触发、行在静止后再次被 `push` 才欠新的一次；
+4. 日志 `row-settle holder=<slot> ok=1|0`（500 ms 限流、预算 60 条）；角色解析失败只打一行
+   `row-settle unavailable: …`，弹簧照常安装。
+
+### 9.1 DEX 事实（本次逐条复核）
+
+| 事实 | 证据 |
+| --- | --- |
+| `$u#s(ViewHolder)V` **声明在 `$u`**（public final，flags `0x11`），不是从 `F` 继承 | `RecyclerView$D`/`$u` 的 method_access 表；`getDeclaredMethod` 在 `$u` 上可取 |
+| 方法体只有三步：`this.z`（fragment）→ `n0:i1`（adapter）→ `i1#N(holder)` | `amd2.py base.apk 'PlayerLyricsViewFragment$u' s` |
+| 它唯一的调用点是**虚分派** `F#s(holder)`，两个调用方都是 `AnimatorListenerAdapter.onAnimationStart` | `callers.py 'recyclerview\.widget\.(F|RecyclerView\$k|j)#s\('` → `androidx.recyclerview.widget.h#onAnimationStart`、`mc.z#onAnimationStart`（`$u#p/q/r/s` 本身零引用，符合虚分派） |
+| `mc.y#m` **不**直接调 `$u#s`：`dx==0 \|\| dy==0` → 写 translation、入 `mc.y.j`、返回 true；`dx!=0 && dy!=0` → `post J4.t2(u,2,holder)` + `RecyclerView$k#c` + 返回 false | `amd2.py base.apk 'mc.y' m`（23/25 两处 `if-nez` 都跳到 56 = 动画分支） |
+| 那个 post 的歌词分支是 `u.z → n0 → i1#H(holder)`（行更新），不是 `$u#s` | `amd2.py base.apk 'J4.t2' run` 第 12–23 行 |
+| `i1#N` 的两个实现 `A#N`/`V0#N` 都先 `instance-of q8.m9`（间奏/三点行 binding），否则**立即 return** | `amd2.py base.apk 'com.apple.android.music.player.A' N` / `'…V0' N` |
+
+**结论（必须写清楚，别骗自己）**：对**文本行**，`$u#s` → `i1#N` 是 no-op；它补回的是「宿主会为每一行发一次通知」这个**形状**和计数，
+不是「下一行高亮」的充分条件。本次按既定方案落地并留了真机判据（见 9.2），但如果真机上 `row-settle` 有了、高亮仍未恢复，
+那这条链就到此为止，要继续查 9.3 的那条。
+
+### 9.2 真机判据
+
+* 短句段落里，**每次换行后出现一次** `row-settle holder=<slot> ok=1`（同一批 4–8 行只会打印前 1–2 条：500 ms 限流是刻意的）；
+* 出现 `row-settle holder=… ok=0` = 宿主方法自己抛了（`n0` 还没绑定、行已回收），弹簧不受影响；
+* 完全没有 `row-settle`、只有一行 `row-settle unavailable:` = profile/反射没解析到（先看 profile 版本是否 1626）；
+* **恢复判据**：短句段落连续换行时，下一行在换行后即高亮，不再「慢一行」。
+
+### 9.3 下一步候选（本次**未**做，需要拍板）
+
+`isRunning()` 被我们覆盖成 true 期间，宿主的 `RecyclerView$k#h(ItemAnimatorFinishedListener)`（= `ItemAnimator.isRunning(listener)`）
+只会把宿主 listener 排进`mFinishedListeners`，而派发它的 `RecyclerView$k#d()`（= `dispatchAnimationsFinished`）只有一个调用点：
+`mc.y#u()`（`if (!isRunning()) dispatchAnimationsFinished()`），而它只在宿主自己那条动画结束路径里跑——我们整条跳过了。
+
+也就是说：**我们借了 `isRunning` 的回答权，却没有还「结束了」这个回调**。短句时下一次换行到来，宿主还在等上一次的回调，
+这正好是「宿主的 highlight/布局更新被它自己的『动画未结束』状态挡住」的形状。候选修法：某个 animator 的最后一个 wave 结束时
+调用 `mc.y#u()`（或直接 `RecyclerView$k#d()`），作为 profile 里的新角色做 exact 校验；与 `rowSettle` 相互独立。
+

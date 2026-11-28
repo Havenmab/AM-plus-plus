@@ -33,13 +33,17 @@ import dev.amenhancer.module.model.ModuleSettings
  * when a fast song re-offers `animateMove` every 60-120 ms. The zero branch, the deferred queue, the
  * re-anchor and the duration field are all left exactly as Apple Music wrote them.
  *
- * **What it therefore owes.** Skipping the host's animation also skips the two notifications that
- * animation's listener emits — `dispatchMoveStarting(holder)` when it starts and
- * `dispatchAnimationFinished(holder)` when it ends. RecyclerView's pending-move ledger accepts
- * exactly one finish per start, so the finish is emitted from a per-row flag shared by every end
- * path (spring at rest, `endAnimation`, `endAnimations`, a re-target retiring the previous move),
- * and `isRunning()` is answered `true` while any wave of that animator is live so the list is not
- * considered idle mid-flight.
+ * **What it therefore owes.** Skipping the host's animation also skips the notifications that
+ * animation emits — `dispatchMoveStarting(holder)` when it starts, `dispatchAnimationFinished(holder)`
+ * when it ends, and the lyrics animator's own per-row announcement to its adapter
+ * (`PlayerLyricsViewFragment$u#s` → `i1#N`, [LyricLineSpringRoles.rowSettle]). RecyclerView's
+ * pending-move ledger accepts exactly one finish per start, so the finish is emitted from a
+ * per-row flag shared by every end path (spring at rest,
+ * `endAnimation`, `endAnimations`, a re-target retiring the previous move), and `isRunning()` is
+ * answered `true` while any wave of that animator is live so the list is not considered idle
+ * mid-flight. The row announcement is a *different* obligation and gets a different rule: it is
+ * emitted only when the spring really came to rest — after `translationY = 0` and after the finish —
+ * and never from a reset, where the row is leaving the window or about to be reused.
  *
  * **One tempo: AMLL's.** The spring is AMLL's own — a fixed 0.45 s settle with k≈197, c≈31, m=0.9
  * and AMLL's ζ≥1 curve — and it never reads the animator's move-duration field (`$k.e`): a line
@@ -125,6 +129,10 @@ internal class AppleMusicLyricLineSpringTarget(
                 "Lyric line-change spring not installed; " + profile.id + ": " + reason,
             )
         }
+        // Optional: the host's own per-row "this row's move is over". A build whose animator
+        // subclass no longer declares it keeps the spring and loses only that notification, so the
+        // reason is printed once here and the install goes on.
+        roles.optionalMissing().firstOrNull()?.let { reason -> diagnostics.rowSettleUnavailable(reason) }
         val session = SpringSession(roles, ::featureEnabled, diagnostics, profile, loader)
         val scope = HookRegistrationScope()
         return try {
@@ -161,6 +169,9 @@ internal class AppleMusicLyricLineSpringTarget(
         private val tracks = LyricLineSpringTracks(
             writeOffset = { row, offset -> row.view.translationY = offset },
             dispatchFinished = { row -> notifyFinished(row) },
+            // The host's own half of "this move is over": not RecyclerView's ledger but the
+            // lyrics animator telling its adapter that the row has arrived (see notifySettled).
+            settled = { row -> notifySettled(row) },
             layoutShift = { row, delta, lag -> diagnostics.layoutShift(row.holder, delta, lag) },
             layoutShiftSkipped = { row, delta, reason ->
                 diagnostics.shiftIgnored(delta, reason)
@@ -466,6 +477,33 @@ internal class AppleMusicLyricLineSpringTarget(
                 .onFailure { diagnostics.failed("dispatchAnimationFinished", it) }
         }
 
+        /**
+         * The host's own row notification, replayed once when the spring comes to rest.
+         *
+         * 1626's lyric animator announces every row it animates to its adapter
+         * (`PlayerLyricsViewFragment$u#s` → `i1#N`), so a takeover that answers `animateMove` and
+         * never animates has to replay it: the host emits it from the animator's own listener, and
+         * that listener never runs while we own the displacement.
+         *
+         * Three rules, all of them here:
+         *  * once per row — the wave's own `finished` flag is what calls this (see
+         *    [dev.amenhancer.module.lyrics.LyricLineSpringWave.onSettled]), so a re-target cannot
+         *    duplicate it and a reset never emits it;
+         *  * on the thread that owns the list — the frame callback, which is where the wave ends;
+         *  * never at the animation's expense — a missing role, a wrong animator or a throwing host
+         *    method costs one rate-limited log line, and the row stays where the spring put it.
+         */
+        private fun notifySettled(row: LyricLineSpringRow) {
+            val settle = roles.rowSettle ?: return
+            val ok = runCatching {
+                if (!settle.declaringClass.isInstance(row.animator)) {
+                    error("animator is not " + settle.declaringClass.name)
+                }
+                settle.invoke(row.animator, row.holder)
+            }.isSuccess
+            diagnostics.rowSettle(row.slot, ok)
+        }
+
         private fun recover(row: LyricLineSpringRow) {
             runCatching { tracks.forget(row.holder) }
             runCatching { row.view.translationY = 0f }
@@ -495,7 +533,9 @@ internal class AppleMusicLyricLineSpringTarget(
  *  * `handed back: …` — a move the spring refused, with the bound it failed;
  *  * `layout-shift` / `ignore-shift` / `shift-cap` — what the per-frame layout reading did;
  *  * `reset endAnimation|endAnimations …` — the host zeroed rows, and how far they were from home;
- *  * `idle host=0 override=1 …` — the host said "list is idle" while the wave was still travelling.
+ *  * `idle host=0 override=1 …` — the host said "list is idle" while the wave was still travelling;
+ *  * `row-settle holder=… ok=1|0` — a row arrived and the host's own "this move is over" was
+ *    replayed (or refused), i.e. the notification a real move would have emitted.
  *
  * The pairing that answers "the middle line did not move" is `line-change` against `push`: the
  * host's count of line changes against ours, plus `tick` to prove the clock ran between them.
@@ -668,6 +708,33 @@ internal class LyricLineSpringDiagnostics(
 
     /** The line-change hook did not install; one line, ever. The spring itself is unaffected. */
     fun traceUnavailable(reason: String) = once("trace", "line-change trace unavailable: " + reason)
+
+    /**
+     * The host's own per-row "this move is over", replayed when a spring came to rest.
+     *
+     * `row-settle holder=<slot> ok=1` once per row that arrived is the line a device run reads: in a
+     * passage of short lines there is one of them after **each** line change, and what the next line
+     * does is read against it. `ok=0` means the host's method itself refused (a missing adapter, a
+     * row recycled in between) — the spring and the row's position are unaffected, only the host's
+     * own reaction to the move is lost.
+     *
+     * Rate limited per class like every event line (≤2 a second), because a fast song settles rows
+     * as fast as it moves them; the budget is the same size as `push`'s.
+     */
+    fun rowSettle(slot: Int, ok: Boolean) {
+        if (!gate(ROW_SETTLE, REPEAT_WINDOW_MS, MAX_ROW_SETTLE_LINES)) return
+        emit("row-settle holder=" + slot + " ok=" + (if (ok) 1 else 0))
+    }
+
+    /**
+     * The optional row-notification role did not resolve on this build: one line, ever.
+     *
+     * The spring still runs; only the host's own per-row notification is missing, which on a device
+     * looks like a correct animation with one host-side effect silently absent — exactly what this
+     * line has to be distinguishable from.
+     */
+    fun rowSettleUnavailable(reason: String) =
+        once("row-settle-unavailable", "row-settle unavailable: " + reason)
 
     /**
      * One frame of a layout change that announced nothing — the background line growing or
@@ -886,6 +953,7 @@ internal class LyricLineSpringDiagnostics(
         const val TICK = "tick"
         const val LINE_CHANGE = "line-change"
         const val STUCK = "stuck"
+        const val ROW_SETTLE = "row-settle"
 
         /**
          * ≤2 lines a second for every event class.
@@ -901,6 +969,15 @@ internal class LyricLineSpringDiagnostics(
         const val MAX_LINE_CHANGE_LINES = 40
         const val STUCK_WINDOW_MS = 2_000L
         const val MAX_STUCK_LINES = 20
+
+        /**
+         * The row announcement: one line per row that arrives, so the same budget as `push`.
+         *
+         * A line change settles 4-8 rows inside a few hundred milliseconds, and only the leading
+         * ones are printed — the class shares [REPEAT_WINDOW_MS] with every other event line, which
+         * is what keeps a fast song under the log budget.
+         */
+        const val MAX_ROW_SETTLE_LINES = 60
 
         /**
          * The heartbeat: 250 ms, the cadence that makes a gap meaningful.

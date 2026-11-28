@@ -71,6 +71,13 @@ import kotlin.math.abs
  * genuinely ends — the spring arriving, `endAnimation(holder)`, `endAnimations()`, or the row moving
  * to another wave.
  *
+ * **A row at rest owes the host two notifications, not one.** [finish] is the bookkeeping half
+ * (`dispatchAnimationFinished`, i.e. RecyclerView's pending-move ledger) and [onSettled] is the
+ * host's own per-row half: 1626's lyric animator announces every row it animates to its adapter
+ * (`PlayerLyricsViewFragment$u#s` → `i1#N`), and skipping the host's animation skips that
+ * announcement with it. The wave replays it — only here, i.e. only when the spring really came to
+ * rest, and never from a reset (see [finishHolder] / [finishAll]).
+ *
  * Pure: it never touches a View, a clock or the host. The caller supplies [write] (pixels) and
  * [finish] (the host's `dispatchAnimationFinished`), plus the pane height a line change was pushed
  * with, which is what makes the exactly-once rule and the wave's arithmetic testable with a fake
@@ -79,6 +86,21 @@ import kotlin.math.abs
 class LyricLineSpringWave<H : Any>(
     private val write: (H, Float) -> Unit,
     private val finish: (H) -> Unit,
+    /**
+     * Called when a row's spring comes to rest **on its own**, exactly once per completed travel.
+     *
+     * This is the host's own per-row notification (1626: `PlayerLyricsViewFragment$u#s(ViewHolder)V`
+     * → the adapter's `i1#N`). A real move emits it from the animator's own listener, so a takeover
+     * — which answers `animateMove` and never animates — can only replay it here. It is emitted
+     * *after* the row has been written home and [finish] has run, i.e. when the row is genuinely at
+     * rest, and never from the reset paths ([finishHolder], [finishAll]) — those rows are leaving
+     * the window or are about to be reused.
+     *
+     * The once-only rule is the wave's own `finished` flag, the same one that gates [finish]: a
+     * re-target of a travelling row does not clear it (one move, one start, one finish, one settle),
+     * and only a fresh [push] after the row came to rest starts a new travel that owes its own.
+     */
+    private val onSettled: (H) -> Unit = {},
     /**
      * The row's current layout top, or null when it cannot be read (detached, recycled).
      *
@@ -432,6 +454,9 @@ class LyricLineSpringWave<H : Any>(
                 member.finished = true
                 write(member.holder, 0f)
                 finish(member.holder)
+                // Last, and only here: the row is home, RecyclerView has already been told its move
+                // ended, and the host may now react to it (see [onSettled]).
+                onSettled(member.holder)
             } else {
                 write(member.holder, offset)
                 running = true
@@ -448,6 +473,10 @@ class LyricLineSpringWave<H : Any>(
      * arrived spring all need. A re-target passes false: the row's layout already jumped, and the
      * new lag is written by [push] in the same host call, so zeroing here would flash the old
      * position.
+     *
+     * A reset is not a settle: [finish] runs (RecyclerView's ledger still needs its one end) but
+     * [onSettled] does not — this row is leaving the window or is about to be reused, and the host's
+     * per-row reaction to a *finished move* would land on a rebind.
      */
     fun finishHolder(holder: H, resetOffset: Boolean = true): Boolean {
         val member = members.firstOrNull { it.holder === holder } ?: return false
@@ -458,7 +487,12 @@ class LyricLineSpringWave<H : Any>(
         return true
     }
 
-    /** End every row of this wave, each exactly once, at 0. */
+    /**
+     * End every row of this wave, each exactly once, at 0.
+     *
+     * The full-reset twin of [finishHolder]: a track change or a list replacement, so no row gets
+     * the settle notification either.
+     */
     fun finishAll() {
         members.forEach { member ->
             if (!member.finished) {

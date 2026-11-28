@@ -15,10 +15,19 @@ import kotlin.math.abs
  * rows did not move.
  */
 class LyricLineSpringWaveTest {
-    /** Stands in for a RecyclerView.ViewHolder: its itemView's translationY and its finish count. */
+    /**
+     * Stands in for a RecyclerView.ViewHolder: its itemView's translationY, and the two counts the
+     * host's ledger and the host's own row callback are graded by.
+     */
     private class Row(val name: String, var top: Int) {
         var translationY = 0f
+
+        /** `dispatchAnimationFinished` — RecyclerView's pending-move ledger. */
         var finished = 0
+
+        /** The host's own "this row's move is over" notification (see `onSettled`). */
+        var settled = 0
+
         override fun toString(): String = name + "@" + top
     }
 
@@ -28,6 +37,7 @@ class LyricLineSpringWaveTest {
         LyricLineSpringWave<Row>(
             write = { row, offset -> row.translationY = offset },
             finish = { row -> row.finished += 1 },
+            onSettled = { row -> row.settled += 1 },
             // The real host reads the row's own layout top; the fake row is the same thing.
             layoutTop = { row -> row.top },
         ).also { it.paneHeightPx = paneHeightPx }
@@ -411,6 +421,102 @@ class LyricLineSpringWaveTest {
         assertEquals(0f, row.translationY, 0f)
         // One move the whole way: the four corrections re-aimed it, so one finish is owed.
         assertEquals(1, row.finished)
+    }
+
+    // ---- the host's own per-row "this move is over" notification ------------------------------
+
+    @Test
+    fun `a row that comes to rest tells the host after it was written home and finished`() {
+        val events = ArrayList<String>()
+        val row = Row("a", top = 200)
+        val wave = LyricLineSpringWave<Row>(
+            write = { target, offset ->
+                target.translationY = offset
+                // Only the arrival is interesting; the frames before it are ordinary writes.
+                if (offset == 0f) events += "write-home"
+            },
+            finish = { target ->
+                target.finished += 1
+                events += "finish"
+            },
+            onSettled = { target ->
+                target.settled += 1
+                events += "settle"
+            },
+            layoutTop = { target -> target.top },
+        )
+        wave.push(row, -240f, row.top, tempo())
+        wave.advance(16.6f)
+        // Still travelling: the row owes neither notification yet.
+        assertEquals(0, row.finished)
+        assertEquals(0, row.settled)
+        assertTrue("settled mid flight: " + events, events.isEmpty())
+
+        assertTrue(wave.settle() > 0)
+        // Exactly one of each, in the order the host's own animation would have emitted them: the
+        // row is written home, RecyclerView's ledger is closed, and only then is the host told.
+        assertEquals(1, row.finished)
+        assertEquals(1, row.settled)
+        assertEquals(listOf("write-home", "finish", "settle"), events)
+    }
+
+    @Test
+    fun `a reset closes the ledger but never tells the host the row settled`() {
+        val rows = (0 until 3).map { Row("r" + it, top = 200 + it * 120) }
+        val wave = wave()
+        rows.forEach { wave.push(it, -240f, it.top, tempo()) }
+        wave.advance(50f)
+        assertTrue(rows.any { it.translationY != -240f })
+
+        // endAnimations: every row is zeroed and finished, none of them arrived.
+        wave.finishAll()
+        wave.advance(16.6f)
+        assertEquals(3, rows.sumOf { it.finished })
+        assertEquals(0, rows.sumOf { it.settled })
+
+        // endAnimation: the same for one row, and the frames after it cannot settle it either.
+        val late = Row("late", top = 500)
+        wave.push(late, -240f, late.top, tempo())
+        wave.advance(16.6f)
+        assertTrue(wave.finishHolder(late))
+        repeat(4) { wave.advance(16.6f) }
+        assertEquals(1, late.finished)
+        assertEquals(0, late.settled)
+    }
+
+    @Test
+    fun `a re-aimed move settles once, when the row finally arrives`() {
+        val row = Row("a", top = 200)
+        val wave = wave()
+        wave.push(row, -300f, row.top, tempo())
+        repeat(3) { wave.advance(16.6f) }
+        // The next line change lands while this row is still travelling: one move, re-aimed.
+        wave.push(row, -420f, row.top, tempo())
+        repeat(3) { wave.advance(16.6f) }
+        assertEquals(0, row.settled)
+
+        wave.settle()
+        assertEquals(1, row.finished)
+        assertEquals(1, row.settled)
+        // A reset after the arrival cannot add a second one: the flag the finish uses covers this.
+        wave.finishAll()
+        wave.finishHolder(row)
+        assertEquals(1, row.settled)
+    }
+
+    @Test
+    fun `a row that arrives and is pushed again settles once per travel`() {
+        val row = Row("a", top = 200)
+        val wave = wave()
+        wave.push(row, -240f, row.top, tempo())
+        wave.settle()
+        assertEquals(1, row.settled)
+
+        // A later line change moves the same (reused) holder again: a new move, a new settle.
+        wave.push(row, -240f, row.top, tempo())
+        wave.settle()
+        assertEquals(2, row.finished)
+        assertEquals(2, row.settled)
     }
 
     @Test

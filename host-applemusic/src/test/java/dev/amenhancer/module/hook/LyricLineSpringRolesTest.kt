@@ -29,12 +29,28 @@ class LyricLineSpringRolesTest {
     open class SimpleItemAnimatorBase : ItemAnimatorBase() {
         fun dispatchMoveStarting(holder: Holder) = Unit
 
+        /**
+         * The inherited shape of the row notification (1626: `androidx.recyclerview.widget.F#s`).
+         *
+         * The real animator overrides it, so pinning the base declaration would also work — the
+         * optional role accepts a member declared above *or* below the animator.
+         */
+        open fun settle(holder: Holder) = Unit
+
         open fun animateMove(holder: Holder, fromX: Int, fromY: Int, toX: Int, toY: Int): Boolean = true
     }
 
     class LyricsAnimator : SimpleItemAnimatorBase() {
         @JvmField
         var fragment: Any? = null
+
+        /**
+         * The host's own per-row "this move is over" (1626: `PlayerLyricsViewFragment$u#s`).
+         *
+         * Final, like the real one: the obfuscated override is public final, which is exactly why
+         * reflection on this class finds it instead of the base declaration.
+         */
+        override fun settle(holder: Holder) = Unit
 
         override fun animateMove(holder: Holder, fromX: Int, fromY: Int, toX: Int, toY: Int): Boolean = true
 
@@ -70,6 +86,8 @@ class LyricLineSpringRolesTest {
         endAllOwner: String = animator,
         itemViewOwner: String = holder,
         moveParameters: String = "\"" + holder + "\",\"int\",\"int\",\"int\",\"int\"",
+        /** The optional row notification; `null` leaves the role out of the section entirely. */
+        rowSettle: String? = method(animator, "settle", "\"" + holder + "\"", "void"),
     ): String = "{" +
         "\"contractVersion\":1," +
         "\"classes\":{\"animator\":\"" + animator + "\",\"holder\":\"" + holder + "\"}," +
@@ -80,6 +98,7 @@ class LyricLineSpringRolesTest {
         "\"endAnimations\":" + method(endAllOwner, "endAnimations", "", "void") + "," +
         "\"dispatchMoveStarting\":" + method(simple, "dispatchMoveStarting", "\"" + holder + "\"", "void") + "," +
         "\"dispatchAnimationFinished\":" + method(base, "dispatchAnimationFinished", "\"" + holder + "\"", "void") +
+        (rowSettle?.let { ",\"rowSettle\":" + it } ?: "") +
         "}," +
         "\"fields\":{" +
         "\"holderItemView\":" + field(itemViewOwner, "itemView", "java.lang.Object") + "," +
@@ -101,10 +120,63 @@ class LyricLineSpringRolesTest {
         assertNotNull(roles.dispatchAnimationFinished)
         assertNotNull(roles.holderItemView)
         assertNotNull(roles.animatorFragment)
-        // Two classes, six methods, two fields. The animator's move duration is deliberately absent:
-        // the tempo is AMLL's fixed spring, so nothing reads that field.
-        assertEquals(10, roles.resolved().size)
+        // The host's own per-row notification, declared on the animator's own class (1626: `$u#s`).
+        assertNotNull(roles.rowSettle)
+        assertTrue(roles.optionalMissing().toString(), roles.optionalMissing().isEmpty())
+        // Two classes, seven methods, two fields. The animator's move duration is deliberately
+        // absent: the tempo is AMLL's fixed spring, so nothing reads that field.
+        assertEquals(11, roles.resolved().size)
         assertEquals(Boolean::class.javaPrimitiveType, roles.animateMove?.returnType)
+    }
+
+    /**
+     * Where the row notification may be pinned: on the animator itself (1626), inherited from an
+     * ancestor, or declared on a subclass — all three are invocable on the instance.
+     */
+    @Test
+    fun `the row notification may be declared on the animator or on its ancestry`() {
+        listOf(
+            method(animator, "settle", "\"" + holder + "\"", "void"),
+            method(simple, "settle", "\"" + holder + "\"", "void"),
+        ).forEach { contract ->
+            val roles = roles(section(rowSettle = contract))
+            assertNotNull(roles.rowSettle)
+            assertTrue(roles.optionalMissing().toString(), roles.optionalMissing().isEmpty())
+            assertTrue(roles.isComplete())
+        }
+    }
+
+    /**
+     * The one role outside the all-or-nothing wall: without the host's row notification the spring
+     * still animates every row and RecyclerView's ledger is still closed, so the install must go on
+     * and only the callback is lost — reported once, on its own list.
+     */
+    @Test
+    fun `a missing row-settle role costs the callback and nothing else`() {
+        listOf(
+            // Not declared at all (an older or a differently obfuscated build).
+            section(rowSettle = null),
+            // Declared, but the name no longer resolves.
+            section(rowSettle = method(animator, "rowSettled", "\"" + holder + "\"", "void")),
+            // Declared on a class that is neither the animator nor one of its subclasses: invoking
+            // it on the animator instance could only throw.
+            section(rowSettle = method(holder, "settle", "\"" + holder + "\"", "void")),
+            // Right class, wrong shape: the adapter notification takes the holder and returns void.
+            section(rowSettle = method(animator, "settle", "", "boolean")),
+        ).forEach { json ->
+            val roles = roles(json)
+            assertTrue(roles.missing().toString(), roles.isComplete())
+            assertTrue(roles.missing().isEmpty())
+            assertNull(roles.rowSettle)
+            assertTrue(
+                roles.optionalMissing().toString(),
+                roles.optionalMissing().any { it.startsWith("methods.rowSettle:") },
+            )
+            // Everything the animation itself needs is still there.
+            assertNotNull(roles.animateMove)
+            assertNotNull(roles.dispatchAnimationFinished)
+            assertEquals(10, roles.resolved().size)
+        }
     }
 
     /**

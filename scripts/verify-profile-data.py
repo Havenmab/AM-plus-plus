@@ -45,16 +45,11 @@ def main():
             motion = profile['lyricLineMotion']
             spring = motion.get('spring') or {}
             assert spring.get('contractVersion') == 1, f'missing line motion spring contract: {filename}'
-            # `binding`/`recycler` lead from the lyrics fragment to the lyric list, i.e. to the rows a
-            # *bare layout jump* is measured on -- 1626's normal line change offers no animateMove at
-            # all, so without these two the feature can only animate what the host announces.
-            # Optional per role at runtime (a build without them keeps the animateMove half), but a
-            # profile that claims the spring must pin them.
             required_spring = {
                 'classes': {'animator', 'holder'},
                 'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
                             'dispatchMoveStarting', 'dispatchAnimationFinished'},
-                'fields': {'holderItemView', 'animatorFragment', 'binding', 'recycler'},
+                'fields': {'holderItemView', 'animatorFragment'},
             }
             for group, roles in required_spring.items():
                 assert roles <= spring.get(group, {}).keys(), f'missing line motion spring {group}: {filename}'
@@ -77,7 +72,7 @@ def main():
             trace = motion.get('trace') or {}
             if trace:
                 assert trace.get('contractVersion') == 1, f'missing line motion trace contract: {filename}'
-                required_trace = {'methods': {'lineChange'}, 'fields': {'fragment'}}
+                required_trace = {'methods': {'lineChange'}}
                 for group, roles in required_trace.items():
                     assert roles <= trace.get(group, {}).keys(), f'missing line motion trace {group}: {filename}'
         artist_targets = profile['hookTargets'].get('ARTIST_SURFACE_CLASSES', [])

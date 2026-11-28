@@ -6249,16 +6249,6 @@
           "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment$u",
           "name": "z",
           "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
-        },
-        "binding": {
-          "owner": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment",
-          "name": "l0",
-          "type": "q8.X4"
-        },
-        "recycler": {
-          "owner": "q8.X4",
-          "name": "d0",
-          "type": "androidx.recyclerview.widget.RecyclerView"
         }
       },
       "evidence": {
@@ -6268,7 +6258,7 @@
         "timing": "the displacement is owned from the animateMove entry (the visible translation is written here and then advanced once per Choreographer frame at AMLL's fixed 0.45 s settle: k = 170 * (0.484/0.45)^2 = 196.7, c = 2.2 sqrt(k) = 30.9, m = 0.9, zeta = 1.1595, AMLL zeta>=1 shape); the started/finished notifications are replayed at the same points the host's own ViewPropertyAnimator would have emitted them",
         "ownership": "single writer for translationY of the rows in a taken-over batch; no host field, no adapter notification and no animator duration is written, and dy == 0 / dx != 0 / |dy| > 1200 are all handed back to the host untouched. The move-duration field (k.e) is deliberately not among this contract's roles: the tempo is AMLL's fixed 0.45 s spring, never the host's",
         "dispatch": "exactly one RecyclerView$k#c per taken-over move, from a per-row finished flag that is shared by the spring reaching rest, endAnimation(holder) and endAnimations(); isRunning() answers true for that animator while any batch is live, so RecyclerView does not conclude the list is idle early",
-        "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no row is left to watch, and no state outlives the animator instance"
+        "release": "endAnimation/endAnimations zero the rows and drop the batches; the shared Choreographer callback stops as soon as no batch is live and no state outlives the animator instance"
       }
     },
     "interlude": {
@@ -6345,20 +6335,13 @@
           "static": false
         }
       },
-      "fields": {
-        "fragment": {
-          "owner": "com.apple.android.music.player.fragment.K",
-          "name": "a",
-          "type": "com.apple.android.music.player.fragment.PlayerLyricsViewFragment"
-        }
-      },
       "evidence": {
         "sourceIdentity": "com.apple.android.music / 7.0.3 / 1626",
         "memberSource": "1626 DEX: Lcom/apple/android/music/player/fragment/K; is a final helper (super java.lang.Object) holding one field, a: PlayerLyricsViewFragment, built by <init>(PlayerLyricsViewFragment)V, and declaring exactly two methods: a(I)V (the viewer's onClick, reached from com.apple.android.music.player.W0#onClick) and b(II)V, the line-change callback (access flags 0x11, i.e. public final instance). Reference-level call sites of K#b(II)V are the two lyric adapters' commit paths (com.apple.android.music.player.A#P(List,int,Pair[])V and V0#P(...)V, the same two adapters that build the interlude exits A#N/V0#N) plus two observer bridges (com.apple.android.music.player.fragment.b0#invoke, com.apple.android.music.navigation.deeplink.F#invoke), i.e. once per submitted line page. K#b's own references are the decision note 01 called the only point that knows which line is current: PlayerLyricsViewModel#setCurrentHighlightedLine(I), PlayerLyricsViewFragment#e2(PlayerLyricsViewFragment,int)Z (the re-anchor), PlayerLyricsViewFragment#A2(Z)V, i1#D()Z and i1#Q(Z)V, mc.y.u:I, the fragment's G0/H0/L0 line fields, RecyclerView#getScrollState and setVerticalScrollBarEnabled. That is why the two int arguments are the highlighted line interval (start/end; a -1 start is the host's own NO_POSITION, observed once on a seek) and why the callback runs before the layout pass that offers this module its animateMove calls: it is the one upstream count the spring's own log cannot produce. Note 10 records the re-anchor behind it (K#b -> LinearLayoutManager.u1 -> requestLayout); this node reads neither.",
         "runtimeVerified": false,
-        "timing": "read-only observation: beforeHookedMethod reads the two int arguments and prints them, so the line's position in logcat is what pairs the host's line changes with the pushes the following layout pass produces. The helper's own fragment field (a: PlayerLyricsViewFragment) is read in the same callback, before the re-anchor it precedes, so the lyric list's rows can be read back in for the per-frame layout reading: the line change this module replays on 1626 is a scrollToPositionWithOffset + requestLayout that no animateMove announces, and rows nobody was watching cannot be animated",
+        "timing": "read-only observation: beforeHookedMethod reads the two int arguments and prints them, so the line's position in logcat is what pairs the host's line changes with the pushes the following layout pass produces",
         "ownership": "none: no argument, return value, field, view property or tag is ever written, and the hook never answers for the host; this is observation, not interception",
-        "dispatch": "one line-change start=... end=... line per callback, rate limited with the rest of AMPP-LineSpring, plus one roster rows=N new=M line when the lyric list's rows are read back in (RecyclerView#getChildViewHolder per attached child); the hook is optional here and per role, so its absence costs that one line and the jumps the host never announces, never the spring itself",
+        "dispatch": "one line-change start=... end=... line per callback, rate limited with the rest of AMPP-LineSpring; the hook is optional here and per role, so its absence costs that one line and nothing else",
         "release": "no state outlives the hook: a rate-limit stamp, a per-class counter and the session's own bounded line budget"
       }
     }

@@ -33,20 +33,6 @@ internal class LyricLineTraceRoles(private val loader: ClassLoader, motion: JSON
         methodsOf(motion, "trace"),
     )
 
-    /**
-     * The lyrics fragment the callback belongs to, or null.
-     *
-     * `K#b` is an instance method on a one-field helper (`fragment.K.a`), so the only way to the
-     * lyric list — and therefore to the rows a bare layout jump has to be read from — is through
-     * that field. Optional on its own: without it the `line-change` line still prints and the
-     * spring still runs, only the jumps the host never offered are missed.
-     */
-    val fragment: java.lang.reflect.Field? = optionalField(
-        "fragment",
-        fieldsOf(motion, "trace"),
-        fieldsOf(motion, "interlude"),
-    )
-
     /** Roles that did not resolve, with the reason; empty when the trace is usable. */
     fun missing(): List<String> = failures.map { (role, reason) -> role + ": " + reason }
 
@@ -57,10 +43,6 @@ internal class LyricLineTraceRoles(private val loader: ClassLoader, motion: JSON
 
     private fun methodsOf(motion: JSONObject, section: String): JSONObject? = runCatching {
         motion.getJSONObject(section).getJSONObject("methods")
-    }.getOrNull()
-
-    private fun fieldsOf(motion: JSONObject, section: String): JSONObject? = runCatching {
-        motion.getJSONObject(section).getJSONObject("fields")
     }.getOrNull()
 
     /**
@@ -81,25 +63,6 @@ internal class LyricLineTraceRoles(private val loader: ClassLoader, motion: JSON
         failures[role] = it.message ?: it.javaClass.simpleName
         null
     }
-
-    /** The field twin of [optional]: first inventory that declares it wins, and null is not a failure. */
-    private fun optionalField(role: String, vararg inventories: JSONObject?): java.lang.reflect.Field? =
-        runCatching {
-            var contract: JSONObject? = null
-            for (inventory in inventories) {
-                if (contract != null) break
-                contract = inventory?.optJSONObject(role)
-            }
-            val declared = requireNotNull(contract) { role + " is not declared in this profile" }
-            val owner = classNamed(declared.getString("owner"))
-            val member = owner.getDeclaredField(declared.getString("name"))
-            check(member.type == classNamed(declared.getString("type"))) {
-                "descriptor mismatch: " + member
-            }
-            check(!Modifier.isStatic(member.modifiers)) { "descriptor mismatch: " + member }
-            member.isAccessible = true
-            member
-        }.getOrElse { null }
 
     private fun resolve(contract: JSONObject): Method {
         val parameters = contract.getJSONArray("parameters")

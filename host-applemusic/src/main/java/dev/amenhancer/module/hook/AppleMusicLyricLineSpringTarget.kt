@@ -18,14 +18,10 @@ import dev.amenhancer.module.model.ModuleSettings
 /**
  * 「换行弹簧」: take the lyric block's line-change displacement over with one spring per row.
  *
- * **What the host does (1626, measured).** Sometimes one line change is 4–8 `animateMove` calls
- * that all carry the *same* `dy`: for a non-zero `dy`, `mc.y#m` writes `translationY = -dy`,
- * queues the row in its move list and returns `true` so a `ViewPropertyAnimator` runs for `$k.e`
- * milliseconds, and for `dy == 0` it finishes the row and defers the row transition through
- * `V0`/`s2()`. **But during normal playback it offers nothing at all**: the line change is
- * `PlayerLyricsViewFragment$K#b` → `LinearLayoutManager.u1(pos, offset)` → `requestLayout`, i.e. the
- * block is simply laid out one line higher. That is the case this target has to catch on its own —
- * see "and when the host offers nothing" below.
+ * **What the host does (1626, measured).** One line change is 4–8 `animateMove` calls that all
+ * carry the *same* `dy`; for a non-zero `dy`, `mc.y#m` writes `translationY = -dy`, queues the row
+ * in its move list and returns `true` so a `ViewPropertyAnimator` runs for `$k.e` milliseconds.
+ * For `dy == 0` it instead finishes the row and defers the row transition through `V0`/`s2()`.
  *
  * **What this takes.** Only the non-zero branch: the hook answers `false` (so the host's animator
  * never runs), writes the same `translationY = -dy`, and advances a *wave* of per-row springs from
@@ -37,24 +33,13 @@ import dev.amenhancer.module.model.ModuleSettings
  * when a fast song re-offers `animateMove` every 60-120 ms. The zero branch, the deferred queue, the
  * re-anchor and the duration field are all left exactly as Apple Music wrote them.
  *
- * **...and when the host offers nothing.** The rows are read once per frame instead
- * (`layoutTop` → `LyricLineSpringWave#absorbLayoutShifts`): a row that is standing still and whose
- * layout moved by a whole line is given the movement back (`translationY = -delta`, so the eye sees
- * no jump) and one spring carries it home. That needs the rows *before* the jump, so the target
- * keeps a **roster** of the lyric list's children (`seedRoster`, refreshed from the `K#b` trace and
- * after `endAnimations`) and the shared clock runs while there is anything to read
- * (`LyricLineSpringTracks#advance` keeps a wave whose `isWatching` is true). A drag or a fling
- * moves the block the same way, so a whole-line jump is only replayed when the host says the list is
- * not scrolling (`listIdle`).
- *
  * **What it therefore owes.** Skipping the host's animation also skips the two notifications that
  * animation's listener emits — `dispatchMoveStarting(holder)` when it starts and
  * `dispatchAnimationFinished(holder)` when it ends. RecyclerView's pending-move ledger accepts
  * exactly one finish per start, so the finish is emitted from a per-row flag shared by every end
  * path (spring at rest, `endAnimation`, `endAnimations`, a re-target retiring the previous move),
- * and `isRunning()` is answered `true` while any wave of that animator is *travelling* so the list
- * is not considered idle mid-flight. A watched-but-resting row owes nothing and is never written on
- * `isRunning`'s behalf.
+ * and `isRunning()` is answered `true` while any wave of that animator is live so the list is not
+ * considered idle mid-flight.
  *
  * **One tempo: AMLL's.** The spring is AMLL's own — a fixed 0.45 s settle with k≈197, c≈31, m=0.9
  * and AMLL's ζ≥1 curve — and it never reads the animator's move-duration field (`$k.e`): a line
@@ -182,26 +167,7 @@ internal class AppleMusicLyricLineSpringTarget(
             },
             skipped = { row, moved, lag, window -> diagnostics.skipped(row.holder, moved, lag, window) },
             stuck = { rows, maxLag, since -> diagnostics.stuck(rows, maxLag, since) },
-            // A bare layout jump the wave replayed as a line change: the half of this feature that
-            // needs no animateMove at all (1626's normal playback).
-            layoutLineChange = { row, delta, applied ->
-                diagnostics.layoutChange(
-                    deltaPx = delta,
-                    applied = applied,
-                    waves = waveCount(),
-                    describe = { statusOf(row.animator) },
-                )
-            },
-            // The roster reads layout on the frame clock, so the switch has to hold here too: with the
-            // feature off a whole-line jump is the host's, and is followed.
-            canAbsorbJump = { row -> isEnabled() && listIdle(row) },
         )
-
-        // `tracks`'s own lambdas cannot name `tracks` (a property is not in scope inside its
-        // initializer); a function body is, and these two are only ever called from a frame later.
-        private fun waveCount(): Int = tracks.activeWaves()
-
-        private fun statusOf(animator: Any): LyricLineSpringStatus? = tracks.status(animator)
         private var lastFrameNanos = 0L
         private var frameScheduled = false
 
@@ -265,16 +231,10 @@ internal class AppleMusicLyricLineSpringTarget(
                 AppleMusicLyricLineChangeTrace.open(
                     profile = profile,
                     loader = loader,
-                    onLineChange = { fragment, start, end ->
+                    onLineChange = { start, end ->
                         // Same switch as the takeovers: with the spring off there is nothing to
                         // pair the line with, so the line is not printed either.
-                        if (isEnabled()) {
-                            // The host is about to re-anchor (K#b -> scrollToPositionWithOffset ->
-                            // requestLayout). Reading the list back in *here* is what makes the jump
-                            // that follows visible to the wave: no animateMove will announce it.
-                            seedRoster(fragment)
-                            diagnostics.lineChange(start, end)
-                        }
+                        if (isEnabled()) diagnostics.lineChange(start, end)
                     },
                     onUnavailable = { reason -> diagnostics.traceUnavailable(reason) },
                 )
@@ -373,10 +333,6 @@ internal class AppleMusicLyricLineSpringTarget(
                 recover(row)
                 throw error
             }
-            // The list's own rows are the only way the *next* line change is seen at all: 1626 offers
-            // no animateMove for it. Seeded once (the roster survives rebinds), it costs one `top`
-            // read per frame per row.
-            if (tracks.rosterSize() == 0) seedFromAnimator(animator)
             // One move per row, not one per animateMove: a correction re-aims the move RecyclerView
             // already has, so it dispatches neither a start nor a finish (see LyricLineSpringPush).
             if (!applied.moving) notifyStarted(row)
@@ -431,9 +387,6 @@ internal class AppleMusicLyricLineSpringTarget(
                 guarded("endAnimations") {
                     val animator = param.thisObject ?: return@guarded
                     tracks.finishAll(animator)?.let { diagnostics.cleaned("endAnimations", it) }
-                    // A full reset is a new list (track change, list replacement): read its rows back
-                    // in, or the next line change would be an unannounced jump nobody was watching.
-                    seedFromAnimator(animator)
                 }
             }
         }
@@ -452,14 +405,6 @@ internal class AppleMusicLyricLineSpringTarget(
         private fun onFrame(frameTimeNanos: Long) {
             frameScheduled = false
             frames += 1
-            // The clock also runs while the wave only watches, so switching the feature off has to
-            // stop the reading as well as the takeovers. Twice a second: the check costs a settings
-            // read and a frame does not.
-            if (frames % SWITCH_CHECK_FRAMES == 0L && !isEnabled()) {
-                guarded("switch") { tracks.finishAll(null)?.let { diagnostics.cleaned("switch", it) } }
-                lastFrameNanos = 0L
-                return
-            }
             val stillRunning = runCatching { advance(frameTimeNanos) }.getOrElse { error ->
                 diagnostics.failed("frame", error)
                 runCatching { tracks.finishAll(null) }
@@ -500,91 +445,6 @@ internal class AppleMusicLyricLineSpringTarget(
          */
         private fun isEnabled(): Boolean = enabled()
 
-        // ---- the roster: the rows a bare layout jump is read from ---------------------------------
-
-        /** One reflective lookup per list class, for the scroll state asked on every candidate jump. */
-        private val scrollStateMethods = HashMap<Class<*>, java.lang.reflect.Method?>()
-
-        /**
-         * True when the host's lyric list is not being scrolled right now.
-         *
-         * A drag or a fling moves the block exactly the way a line change does, so the wave asks
-         * before it replays one: `RecyclerView#getScrollState()` is 0 (IDLE) unless the user is
-         * dragging or the list is settling. A refusal is always "follow the layout" — the row keeps
-         * the translation the finger gave it, which is what a scroll should look like.
-         *
-         * A list that cannot answer counts as idle: the wave's own bounds (one pixel floor, ±1200 px,
-         * resting rows only) already keep a scroll from being replayed more than once per row.
-         */
-        private fun listIdle(row: LyricLineSpringRow): Boolean = runCatching {
-            val list = row.view.parent ?: return@runCatching true
-            val state = scrollStateOf(list) ?: return@runCatching true
-            state == 0
-        }.getOrDefault(true)
-
-        private fun scrollStateOf(list: Any): Int? = runCatching {
-            val type = list.javaClass
-            val method = synchronized(scrollStateMethods) {
-                if (scrollStateMethods.containsKey(type)) {
-                    scrollStateMethods[type]
-                } else {
-                    val found = runCatching { type.getMethod("getScrollState") }.getOrNull()
-                    scrollStateMethods[type] = found
-                    found
-                }
-            } ?: return null
-            method.invoke(list) as? Int
-        }.getOrNull()
-
-        /**
-         * The rows the host's lyric list is showing, in list order, or null when unreadable.
-         *
-         * The animator is not needed to find them: the line-change callback hands over the lyrics
-         * fragment, the profile pins the two fields that lead to the list (`binding`, `recycler`)
-         * and `RecyclerView#getChildViewHolder` turns each child into the very holder RecyclerView's
-         * ledger speaks about. Every step is a `runCatching`: a build without these fields simply
-         * keeps the spring that `animateMove` alone can drive.
-         */
-        private fun visibleRows(fragment: Any?): List<LyricLineSpringRow>? {
-            if (fragment == null) return null
-            val binding = roles.binding?.let { runCatching { it.get(fragment) }.getOrNull() } ?: return null
-            val list = roles.recycler?.let { runCatching { it.get(binding) }.getOrNull() } ?: return null
-            val group = list as? android.view.ViewGroup ?: return null
-            val animator = runCatching { group.javaClass.getMethod("getItemAnimator").invoke(group) }
-                .getOrNull() ?: return null
-            // Only the lyric list's animator: the fragments own more than one list.
-            if (!isLyricsAnimator(animator)) return null
-            val holderOf = runCatching {
-                group.javaClass.getMethod("getChildViewHolder", View::class.java)
-            }.getOrNull() ?: return null
-            val rows = ArrayList<LyricLineSpringRow>(group.childCount)
-            for (index in 0 until group.childCount) {
-                val child = runCatching { group.getChildAt(index) }.getOrNull() ?: continue
-                if (!runCatching { child.isAttachedToWindow }.getOrDefault(false)) continue
-                val holder = runCatching { holderOf.invoke(null, child) }.getOrNull() ?: continue
-                rows += LyricLineSpringRow(animator, holder, child, child.top)
-            }
-            return rows
-        }
-
-        /** Read the lyric list's rows in, and start the clock that watches them. */
-        private fun seedRoster(fragment: Any?) {
-            runCatching {
-                val rows = visibleRows(fragment) ?: return@runCatching
-                if (rows.isEmpty()) return@runCatching
-                val added = tracks.seed(rows)
-                diagnostics.roster(rows.size, added, tracks.activeWaves())
-                // Without a live frame clock nothing ever reads the rows again, and the jump this
-                // roster exists for would go unseen.
-                ensureClock()
-            }.onFailure { diagnostics.failed("roster", it) }
-        }
-
-        private fun seedFromAnimator(animator: Any) {
-            if (!isEnabled()) return
-            runCatching { roles.animatorFragment?.get(animator) }.getOrNull()?.let(::seedRoster)
-        }
-
         /** Only the lyric list's animator; every other RecyclerView keeps its own animations. */
         private fun isLyricsAnimator(animator: Any): Boolean {
             val owner = runCatching { roles.animatorFragment?.declaringClass }.getOrNull() ?: return true
@@ -616,17 +476,6 @@ internal class AppleMusicLyricLineSpringTarget(
         private fun guarded(where: String, block: () -> Unit) {
             runCatching(block).onFailure { diagnostics.failed(where, it) }
         }
-
-        private companion object {
-            /**
-             * How often the frame clock re-reads the feature's switch: twice a second at 60 Hz.
-             *
-             * The clock also runs while the wave only watches the list, so "turned off" has to stop
-             * the reading as well as the takeovers — but the check costs a settings read and a frame
-             * does not, hence a cadence rather than every frame.
-             */
-            const val SWITCH_CHECK_FRAMES = 30L
-        }
     }
 }
 
@@ -638,25 +487,18 @@ internal class AppleMusicLyricLineSpringTarget(
  *
  *  * `line-change start=… end=…` — the host committed a new current line (the upstream fact);
  *  * `push kind=new|retarget|merge …` — a move was offered and taken over, and what the wave did;
- *  * `layout-change push dy=… lag=… rows=…` — the host offered *no* move and the wave read the
- *    jump off the rows' own tops and replayed it anyway (1626's normal line change);
- *  * `roster rows=… new=…` — the lyric list's rows were read back in: the roster the
- *    per-frame reading works on, and the evidence that the bare layout jumps can be seen at all;
  *  * `start rows=… delays=[…]` — a batch started stepping (or the clock was re-posted): its stagger;
  *  * `tick … frame=…` — 250 ms of real Choreographer frames: the heartbeat, printed from the
  *    callback itself, so its absence while rows are owed is the clock stopping;
  *  * `stuck rows=… maxLag=… sinceMs=…` — a pushed batch was still where it was written 400 ms on;
  *  * `skip?` — one row of that batch, 200 ms on;
  *  * `handed back: …` — a move the spring refused, with the bound it failed;
- *  * `layout-shift` / `ignore-shift` / `shift-cap` — what the per-frame layout reading did; a
- *    travelling block is followed (`why=block` / `why=fast`), a seek is handed back (`why=seek`), and a
- *    jump under the user's finger is left alone (`why=scroll`);
+ *  * `layout-shift` / `ignore-shift` / `shift-cap` — what the per-frame layout reading did;
  *  * `reset endAnimation|endAnimations …` — the host zeroed rows, and how far they were from home;
  *  * `idle host=0 override=1 …` — the host said "list is idle" while the wave was still travelling.
  *
- * The pairing that answers "the middle line did not move" is `line-change` against `push` *and*
- * `layout-change push`: the host's count of line changes against the moves it offered and the jumps
- * the wave measured for itself, plus `tick` to prove the clock ran between them.
+ * The pairing that answers "the middle line did not move" is `line-change` against `push`: the
+ * host's count of line changes against ours, plus `tick` to prove the clock ran between them.
  * Repeats are rate limited per class (≤2 lines a second, except the 250 ms heartbeat) and the whole
  * session stops after [MAX_LINES], so a long song cannot flood logcat.
  *
@@ -673,20 +515,13 @@ internal class LyricLineSpringDiagnostics(
     private val sink: ((String) -> Unit)? = null,
 ) {
     private val reported = HashMap<String, Long>()
-
-    /**
-     * When each once-per-window line last printed; null until its first.
-     *
-     * Not `Long.MIN_VALUE`: `now - Long.MIN_VALUE` overflows to a negative number, which reads as
-     * "too soon" and silences the class forever (see [gate]).
-     */
-    private var lastCleanupAt: Long? = null
+    private var lastCleanupAt = Long.MIN_VALUE
     private var emitted = 0
     private var shifts = 0
     private var ignores = 0
     private var skips = 0
     private var idles = 0
-    private var lastIdleAt: Long? = null
+    private var lastIdleAt = Long.MIN_VALUE
 
     /** Per-class rate gates: when each class last printed, and how much of its own budget it spent. */
     private val gateAt = HashMap<String, Long>()
@@ -759,52 +594,6 @@ internal class LyricLineSpringDiagnostics(
     }
 
     /**
-     * A **bare layout jump** was taken as a line change: the animation the host never offered.
-     *
-     * This is the line that separates the feature's two halves. `push kind=…` is a move the host
-     * announced with `animateMove`; `layout-change push` is a jump it announced nothing for —
-     * 1626's normal playback, where the block is simply laid out one line higher by
-     * `scrollToPositionWithOffset` + `requestLayout`. `dy` is the jump the wave measured on the
-     * row's own `top` (negative = the block moved up), `lag` the residual it wrote back, so the
-     * displayed position did not move, and `rows`/`delayMs` the batch the jump joined.
-     *
-     * A device run answers "does the row move?" with this line and `tick`: no `layout-change` in a
-     * playing song means either the roster was never seeded (`roster rows=…`) or nothing moved the
-     * block at all.
-     */
-    fun layoutChange(
-        deltaPx: Int,
-        applied: LyricLineSpringPush,
-        waves: Int,
-        describe: () -> LyricLineSpringStatus?,
-    ) {
-        if (!gate(LAYOUT_CHANGE, PUSH_WINDOW_MS, MAX_LAYOUT_CHANGE_LINES)) return
-        val status = runCatching(describe).getOrNull()
-        emit(
-            "layout-change push dy=" + deltaPx +
-                " lag=" + fixed(applied.lagPx) +
-                " rows=" + (status?.rows ?: 0) +
-                " delayMs=" + delays(status) +
-                " t=" + fixed(LyricLineSpringPolicy.AMLL_SETTLE_MS) + "ms" +
-                " waves=" + waves,
-        )
-    }
-
-    /**
-     * The lyric list's rows were read in — the roster the per-frame layout reading works on.
-     *
-     * Printed on every seed (a line change, a full reset, the first takeover), rate limited to twice
-     * a second: `new` is how many of them the wave had never seen, so a roster that stays at
-     * `new=0 rows=8` is a roster that is working, and a `rows=0` means the list could not be read
-     * (a build whose `binding`/`recycler` roles are missing) — in which case only moves the host
-     * announces can be animated.
-     */
-    fun roster(rows: Int, added: Int, waves: Int) {
-        if (!gate(ROSTER, ROSTER_WINDOW_MS, MAX_ROSTER_LINES)) return
-        emit("roster rows=" + rows + " new=" + added + " waves=" + waves)
-    }
-
-    /**
      * A batch started stepping: the AMLL stagger it will run.
      *
      * Printed from the frame [LyricLineSpringWave.advance] ranks the pending pushes in — the first
@@ -835,12 +624,6 @@ internal class LyricLineSpringDiagnostics(
      */
     fun tick(frame: Long, describe: () -> LyricLineSpringStatus?) {
         if (tickCapped) return
-        // Only rows that owe something are a heartbeat: the clock now also runs while the wave merely
-        // *watches* the list — waiting for the bare layout jump a line change arrives as — and a tick
-        // every 250 ms for a lyric page that is simply on screen would spend the whole line budget
-        // proving that nothing is happening.
-        val status = runCatching(describe).getOrNull() ?: return
-        if (status.rows == 0) return
         if (!gate(TICK, TICK_WINDOW_MS, MAX_TICK_LINES)) {
             if (spent(TICK, MAX_TICK_LINES)) {
                 tickCapped = true
@@ -848,6 +631,7 @@ internal class LyricLineSpringDiagnostics(
             }
             return
         }
+        val status = runCatching(describe).getOrNull() ?: return
         emit(
             "tick rows=" + status.rows + " moving=" + status.moving + " waiting=" + status.waiting +
                 " maxLag=" + fixed(status.maxLagPx) + " frame=" + frame,
@@ -920,7 +704,7 @@ internal class LyricLineSpringDiagnostics(
      */
     fun cleaned(where: String, reset: LyricLineSpringReset) {
         val now = now()
-        lastCleanupAt?.let { if (now - it < REPEAT_WINDOW_MS) return }
+        if (now - lastCleanupAt < REPEAT_WINDOW_MS) return
         lastCleanupAt = now
         emit("reset " + where + " rows=" + reset.rows + " lag=" + fixed(reset.maxLagPx) + "->0")
     }
@@ -953,10 +737,6 @@ internal class LyricLineSpringDiagnostics(
                 LyricLineShiftSkip.TOO_FAST -> "ignore-shift why=fast delta=" + deltaPx
                 LyricLineShiftSkip.CAPPED ->
                     "shift-cap delta=" + deltaPx + " cap=" + LyricLineSpringPolicy.MAX_COMPENSATION_PX
-                LyricLineShiftSkip.SEEK ->
-                    "ignore-shift why=seek delta=" + deltaPx +
-                        " bound=±" + LyricLineSpringPolicy.MAX_DISPLACEMENT_PX
-                LyricLineShiftSkip.SCROLL -> "ignore-shift why=scroll delta=" + deltaPx
             },
         )
     }
@@ -998,8 +778,7 @@ internal class LyricLineSpringDiagnostics(
         // frame, and a String per frame for a line that is rate limited away is waste on the main
         // thread. The counter is a diagnostic, so the unlocked read is fine.
         val now = now()
-        lastIdleAt?.let { if (now - it < IDLE_WINDOW_MS) return }
-        if (idles >= MAX_IDLE_LINES) return
+        if (now - lastIdleAt < IDLE_WINDOW_MS || idles >= MAX_IDLE_LINES) return
         val detail = runCatching(describe).getOrNull() ?: return
         lastIdleAt = now
         idles += 1
@@ -1035,12 +814,8 @@ internal class LyricLineSpringDiagnostics(
     private fun gate(name: String, windowMs: Long, budget: Int): Boolean {
         val now = now()
         synchronized(reported) {
-            // No stamp yet means "never printed": the first line of a class must always pass. (A
-            // `Long.MIN_VALUE` sentinel would make `now - last` overflow to a negative number and
-            // refuse *every* line of that class for the life of the process — the reason a device
-            // log showed no `push`, no `tick` and no `line-change` at all.)
-            val last = gateAt[name]
-            if (last != null && now - last < windowMs) return false
+            val last = gateAt[name] ?: Long.MIN_VALUE
+            if (now - last < windowMs) return false
             val printed = gateCount[name] ?: 0
             if (printed >= budget) return false
             gateAt[name] = now
@@ -1111,8 +886,6 @@ internal class LyricLineSpringDiagnostics(
         const val TICK = "tick"
         const val LINE_CHANGE = "line-change"
         const val STUCK = "stuck"
-        const val LAYOUT_CHANGE = "layout-change"
-        const val ROSTER = "roster"
 
         /**
          * ≤2 lines a second for every event class.
@@ -1122,11 +895,6 @@ internal class LyricLineSpringDiagnostics(
          */
         const val PUSH_WINDOW_MS = 500L
         const val MAX_PUSH_LINES = 60
-        /** A bare layout jump is one per line change; the same two-a-second budget applies. */
-        const val MAX_LAYOUT_CHANGE_LINES = 60
-        /** The roster is re-read on every line change: two lines a second is plenty to see it work. */
-        const val ROSTER_WINDOW_MS = 1_000L
-        const val MAX_ROSTER_LINES = 12
         const val START_WINDOW_MS = 500L
         const val MAX_START_LINES = 20
         const val LINE_CHANGE_WINDOW_MS = 500L
@@ -1146,6 +914,5 @@ internal class LyricLineSpringDiagnostics(
 
         /** Longest `delayMs=[…]` printed; a lyric pane shows fewer rows than this. */
         const val MAX_DELAYS = 12
-
     }
 }

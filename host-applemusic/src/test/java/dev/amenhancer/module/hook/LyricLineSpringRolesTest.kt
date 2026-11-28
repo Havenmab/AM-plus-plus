@@ -167,50 +167,6 @@ class LyricLineSpringRolesTest {
         assertTrue(roles.missing().any { it.startsWith("fields.holderItemView:") })
     }
 
-    /**
-     * The roster roles (`binding`/`recycler`) are optional *by design*.
-     *
-     * 1626's normal line change offers no `animateMove`, so the rows have to be read back off the
-     * list itself — and that is what these two fields lead to. Without them the spring still
-     * installs and still takes over every move the host announces; a broken one must therefore cost
-     * the roster and nothing else.
-     */
-    @Test
-    fun `the roster roles are optional in both directions`() {
-        val roster = "," +
-            "\"binding\":" + field(holder, "itemView", "java.lang.Object") + "," +
-            "\"recycler\":" + field(holder, "itemView", "java.lang.Object")
-        val withRoster = section().replace(
-            "\"animatorFragment\":" + field(animator, "fragment", "java.lang.Object"),
-            "\"animatorFragment\":" + field(animator, "fragment", "java.lang.Object") + roster,
-        )
-        val full = roles(withRoster)
-        assertTrue(full.missing().toString(), full.isComplete())
-        assertNotNull(full.binding)
-        assertNotNull(full.recycler)
-        // Two classes, six methods, four fields.
-        assertEquals(12, full.resolved().size)
-
-        // A misshapen roster field is reported as absent, and the contract still installs.
-        val partial = roles(
-            withRoster.replace(
-                "\"recycler\":" + field(holder, "itemView", "java.lang.Object"),
-                "\"recycler\":" + field(holder, "itemView", "int"),
-            ),
-        )
-        assertTrue(partial.missing().toString(), partial.isComplete())
-        assertNotNull(partial.binding)
-        assertNull(partial.recycler)
-        assertEquals(11, partial.resolved().size)
-
-        // And a section that never declares them is not missing anything.
-        val plain = roles(section())
-        assertTrue(plain.isComplete())
-        assertNull(plain.binding)
-        assertNull(plain.recycler)
-        assertEquals(10, plain.resolved().size)
-    }
-
     @Test
     fun `a section without groups resolves nothing and does not throw`() {
         val roles = roles("{}")

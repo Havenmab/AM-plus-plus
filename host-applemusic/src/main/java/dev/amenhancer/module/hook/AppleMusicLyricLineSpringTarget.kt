@@ -45,6 +45,14 @@ import dev.amenhancer.module.model.ModuleSettings
  * emitted only when the spring really came to rest — after `translationY = 0` and after the finish —
  * and never from a reset, where the row is leaving the window or about to be reused.
  *
+ * **...and the answer we borrow.** `isRunning()` is answered `true` for every frame a wave is
+ * travelling, which is what stops RecyclerView from ending the moves mid-flight. The host reads that
+ * same answer the other way round: `ItemAnimator.isRunning(listener)` queues the listener while it
+ * is true, and only `dispatchAnimationsFinished()` — through the animator's own `u()`, called from
+ * the animation-end path a takeover skips — ever fires it. So the *last* wave of an animator hands
+ * that answer back exactly once ([dev.amenhancer.module.lyrics.LyricLineSpringBorrows]): one
+ * dispatch per epoch, never per row, never while the next line change is already travelling.
+ *
  * **One tempo: AMLL's.** The spring is AMLL's own — a fixed 0.45 s settle with k≈197, c≈31, m=0.9
  * and AMLL's ζ≥1 curve — and it never reads the animator's move-duration field (`$k.e`): a line
  * change takes AMLL's time, not the time Apple Music computed for that line. That is the whole
@@ -129,10 +137,12 @@ internal class AppleMusicLyricLineSpringTarget(
                 "Lyric line-change spring not installed; " + profile.id + ": " + reason,
             )
         }
-        // Optional: the host's own per-row "this row's move is over". A build whose animator
-        // subclass no longer declares it keeps the spring and loses only that notification, so the
-        // reason is printed once here and the install goes on.
-        roles.optionalMissing().firstOrNull()?.let { reason -> diagnostics.rowSettleUnavailable(reason) }
+        // Optional callbacks: each one is a host notification the spring replays on its behalf. A
+        // build that no longer declares one keeps the spring and loses only that notification, so
+        // every failure is reported once here — per role, never "install nothing".
+        roles.optionalFailure("rowSettle")?.let { reason -> diagnostics.rowSettleUnavailable(reason) }
+        (roles.optionalFailure("finishDispatch") ?: roles.optionalFailure("finishDispatchFallback"))
+            ?.let { reason -> diagnostics.animationsFinishedUnavailable(reason) }
         val session = SpringSession(roles, ::featureEnabled, diagnostics, profile, loader)
         val scope = HookRegistrationScope()
         return try {
@@ -172,6 +182,9 @@ internal class AppleMusicLyricLineSpringTarget(
             // The host's own half of "this move is over": not RecyclerView's ledger but the
             // lyrics animator telling its adapter that the row has arrived (see notifySettled).
             settled = { row -> notifySettled(row) },
+            // The other half is per animator, not per row: the "nothing left to animate" dispatch
+            // the host queues its listeners on (see notifyAnimationsFinished).
+            animationsFinished = { animator, answers -> notifyAnimationsFinished(animator, answers) },
             layoutShift = { row, delta, lag -> diagnostics.layoutShift(row.holder, delta, lag) },
             layoutShiftSkipped = { row, delta, reason ->
                 diagnostics.shiftIgnored(delta, reason)
@@ -376,6 +389,10 @@ internal class AppleMusicLyricLineSpringTarget(
                     // means this hook is never asked (suspicion 2), and a `reset` line right after
                     // one means RecyclerView ended the moves anyway.
                     param.result = true
+                    // ...and the answer is borrowed, not given: the host hangs its own
+                    // "animations finished" listener on it, and nothing else in this build will
+                    // ever dispatch that. The wave hands it back when its last row is home.
+                    tracks.borrow(animator)
                     diagnostics.idle { tracks.describe(animator) }
                 }
             }
@@ -494,14 +511,29 @@ internal class AppleMusicLyricLineSpringTarget(
          *    method costs one rate-limited log line, and the row stays where the spring put it.
          */
         private fun notifySettled(row: LyricLineSpringRow) {
-            val settle = roles.rowSettle ?: return
-            val ok = runCatching {
-                if (!settle.declaringClass.isInstance(row.animator)) {
-                    error("animator is not " + settle.declaringClass.name)
-                }
-                settle.invoke(row.animator, row.holder)
-            }.isSuccess
-            diagnostics.rowSettle(row.slot, ok)
+            diagnostics.rowSettle(row.slot, invokeHostCallback(roles.rowSettle, row.animator, row.holder))
+        }
+
+        /**
+         * The animator has nothing left to animate: hand the host's own dispatch back.
+         *
+         * This is the second half of the `isRunning()` override. While we answer `true`, 1626's
+         * `ItemAnimator.isRunning(listener)` queues the host's listener instead of firing it, and the
+         * only thing that fires it is `dispatchAnimationsFinished()` — reached through `mc.y#u()`,
+         * which the host calls from its own animation listeners' `onAnimationEnd`. A takeover skips
+         * those listeners entirely, so without this call every listener the host queued while we
+         * animated stays queued, and a short line ("the previous row has not finished yet") is
+         * exactly when the host has such a listener waiting.
+         *
+         * Called by [LyricLineSpringTracks] once per borrow epoch — the frame the animator's last
+         * wave drains — never per row and never per wave, and never from a reset that leaves a wave
+         * behind. Failing to resolve either role costs one log line and this dispatch; the
+         * animation, the ledger and the row positions are untouched.
+         */
+        private fun notifyAnimationsFinished(animator: Any, answers: Int) {
+            val dispatch = roles.finishDispatch ?: roles.finishDispatchFallback
+            if (dispatch == null) return
+            diagnostics.animationsFinished(invokeHostCallback(dispatch, animator), answers)
         }
 
         private fun recover(row: LyricLineSpringRow) {
@@ -535,7 +567,9 @@ internal class AppleMusicLyricLineSpringTarget(
  *  * `reset endAnimation|endAnimations …` — the host zeroed rows, and how far they were from home;
  *  * `idle host=0 override=1 …` — the host said "list is idle" while the wave was still travelling;
  *  * `row-settle holder=… ok=1|0` — a row arrived and the host's own "this move is over" was
- *    replayed (or refused), i.e. the notification a real move would have emitted.
+ *    replayed (or refused), i.e. the notification a real move would have emitted;
+ *  * `animations-finished ok=1|0 borrows=…` — that animator's last wave drained and the borrowed
+ *    `isRunning()` answer was handed back, i.e. the host's own "nothing left to animate" dispatch.
  *
  * The pairing that answers "the middle line did not move" is `line-change` against `push`: the
  * host's count of line changes against ours, plus `tick` to prove the clock ran between them.
@@ -553,15 +587,33 @@ internal class LyricLineSpringDiagnostics(
      * timestamped by the sink. Null (a test, a target without a context) means logcat only.
      */
     private val sink: ((String) -> Unit)? = null,
+    /**
+     * Where one finished line goes, before the sink timestamps it — logcat and Xposed by default.
+     *
+     * Injectable so the one thing the log has to guarantee (the exact vocabulary of every line, and
+     * that a class really is rate limited) can be asserted on a plain JVM instead of on a device.
+     */
+    private val log: (String) -> Unit = { line ->
+        runCatching { Log.i(TAG, line) }
+        runCatching { ModernXposedRuntime.log(TAG + " " + line) }
+    },
 ) {
     private val reported = HashMap<String, Long>()
-    private var lastCleanupAt = Long.MIN_VALUE
+
+    /**
+     * "Never printed yet", as a nullable instant rather than a sentinel.
+     *
+     * `now - Long.MIN_VALUE` overflows to a large *negative* number, so a sentinel of
+     * `Long.MIN_VALUE` makes every window comparison read "too soon" and no line of that class is
+     * ever printed.
+     */
+    private var lastCleanupAt: Long? = null
     private var emitted = 0
     private var shifts = 0
     private var ignores = 0
     private var skips = 0
     private var idles = 0
-    private var lastIdleAt = Long.MIN_VALUE
+    private var lastIdleAt: Long? = null
 
     /** Per-class rate gates: when each class last printed, and how much of its own budget it spent. */
     private val gateAt = HashMap<String, Long>()
@@ -737,6 +789,25 @@ internal class LyricLineSpringDiagnostics(
         once("row-settle-unavailable", "row-settle unavailable: " + reason)
 
     /**
+     * The borrowed `isRunning()` answer handed back: whether the host took the call, and how many
+     * answers that epoch held.
+     *
+     * `animations-finished ok=1 borrows=12` is the line a device run reads for this fix: one of them
+     * per line change (the frame the last row of that animator comes to rest), and `borrows` is how
+     * many frames we kept telling the host "still animating" before it. A missing line means the
+     * hand-back never happened, i.e. the host's listeners are still queued; `ok=0` means the
+     * host's own method refused — the spring is unaffected.
+     */
+    fun animationsFinished(ok: Boolean, borrows: Int) {
+        if (!gate(ANIMATIONS_FINISHED, REPEAT_WINDOW_MS, MAX_ANIMATIONS_FINISHED_LINES)) return
+        emit("animations-finished ok=" + (if (ok) 1 else 0) + " borrows=" + borrows)
+    }
+
+    /** Neither dispatch role resolved: one line, ever. The spring and its rows are unaffected. */
+    fun animationsFinishedUnavailable(reason: String) =
+        once("animations-finished-unavailable", "animations-finished unavailable: " + reason)
+
+    /**
      * One frame of a layout change that announced nothing — the background line growing or
      * collapsing.
      *
@@ -771,7 +842,8 @@ internal class LyricLineSpringDiagnostics(
      */
     fun cleaned(where: String, reset: LyricLineSpringReset) {
         val now = now()
-        if (now - lastCleanupAt < REPEAT_WINDOW_MS) return
+        val last = lastCleanupAt
+        if (last != null && now - last < REPEAT_WINDOW_MS) return
         lastCleanupAt = now
         emit("reset " + where + " rows=" + reset.rows + " lag=" + fixed(reset.maxLagPx) + "->0")
     }
@@ -845,7 +917,8 @@ internal class LyricLineSpringDiagnostics(
         // frame, and a String per frame for a line that is rate limited away is waste on the main
         // thread. The counter is a diagnostic, so the unlocked read is fine.
         val now = now()
-        if (now - lastIdleAt < IDLE_WINDOW_MS || idles >= MAX_IDLE_LINES) return
+        val last = lastIdleAt
+        if ((last != null && now - last < IDLE_WINDOW_MS) || idles >= MAX_IDLE_LINES) return
         val detail = runCatching(describe).getOrNull() ?: return
         lastIdleAt = now
         idles += 1
@@ -881,8 +954,10 @@ internal class LyricLineSpringDiagnostics(
     private fun gate(name: String, windowMs: Long, budget: Int): Boolean {
         val now = now()
         synchronized(reported) {
-            val last = gateAt[name] ?: Long.MIN_VALUE
-            if (now - last < windowMs) return false
+            // Null means "this class never printed": the first line of every class must go through,
+            // and `now - Long.MIN_VALUE` would overflow to a negative difference instead.
+            val last = gateAt[name]
+            if (last != null && now - last < windowMs) return false
             val printed = gateCount[name] ?: 0
             if (printed >= budget) return false
             gateAt[name] = now
@@ -909,8 +984,7 @@ internal class LyricLineSpringDiagnostics(
             if (emitted >= MAX_LINES) return
             emitted += 1
         }
-        runCatching { Log.i(TAG, line) }
-        runCatching { ModernXposedRuntime.log(TAG + " " + line) }
+        runCatching { log(line) }
         // The file is the third destination, and the only one a user can open without a computer.
         // It gets the same line; the sink adds its own timestamp and refuses while the switch is off.
         sink?.let { write -> runCatching { write(line) } }
@@ -954,6 +1028,7 @@ internal class LyricLineSpringDiagnostics(
         const val LINE_CHANGE = "line-change"
         const val STUCK = "stuck"
         const val ROW_SETTLE = "row-settle"
+        const val ANIMATIONS_FINISHED = "animations-finished"
 
         /**
          * ≤2 lines a second for every event class.
@@ -978,6 +1053,14 @@ internal class LyricLineSpringDiagnostics(
          * is what keeps a fast song under the log budget.
          */
         const val MAX_ROW_SETTLE_LINES = 60
+
+        /**
+         * The hand-back: one line per line change, so a small budget is plenty.
+         *
+         * A song that changes lines every 400 ms would still only produce one per line change, and
+         * [REPEAT_WINDOW_MS] keeps even that under two a second.
+         */
+        const val MAX_ANIMATIONS_FINISHED_LINES = 40
 
         /**
          * The heartbeat: 250 ms, the cadence that makes a gap meaningful.

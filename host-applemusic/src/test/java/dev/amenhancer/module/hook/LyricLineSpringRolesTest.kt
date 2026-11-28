@@ -24,6 +24,9 @@ class LyricLineSpringRolesTest {
         open fun endAnimations() = Unit
 
         fun dispatchAnimationFinished(holder: Holder) = Unit
+
+        /** 1626: `RecyclerView$k#d`, `dispatchAnimationsFinished()` — the fallback dispatch. */
+        fun dispatchAnimationsFinished() = Unit
     }
 
     open class SimpleItemAnimatorBase : ItemAnimatorBase() {
@@ -51,6 +54,15 @@ class LyricLineSpringRolesTest {
          * reflection on this class finds it instead of the base declaration.
          */
         override fun settle(holder: Holder) = Unit
+
+        /**
+         * "This animator has nothing left to animate" (1626: `mc.y#u`).
+         *
+         * Declared here, on the animator, because 1626's `PlayerLyricsViewFragment$u` does *not*
+         * override `u()` — it declares only `b/i/p/q/r/s` — so the animator's own implementation is
+         * the one the lyrics animator inherits and the host itself calls.
+         */
+        fun dispatchFinished() = Unit
 
         override fun animateMove(holder: Holder, fromX: Int, fromY: Int, toX: Int, toY: Int): Boolean = true
 
@@ -88,6 +100,10 @@ class LyricLineSpringRolesTest {
         moveParameters: String = "\"" + holder + "\",\"int\",\"int\",\"int\",\"int\"",
         /** The optional row notification; `null` leaves the role out of the section entirely. */
         rowSettle: String? = method(animator, "settle", "\"" + holder + "\"", "void"),
+        /** The optional "nothing left to animate" dispatch (1626: `mc.y#u`). */
+        finishDispatch: String? = method(animator, "dispatchFinished", "", "void"),
+        /** The optional unconditional dispatch (1626: `RecyclerView$k#d`). */
+        finishDispatchFallback: String? = method(base, "dispatchAnimationsFinished", "", "void"),
     ): String = "{" +
         "\"contractVersion\":1," +
         "\"classes\":{\"animator\":\"" + animator + "\",\"holder\":\"" + holder + "\"}," +
@@ -99,6 +115,8 @@ class LyricLineSpringRolesTest {
         "\"dispatchMoveStarting\":" + method(simple, "dispatchMoveStarting", "\"" + holder + "\"", "void") + "," +
         "\"dispatchAnimationFinished\":" + method(base, "dispatchAnimationFinished", "\"" + holder + "\"", "void") +
         (rowSettle?.let { ",\"rowSettle\":" + it } ?: "") +
+        (finishDispatch?.let { ",\"finishDispatch\":" + it } ?: "") +
+        (finishDispatchFallback?.let { ",\"finishDispatchFallback\":" + it } ?: "") +
         "}," +
         "\"fields\":{" +
         "\"holderItemView\":" + field(itemViewOwner, "itemView", "java.lang.Object") + "," +
@@ -122,11 +140,72 @@ class LyricLineSpringRolesTest {
         assertNotNull(roles.animatorFragment)
         // The host's own per-row notification, declared on the animator's own class (1626: `$u#s`).
         assertNotNull(roles.rowSettle)
+        // The borrowed isRunning() answer (1626: `mc.y#u`) and the unconditional dispatch behind it.
+        assertNotNull(roles.finishDispatch)
+        assertNotNull(roles.finishDispatchFallback)
         assertTrue(roles.optionalMissing().toString(), roles.optionalMissing().isEmpty())
-        // Two classes, seven methods, two fields. The animator's move duration is deliberately
+        // Two classes, nine methods, two fields. The animator's move duration is deliberately
         // absent: the tempo is AMLL's fixed spring, so nothing reads that field.
-        assertEquals(11, roles.resolved().size)
+        assertEquals(13, roles.resolved().size)
         assertEquals(Boolean::class.javaPrimitiveType, roles.animateMove?.returnType)
+    }
+
+    /**
+     * The borrowed `isRunning()` answer is optional in both shapes, and the two degrade on their
+     * own: a build without the animator's own `u()` still has the dispatch behind it, and a build
+     * with neither keeps the spring and only loses the hand-back.
+     */
+    @Test
+    fun `the finish dispatch degrades one role at a time`() {
+        // Only the unconditional dispatch is gone: the primary still resolves.
+        val noFallback = roles(section(finishDispatchFallback = null))
+        assertTrue(noFallback.isComplete())
+        assertNotNull(noFallback.finishDispatch)
+        assertNull(noFallback.finishDispatchFallback)
+        assertTrue(
+            noFallback.optionalMissing().toString(),
+            noFallback.optionalMissing().any { it.startsWith("methods.finishDispatchFallback:") },
+        )
+
+        // Only the animator's own u() is gone: the fallback is still there to hand the answer back.
+        val noPrimary = roles(section(finishDispatch = null))
+        assertTrue(noPrimary.isComplete())
+        assertNull(noPrimary.finishDispatch)
+        assertNotNull(noPrimary.finishDispatchFallback)
+
+        // Neither: the spring installs and the hand-back is the only thing lost.
+        val neither = roles(section(finishDispatch = null, finishDispatchFallback = null))
+        assertTrue(neither.missing().toString(), neither.isComplete())
+        assertNull(neither.finishDispatch)
+        assertNull(neither.finishDispatchFallback)
+        assertEquals(
+            setOf("methods.finishDispatch", "methods.finishDispatchFallback"),
+            neither.optionalMissing().map { it.substringBefore(":") }.toSet(),
+        )
+        assertNull(neither.optionalFailure("rowSettle")) // the row notification is unaffected
+        assertNotNull(neither.optionalFailure("finishDispatch"))
+    }
+
+    /**
+     * A dispatch pinned on a class the animator is unrelated to would resolve and then throw on
+     * every hand-back: refused, and that role alone is lost.
+     */
+    @Test
+    fun `a finish dispatch off the animator lineage is refused`() {
+        val roles = roles(
+            section(
+                finishDispatch = method(holder, "dispatchAnimationsFinished", "", "void"),
+                finishDispatchFallback = method(holder, "dispatchAnimationsFinished", "", "void"),
+            ),
+        )
+
+        assertTrue(roles.isComplete())
+        assertNull(roles.finishDispatch)
+        assertNull(roles.finishDispatchFallback)
+        assertEquals(
+            setOf("methods.finishDispatch", "methods.finishDispatchFallback"),
+            roles.optionalMissing().map { it.substringBefore(":") }.toSet(),
+        )
     }
 
     /**
@@ -172,10 +251,11 @@ class LyricLineSpringRolesTest {
                 roles.optionalMissing().toString(),
                 roles.optionalMissing().any { it.startsWith("methods.rowSettle:") },
             )
-            // Everything the animation itself needs is still there.
+            // Everything the animation itself needs is still there, and so is the other optional
+            // pair (this list only ever removes the row notification).
             assertNotNull(roles.animateMove)
             assertNotNull(roles.dispatchAnimationFinished)
-            assertEquals(10, roles.resolved().size)
+            assertEquals(12, roles.resolved().size)
         }
     }
 

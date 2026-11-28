@@ -3,6 +3,7 @@ package dev.amenhancer.module.hook
 import android.view.View
 import android.view.ViewGroup
 import dev.amenhancer.module.lyrics.LyricLineShiftSkip
+import dev.amenhancer.module.lyrics.LyricLineSpringBorrows
 import dev.amenhancer.module.lyrics.LyricLineSpringTempo
 import dev.amenhancer.module.lyrics.LyricLineSpringPush
 import dev.amenhancer.module.lyrics.LyricLineSpringStatus
@@ -91,6 +92,14 @@ internal class LyricLineSpringTracks(
      * See [dev.amenhancer.module.lyrics.LyricLineSpringWave.onSettled].
      */
     private val settled: (LyricLineSpringRow) -> Unit = { _ -> },
+    /**
+     * The animator has nothing left to animate: hand the host its own "finished" back.
+     *
+     * `(animator, how many isRunning() answers that epoch held)`. Owed exactly once per epoch — see
+     * [dev.amenhancer.module.lyrics.LyricLineSpringBorrows] for why answering `isRunning()` true
+     * without ever dispatching leaves every listener the host queued waiting forever.
+     */
+    private val animationsFinished: (Any, Int) -> Unit = { _, _ -> },
     /** One line per absorbed layout shift, i.e. per frame of a background line growing. */
     private val layoutShift: (LyricLineSpringRow, Int, Float) -> Unit = { _, _, _ -> },
     /** One line per layout shift that was *not* absorbed, with the reason. */
@@ -102,6 +111,7 @@ internal class LyricLineSpringTracks(
     private val stuck: (rows: Int, maxLagPx: Float, sinceMs: Float) -> Unit = { _, _, _ -> },
 ) {
     private val lock = Any()
+    private val borrowing = LyricLineSpringBorrows()
     private val waves = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
     private val rows = IdentityHashMap<Any, LyricLineSpringRow>()
     private val waveOf = IdentityHashMap<Any, LyricLineSpringWave<Any>>()
@@ -125,7 +135,13 @@ internal class LyricLineSpringTracks(
         holdMs: Float = 0f,
     ): LyricLineSpringPush =
         synchronized(lock) {
-            val wave = waves[row.animator] ?: newWave().also { waves[row.animator] = it }
+            val existing = waves[row.animator]
+            val wave = existing ?: newWave().also {
+                waves[row.animator] = it
+                // A wave of this animator exists now, so isRunning() will keep answering true for
+                // it until it drains: that is the start of a borrow epoch (LyricLineSpringBorrows).
+                borrowing.waveStarted(row.animator)
+            }
             val previous = waveOf[row.holder]
             if (previous != null && previous !== wave) {
                 previous.finishHolder(row.holder, resetOffset = false)
@@ -164,14 +180,19 @@ internal class LyricLineSpringTracks(
      * `endAnimation` for an already-finished row is a no-op instead of a second finish.
      */
     fun advance(dtMs: Float): Boolean = synchronized(lock) {
+        val drained = ArrayList<Any>(2)
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             if (!entry.value.advance(dtMs)) {
                 forgetWave(entry.value)
                 iterator.remove()
+                drained += entry.key
             }
         }
+        // After the iterator is done, never inside it: the host's dispatch re-enters our hooks
+        // (endAnimation -> finish -> retire), and mutating the map mid-iteration would throw.
+        drained.forEach { handBack(it) }
         waves.isNotEmpty()
     }
 
@@ -204,6 +225,7 @@ internal class LyricLineSpringTracks(
     fun finishAll(animator: Any?): LyricLineSpringReset? = synchronized(lock) {
         var ended = 0
         var maxLag = 0f
+        val drained = ArrayList<Any>(2)
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
@@ -214,8 +236,10 @@ internal class LyricLineSpringTracks(
                 wave.finishAll()
                 forgetWave(wave)
                 iterator.remove()
+                drained += entry.key
             }
         }
+        drained.forEach { handBack(it) }
         if (ended == 0) null else LyricLineSpringReset(ended, maxLag)
     }
 
@@ -227,6 +251,22 @@ internal class LyricLineSpringTracks(
 
     /** The number of live waves, for the diagnostic line. */
     fun activeWaves(): Int = synchronized(lock) { waves.size }
+
+    /**
+     * We just answered `isRunning()` true for [animator]: one more answer to hand back later.
+     *
+     * Called from the isRunning hook on every frame that would otherwise have said "idle", so the
+     * count this animator is owed is also the number of frames the host's queued listeners were
+     * kept waiting — which is what the `animations-finished borrows=` line prints.
+     */
+    fun borrow(animator: Any?) = synchronized(lock) {
+        if (animator != null) borrowing.borrow(animator)
+    }
+
+    /** True while [animator] is owed an "animations finished" dispatch, for the frame diagnostics. */
+    fun owesFinished(animator: Any?): Boolean = synchronized(lock) {
+        animator != null && borrowing.owed(animator) > 0
+    }
 
     /**
      * True when some wave is about to rank a batch pushed since the last frame.
@@ -297,10 +337,31 @@ internal class LyricLineSpringTracks(
     private fun retire(wave: LyricLineSpringWave<Any>) {
         if (wave.isRunning) return
         forgetWave(wave)
+        var drained: Any? = null
         val iterator = waves.entries.iterator()
         while (iterator.hasNext()) {
-            if (iterator.next().value === wave) iterator.remove()
+            val entry = iterator.next()
+            if (entry.value === wave) {
+                drained = entry.key
+                iterator.remove()
+            }
         }
+        // After the map is consistent again: the dispatch re-enters endAnimation/finish.
+        drained?.let { handBack(it) }
+    }
+
+    /**
+     * Hand the host's borrowed `isRunning()` answer back, once the animator has no wave left.
+     *
+     * Three rules, all of them here rather than at the call sites: only when this animator really
+     * has no wave any more (a line change that finishes while the next one travels must not tell the
+     * host "nothing is animating"), only when we actually borrowed (answering "idle" when nobody
+     * asked owes nothing), and exactly once per epoch — the ledger forgets the animator, so the next
+     * wave starts a new debt.
+     */
+    private fun handBack(animator: Any) {
+        val answers = borrowing.waveEnded(animator) ?: return
+        runCatching { animationsFinished(animator, answers) }
     }
 
     /**

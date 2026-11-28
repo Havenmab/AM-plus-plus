@@ -393,14 +393,21 @@ def verify_lyric_line_motion_contract(document, classes, failures):
     if not isinstance(spring, dict) or spring.get('contractVersion') != 1:
         failures.append('lyricLineMotion.spring: missing versioned contract')
         return 0
-    # "rowSettle" is the host's own per-row "this row's move is over", i.e. the notification the
-    # animator emits from its per-row listener and a takeover has to replay. Optional at runtime --
-    # a build without it keeps the animation and loses one callback -- so the profile is where it is
-    # pinned, and the shape that fails silently is checked below.
+    # Three optional-at-runtime roles are pinned by the profile, because losing one is a regression
+    # rather than a missing extra:
+    #   rowSettle               the host's own per-row "this row's move is over" (a takeover replays
+    #                           the notification the skipped animation would have emitted);
+    #   finishDispatch          "this animator has nothing left to animate" (mc.y#u: the borrowed
+    #                           isRunning() answer, handed back once its last wave is gone);
+    #   finishDispatchFallback  dispatchAnimationsFinished() itself (RecyclerView$k#d), for a build
+    #                           whose animator no longer declares its own dispatch.
+    # Their shapes fail *silently* when wrong (a member on a sibling class resolves and then throws
+    # on every call), so each is checked below against the animator's own lineage.
     required_spring = {
         'classes': {'animator', 'holder'},
         'methods': {'animateMove', 'isRunning', 'endAnimation', 'endAnimations',
-                    'dispatchMoveStarting', 'dispatchAnimationFinished', 'rowSettle'},
+                    'dispatchMoveStarting', 'dispatchAnimationFinished', 'rowSettle',
+                    'finishDispatch', 'finishDispatchFallback'},
         'fields': {'holderItemView', 'animatorFragment'},
     }
     checks = 0
@@ -444,24 +451,29 @@ def verify_lyric_line_motion_contract(document, classes, failures):
         # inherited from an ancestor -- the opposite direction from dispatchMoveStarting/Finished.
         # A role pinned to a sibling class would resolve and then throw on every invocation, which
         # is a silently missing row update, so both the lineage and the shape are pinned here.
-        settle = spring['methods'].get('rowSettle')
-        if settle is not None:
-            settle_owner = descriptor(settle['owner'])
-            # Called on the animator instance, so the member is invocable when it is declared on
-            # the animator, inherited from one of its ancestors (virtual dispatch reaches the
-            # subclass override) or declared on a subclass. Anything else resolves and then throws
-            # on every call, which on the device is a silently missing row update.
-            if (settle_owner not in spring_lineage
-                    and spring_animator not in class_lineage(classes, settle_owner)):
+        # Every replayed callback is invoked on the animator instance, so it is invocable when it is
+        # declared on the animator, inherited from one of its ancestors (virtual dispatch reaches the
+        # subclass override) or declared on a subclass. Anything else resolves and then throws on
+        # every call, i.e. a silently missing host callback -- which is why the lineage is pinned
+        # per role, together with the exact parameter list each one takes.
+        for role, parameters in (
+                ('rowSettle', [spring_holder]),
+                ('finishDispatch', []),
+                ('finishDispatchFallback', [])):
+            contract = spring['methods'].get(role)
+            if contract is None:
+                continue
+            owner = descriptor(contract['owner'])
+            if owner not in spring_lineage and spring_animator not in class_lineage(classes, owner):
                 failures.append(
-                    'lyricLineMotion.spring.methods.rowSettle: %s is neither the animator, a '
-                    'subclass of it, nor one of its ancestors' % settle_owner)
-            if [descriptor(parameter) for parameter in settle['parameters']] != [spring_holder]:
+                    'lyricLineMotion.spring.methods.%s: %s is neither the animator, a subclass of it, '
+                    'nor one of its ancestors' % (role, owner))
+            if [descriptor(parameter) for parameter in contract['parameters']] != parameters:
                 failures.append(
-                    'lyricLineMotion.spring.methods.rowSettle: does not take the holder class')
-            if descriptor(settle['returns']) != 'V' or settle.get('static', False):
+                    'lyricLineMotion.spring.methods.%s: wrong parameter list' % role)
+            if descriptor(contract['returns']) != 'V' or contract.get('static', False):
                 failures.append(
-                    'lyricLineMotion.spring.methods.rowSettle: not a void instance method')
+                    'lyricLineMotion.spring.methods.%s: not a void instance method' % role)
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         failures.append('lyricLineMotion.spring: incomplete semantic keys (%s)' % error)
     checks += verify_lyric_interlude_contract(data, classes, failures)

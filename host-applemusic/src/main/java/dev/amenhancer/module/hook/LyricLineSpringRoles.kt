@@ -14,8 +14,10 @@ import java.lang.reflect.Modifier
  * is a hang rather than a wrong look. So every such role is resolved here, [missing] reports each
  * failure with its reason, and the target installs nothing at all unless [isComplete].
  *
- * One role is deliberately outside that wall: [rowSettle] is the host's own per-row notification to
- * its adapter. Losing it costs that callback and nothing else the spring does, so it is reported
+ * Three roles are deliberately outside that wall, because the spring animates exactly the same
+ * without them: [rowSettle] (the host's own per-row notification to its adapter), [finishDispatch]
+ * and its [finishDispatchFallback] (the "this animator has nothing left" dispatch the host queues
+ * its listeners on). Losing one costs that callback and nothing else, so each failure is reported
  * through [optionalMissing] and the spring installs anyway.
  *
  * Two shapes are pinned beyond the descriptors, because both fail *silently*:
@@ -98,6 +100,31 @@ internal class LyricLineSpringRoles(
      */
     val rowSettle: Method? = optional("rowSettle")
 
+    /**
+     * `mc.y#u(): void` — "this animator has nothing left to animate".
+     *
+     * 1626's body is `if (!isRunning()) dispatchAnimationsFinished()`, and every one of the host's
+     * own animation listeners ends with it (`mc.y$a..$d#onAnimationEnd`, `mc.z#onAnimationEnd`), as
+     * does `endAnimation`. That is the *other half* of our `isRunning()` override: while we answer
+     * true, every listener the host queues through `ItemAnimator.isRunning(listener)` waits for
+     * exactly this dispatch — which a takeover never reaches. See
+     * [dev.amenhancer.module.lyrics.LyricLineSpringBorrows].
+     *
+     * Pinned on the animator itself rather than on `PlayerLyricsViewFragment$u`: 1626's subclass
+     * does **not** override `u()` (it declares only `b/i/p/q/r/s`), so this is the implementation the
+     * lyrics animator inherits and the one the host itself calls.
+     */
+    val finishDispatch: Method? = optional("finishDispatch")
+
+    /**
+     * `RecyclerView$k#d(): void` — `dispatchAnimationsFinished()` itself, the fallback.
+     *
+     * The dispatch without [finishDispatch]'s `isRunning()` gate, used only when the animator no
+     * longer declares its own `u()`. Releasing the queued listeners unconditionally is correct here
+     * because we only ever call it once that animator's last wave is gone.
+     */
+    val finishDispatchFallback: Method? = optional("finishDispatchFallback")
+
     // ---- fields -----------------------------------------------------------------------------
 
     /** `RecyclerView$D.a`: the row's itemView, i.e. the View whose translationY we own. */
@@ -129,6 +156,9 @@ internal class LyricLineSpringRoles(
      */
     fun optionalMissing(): List<String> =
         optionalFailures.map { (role, reason) -> role + ": " + reason }
+
+    /** Why the optional [role] did not resolve, or null when it did (or was never declared). */
+    fun optionalFailure(role: String): String? = optionalFailures["methods." + role]
 
     /** True when every role this contract needs is present and correctly shaped. */
     fun isComplete(): Boolean = failures.isEmpty() &&

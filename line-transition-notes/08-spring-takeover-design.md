@@ -406,3 +406,56 @@ compensation stops at the cap so the residual cannot run away
 这正好是「宿主的 highlight/布局更新被它自己的『动画未结束』状态挡住」的形状。候选修法：某个 animator 的最后一个 wave 结束时
 调用 `mc.y#u()`（或直接 `RecyclerView$k#d()`），作为 profile 里的新角色做 exact 校验；与 `rowSettle` 相互独立。
 
+
+---
+
+## 10. 借出去的 isRunning 要还（`finishDispatch`，2026-11-28）
+
+**这是 §9.3 那条候选修法的落地**，与 §9 的 `rowSettle` 并存、互不依赖。
+
+**机理（1626 DEX）**：
+
+| 事实 | 证据 |
+| --- | --- |
+| `mc.y#g()`（isRunning）被我们答 `true` 期间，宿主的 `RecyclerView$k#h(ItemAnimatorFinishedListener)Z` 只把 listener 排进 `mFinishedListeners` | `RecyclerView$k` 的 10 个方法里唯一的单参 `$a` 类型，即 `ItemAnimator.isRunning(listener)` |
+| 唯一派发者是 `RecyclerView$k#d()`（`dispatchAnimationsFinished`） | `callers.py 'RecyclerView\$k#d\(\)'` → `mc.y#u`、`mc.y#f`、`g#f`、`g#u` |
+| `mc.y#u()` 就是 `if (!isRunning()) dispatchAnimationsFinished()`，被 `mc.y$a..$d#onAnimationEnd`、`mc.z#onAnimationEnd`、`mc.y#e` 调用 | `amd2.py base.apk 'mc.y' u`；callers 同上 |
+| **`$u` 不声明 `u()`**：它只声明 `<init>/b/i/p/q/r/s`，`u()` 在 `mc.y` 上（public final `0x11`） | `$u` 的整张 method_access 表 |
+
+于是角色是 **`finishDispatch = mc.y#u()V`**（不是 `$u#u`——那个成员在这个包里不存在；也不是直接钉 `RecyclerView$k#d`，
+因为 `u()` 自带 `isRunning()` 闸门，宿主自己有动画在跑时会把它推迟到宿主自己的 `onAnimationEnd`，这才是它的语义），
+**`finishDispatchFallback = RecyclerView$k#d()V`** 只在 animator 不再声明自己的 `u()` 时使用。两者都写进 profile、
+各自独立降级、优先 `finishDispatch`。
+
+**何时还**：`LyricLineSpringTracks` 里一本 per-animator 的借还账本（`LyricLineSpringBorrows`，`:core` 纯逻辑）：
+
+* `push` 建出一条新 wave → `waveStarted`；
+* isRunning hook 每答一次 `true` → `borrow`（这个计数就是日志里的 `borrows=`：我们替宿主答了多少帧 busy）；
+* wave 从 animator→wave 的映射里被移除 → `waveEnded`：**只有该 animator 一条 wave 都不剩、且确实借过**，才返回一次，
+  账本随即清空（下一轮重新借、重新还）；
+* 三条移除路径都覆盖：`advance` 自然结束、`retire`（`endAnimation` 之后）、`finishAll`（`endAnimations`）；
+* 回调一律在**迭代结束之后**发：宿主的 `dispatchAnimationsFinished` 会重新进 `endAnimation`→`finish`→`retire`，
+  在遍历中改 map 会 CME。
+
+**日志**：`animations-finished ok=1|0 borrows=<n>`（500 ms 限流、40 条预算）。
+
+**真机判据**：短句段落里，每次换行后应出现**一条** `animations-finished ok=1 borrows=<n>`（`n` 是那一轮我们替宿主答的帧数），
+并且下一次换行时**上一行已经收尾**——即下一行当场高亮，不再慢一拍。看不到这行 = 借了没还（或角色没解析，见 `animations-finished unavailable:`）。
+
+**分工**：`rowSettle` 是「某一行位移结束」的 per-row 通知（对我们来说文本行是 no-op，对间奏行无害，形状正确）；
+`finishDispatch` 是「这个 animator 没有动画了」的 per-animator 派发，才是宿主排队 listener 的解药。两者都失败时弹簧照跑。
+
+---
+
+## 11. 顺带修掉一个会让上面所有日志失效的 bug（2026-11-28）
+
+`gate()` / `cleaned()` / `idle()` 用 `Long.MIN_VALUE` 当「还没打印过」的哨兵，而 `now - Long.MIN_VALUE` **溢出成负数**
+（`1000 - (-2^63)` → `-9223372036854774808`），于是每个类别的第一条永远被判成「窗口内」而被吞掉：
+
+* 受影响：`push` / `start` / `tick` / `line-change` / `stuck` / `reset` / `idle`（全部走 `gate` 或 `lastCleanupAt` / `lastIdleAt`）；
+* 只有 `once()` 那几行（`handed back:` / `unavailable` / `failed`）和按 holder 用 map 的 `layout-shift` / `ignore-shift` / `skip?` 能出；
+* 也就是说 §9 的 `row-settle` 判据在这次修复之前**根本不可能在真机出现**。
+
+改法：哨兵换成 `Long?` + null 判断；新增 `LyricLineSpringDiagnosticsTest`，其中一条断言「每个类别的第一条都必须打印」——
+把哨兵改回 `Long.MIN_VALUE`，5 条诊断测试里 4 条立刻红。
+
